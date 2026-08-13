@@ -2,6 +2,8 @@ import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { SearchWidget } from "./search-widget";
+import { getPublicExtras } from "./extras-catalog";
+import { getMaxLuggageCapacity } from "./fleet-luggage";
 import type { BookingContact } from "./offers";
 
 /**
@@ -32,10 +34,16 @@ export async function BookingWidget({
   locale?: string;
   className?: string;
 }) {
-  const [discountEnabled, offerBanners, checkoutBanners] = await Promise.all([
+  const [discountEnabled, offerBanners, checkoutBanners, extras, maxLuggage] = await Promise.all([
     isDiscountEnabled(),
     getPromoBanners("offers"),
     getPromoBanners("checkout"),
+    // كتالوج الخدمات (0031): يُقرأ هنا لا في الجزيرة — والفارغ يعني ألّا يظهر
+    // في الويدجت شيء إطلاقاً، وهي الحالة الافتراضية حتى يضيف المالك خدماته.
+    getPublicExtras(),
+    // سقف عدّاد الحقائب من الأسطول نفسه: عدّادٌ يصعد فوق أكبر سعة يعرض على
+    // العميل رقماً يضمن «لا توجد فئة». والفشل يعيد null فيبقى السقف الثابت.
+    getMaxLuggageCapacity(),
   ]);
 
   return (
@@ -47,6 +55,8 @@ export async function BookingWidget({
       discountEnabled={discountEnabled}
       offerBanners={offerBanners}
       checkoutBanners={checkoutBanners}
+      extras={extras}
+      maxLuggage={maxLuggage}
     />
   );
 }

@@ -16,11 +16,10 @@ import {
   Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Offer } from "@/lib/pricing-types";
+import type { ExtraSelection } from "@/lib/extras-types";
 import {
   DEFAULT_PAYMENT_SETTINGS,
   type BookingError,
-  type CreateBookingRequest,
   type CreateBookingResponse,
   type PaymentPlan,
   type PaymentSettings,
@@ -33,6 +32,7 @@ import type { AppliedDiscount } from "@/lib/discounts/types";
 import { createFormatter, type LocaleFormatter } from "../format";
 import { CouponField, DiscountRows } from "../coupon-field";
 import { PromoBanners } from "../promo-banner";
+import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
 import { readPaymentSettings, splitAmounts } from "./payment";
 import { todayInputValue, toIsoFromLocalInputs } from "./datetime";
 
@@ -65,11 +65,23 @@ export type CheckoutTrip = {
   destLng: number;
   passengers: number;
   roundTrip: boolean;
+  /** كما اشتقّتها القاعدة من الموعدين — لا كما قدّرها متصفح */
   waitingHours: number;
+  luggage?: number;
+  /**
+   * موعد الانطلاق حين تكون الرحلة ذهاباً وعودة: تجمعه الحاسبة لأنه **مُدخل
+   * سعري** هناك. وحين يصل غير فارغ **تُعرض الخطوة ١ للقراءة لا للتعديل**:
+   * تعديل موعدٍ يغيّر السعر بعد عرض السعر هو بالضبط «الشاشة تَعِد بغير ما تفعله
+   * القاعدة». وللاتجاه الواحد يصل `null` فيبقى الحقل قابلاً للكتابة كما كان.
+   */
+  pickupAt?: string | null;
+  returnAt?: string | null;
+  /** رموز وكميات فقط — ولا سعر (D-09) */
+  extras?: ExtraSelection[];
 };
 
 export type CheckoutProps = {
-  offer: Offer;
+  offer: OfferWithExtras;
   trip: CheckoutTrip;
   /** العودة إلى بطاقات العروض */
   onBack: () => void;
@@ -170,7 +182,7 @@ function SummaryCard({
   t,
   fmt,
 }: {
-  offer: Offer;
+  offer: OfferWithExtras;
   trip: CheckoutTrip;
   /** الإجمالي المعروض — بعد الخصم إن طُبِّق */
   total: number;
@@ -194,6 +206,9 @@ function SummaryCard({
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{offer.classTitle}</span>
           <span>{fmt.passengers(trip.passengers)}</span>
+          {(trip.luggage ?? 0) > 0 ? (
+            <span>{t("luggage", "الحقائب: {value}", { value: fmt.digits(trip.luggage ?? 0) })}</span>
+          ) : null}
           <span>{trip.roundTrip ? t("roundTrip", "ذهاب وعودة") : t("oneWay", "ذهاب فقط")}</span>
           {trip.waitingHours > 0 ? (
             <span>
@@ -303,15 +318,31 @@ export function Checkout({
     });
   }, [step]);
 
-  // الإجمالي الذي تُبنى عليه معاينة العربون: بعد الخصم إن طُبِّق.
-  // `totalAfter` رقمٌ جاء من `apply_discount` — لا يُطرح هنا شيء من شيء.
-  // (والعربون نسبة من الإجمالي بحكم هجرة 0010، فالخصم يغيّره تلقائياً.)
-  const effectiveTotal = discount ? discount.totalAfter : offer.total;
+  /** موعد الانطلاق: من الحاسبة حين جمعته (ذهاب وعودة)، وإلا من حقلَي هذه الخطوة */
+  const scheduledPickup = trip.pickupAt ?? null;
+  const pickupIso = scheduledPickup ?? toIsoFromLocalInputs(pickupDate, pickupTime);
+  const hasExtras = offer.extras.length > 0;
+
+  // ── الإجمالي الذي تُبنى عليه معاينة العربون ────────────────────────────────
+  //
+  // بلا خصم: **الرقم كما جاء من `quote_public` حرفياً** (وهو أصلاً
+  // `ride_total + extras_total` محسوبين في SQL) — لا جمع هنا.
+  //
+  // ومع خصم: `discount.totalAfter` هو **سعر الرحلة بعد الخصم** لا الإجمالي، لأن
+  // `/api/discount/verify` يستدعي `quote_public` بلا خدمات، والكوبون يخصم
+  // الرحلة وحدها بقرار المالك (ب). فالجمع الوحيد في هذا الملف هو ضمّ
+  // `extrasTotal` إليه، وهو **معاينة** كما `splitAmounts` تماماً: الرقم المُلزِم
+  // يعود من `create_booking` (‏`total = ride_total − discount + extras_total`)
+  // ويظهر في صفحة متابعة الحجز وهي مصدره الوحيد.
+  const effectiveTotal = discount ? discount.totalAfter + offer.extrasTotal : offer.total;
   const amounts = splitAmounts(effectiveTotal, plan, payment);
   const depositPreview = splitAmounts(effectiveTotal, "deposit", payment);
 
   function validateStepOne(): FieldErrors {
     const next: FieldErrors = {};
+    // الموعد المُثبَّت في الحاسبة تحقّقت منه هناك، وهو معروض هنا للقراءة فقط
+    if (scheduledPickup) return next;
+
     const iso = toIsoFromLocalInputs(pickupDate, pickupTime);
     if (!iso) {
       next.pickup = t("errors.pickupRequired", "حدد تاريخ ووقت الانطلاق.");
@@ -359,22 +390,28 @@ export function Checkout({
     const trimmedPhone = phone.trim();
     const secondary = sameWhatsapp ? trimmedPhone : whatsapp.trim();
 
-    const payload: CreateBookingRequest = {
+    const payload: CreateBookingRequestWithExtras = {
       origin: { label: trip.originLabel, lat: trip.originLat, lng: trip.originLng },
       destination: { label: trip.destinationLabel, lat: trip.destLat, lng: trip.destLng },
       passengers: trip.passengers,
       roundTrip: trip.roundTrip,
+      // الرقم الذي اشتقّته القاعدة وعُرض في السعر — و`create_booking` تشتقّه
+      // ثانيةً من الموعدين وتأخذ **الأكبر**، فيتطابق المعروض والمُثبَّت.
       waitingHours: trip.waitingHours,
       classSlug: offer.classSlug,
       plan,
       customerName: name.trim(),
       customerPhone: trimmedPhone,
       customerWhatsapp: secondary.length > 0 ? secondary : null,
-      pickupAt: toIsoFromLocalInputs(pickupDate, pickupTime),
+      pickupAt: pickupIso,
       notes: notes.trim().length > 0 ? notes.trim() : null,
       // 🔒 الرمز وحده — ولا `amount` ولا `totalAfter` ولا أي رقم من المعاينة.
       // `create_booking` تعيد الحساب بنفسها وتُجمّده في اللقطة.
       couponCode: discount ? discount.code : null,
+      // 🔒 وكذلك الخدمات: **رموز وكميات فقط**، والأسعار من الكتالوج في القاعدة.
+      returnAt: trip.returnAt ?? null,
+      luggage: trip.luggage ?? 0,
+      extras: trip.extras ?? [],
     };
 
     setSubmitting(true);
@@ -455,7 +492,10 @@ export function Checkout({
         offer={offer}
         trip={trip}
         total={effectiveTotal}
-        originalTotal={discount ? discount.totalBefore : null}
+        // السعر المشطوب هو إجمالي العرض كما جاء من `quote_public` (بلا كوبون
+        // أصلاً) — لا `discount.totalBefore` الذي يخصّ الرحلة وحدها، وإلا شُطب
+        // رقمٌ أقلّ من الرقم الجديد حين توجد خدمات.
+        originalTotal={discount ? offer.total : null}
         t={tSummary}
         fmt={fmt}
       />
@@ -469,40 +509,91 @@ export function Checkout({
               {t("trip.heading", "موعد الانطلاق")}
             </p>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor={`${uid}-date`} className="text-sm font-medium">
-                  {t("trip.date", "التاريخ")}
-                </label>
-                <input
-                  id={`${uid}-date`}
-                  type="date"
-                  min={minDate}
-                  value={pickupDate}
-                  onChange={(event) => setPickupDate(event.target.value)}
-                  aria-invalid={errors.pickup ? true : undefined}
-                  aria-describedby={errors.pickup ? `${uid}-pickup-error` : undefined}
-                  className={fieldClass}
-                />
-              </div>
+            {/*
+              الموعد المُثبَّت في الحاسبة يُعرض للقراءة لا للتعديل: هو مُدخل سعري
+              (منه تُشتق ساعات الانتظار)، وتعديله هنا يعني حجزاً بسعر غير الذي
+              رآه العميل في البطاقة. التعديل ممكن — بالرجوع إلى العروض.
+            */}
+            {scheduledPickup ? (
+              <dl className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <dt className="text-muted-foreground">{t("trip.pickupAt", "الانطلاق")}</dt>
+                  <dd className="font-medium">{fmt.dateTime(scheduledPickup)}</dd>
+                </div>
+                {trip.returnAt ? (
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <dt className="text-muted-foreground">{t("trip.returnAt", "العودة")}</dt>
+                    <dd className="font-medium">{fmt.dateTime(trip.returnAt)}</dd>
+                  </div>
+                ) : null}
+                <p className="text-xs leading-6 text-muted-foreground">
+                  {trip.waitingHours > 0
+                    ? t(
+                        "trip.scheduleNoteWaiting",
+                        "العودة في نفس اليوم — انتظار {hours} محتسب في السعر أعلاه. لتعديل الموعدين ارجع إلى العروض.",
+                        { hours: fmt.hours(trip.waitingHours) }
+                      )
+                    : t(
+                        "trip.scheduleNote",
+                        "الموعدان مثبَّتان في السعر أعلاه. لتعديلهما ارجع إلى العروض."
+                      )}
+                </p>
+              </dl>
+            ) : (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor={`${uid}-date`} className="text-sm font-medium">
+                      {t("trip.date", "التاريخ")}
+                    </label>
+                    <input
+                      id={`${uid}-date`}
+                      type="date"
+                      min={minDate}
+                      value={pickupDate}
+                      onChange={(event) => setPickupDate(event.target.value)}
+                      aria-invalid={errors.pickup ? true : undefined}
+                      aria-describedby={errors.pickup ? `${uid}-pickup-error` : undefined}
+                      className={fieldClass}
+                    />
+                  </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor={`${uid}-time`} className="text-sm font-medium">
-                  {t("trip.time", "الساعة")}
-                </label>
-                <input
-                  id={`${uid}-time`}
-                  type="time"
-                  value={pickupTime}
-                  onChange={(event) => setPickupTime(event.target.value)}
-                  aria-invalid={errors.pickup ? true : undefined}
-                  aria-describedby={errors.pickup ? `${uid}-pickup-error` : undefined}
-                  className={fieldClass}
-                />
-              </div>
-            </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor={`${uid}-time`} className="text-sm font-medium">
+                      {t("trip.time", "الساعة")}
+                    </label>
+                    <input
+                      id={`${uid}-time`}
+                      type="time"
+                      value={pickupTime}
+                      onChange={(event) => setPickupTime(event.target.value)}
+                      aria-invalid={errors.pickup ? true : undefined}
+                      aria-describedby={errors.pickup ? `${uid}-pickup-error` : undefined}
+                      className={fieldClass}
+                    />
+                  </div>
+                </div>
 
-            <FieldError id={`${uid}-pickup-error`} message={errors.pickup} />
+                <FieldError id={`${uid}-pickup-error`} message={errors.pickup} />
+              </>
+            )}
+
+            {/* الخدمات التي اختارها العميل — بأسمائها وأسعارها كما سعّرتها القاعدة */}
+            {hasExtras ? (
+              <ul className="flex flex-col gap-1.5 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm">
+                <li className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("trip.extrasHeading", "الخدمات المختارة")}
+                </li>
+                {offer.extras.map((line) => (
+                  <li key={line.slug} className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">
+                      {line.qty > 1 ? `${line.title} × ${fmt.digits(line.qty)}` : line.title}
+                    </span>
+                    <span className="font-medium">{fmt.money(line.lineTotal, offer.currency)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor={`${uid}-notes`} className="text-sm font-medium">
@@ -518,8 +609,10 @@ export function Checkout({
                 rows={3}
                 maxLength={1000}
                 placeholder={t(
+                  // الحقائب صارت حقلاً، وكرسي الأطفال صار خدمة تُسعَّر — فذكرهما
+                  // هنا يدعو العميل لطلب ما لم يُحتسب في سعره.
                   "trip.notesPlaceholder",
-                  "رقم الرحلة، عدد الحقائب، كرسي أطفال، أو أي طلب خاص…"
+                  "رقم الرحلة، اسم الفندق، أو أي طلب خاص…"
                 )}
                 className="w-full rounded-2xl border border-input bg-background px-3 py-2.5 text-base leading-7 outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
@@ -724,13 +817,51 @@ export function Checkout({
                 حرفياً — لا صفوف صفرية تشوّش القراءة.
               */}
               {discount ? (
-                <DiscountRows discount={discount} t={tDiscount} fmt={fmt} />
+                <DiscountRows
+                  discount={discount}
+                  t={tDiscount}
+                  fmt={fmt}
+                  scope={hasExtras ? "ride" : "total"}
+                />
               ) : (
                 <div className="flex items-center justify-between gap-3">
-                  <dt className="text-muted-foreground">{t("payment.total", "إجمالي الرحلة")}</dt>
-                  <dd className="font-medium">{fmt.money(offer.total, offer.currency)}</dd>
+                  <dt className="text-muted-foreground">
+                    {hasExtras
+                      ? t("payment.rideTotal", "سعر الرحلة")
+                      : t("payment.total", "إجمالي الرحلة")}
+                  </dt>
+                  <dd className="font-medium">
+                    {fmt.money(hasExtras ? offer.rideTotal : offer.total, offer.currency)}
+                  </dd>
                 </div>
               )}
+
+              {/*
+                الخدمات سطراً سطراً ثم الإجمالي — الترتيب نفسه الذي تنفّذه
+                القاعدة: خصمٌ على الرحلة، ثم خدمات فوقه. عرضها داخل الخصم يوحي
+                بأن الكوبون يشملها وهو لا يشملها.
+              */}
+              {hasExtras ? (
+                <>
+                  {offer.extras.map((line) => (
+                    <div key={line.slug} className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">
+                        {line.qty > 1 ? `${line.title} × ${fmt.digits(line.qty)}` : line.title}
+                      </dt>
+                      <dd className="font-medium">
+                        {fmt.money(line.lineTotal, offer.currency)}
+                      </dd>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2">
+                    <dt className="font-semibold">
+                      {t("payment.grandTotal", "الإجمالي بعد الخدمات")}
+                    </dt>
+                    <dd className="font-bold">{fmt.money(effectiveTotal, offer.currency)}</dd>
+                  </div>
+                </>
+              ) : null}
+
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">
                   {t("payment.dueNow", "المطلوب تحويله الآن")}

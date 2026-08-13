@@ -178,20 +178,49 @@
         "increase": "Increase passengers",
         "note": "Children count towards the total — currently: {current}."
       },
+      "luggage": {
+        "label": "Bags",
+        "decrease": "Decrease bags",
+        "increase": "Increase bags",
+        "note": "We only show classes that fit both your passengers and your bags — more bags may hide a smaller class.",
+        "capNote": "Our largest vehicle takes {max}.",
+        "atCap": "That is the most our largest vehicle can take ({max}). For more bags we arrange more than one vehicle — contact us or request a quote."
+      },
       "tripType": {
         "label": "Trip type",
         "roundTrip": "Round trip",
         "roundTripNote": "The price includes the return leg.",
         "oneWayNote": "One-way trip."
       },
+      "schedule": {
+        "heading": "Pickup and return times",
+        "pickupDate": "Pickup date",
+        "pickupTime": "Pickup time",
+        "returnDate": "Return date",
+        "returnTime": "Return time",
+        "emptyNote": "Choose your return time: if it is on the same day the driver waits for you and the waiting is charged at your class's hourly rate; if it is on another day there is no waiting — the round-trip factor alone prices the return.",
+        "otherDayNote": "Return on another day — no waiting hours; the round-trip factor alone prices the return leg.",
+        "sameDayNote": "Same-day return — {hours} of waiting are charged at your class's hourly rate in the prices below.",
+        "sameDayEstimate": "Same-day return — an estimated {hours} of waiting charged at your class's hourly rate. The final figure appears with the prices.",
+        "sameDayZero": "Same-day return — the driver's waiting hours are charged at your class's hourly rate.",
+        "orderNote": "The return time must be after the pickup time."
+      },
       "extras": {
-        "toggle": "More options",
-        "waitingLabel": "Waiting hours",
-        "waitingNote": "The driver waits for you during the trip — charged at a fixed hourly rate."
+        "toggle": "Extra services"
+      },
+      "services": {
+        "unitPrice": "{price} per unit",
+        "decrease": "Decrease {title}",
+        "increase": "Increase {title}",
+        "maxReached": "Maximum for this service in one booking: {max}.",
+        "note": "Services are added to your booking total as a separate line after the trip price, and discount codes do not apply to them."
       },
       "hints": {
         "pickOrigin": "Pick your pickup point from the suggestions — we need its exact location to measure the distance.",
-        "pickDestination": "Pick your destination from the suggestions — we need its exact location to measure the distance."
+        "pickDestination": "Pick your destination from the suggestions — we need its exact location to measure the distance.",
+        "pickPickup": "Choose the pickup date and time so we can price the return leg accurately.",
+        "pickReturn": "Choose the return date and time — or switch to a one-way trip.",
+        "returnOrder": "The return time must be after the pickup time."
       },
       "errors": {
         "quoteFailed": "We could not calculate the price right now. Please try again shortly.",
@@ -199,6 +228,7 @@
       },
       "submit": "Get the price",
       "submitting": "Calculating your price…",
+      "staleResults": "You changed the trip details after the prices were shown — press “Get the price” to refresh them before booking.",
       "statusCalculating": "Calculating your price",
       "statusOffers": "{count} price offers are now shown"
     },
@@ -208,6 +238,8 @@
         "distance": "Distance: {value}",
         "duration": "About {value}",
         "waiting": "Waiting: {value}",
+        "luggage": "Bags: {value}",
+        "returnAt": "Return: {value}",
         "roundTrip": "Round trip",
         "oneWay": "One way"
       },
@@ -232,8 +264,12 @@
         "peakApplied": "Added",
         "minimum": "Class minimum",
         "minimumApplied": "Applied",
+        "rideTotal": "Trip total",
+        "extraLine": "{title} × {qty}",
+        "extrasTotal": "Extra services",
         "total": "Total",
-        "note": "The lines above are the components of the price; the total is the final amount after applying them."
+        "note": "The lines above are the components of the price; the total is the final amount after applying them.",
+        "noteWithExtras": "The lines above are the components of the trip price; services are added on top as a separate line — and a discount code applies to the trip price only."
       },
       "book": "Book this vehicle",
       "bookAria": "Book {vehicle} for {price}",
@@ -253,7 +289,10 @@
         "to": "To: {value}",
         "tripType": "Trip type: {value}",
         "passengers": "Passengers: {value}",
+        "luggage": "Bags: {value}",
+        "returnAt": "Return time: {value}",
         "waiting": "Waiting hours: {value}",
+        "extra": "Service: {title} × {qty}",
         "vehicleClass": "Vehicle class: {value}",
         "price": "Quoted price: {value}"
       }
@@ -273,8 +312,13 @@
         "heading": "Pickup time",
         "date": "Date",
         "time": "Time",
+        "pickupAt": "Pickup",
+        "returnAt": "Return",
+        "scheduleNote": "Both times are locked into the price above. To change them, go back to the offers.",
+        "scheduleNoteWaiting": "Same-day return — {hours} of waiting are included in the price above. To change either time, go back to the offers.",
+        "extrasHeading": "Selected services",
         "notes": "Notes",
-        "notesPlaceholder": "Flight number, number of bags, a child seat, or any special request…",
+        "notesPlaceholder": "Flight number, hotel name, or any special request…",
         "notesHelp": "Anything you write here reaches our operations team with your booking."
       },
       "customer": {
@@ -294,6 +338,8 @@
         "fullOption": "Full amount now",
         "fullNote": "Nothing left to pay on the day — your confirmation arrives as soon as we review the transfer.",
         "total": "Trip total",
+        "rideTotal": "Trip price",
+        "grandTotal": "Total with services",
         "dueNow": "Due now",
         "remaining": "Remaining",
         "remainingWithDriver": "collected by the driver",
@@ -360,11 +406,11 @@
         },
         "clearTerms": {
           "title": "Clear lines, no surprises",
-          "text": "Every offer shows its breakdown: base fee, distance, waiting time and the return leg."
+          "text": "Every offer shows its breakdown: base fee, distance, waiting time, and the extra services you picked."
         },
         "instantEdit": {
           "title": "Adjust your trip in seconds",
-          "text": "Change the passenger count, the waiting hours or the trip type, and the price updates instantly."
+          "text": "Change the passenger count, the bags, the return time or the trip type, and the price updates instantly."
         }
       }
     },
@@ -448,13 +494,26 @@
         "sectionLabel": "Booking amounts",
         "total": "Trip total",
         "totalBeforeDiscount": "Total before discount",
+        "rideBeforeDiscount": "Ride price before discount",
         "discount": "Discount",
         "discountWithCode": "Discount ({code})",
         "discountMinus": "-{amount}",
         "totalAfterDiscount": "Total after discount",
+        "rideAfterDiscount": "Ride price after discount",
+        "extras": "Add-on services",
+        "extrasPlus": "+{amount}",
+        "totalWithExtras": "Total including add-ons",
         "dueNow": "Due now",
         "remaining": "Remaining with the driver",
         "remainingNote": "The remainder is collected in cash by the driver on the day of the trip."
+      },
+      "extras": {
+        "sectionLabel": "Add-on services",
+        "heading": "Add-on services",
+        "lead": "What you chose with the trip, priced at the moment of booking.",
+        "quantity": "× {qty}",
+        "unitPrice": "{amount} each",
+        "discountNote": "The discount applies to the ride price only; add-on services are added afterwards at full price."
       },
       "rejection": {
         "sectionLabel": "Why the previous receipt was rejected",
@@ -565,7 +624,9 @@
       "before": "Total before discount",
       "discount": "Discount ({code})",
       "minus": "-{amount}",
-      "after": "Total after discount"
+      "after": "Total after discount",
+      "rideBefore": "Trip price before discount",
+      "rideAfter": "Trip price after discount"
     },
 
     "reject": {

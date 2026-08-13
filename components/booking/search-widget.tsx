@@ -2,10 +2,12 @@
 
 import * as React from "react";
 import {
+  CalendarClock,
   ChevronDown,
   CircleCheck,
   Flag,
   LoaderCircle,
+  Luggage,
   MapPin,
   Minus,
   Plus,
@@ -16,18 +18,24 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import type {
-  GeoPlace,
-  QuoteError,
-  QuoteRequest,
-  QuoteResponse,
-} from "@/lib/pricing-types";
+import type { GeoPlace, QuoteError } from "@/lib/pricing-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import type { PromoBanner } from "@/lib/discount-types";
 import { createFormatter, type LocaleFormatter } from "./format";
 import { Offers, type BookingContact, type TripSummary } from "./offers";
+import { ExtrasPicker } from "./extras-picker";
+import { todayInputValue, toIsoFromLocalInputs } from "./checkout/datetime";
+import {
+  MAX_LUGGAGE,
+  estimateWaitingHours,
+  isReturnAnotherDay,
+  toSelection,
+  type PublicExtra,
+  type QuoteRequestWithExtras,
+  type QuoteResponseWithExtras,
+} from "./extras";
 
 /**
  * ويدجت البحث عن سعر رحلة — قلب التحويل في الموقع.
@@ -42,15 +50,35 @@ import { Offers, type BookingContact, type TripSummary } from "./offers";
  * المرحلة ٨: اللغة تصل prop من الصفحة الخادمية (لا من سياق المتصفح) فيتطابق
  * التصيير على الطرفين؛ النصوص من مساحة `booking.search` بارتداد عربي، وكل رقم
  * ظاهر يمر بمُنسّق اللغة.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  الدفعة ٣ — ما تغيّر في هذه الشاشة ولماذا
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * (١) **حقل «ساعات الانتظار» حُذف** ومكانه **قائمة الخدمات الإضافية** من
+ *     `public_extras()`. الحقل المحذوف كان يسأل العميل عن رقم لا يعرفه؛ وما
+ *     يعرفه فعلاً هو **متى يعود**.
+ *
+ * (٢) **موعد الانطلاق والعودة يُسألان هنا لا في مسار الحجز — حين تكون الرحلة
+ *     ذهاباً وعودة.** والسبب قاعدة قائمة في هذا المستودع: كل مُدخل يغيّر السعر
+ *     يُجمع **قبل** عرض السعر. فبعد 0031 صار موعدا الرحلة مُدخلين سعريّين
+ *     (‏`derive_waiting_hours` تشتق منهما ساعات الانتظار)، وجمعُهما بعد عرض
+ *     السعر يعني بطاقةً بسعر ثم حجزاً بسعر أعلى — وهو العيب الذي يمسكه المالك
+ *     بيده. أما رحلة الاتجاه الواحد فموعدها لا يمسّ السعر، فيبقى في مسار الحجز
+ *     كما كان حرفياً.
+ *
+ * (٣) **الأهلية لا تُرشَّح هنا أبداً** (D-12). عدّاد الحقائب يُرسَل إلى القاعدة،
+ *     وهي وحدها تُسقط الفئة التي لا تتسع. الشاشة تشرح ولا تُخفي.
+ *
+ * (٤) **ولا سعر يُحسب هنا.** الرقم الوحيد الذي يولد في هذا الملف هو تقدير ساعات
+ *     الانتظار للعرض (‏`estimateWaitingHours`) — ساعات لا مال، ولا يُرسَل، ويُستبدل
+ *     برقم القاعدة فور وصول العرض.
  */
 
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 350;
 const MIN_PASSENGERS = 1;
 const MAX_PASSENGERS = 60;
-const MAX_WAITING_HOURS = 24;
-
-const WAITING_OPTIONS = Array.from({ length: MAX_WAITING_HOURS + 1 }, (_, i) => i);
 
 /** استجابة /api/geocode كما نتعامل معها في العميل */
 type GeocodeResponse =
@@ -73,6 +101,20 @@ export type SearchWidgetProps = {
   /** بانرات موضع «شاشة العروض» و«صفحة الحجز» — عرض فقط، بلا أثر على أي سعر */
   offerBanners?: PromoBanner[];
   checkoutBanners?: PromoBanner[];
+  /**
+   * كتالوج الخدمات الإضافية من `public_extras()` — يقرؤه الغلاف الخادمي
+   * (`booking-widget.tsx` أو صفحة `/book`) ويمرّره props.
+   * **الفارغ يعني ألّا يظهر شيء إطلاقاً**: لا عنوان ولا صندوق ولا زر — والمالك
+   * لم يُضف خدمات بعد (الجدول بلا بذرة بقرار).
+   */
+  extras?: PublicExtra[];
+  /**
+   * أكبر سعة حقائب في الأسطول النشط (‏`getMaxLuggageCapacity`) — **سقف إدخال
+   * لا قاعدة أهلية**. بدونه يصعد العدّاد إلى ٢٠ ثابتة فيعرض على العميل أرقاماً
+   * تضمن «لا توجد فئة» قبل أن يضغط. و`null`/`undefined` = تعذّرت القراءة
+   * (هجرة أو بيئة) فيبقى السقف الثابت كما كان — لا تشديد بالخطأ.
+   */
+  maxLuggage?: number | null;
 };
 
 /* ------------------------------------------------------------------ */
@@ -323,6 +365,81 @@ function PlaceField({
 }
 
 /* ------------------------------------------------------------------ */
+/* عدّاد رقمي (ركاب · حقائب)                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * عدّاد بزرَّي زيادة ونقصان وحقل رقمي — الشكل نفسه الذي كان لعدد الركاب،
+ * مستخرَجاً حين وُلد عدّاد الحقائب بجواره: صيغتان لعدّاد واحد تنحرفان بأول تعديل.
+ */
+function CounterField({
+  id,
+  value,
+  min,
+  max,
+  onChange,
+  decreaseLabel,
+  increaseLabel,
+  describedBy,
+  fieldHeight,
+}: {
+  id: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (next: number) => void;
+  decreaseLabel: string;
+  increaseLabel: string;
+  describedBy?: string;
+  fieldHeight: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-2 rounded-2xl border border-input bg-background px-2",
+        fieldHeight
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onChange(value - 1)}
+        disabled={value <= min}
+        aria-label={decreaseLabel}
+        className="grid size-9 shrink-0 place-items-center rounded-xl text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
+      >
+        <Minus className="size-4" aria-hidden="true" />
+      </button>
+
+      <input
+        id={id}
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        aria-describedby={describedBy}
+        onChange={(event) => {
+          const parsed = Number.parseInt(event.target.value, 10);
+          onChange(Number.isNaN(parsed) ? min : parsed);
+        }}
+        className="w-full min-w-0 self-stretch border-0 bg-transparent text-center text-base font-semibold outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      />
+
+      <button
+        type="button"
+        onClick={() => onChange(value + 1)}
+        disabled={value >= max}
+        aria-label={increaseLabel}
+        className="grid size-9 shrink-0 place-items-center rounded-xl text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
+      >
+        <Plus className="size-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* الويدجت                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -334,6 +451,8 @@ export function SearchWidget({
   discountEnabled = false,
   offerBanners = [],
   checkoutBanners = [],
+  extras = [],
+  maxLuggage = null,
 }: SearchWidgetProps) {
   const t = useT("booking.search");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
@@ -342,37 +461,115 @@ export function SearchWidget({
   const destinationId = `${uid}-destination`;
   const passengersId = `${uid}-passengers`;
   const passengersNoteId = `${uid}-passengers-note`;
-  const waitingId = `${uid}-waiting`;
+  const luggageId = `${uid}-luggage`;
+  const luggageNoteId = `${uid}-luggage-note`;
   const extrasId = `${uid}-extras`;
+  const scheduleNoteId = `${uid}-schedule-note`;
 
   const [originText, setOriginText] = React.useState("");
   const [origin, setOrigin] = React.useState<GeoPlace | null>(null);
   const [destinationText, setDestinationText] = React.useState("");
   const [destination, setDestination] = React.useState<GeoPlace | null>(null);
   const [passengers, setPassengers] = React.useState(2);
+  const [luggage, setLuggage] = React.useState(0);
   const [roundTrip, setRoundTrip] = React.useState(false);
-  const [waitingHours, setWaitingHours] = React.useState(0);
+  const [pickupDate, setPickupDate] = React.useState("");
+  const [pickupTime, setPickupTime] = React.useState("");
+  const [returnDate, setReturnDate] = React.useState("");
+  const [returnTime, setReturnTime] = React.useState("");
+  const [quantities, setQuantities] = React.useState<Record<string, number>>({});
   const [extrasOpen, setExtrasOpen] = React.useState(false);
 
   const [pending, setPending] = React.useState(false);
   const [hint, setHint] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [result, setResult] = React.useState<QuoteResponse | null>(null);
+  const [result, setResult] = React.useState<QuoteResponseWithExtras | null>(null);
   const [trip, setTrip] = React.useState<TripSummary | null>(null);
 
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
-
-  // ساعات الانتظار تظهر مع الذهاب والعودة أو عند فتح «خيارات إضافية»،
-  // وتُصفَّر حسابياً حين تكون مخفية حتى لا تُحتسب قيمة لا يراها الزائر.
-  const showWaiting = roundTrip || extrasOpen;
-  const effectiveWaiting = showWaiting ? waitingHours : 0;
+  const minDate = React.useMemo(() => todayInputValue(), []);
 
   const fieldHeight = compact ? "h-11" : "h-12";
+  const hasExtras = extras.length > 0;
+
+  /**
+   * سقف عدّاد الحقائب = أصغر الرقمين: أكبرُ سعة في الأسطول، والحدُّ الذي يقبله
+   * المسار (`MAX_LUGGAGE`، وهو نفسه حدّ مُحلِّل `/api/quote`).
+   *
+   * ⚠ **سقف إدخال لا ترشيح** (D-12 بلا مساس): أي فئة تُعرض أو تُخفى تُقرّره
+   * `quote_price` وحدها. ما يمنعه هذا السقف أن تعرض الشاشة رقماً **لا يمكن أن
+   * ينجح**: العدّاد كان يصعد إلى ٢٠ ولو كان أكبر ما في الأسطول ستّ حقائب، فيصل
+   * العميل إلى «لا توجد فئة» بعد أن قدّمت له الشاشةُ الرقمَ المستحيل بنفسها.
+   * وتعذُّر القراءة يُبقيه على الثابت — لا يُشدَّد بالخطأ.
+   */
+  const luggageCap =
+    typeof maxLuggage === "number" && Number.isFinite(maxLuggage) && maxLuggage >= 1
+      ? Math.min(Math.trunc(maxLuggage), MAX_LUGGAGE)
+      : MAX_LUGGAGE;
+  /** بلغ العميل سقف الأسطول فعلاً — عندها وحدها يُقال له ما البديل */
+  const luggageAtCap = luggage >= luggageCap;
+  /** والسقف معلوم من الأسطول لا مجرد ثابت واجهة — فلا نُعلن رقماً لا نعرفه */
+  const luggageCapKnown = luggageCap < MAX_LUGGAGE;
+
+  // مواعيد الرحلة تُجمع هنا **للذهاب والعودة وحدها** — لأنها وحدها تغيّر السعر
+  // (منها تُشتق ساعات الانتظار). ورحلة الاتجاه الواحد تبقى كما كانت: موعدها
+  // يُجمع في مسار الحجز.
+  const pickupAt = roundTrip ? toIsoFromLocalInputs(pickupDate, pickupTime) : null;
+  const returnAt = roundTrip ? toIsoFromLocalInputs(returnDate, returnTime) : null;
+
+  /**
+   * تقدير الانتظار **للعرض قبل وصول العرض السعري**، وهو موسوم «تقديري» في النص.
+   * وبعد وصول عرض يخصّ **هذين الموعدين بعينهما** نعرض رقم القاعدة بدله — فلا
+   * يبقى على الشاشة رقم لم تنتجه Postgres.
+   */
+  const scheduleKey = `${pickupAt ?? ""}|${returnAt ?? ""}`;
+  const [quotedSchedule, setQuotedSchedule] = React.useState<{
+    key: string;
+    waitingHours: number;
+  } | null>(null);
+  const serverWaiting =
+    quotedSchedule && quotedSchedule.key === scheduleKey ? quotedSchedule.waitingHours : null;
+  const estimatedWaiting = estimateWaitingHours(pickupAt, returnAt);
+  const shownWaiting = serverWaiting ?? estimatedWaiting;
+  const returnAnotherDay = isReturnAnotherDay(pickupAt, returnAt);
+  const returnBeforePickup =
+    pickupAt !== null && returnAt !== null && new Date(returnAt) <= new Date(pickupAt);
+
+  const selection = React.useMemo(() => toSelection(quantities), [quantities]);
+
+  /**
+   * بصمة كل مُدخل يغيّر السعر. بعد وصول عرض، أي تعديل عليها يجعل البطاقات
+   * المعروضة **قديمة** — والزائر يظن أنها تتبعه (خاصة مع الخدمات: يزيد كرسي
+   * أطفال والسعر لا يتحرك). فنقولها له صراحةً بدل أن يحجز رحلة غير التي عدّلها.
+   */
+  const inputsKey = [
+    origin?.lat ?? "",
+    origin?.lng ?? "",
+    destination?.lat ?? "",
+    destination?.lng ?? "",
+    passengers,
+    luggage,
+    roundTrip,
+    pickupAt ?? "",
+    returnAt ?? "",
+    selection.map((item) => `${item.slug}:${item.qty}`).join(","),
+  ].join("|");
+  const [quotedInputsKey, setQuotedInputsKey] = React.useState<string | null>(null);
+  const staleInputs = result !== null && quotedInputsKey !== null && quotedInputsKey !== inputsKey;
 
   function updatePassengers(next: number) {
     if (!Number.isFinite(next)) return;
     const clamped = Math.min(MAX_PASSENGERS, Math.max(MIN_PASSENGERS, Math.round(next)));
     setPassengers(clamped);
+  }
+
+  function updateLuggage(next: number) {
+    if (!Number.isFinite(next)) return;
+    setLuggage(Math.min(luggageCap, Math.max(0, Math.round(next))));
+  }
+
+  function updateQuantity(slug: string, qty: number) {
+    setQuantities((current) => ({ ...current, [slug]: qty }));
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -399,12 +596,35 @@ export function SearchWidget({
       return;
     }
 
-    const payload: QuoteRequest = {
+    // مواعيد الذهاب والعودة شرط لعرض سعر صادق: بدونها لا تعرف القاعدة إن كان
+    // انتظارٌ يُحتسب، فيظهر سعر أقل مما سيُثبَّت عند الحجز.
+    if (roundTrip && !pickupAt) {
+      setHint(t("hints.pickPickup", "حدد تاريخ ووقت الانطلاق لنحسب رحلة العودة بدقة."));
+      return;
+    }
+    if (roundTrip && !returnAt) {
+      setHint(t("hints.pickReturn", "حدد تاريخ ووقت العودة — أو اختر «ذهاب فقط»."));
+      return;
+    }
+    if (returnBeforePickup) {
+      setHint(t("hints.returnOrder", "موعد العودة يجب أن يكون بعد موعد الانطلاق."));
+      return;
+    }
+
+    const payload: QuoteRequestWithExtras = {
       origin,
       destination,
       passengers,
       roundTrip,
-      waitingHours: effectiveWaiting,
+      // 🔒 صفر دائماً: الساعات لم تعد اختياراً في الشاشة، والخادم يشتقّها من
+      // الموعدين عبر `derive_waiting_hours`. إرسال تقدير المتصفح هنا يجعل
+      // للرقم مصدرين (النمط ٨ في `LESSONS.md`) — ولا يقع أبداً.
+      waitingHours: 0,
+      pickupAt,
+      returnAt,
+      luggage,
+      // رموز وكميات فقط — ولا سعر ولا إجمالي (D-09)
+      extras: selection,
     };
 
     setPending(true);
@@ -414,11 +634,12 @@ export function SearchWidget({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const json = (await res.json()) as QuoteResponse | QuoteError;
+      const json = (await res.json()) as QuoteResponseWithExtras | QuoteError;
 
       if (!json.ok) {
         setResult(null);
         setTrip(null);
+        setQuotedSchedule(null);
         setError(
           json.message ||
             t("errors.quoteFailed", "تعذر حساب السعر الآن. حاول مرة أخرى بعد قليل.")
@@ -427,6 +648,11 @@ export function SearchWidget({
       }
 
       setResult(json);
+      // ساعات الانتظار كما اشتقّتها القاعدة — تحل محل التقدير في النص الإرشادي،
+      // وتمضي في ملخص الرحلة إلى معاينة الكوبون وإلى الحجز بلا اشتقاق ثانٍ.
+      const quotedWaiting = Number.isFinite(json.waitingHours) ? json.waitingHours : 0;
+      setQuotedSchedule({ key: scheduleKey, waitingHours: quotedWaiting });
+      setQuotedInputsKey(inputsKey);
 
       // القمع في المتصفح (المرحلة ١٠): نظير الحدثين اللذين يكتبهما `/api/quote`
       // في قاعدتنا — هنا لجوجل وميتا وحدهما. بلا مرجع ولا قيمة: انتقاء «أرخص
@@ -446,11 +672,16 @@ export function SearchWidget({
         destLng: destination.lng,
         passengers,
         roundTrip,
-        waitingHours: effectiveWaiting,
+        waitingHours: quotedWaiting,
+        luggage,
+        pickupAt,
+        returnAt,
+        extras: selection,
       });
     } catch {
       setResult(null);
       setTrip(null);
+      setQuotedSchedule(null);
       setError(
         t("errors.network", "تعذر الاتصال بالخادم. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
       );
@@ -515,54 +746,23 @@ export function SearchWidget({
           />
         </div>
 
-        {/* عدد الركاب + نوع الرحلة */}
+        {/* عدد الركاب + عدد الحقائب */}
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={passengersId} className="text-sm font-medium">
               {t("passengers.label", "عدد الركاب")}
             </Label>
-            <div
-              className={cn(
-                "flex items-center justify-between gap-2 rounded-2xl border border-input bg-background px-2",
-                fieldHeight
-              )}
-            >
-              <button
-                type="button"
-                onClick={() => updatePassengers(passengers - 1)}
-                disabled={passengers <= MIN_PASSENGERS}
-                aria-label={t("passengers.decrease", "إنقاص عدد الركاب")}
-                className="grid size-9 shrink-0 place-items-center rounded-xl text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
-              >
-                <Minus className="size-4" aria-hidden="true" />
-              </button>
-
-              <input
-                id={passengersId}
-                type="number"
-                inputMode="numeric"
-                min={MIN_PASSENGERS}
-                max={MAX_PASSENGERS}
-                step={1}
-                value={passengers}
-                aria-describedby={passengersNoteId}
-                onChange={(event) => {
-                  const parsed = Number.parseInt(event.target.value, 10);
-                  updatePassengers(Number.isNaN(parsed) ? MIN_PASSENGERS : parsed);
-                }}
-                className="w-full min-w-0 self-stretch border-0 bg-transparent text-center text-base font-semibold outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-              />
-
-              <button
-                type="button"
-                onClick={() => updatePassengers(passengers + 1)}
-                disabled={passengers >= MAX_PASSENGERS}
-                aria-label={t("passengers.increase", "زيادة عدد الركاب")}
-                className="grid size-9 shrink-0 place-items-center rounded-xl text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
-              >
-                <Plus className="size-4" aria-hidden="true" />
-              </button>
-            </div>
+            <CounterField
+              id={passengersId}
+              value={passengers}
+              min={MIN_PASSENGERS}
+              max={MAX_PASSENGERS}
+              onChange={updatePassengers}
+              decreaseLabel={t("passengers.decrease", "إنقاص عدد الركاب")}
+              increaseLabel={t("passengers.increase", "زيادة عدد الركاب")}
+              describedBy={passengersNoteId}
+              fieldHeight={fieldHeight}
+            />
             <p id={passengersNoteId} className="text-xs leading-5 text-muted-foreground">
               {t("passengers.note", "الأطفال يُحسبون ضمن العدد — الحالي: {current}.", {
                 current: fmt.passengers(passengers),
@@ -571,6 +771,56 @@ export function SearchWidget({
           </div>
 
           <div className="flex flex-col gap-1.5">
+            <Label htmlFor={luggageId} className="flex items-center gap-1.5 text-sm font-medium">
+              <Luggage className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              {t("luggage.label", "عدد الحقائب")}
+            </Label>
+            <CounterField
+              id={luggageId}
+              value={luggage}
+              min={0}
+              max={luggageCap}
+              onChange={updateLuggage}
+              decreaseLabel={t("luggage.decrease", "إنقاص عدد الحقائب")}
+              increaseLabel={t("luggage.increase", "زيادة عدد الحقائب")}
+              describedBy={luggageNoteId}
+              fieldHeight={fieldHeight}
+            />
+            {/*
+              شرحٌ لا ترشيح: الفئة التي لا تتسع للحقائب **لا تعود من القاعدة**
+              أصلاً (D-12)، فلا نُخفي هنا فئةً ولا نُظهرها — نقول للعميل لماذا
+              قد تختفي فئة كان يتوقعها.
+
+              والسطر الثاني يقول ما يحدث عند السقف **قبل** أن يصطدم به: العدّاد
+              يقف عند أكبر ما يحمله الأسطول، وما فوقه لا تُنتج له الحاسبة عرضاً
+              أصلاً — فالبديل قناةٌ بشرية لا محاولة ثانية بالرقم نفسه.
+            */}
+            <p id={luggageNoteId} className="text-xs leading-5 text-muted-foreground">
+              {t(
+                "luggage.note",
+                "نعرض الفئات التي تتسع لركابك وحقائبك معاً — زيادة الحقائب قد تُخفي فئة أصغر."
+              )}
+              {luggageCapKnown ? (
+                <>
+                  {" "}
+                  {luggageAtCap
+                    ? t(
+                        "luggage.atCap",
+                        "وهذا أقصى ما تحمله أكبر سيارة لدينا ({max}). لحقائب أكثر نرتّب لك أكثر من سيارة — تواصل معنا أو اطلب عرض سعر.",
+                        { max: fmt.bags(luggageCap) }
+                      )
+                    : t("luggage.capNote", "وأكبر سيارة لدينا تتسع لـ{max}.", {
+                        max: fmt.bags(luggageCap),
+                      })}
+                </>
+              ) : null}
+            </p>
+          </div>
+        </div>
+
+        {/* نوع الرحلة */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5 sm:col-span-1">
             <span className="text-sm font-medium leading-none">
               {t("tripType.label", "نوع الرحلة")}
             </span>
@@ -610,9 +860,137 @@ export function SearchWidget({
           </div>
         </div>
 
-        {/* خيارات إضافية: ساعات الانتظار — تظهر تلقائياً مع الذهاب والعودة */}
-        <div className="flex flex-col gap-3">
-          {roundTrip ? null : (
+        {/*
+          مواعيد الذهاب والعودة — تظهر مع «ذهاب وعودة» وحدها.
+          موضعها هنا لا في مسار الحجز لأنها **مُدخل سعري** منذ 0031: منها تشتق
+          `derive_waiting_hours` ساعات انتظار السائق. وجمعها بعد عرض السعر يعني
+          بطاقةً بسعر ثم حجزاً أغلى.
+        */}
+        {roundTrip ? (
+          <div className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/30 px-3.5 py-3.5">
+            <p className="flex items-center gap-2 text-sm font-semibold">
+              <CalendarClock className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              {t("schedule.heading", "موعد الذهاب والعودة")}
+            </p>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${uid}-pickup-date`} className="text-sm font-medium">
+                  {t("schedule.pickupDate", "تاريخ الانطلاق")}
+                </Label>
+                <input
+                  id={`${uid}-pickup-date`}
+                  type="date"
+                  min={minDate}
+                  value={pickupDate}
+                  onChange={(event) => setPickupDate(event.target.value)}
+                  aria-describedby={scheduleNoteId}
+                  className={cn(
+                    "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                    fieldHeight
+                  )}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${uid}-pickup-time`} className="text-sm font-medium">
+                  {t("schedule.pickupTime", "ساعة الانطلاق")}
+                </Label>
+                <input
+                  id={`${uid}-pickup-time`}
+                  type="time"
+                  value={pickupTime}
+                  onChange={(event) => setPickupTime(event.target.value)}
+                  aria-describedby={scheduleNoteId}
+                  className={cn(
+                    "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                    fieldHeight
+                  )}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${uid}-return-date`} className="text-sm font-medium">
+                  {t("schedule.returnDate", "تاريخ العودة")}
+                </Label>
+                <input
+                  id={`${uid}-return-date`}
+                  type="date"
+                  min={pickupDate || minDate}
+                  value={returnDate}
+                  onChange={(event) => setReturnDate(event.target.value)}
+                  aria-describedby={scheduleNoteId}
+                  className={cn(
+                    "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                    fieldHeight
+                  )}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${uid}-return-time`} className="text-sm font-medium">
+                  {t("schedule.returnTime", "ساعة العودة")}
+                </Label>
+                <input
+                  id={`${uid}-return-time`}
+                  type="time"
+                  value={returnTime}
+                  onChange={(event) => setReturnTime(event.target.value)}
+                  aria-describedby={scheduleNoteId}
+                  className={cn(
+                    "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                    fieldHeight
+                  )}
+                />
+              </div>
+            </div>
+
+            {/*
+              السطر الصادق: يقول ما ستفعله القاعدة بالضبط بما اختاره العميل.
+              • عودة ≤ الانطلاق ⇒ تحذير (وترفضه القاعدة أيضاً عند الحجز).
+              • يوم آخر ⇒ لا انتظار، ومعامل الذهاب والعودة وحده يسعّر العودة.
+              • نفس اليوم ⇒ الساعات ورسمها. والرقم موسوم **«تقديري»** ما دام من
+                المتصفح، ويصير رقم القاعدة نصاً بلا وسم فور وصول العرض.
+            */}
+            <p id={scheduleNoteId} className="text-xs leading-6 text-muted-foreground">
+              {returnBeforePickup
+                ? t("schedule.orderNote", "موعد العودة يجب أن يكون بعد موعد الانطلاق.")
+                : returnAt === null
+                  ? t(
+                      "schedule.emptyNote",
+                      "حدد موعد العودة: إن كانت في اليوم نفسه يبقى السائق في انتظارك ويُحتسب الانتظار بسعر الساعة لفئتك، وإن كانت في يوم آخر فلا انتظار — معامل الذهاب والعودة وحده يسعّر العودة."
+                    )
+                  : returnAnotherDay
+                    ? t(
+                        "schedule.otherDayNote",
+                        "العودة في يوم آخر — لا ساعات انتظار، ومعامل الذهاب والعودة وحده يسعّر رحلة العودة."
+                      )
+                    : shownWaiting !== null && shownWaiting > 0
+                      ? serverWaiting !== null
+                        ? t(
+                            "schedule.sameDayNote",
+                            "العودة في نفس اليوم — انتظار {hours} محتسب بسعر الساعة لفئتك ضمن الأسعار أدناه.",
+                            { hours: fmt.hours(shownWaiting) }
+                          )
+                        : t(
+                            "schedule.sameDayEstimate",
+                            "العودة في نفس اليوم — انتظار تقديري {hours} يُحتسب بسعر الساعة لفئتك. الرقم النهائي يظهر مع الأسعار.",
+                            { hours: fmt.hours(shownWaiting) }
+                          )
+                      : t(
+                          "schedule.sameDayZero",
+                          "العودة في نفس اليوم — تُحتسب ساعات انتظار السائق بسعر الساعة لفئتك."
+                        )}
+            </p>
+          </div>
+        ) : null}
+
+        {/*
+          خيارات إضافية: **الخدمات** لا ساعات الانتظار (حُذف حقلها في الدفعة ٣).
+          والكتالوج الفارغ لا يعرض شيئاً إطلاقاً — لا زرّ ولا صندوق.
+        */}
+        {hasExtras ? (
+          <div className="flex flex-col gap-3">
             <button
               type="button"
               onClick={() => setExtrasOpen((current) => !current)}
@@ -624,39 +1002,35 @@ export function SearchWidget({
                 className={cn("size-4 transition-transform duration-200", extrasOpen && "rotate-180")}
                 aria-hidden="true"
               />
-              {t("extras.toggle", "خيارات إضافية")}
+              {t("extras.toggle", "خدمات إضافية")}
+              {selection.length > 0 ? (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold">
+                  {fmt.number(selection.length)}
+                </span>
+              ) : null}
             </button>
-          )}
 
-          {showWaiting ? (
-            <div id={extrasId} className="flex flex-col gap-1.5 sm:max-w-xs">
-              <Label htmlFor={waitingId} className="text-sm font-medium">
-                {t("extras.waitingLabel", "ساعات الانتظار")}
-              </Label>
-              <select
-                id={waitingId}
-                value={waitingHours}
-                onChange={(event) => setWaitingHours(Number(event.target.value))}
-                className={cn(
-                  "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-                  fieldHeight
-                )}
-              >
-                {WAITING_OPTIONS.map((hours) => (
-                  <option key={hours} value={hours}>
-                    {fmt.waiting(hours)}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs leading-5 text-muted-foreground">
-                {t(
-                  "extras.waitingNote",
-                  "انتظار السائق لك أثناء الرحلة — يُضاف بسعر ثابت لكل ساعة."
-                )}
-              </p>
-            </div>
-          ) : null}
-        </div>
+            {extrasOpen ? (
+              <div id={extrasId} className="flex flex-col gap-2">
+                <ExtrasPicker
+                  extras={extras}
+                  quantities={quantities}
+                  onChange={updateQuantity}
+                  idPrefix={extrasId}
+                  t={t}
+                  fmt={fmt}
+                  disabled={pending}
+                />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t(
+                    "services.note",
+                    "تُضاف الخدمات إلى إجمالي الحجز كبند مستقل بعد سعر الرحلة، ولا يشملها رمز الخصم."
+                  )}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* إرشاد لطيف عند الإرسال بلا اختيار من الاقتراحات */}
         {hint ? (
@@ -711,7 +1085,24 @@ export function SearchWidget({
 
       {/* العروض — في نفس الشجرة أسفل النموذج مباشرة */}
       {result && trip ? (
-        <div ref={resultsRef} className="border-t border-border pt-5">
+        <div ref={resultsRef} className="flex flex-col gap-4 border-t border-border pt-5">
+          {/*
+            بطاقات لمدخلات قديمة: تبقى معروضة (السعر الذي فيها هو ما سيُحجز به
+            فعلاً لأن مسار الحجز يحمل مدخلات لحظة التسعير) — لكن يُقال للزائر
+            صراحةً إنها لا تشمل تعديله الأخير.
+          */}
+          {staleInputs ? (
+            <p
+              role="status"
+              className="flex items-start gap-2 rounded-2xl border border-amber-500/50 bg-amber-500/10 px-3 py-2.5 text-sm leading-6 text-amber-800 dark:text-amber-200"
+            >
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {t(
+                "staleResults",
+                "عدّلت بيانات الرحلة بعد عرض الأسعار — اضغط «احسب السعر» لتحديثها قبل الحجز."
+              )}
+            </p>
+          ) : null}
           <Offers
             offers={result.offers}
             distanceKm={result.distanceKm}

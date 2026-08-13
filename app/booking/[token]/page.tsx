@@ -6,10 +6,12 @@ import {
   CalendarClock,
   CircleCheck,
   Clock,
+  ConciergeBell,
   Hourglass,
   Info,
   Landmark,
   Link2,
+  Luggage,
   MessageCircle,
   Phone,
   ReceiptText,
@@ -21,6 +23,7 @@ import {
 import { getSettings } from "@/lib/settings";
 import { getBaseUrl } from "@/lib/seo";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { createServiceSupabase } from "@/lib/supabase/admin";
 import { localePath } from "@/lib/i18n-types";
 import { createFormatter, getT, resolveLocale, type Tx } from "@/lib/i18n/content";
 import type { LocaleFormatter } from "@/components/booking/format";
@@ -199,6 +202,110 @@ function readReceipts(row: UnknownRow): ReceiptView[] {
     });
   }
   return receipts;
+}
+
+/**
+ * سطر خدمة إضافية اشتراها العميل مع الحجز (هجرة `0031`).
+ *
+ * 🔒 **الأرقام تصل جاهزة ولا تُحسب هنا**: `qty × unitPrice` جرى في Postgres
+ * وخُزِّن في `line_total` لحظة الحجز، ومجموعها في `trip.extrasTotal`. هذه الصفحة
+ * تعرض ولا تجمع ولا تطرح (قرار معماري ٤ — ولو طرحنا «الإجمالي ناقص الخدمات»
+ * لصار للرقم مصدران ينحرفان).
+ */
+type ExtraLine = {
+  title: string;
+  qty: number;
+  unitPrice: number | null;
+  lineTotal: number | null;
+};
+
+/**
+ * قراءة الخدمات من حمولة `get_booking_by_token` — إن حملتها يوماً.
+ *
+ * نوع إرجاع الدالة اليوم **سبعة عشر عموداً لا ثامن عشر**، ولقطة `trip` تحمل
+ * `extrasTotal` وحده (‏`0031:1156-1178`) — فهذا المصدر **فارغ اليوم بالضرورة**،
+ * ويبقى مكتوباً لأن توسيع نوع الإرجاع لاحقاً يجعله المصدر الأولى بلا تغيير في
+ * هذه الصفحة. والمصدر الحقيقي الآن هو `loadBookingExtras` أدناه.
+ *
+ * ⚠ ولا معرّف خدمة يُقرأ هنا ولا يُعرض: اللقطة تخرج كاملة إلى حامل التوكن
+ * (‏`0024:1089-1095`)، فما لا يحتاجه العميل لا مكان له في هذه الصفحة.
+ */
+function readExtras(row: UnknownRow, trip: UnknownRow): ExtraLine[] {
+  const source = Array.isArray(row["extras"])
+    ? row["extras"]
+    : Array.isArray(trip["extras"])
+      ? trip["extras"]
+      : [];
+
+  const lines: ExtraLine[] = [];
+  for (const item of source) {
+    if (!isRecord(item)) continue;
+    const title = readText(item, "title", "titleSnapshot", "title_snapshot");
+    const qty = readNumber(item, "qty", "quantity");
+    if (!title || qty === null || qty <= 0) continue;
+    lines.push({
+      title,
+      qty,
+      unitPrice: readNumber(item, "unitPrice", "unit_price"),
+      lineTotal: readNumber(item, "lineTotal", "line_total"),
+    });
+  }
+  return lines;
+}
+
+/**
+ * تفصيل الخدمات من **لقطة `booking_extras` المجمَّدة** — المصدر الفعلي.
+ *
+ * ── لماذا عميل الخدمة، وهو استثناء يحتاج مبرراً ───────────────────────────
+ * `booking_extras` محجوب عن `anon` كلياً (‏`revoke all` في 0031 §٣)، وسياسته
+ * الوحيدة للقراءة `is_admin()`. فالزائر لا يصل إليه لا بالجدول ولا بدالة —
+ * و`get_booking_by_token` لا تُخرجه. وبدون هذه القراءة يبقى الحال الذي أمسكته
+ * المراجعة: **عميلٌ دفع ثمن كرسيَّي أطفال يرى إجمالاً أكبر من سعر رحلته بلا سطر
+ * واحد يفسّر الفرق** — بطاقةُ الخدمات مكتوبة في هذا الملف ولا تُصيَّر أبداً.
+ *
+ * والصلاحية لا تُوسَّع بها رؤية: التوكن هو ما فتح الحجز أصلاً في السطر السابق،
+ * والقراءة **مقيَّدة بمعرّف ذلك الحجز وحده** وبأربعة أعمدة تخصّ العميل — ولا
+ * `extra_id` ولا `created_at`، فالكائن يُبنى حقلاً حقلاً لا بالنسخ (نفس مبدأ
+ * `redactPricing` في `/api/quote`).
+ *
+ * ── والفشل يقع فارغاً ─────────────────────────────────────────────────────
+ * بلا `SUPABASE_SERVICE_ROLE_KEY`، أو قبل هجرة 0031، أو عند أي خطأ: قائمة
+ * فارغة ⇒ تُخفى بطاقة التفصيل ويبقى مجموع الخدمات في بطاقة المبالغ من اللقطة.
+ * الصفحة تفقد تفصيلاً ولا تعرض رقماً مخترعاً — ولا تسقط.
+ *
+ * 🔒 ولا حساب هنا: `qty × unitPrice` جرى في Postgres وخُزِّن في `line_total`.
+ */
+async function loadBookingExtras(bookingId: string): Promise<ExtraLine[]> {
+  if (bookingId.length === 0) return [];
+
+  const service = createServiceSupabase();
+  if (!service) return [];
+
+  const { data, error } = await service
+    .from("booking_extras")
+    .select("title_snapshot, qty, unit_price, line_total")
+    .eq("booking_id", bookingId)
+    // ترتيبٌ ثابت لا عشوائي: الصفوف تُدرَج في عبارة واحدة فتتساوى طوابعها،
+    // والاسم يفصل التعادل حتى لا يتغير ترتيب العرض بين تحميل وآخر.
+    .order("created_at", { ascending: true })
+    .order("title_snapshot", { ascending: true })
+    .limit(50);
+
+  if (error || !Array.isArray(data)) return [];
+
+  const lines: ExtraLine[] = [];
+  for (const item of data as UnknownRow[]) {
+    const title = readText(item, "title_snapshot");
+    const qty = readNumber(item, "qty");
+    if (!title || qty === null || qty <= 0) continue;
+    lines.push({
+      title,
+      qty,
+      unitPrice: readNumber(item, "unit_price"),
+      lineTotal: readNumber(item, "line_total"),
+    });
+  }
+  return lines;
 }
 
 /**
@@ -450,6 +557,7 @@ export default async function BookingStatusPage({ params }: PageParams) {
   if (!isRecord(raw)) notFound();
 
   const status = readStatus(raw);
+  const bookingId = readText(raw, "id") ?? "";
   const reference = readText(raw, "reference") ?? "";
   const currency = readText(raw, "currency") ?? "EGP";
   const total = readNumber(raw, "total") ?? 0;
@@ -477,20 +585,48 @@ export default async function BookingStatusPage({ params }: PageParams) {
   const discount: UnknownRow = isRecord(discountRaw) ? discountRaw : {};
   const discountAmount = readNumber(discount, "amount");
   const discountTotalBefore = readNumber(discount, "totalBefore", "total_before");
+  // ثمنُ الرحلة بعد الخصم وقبل الخدمات — **مخزَّن** في اللقطة (‏`totalAfter` في
+  // `v_disc_json`)، فلا يُشتق هنا بطرح. وهو ما يجعل السطور الأربعة تُقرأ بترتيب
+  // المعادلة نفسه بدل أن تقفز من الخصم إلى الإجمالي فوق فجوة الخدمات.
+  const discountTotalAfter = readNumber(discount, "totalAfter", "total_after");
   const discountCode = readText(discount, "code");
   const hasDiscount =
     discountAmount !== null && discountAmount > 0 && discountTotalBefore !== null;
+
+  /**
+   * الخدمات الإضافية (هجرة `0031`): المجموع من اللقطة، والتفصيل من لقطة
+   * `booking_extras` المجمَّدة. و`total` أعلاه **يشمل** ثمنها بالفعل — فالمعادلة
+   * تضيفها آخر شيء، بعد الذروة وبعد الخصم:
+   *     `total = (ride_total − discount) + extras_total`
+   * ولهذا لا يُطرح هنا شيء ولا يُجمع: تُعرض الحدود كما خزّنتها القاعدة.
+   *
+   * والحمولة أولاً ثم الجدول: يوم يوسّع نوعُ إرجاع الدالة ليحمل `extras` يصير
+   * هو المصدر بلا تعديل هنا، ويسقط نداء عميل الخدمة من نفسه.
+   */
+  const extrasTotal = readNumber(trip, "extrasTotal", "extras_total");
+  const hasExtras = extrasTotal !== null && extrasTotal > 0;
+  const payloadExtras = readExtras(raw, trip);
+  const extras =
+    payloadExtras.length > 0 || !hasExtras
+      ? payloadExtras
+      : await loadBookingExtras(bookingId);
 
   const originLabel = readText(trip, "originLabel", "origin_label") ?? "";
   const destLabel = readText(trip, "destLabel", "dest_label", "destinationLabel") ?? "";
   const distanceKm = readNumber(trip, "distanceKm", "distance_km");
   const passengers = readNumber(trip, "passengers") ?? 1;
+  const luggage = readNumber(trip, "luggage");
   const roundTrip = readBoolean(trip, "roundTrip", "round_trip");
   const waitingHours = readNumber(trip, "waitingHours", "waiting_hours") ?? 0;
+  // راية تشرح للعميل **من أين جاءت** ساعات الانتظار: عودةٌ في اليوم نفسه تعني
+  // أن السائق ينتظره، فالساعات مشتقة من الموعدين لا مطلوبة صراحةً.
+  const waitingDerived = readBoolean(trip, "waitingDerived", "waiting_derived");
   const pickupAt = readText(trip, "pickupAt", "pickup_at");
+  const returnAt = readText(trip, "returnAt", "return_at");
   const notes = readText(trip, "notes");
 
   const pickupLabel = fmt.dateTime(pickupAt);
+  const returnLabel = fmt.dateTime(returnAt);
   const createdLabel = fmt.dateTime(createdAt);
   const payment = readPaymentSettings(settings);
   // الرابط الذي يحفظه العميل هو رابط لغته — العربية بلا بادئة والإنجليزية تحت /en
@@ -696,11 +832,20 @@ export default async function BookingStatusPage({ params }: PageParams) {
           >
             <h2 className="text-base font-bold">{t("amounts.heading", "المبالغ")}</h2>
             <dl className="flex flex-col gap-2.5 text-sm">
+              {/*
+                🔒 تسمية ما يخصمه الكوبون **فعلاً**: منذ الدفعة ٣ صار يخصم
+                `ride_total` وحده، والخدمات تُجمع فوق الناتج. فكلمة «الإجمالي قبل
+                الخصم» تصير كاذبة بوجود خدمات — الرقم المشطوب سعرُ رحلة لا إجمالٌ
+                — وهي بعينها «الشاشة تَعِد بما لا تفعله القاعدة». والسطور تُسمّى
+                بحسب وجود الخدمات لا بنص واحد يصلح للحالتين.
+              */}
               {hasDiscount ? (
                 <>
                   <div className="flex items-center justify-between gap-3">
                     <dt className="text-muted-foreground">
-                      {t("amounts.totalBeforeDiscount", "الإجمالي قبل الخصم")}
+                      {hasExtras
+                        ? t("amounts.rideBeforeDiscount", "سعر الرحلة قبل الخصم")
+                        : t("amounts.totalBeforeDiscount", "الإجمالي قبل الخصم")}
                     </dt>
                     <dd className="font-medium line-through decoration-muted-foreground/60">
                       {fmt.money(discountTotalBefore as number, currency)}
@@ -718,13 +863,45 @@ export default async function BookingStatusPage({ params }: PageParams) {
                       })}
                     </dd>
                   </div>
+                  {/* الحلقة الوسطى — تظهر حين تكون هناك خدمات فوقها فقط، وإلا
+                      كررت سطر «الإجمالي بعد الخصم» أدناه بالرقم نفسه */}
+                  {hasExtras && discountTotalAfter !== null ? (
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">
+                        {t("amounts.rideAfterDiscount", "سعر الرحلة بعد الخصم")}
+                      </dt>
+                      <dd className="font-medium">
+                        {fmt.money(discountTotalAfter, currency)}
+                      </dd>
+                    </div>
+                  ) : null}
                 </>
+              ) : null}
+              {/*
+                الخدمات سطرٌ مستقل **قبل** الإجمالي لا بعده: التسلسل الذي يقرؤه
+                العميل هو تسلسل المعادلة نفسه — سعر الرحلة، ثم ناقص الخصم، ثم
+                زائد الخدمات، ثم الإجمالي. ولو كتبناها «منها كذا» بعد الإجمالي
+                لبدت خصماً منه لا إضافةً إليه.
+              */}
+              {hasExtras ? (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">
+                    {t("amounts.extras", "الخدمات الإضافية")}
+                  </dt>
+                  <dd className="font-medium">
+                    {t("amounts.extrasPlus", "+{amount}", {
+                      amount: fmt.money(extrasTotal as number, currency),
+                    })}
+                  </dd>
+                </div>
               ) : null}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">
-                  {hasDiscount
-                    ? t("amounts.totalAfterDiscount", "الإجمالي بعد الخصم")
-                    : t("amounts.total", "إجمالي الرحلة")}
+                  {hasExtras
+                    ? t("amounts.totalWithExtras", "الإجمالي شاملاً الخدمات")
+                    : hasDiscount
+                      ? t("amounts.totalAfterDiscount", "الإجمالي بعد الخصم")
+                      : t("amounts.total", "إجمالي الرحلة")}
                 </dt>
                 <dd className="font-medium">{fmt.money(total, currency)}</dd>
               </div>
@@ -745,6 +922,69 @@ export default async function BookingStatusPage({ params }: PageParams) {
               </p>
             ) : null}
           </section>
+
+          {/*
+            تفصيل الخدمات — يلي بطاقة المبالغ مباشرةً لأنه شرحُ سطرٍ فيها.
+            كل رقم هنا مقروء من لقطة الحجز: الكمية وسعر الوحدة وإجمالي السطر
+            خزّنتها قاعدة البيانات لحظة الحجز، فتغيير سعر الخدمة غداً لا يغيّر
+            ما دفعه العميل اليوم. وبلا تفصيل واصل تُخفى البطاقة كلها ويبقى
+            المجموع في المبالغ — لا نخترع سطوراً لا نملكها.
+          */}
+          {extras.length > 0 ? (
+            <section
+              aria-label={t("extras.sectionLabel", "الخدمات الإضافية")}
+              className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
+            >
+              <div className="flex flex-col gap-1.5">
+                <h2 className="flex items-center gap-2 text-base font-bold">
+                  <ConciergeBell className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                  {t("extras.heading", "الخدمات الإضافية")}
+                </h2>
+                <p className="text-sm leading-7 text-muted-foreground">
+                  {t("extras.lead", "ما اخترته مع الرحلة، بسعر لحظة الحجز.")}
+                </p>
+              </div>
+
+              <ul className="flex flex-col gap-2.5 text-sm">
+                {extras.map((extra, index) => (
+                  <li
+                    key={`${extra.title}#${index}`}
+                    className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border pb-2.5 last:border-0 last:pb-0"
+                  >
+                    <span className="font-medium">
+                      {extra.title}
+                      <span className="ms-1.5 text-muted-foreground">
+                        {t("extras.quantity", "× {qty}", { qty: fmt.number(extra.qty) })}
+                      </span>
+                    </span>
+                    <span className="flex items-baseline gap-2">
+                      {extra.unitPrice !== null ? (
+                        <span className="text-xs text-muted-foreground">
+                          {t("extras.unitPrice", "{amount} للوحدة", {
+                            amount: fmt.money(extra.unitPrice, currency),
+                          })}
+                        </span>
+                      ) : null}
+                      {extra.lineTotal !== null ? (
+                        <span className="font-semibold">
+                          {fmt.money(extra.lineTotal, currency)}
+                        </span>
+                      ) : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              {hasDiscount ? (
+                <p className="text-xs leading-6 text-muted-foreground">
+                  {t(
+                    "extras.discountNote",
+                    "الخصم يسري على سعر الرحلة وحده؛ الخدمات الإضافية تُضاف بسعرها كاملاً بعده."
+                  )}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
 
           {/* رفض إيصال سابق — يسبق بطاقة التحويل ليقرأه العميل قبل أن يعيد الرفع */}
           {rejection ? (
@@ -935,6 +1175,16 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 <dt className="text-muted-foreground">{t("trip.passengers", "عدد الركاب")}</dt>
                 <dd className="font-medium">{fmt.passengers(passengers)}</dd>
               </div>
+              {/* الحقائب (0031) — يُعرض الصفر أيضاً لأنه اختيار العميل لا غياب بيانات */}
+              {luggage !== null ? (
+                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+                  <dt className="flex items-center gap-1.5 text-muted-foreground">
+                    <Luggage className="size-3.5 shrink-0" aria-hidden="true" />
+                    {t("trip.luggage", "عدد الحقائب")}
+                  </dt>
+                  <dd className="font-medium">{fmt.number(luggage)}</dd>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
                 <dt className="text-muted-foreground">{t("trip.tripType", "نوع الرحلة")}</dt>
                 <dd className="font-medium">
@@ -950,21 +1200,49 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 </div>
               ) : null}
               {waitingHours > 0 ? (
-                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                  <dt className="flex items-center gap-1.5 text-muted-foreground">
-                    <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-                    {t("trip.waitingHours", "ساعات الانتظار")}
-                  </dt>
-                  <dd className="font-medium">{fmt.hours(waitingHours)}</dd>
+                <div className="flex flex-col gap-1 rounded-2xl bg-muted/40 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="flex items-center gap-1.5 text-muted-foreground">
+                      <Clock className="size-3.5 shrink-0" aria-hidden="true" />
+                      {t("trip.waitingHours", "ساعات الانتظار")}
+                    </dt>
+                    <dd className="font-medium">{fmt.hours(waitingHours)}</dd>
+                  </div>
+                  {/*
+                    من أين جاء الرقم — السؤال الذي يطرحه العميل حين يرى ساعات
+                    انتظار لم يطلبها صراحةً: عودتُه في اليوم نفسه تعني أن السائق
+                    ينتظره بينهما.
+                  */}
+                  {waitingDerived ? (
+                    <p className="text-xs leading-6 text-muted-foreground">
+                      {t(
+                        "trip.waitingDerivedNote",
+                        "محسوبة تلقائياً من موعد عودتك في اليوم نفسه — السائق ينتظرك بينهما."
+                      )}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               {pickupLabel ? (
-                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5 sm:col-span-2">
+                <div
+                  className={`flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5 ${
+                    returnLabel ? "" : "sm:col-span-2"
+                  }`}
+                >
                   <dt className="flex items-center gap-1.5 text-muted-foreground">
                     <CalendarClock className="size-3.5 shrink-0" aria-hidden="true" />
                     {t("trip.pickupAt", "موعد الانطلاق")}
                   </dt>
                   <dd className="font-medium">{pickupLabel}</dd>
+                </div>
+              ) : null}
+              {returnLabel ? (
+                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+                  <dt className="flex items-center gap-1.5 text-muted-foreground">
+                    <CalendarClock className="size-3.5 shrink-0" aria-hidden="true" />
+                    {t("trip.returnAt", "موعد العودة")}
+                  </dt>
+                  <dd className="font-medium">{returnLabel}</dd>
                 </div>
               ) : null}
             </dl>

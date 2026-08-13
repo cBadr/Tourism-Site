@@ -17,6 +17,9 @@ import { createServerSupabase } from "@/lib/supabase/server";
  *   لذلك نفحص `.select()` بعد كل كتابة.
  * - `revalidatePath("/", "layout")` لأن الفئات والأسعار تظهر في الموقع العام
  *   (قسم الأسطول وويدجت البحث والعروض).
+ * - **سعة الحقائب** (‏`luggage_capacity`، هجرة `0031`) مُدخَل لا قرار: شرط
+ *   الأهلية الثاني يُفحص داخل `quote_price` وحدها مع سعة الركاب (D-12)، وهذه
+ *   الشاشة تكتب الرقم فقط.
  */
 
 const url = (qs: string) => `/admin/fleet?${qs}`;
@@ -26,6 +29,8 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** حدود عاقلة تمنع الأخطاء المطبعية الكارثية (ليست قواعد تسعير) */
 const MAX_CAPACITY = 200;
+/** `check (luggage_capacity between 0 and 99)` في هجرة `0031` — المدى نفسه هنا */
+const MAX_LUGGAGE = 99;
 const MAX_SORT = 999;
 const MIN_ROUND_TRIP_FACTOR = 1;
 const MAX_ROUND_TRIP_FACTOR = 3;
@@ -49,6 +54,27 @@ function num(formData: FormData, name: string): number | null {
 }
 
 const checked = (formData: FormData, name: string) => formData.get(name) != null;
+
+/**
+ * «العمود غير موجود» — قاعدة لم تُنفَّذ عليها هجرة `0031` بعد.
+ * Postgres يرفع 42703، وPostgREST يردّ PGRST204 من ذاكرة المخطط عند الكتابة.
+ */
+const isMissingColumn = (code: string | undefined) => code === "42703" || code === "PGRST204";
+
+/**
+ * سعة الحقائب من النموذج — ثلاث حالات لا تُخلط:
+ *   `undefined` = الحقل غير مُرسَل أصلاً (شاشةٌ عُرضت قبل هجرة `0031`) ⇒ **لا
+ *                 يُكتب العمود إطلاقاً**، فلا نطمس قيمةً بافتراضٍ من عندنا.
+ *   رقم صالح    = يُكتب.
+ *   `"invalid"` = مُرسَل وخارج المدى ⇒ رسالة خطأ باسمه لا رسالة عامة.
+ */
+function readLuggage(formData: FormData): number | undefined | "invalid" {
+  const raw = formData.get("luggage_capacity");
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  const n = Number(toLatinDigits(raw.trim()));
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > MAX_LUGGAGE) return "invalid";
+  return n;
+}
 
 type Money = {
   per_km: number;
@@ -106,6 +132,9 @@ export async function saveClass(classId: string, formData: FormData) {
   )
     redirect(url("error=factor"));
 
+  const luggage = readLuggage(formData);
+  if (luggage === "invalid") redirect(url("error=luggage"));
+
   const active = checked(formData, "active");
   // فئة نشطة بتعريفة صفرية تعني عروضاً بسعر صفر أمام العملاء — تُرفض قبل الكتابة
   if (active && isZeroTariff(money)) redirect(url("error=tariff"));
@@ -118,9 +147,15 @@ export async function saveClass(classId: string, formData: FormData) {
       short: text(formData, "short"),
       active,
       sort,
+      ...(luggage === undefined ? {} : { luggage_capacity: luggage }),
     })
     .eq("id", classId)
     .select("id");
+
+  // نموذجٌ يحمل سعة حقائب على قاعدة لم تُهاجَر: الكتابة الفاشلة لم تُغيّر شيئاً،
+  // فنقولها صراحةً بدل أن نُسقط العمود بصمت ونُعلن حفظاً ناقصاً (النمط ٢ في LESSONS).
+  if (classRes.error && isMissingColumn(classRes.error.code)) redirect(url("error=luggagemig"));
+
   if (classRes.error || !classRes.data || classRes.data.length === 0)
     redirect(url("error=save"));
 

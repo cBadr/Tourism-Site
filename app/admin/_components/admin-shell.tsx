@@ -10,6 +10,7 @@ import {
   Car,
   ClipboardList,
   Coins,
+  ConciergeBell,
   CreditCard,
   FileText,
   Globe,
@@ -50,6 +51,7 @@ type NavItem = {
     | "/admin/content"
     | "/admin/discounts"
     | "/admin/dispatch"
+    | "/admin/extras"
     | "/admin/finance"
     | "/admin/fleet"
     | "/admin/integrations"
@@ -83,6 +85,15 @@ const NAV_ITEMS: NavItem[] = [
   { label: "اللغات", icon: Languages, href: "/admin/languages" },
   { label: "الأسطول", icon: Car, href: "/admin/fleet" },
   { label: "التسعير", icon: Coins, href: "/admin/pricing" },
+  // «الخدمات الإضافية» بين «التسعير» و«الخصومات» عمداً: الخدمة **مكوّن من
+  // مكوّنات السعر لا طبقة تسويق** — كرسي الأطفال والواي فاي بندٌ يشتريه العميل
+  // ويُقيَّد على حجزه، لا حملةٌ تحفيزية. فموضعها مع شاشتَي بناء السعر (الأسطول
+  // والتسعير) لا مع الخصومات والبانرات.
+  // ⚠ وفي المعادلة موضعها بعد الخصم (`total = ride_total − discount + extras`)
+  // — أي أن ترتيب القائمة هنا يتبع **طبيعة الشاشة** لا ترتيب الحدود، بخلاف
+  // «الخصومات» أدناه التي علّلنا موضعها بموضعها في المعادلة. مذكور صراحةً حتى
+  // لا يُقرأ التناقض سهواً.
+  { label: "الخدمات الإضافية", icon: ConciergeBell, href: "/admin/extras" },
   // «الخصومات» بعد «التسعير» مباشرة: الرؤية تصنّف الخصومات والتحفيز **مكمّلات
   // للتسعير** لا قسماً مستقلاً (VISION.md:76 داخل قسم «آلية التسعير»). والخصم
   // نفسه طبقة تقع بعد بناء السعر، فموضعه في القائمة يتبع موضعه في المعادلة.
@@ -122,6 +133,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/discounts": "الخصومات",
   "/admin/discounts/banners": "بانرات العروض",
   "/admin/dispatch": "الإسناد",
+  "/admin/extras": "الخدمات الإضافية",
   "/admin/finance": "المالية",
   "/admin/finance/expenses": "المصروفات",
   "/admin/finance/partners": "مقاصة المتعهدين",

@@ -176,6 +176,7 @@ export async function DispatchPanel({
   bookingId,
   bookingStatus,
   bookingTotal,
+  extrasTotal,
   currency,
   confirmingAssign,
   confirmingOverride,
@@ -184,6 +185,14 @@ export async function DispatchPanel({
   bookingStatus: string;
   /** إجمالي الحجز كما خزّنته `create_booking` — أساس حساب الهامش الحقيقي */
   bookingTotal: number;
+  /**
+   * مجموع الخدمات الإضافية من لقطة الحجز (‏`trip.extrasTotal`، هجرة 0031).
+   * **يُطرح من الإجمالي قبل قياس الهامش**: `total` يحمله منذ 0031، وهو إيرادٌ عن
+   * شيء ننفّذه نحن ولا يراه المتعهد — فعدُّه هامشاً يطلي صفقةً تحت الأرضية
+   * بالأخضر. نفس ما تفعله القاعدة في `dispatch_ceiling` (0032) وفي `realMargin`
+   * داخل إشعار الإسناد (0033). و`null` = حجزٌ سابق للهجرة، أي صفر.
+   */
+  extrasTotal: number | null;
   currency: string;
   confirmingAssign: boolean;
   /** ‎?confirm=override‎ — خطوة تأكيد الإسناد فوق سقف دين المتعهد */
@@ -207,7 +216,11 @@ export async function DispatchPanel({
     ? (names.get(dispatch.assignedSubcontractorId) ?? "متعهد مسجَّل")
     : null;
 
-  const assignedMargin = realMargin(bookingTotal, dispatch?.assignedPayout ?? null);
+  const assignedMargin = realMargin(
+    bookingTotal,
+    dispatch?.assignedPayout ?? null,
+    extrasTotal
+  );
   const assignedTone = marginTone(assignedMargin, settings.minMarginAmount);
 
   const statusHint =
@@ -311,7 +324,11 @@ export async function DispatchPanel({
               </Field>
               <Field
                 label="الهامش الحقيقي"
-                help="إجمالي الحجز ناقص مستحق المنفِّذ — ربح الموقع الفعلي من هذه الرحلة بعد الإسناد. الأحمر يعني خسارة، والكهرماني يعني هامشاً دون الأرضية المضبوطة في إعدادات الإسناد."
+                help={
+                  (extrasTotal ?? 0) > 0
+                    ? "إجمالي الحجز ناقص الخدمات الإضافية ناقص مستحق المنفِّذ — ربح الموقع الفعلي من هذه الرحلة بعد الإسناد. الخدمات مطروحة لأنها إيراد عن شيء ننفّذه نحن ولا يراه المتعهد، فعدّها هامشاً يُظهر صفقةً ضعيفة الهامش وكأنها سليمة. وهو نفس الرقم الذي ترسله قاعدة البيانات في إشعار الإسناد. الأحمر يعني خسارة، والكهرماني يعني هامشاً دون الأرضية المضبوطة في إعدادات الإسناد."
+                    : "إجمالي الحجز ناقص مستحق المنفِّذ — ربح الموقع الفعلي من هذه الرحلة بعد الإسناد (ولا خدمات إضافية في هذا الحجز تُطرح منه). الأحمر يعني خسارة، والكهرماني يعني هامشاً دون الأرضية المضبوطة في إعدادات الإسناد."
+                }
               >
                 <MarginPill
                   margin={assignedMargin}
@@ -372,7 +389,7 @@ export async function DispatchPanel({
                   </thead>
                   <tbody>
                     {offers.map((offer) => {
-                      const margin = realMargin(bookingTotal, offer.payout);
+                      const margin = realMargin(bookingTotal, offer.payout, extrasTotal);
                       return (
                         <tr
                           key={offer.key}
@@ -547,6 +564,7 @@ export async function DispatchPanel({
               action={manualAssign.bind(null, bookingId)}
               partners={partners}
               bookingTotal={bookingTotal}
+              extrasTotal={extrasTotal}
               currency={currency}
               marginFloor={settings.minMarginAmount}
               disabled={!ready}
@@ -571,6 +589,7 @@ export async function DispatchPanel({
               variant="over-limit"
               partners={partners}
               bookingTotal={bookingTotal}
+              extrasTotal={extrasTotal}
               currency={currency}
               marginFloor={settings.minMarginAmount}
               disabled={!ready}

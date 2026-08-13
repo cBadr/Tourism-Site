@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { controlClass } from "../../_components/booking-ui";
+import { realMargin } from "../../../dispatch/_components/dispatch-ui";
 
 /**
  * بطاقة الإسناد اليدوي — تظهر بعد خطوة تأكيد صريحة (رابط ‎?confirm=assign‎)،
@@ -20,9 +21,16 @@ import { controlClass } from "../../_components/booking-ui";
  * التشغيل هو ما سيدفعه الموقع للمتعهد، والفرق بينه وبين إجمالي الحجز هو ربح
  * الرحلة الحقيقي — ورؤيته *قبل* الضغط تمنع إسناداً خاسراً بدل أن تشرحه بعده.
  *
- * وهذه معاينة لا قرار: القرار الملزِم (رفض المستحق الذي يهبط بالهامش تحت
- * أرضيته) يقع داخل دالة `manual_assign` في قاعدة البيانات، ولو عُطِّل جافاسكربت
- * لعمل النموذج كما هو وبقيت الحراسة قائمة.
+ * ⚠ **ولا حارس خلف هذه المعاينة — تصحيحٌ لما كان مكتوباً هنا.** كان النص يقول إن
+ * «الرفض الملزِم عند نزول الهامش تحت أرضيته يقع داخل `manual_assign`»، وهو غير
+ * صحيح: حرّاس تلك الدالة هي الصلاحية وحالةُ الحجز وإيقافُ المتعهد وأن المستحق
+ * غير سالب، **ولا فحص هامشٍ ولا سقفٍ فيها إطلاقاً** (‏0033 يقول ذلك نصاً، وسقف
+ * `dispatch_ceiling` يحرس مسار البث وحده). فهذه المعاينة هي إشارة الهامش الوحيدة
+ * قبل الضغط، وإسنادٌ بمستحق يبتلع الهامش كله **ينجح** إن مضى المشغّل. الوعد
+ * بحارسٍ غير موجود أخطر من غياب الحارس نفسه: يُسكِت الحذر عند من يقرأ.
+ *
+ * ورقمُ الهامش يُحسب بـ`realMargin` نفسها التي تعرضها لوحة الإسناد — دالة واحدة
+ * لا نسخة ثانية، وإلا انحرف رقم المعاينة عن الرقم الذي يظهر بعد الحفظ.
  *
  * لا يستورد شيئاً من طبقة الخادم: القائمة والأرقام والإجراء كلها props من
  * الصفحة الخادمية، ورابط التراجع يصل children جاهزاً (المسارات مُنمَّطة).
@@ -88,6 +96,7 @@ export function ManualAssignForm({
   action,
   partners,
   bookingTotal,
+  extrasTotal,
   currency,
   marginFloor,
   disabled,
@@ -98,6 +107,11 @@ export function ManualAssignForm({
   partners: PartnerOption[];
   /** إجمالي الحجز كما خزّنته `create_booking` — لا يُحسب هنا ولا يُعدَّل */
   bookingTotal: number;
+  /**
+   * مجموع الخدمات الإضافية من لقطة الحجز — يُطرح قبل قياس الهامش لأن `total`
+   * يحمله منذ 0031 وهو ليس هامشاً (القرار ب). و`null` = حجزٌ سابق للهجرة.
+   */
+  extrasTotal: number | null;
   currency: string;
   /** أرضية الهامش من إعدادات الإسناد — `null` قبل تنفيذ الهجرة */
   marginFloor: number | null;
@@ -111,8 +125,10 @@ export function ManualAssignForm({
 
   const payout = payoutText.trim() === "" ? null : Number(payoutText);
   const validPayout = payout !== null && Number.isFinite(payout) && payout >= 0;
-  // طرح عرضٍ لا قرار — الحراسة الملزِمة في `manual_assign` داخل قاعدة البيانات
-  const margin = validPayout ? bookingTotal - payout : null;
+  // 🔒 نفس دالة لوحة الإسناد — والخدمات مطروحة فيها: `total` يحملها منذ 0031،
+  // وعدُّها هامشاً يجعل مستحقاً يبتلع الربح كله يبدو مقبولاً. ولا حارس في
+  // `manual_assign` يمسك ذلك بعد الضغط (انظر ترويسة الملف).
+  const margin = validPayout ? realMargin(bookingTotal, payout, extrasTotal) : null;
   const loss = margin !== null && margin < 0;
   const thin =
     margin !== null && !loss && marginFloor !== null && marginFloor > 0 && margin < marginFloor;
@@ -140,10 +156,13 @@ export function ManualAssignForm({
               سجل العروض.
             </p>
             <p className="text-sm leading-relaxed">
-              وهو يرفع حاجز الدين وحده: أرضية الهامش تبقى سارية، والمتعهد الموقوف أو غير
-              المعتمد يبقى مرفوضاً. ولا عمود في القاعدة يميّز هذا الإسناد عن الإسناد اليدوي
-              العادي بعد وقوعه — <span className="font-semibold">نصّك هو الأثر الدائم
-              الوحيد</span>، فاذكر فيه أنك أسندت رغم السقف ولماذا.
+              وهو يرفع حاجز الدين وحده: المتعهد الموقوف أو غير المعتمد يبقى مرفوضاً. أما
+              الهامش فلا حاجز له أصلاً في الإسناد اليدوي —{" "}
+              <span className="font-semibold">أرضيته لا تُفرض هنا</span>، والرقم المعروض
+              أدناه هو كل ما يقف بينك وبين إسناد خاسر. ولا عمود في القاعدة يميّز هذا الإسناد
+              عن الإسناد اليدوي العادي بعد وقوعه —{" "}
+              <span className="font-semibold">نصّك هو الأثر الدائم الوحيد</span>، فاذكر فيه
+              أنك أسندت رغم السقف ولماذا.
             </p>
           </>
         ) : (
@@ -230,14 +249,28 @@ export function ManualAssignForm({
             {formatMoney(bookingTotal, currency)}
           </span>
         </span>
+        {(extrasTotal ?? 0) > 0 && (
+          <span className="text-muted-foreground">
+            منها خدمات إضافية:{" "}
+            <span dir="ltr" className="font-medium text-foreground">
+              {formatMoney(extrasTotal ?? 0, currency)}
+            </span>
+          </span>
+        )}
         <span className="flex items-center gap-1.5">
           الهامش الحقيقي:
           <span dir="ltr" className="font-bold">
             {margin === null ? "—" : formatMoney(margin, currency)}
           </span>
           <HelpTip>
-            إجمالي الحجز ناقص مستحق المتعهد — ربح الموقع الفعلي من هذه الرحلة. معاينة إرشادية،
-            والرفض النهائي عند نزوله تحت الأرضية يقع في قاعدة البيانات لا هنا.
+            {(extrasTotal ?? 0) > 0
+              ? "إجمالي الحجز ناقص الخدمات الإضافية ناقص مستحق المتعهد — ربح الموقع الفعلي من هذه الرحلة. الخدمات مطروحة لأنها ثمن شيء ننفّذه نحن ولا يراه المتعهد."
+              : "إجمالي الحجز ناقص مستحق المتعهد — ربح الموقع الفعلي من هذه الرحلة."}{" "}
+            <span className="font-semibold">
+              وهذا الرقم هو الحارس الوحيد قبل الضغط: قاعدة البيانات لا تفحص الهامش في
+              الإسناد اليدوي — تفحص الصلاحية وحالة الحجز وإيقاف المتعهد وألّا يكون المستحق
+              سالباً، لا غير. فالإسناد بمستحق يبتلع الهامش ينجح إن أكملته.
+            </span>
           </HelpTip>
         </span>
         {loss && (

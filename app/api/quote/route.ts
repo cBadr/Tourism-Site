@@ -2,8 +2,16 @@ import { trackFunnelBatch } from "@/lib/analytics/emit";
 import { routeDistance } from "@/lib/geo/route";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import type { FunnelPayload } from "@/lib/analytics-types";
-import type { Offer, QuoteError, QuoteRequest, QuoteResponse } from "@/lib/pricing-types";
+import type { QuoteError } from "@/lib/pricing-types";
 import type { OfferPricing, PriceSource } from "@/lib/subcontractor-types";
+import {
+  parseExtrasSelection,
+  parseLuggage,
+  readExtraLines,
+  type OfferWithExtras,
+  type QuoteRequestWithExtras,
+  type QuoteResponseWithExtras,
+} from "@/components/booking/extras";
 
 /**
  * POST /api/quote — عرض الأسعار للرحلة (يخدم ويدجت الحجز وصفحة /book).
@@ -31,9 +39,35 @@ import type { OfferPricing, PriceSource } from "@/lib/subcontractor-types";
  *
  * لا كاش لهذه الاستجابة: مفتاح الذروة من اللوحة يغيّر النتيجة فوراً.
  *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  الدفعة ٣ (هجرة 0031) — الحقائب والخدمات وتاريخ العودة
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * (١) **الحقائب** تُمرَّر `p_luggage` وتُصفّى داخل `quote_price` وحدها
+ *     (‏`luggage_capacity >= p_luggage` داخل CTE `eligible`). لا ترشيح هنا ولا
+ *     في المتصفح: فئةٌ لا تتسع لحقائب العميل **لا تعود أصلاً** (D-12).
+ *
+ * (٢) **الخدمات** تُمرَّر `p_extras` **رموزاً وكميات فقط**، و`price_extras`
+ *     تقرأ أسعارها من الكتالوج وتقصّ الكميات على `max_qty`. ولا يصل من المتصفح
+ *     سعر ولا إجمالي — لا يُقرأ أصلاً (D-09).
+ *
+ * (٣) **ساعات الانتظار لم تعد حقلاً في الشاشة**، بل تُشتق من موعد العودة.
+ *     و**الاشتقاق في القاعدة**: هذا المسار ينادي `derive_waiting_hours` نداءً
+ *     مستقلاً ويمرّر ناتجها إلى `quote_public` — لأن `quote_public` تأخذ
+ *     الساعات ولا تأخذ التاريخين (ق٧ في المواصفة). فالرقم يخرج من نفس الدالة
+ *     التي ستشتقّه ثانيةً داخل `create_booking`، ولا يُحسب في TypeScript ولا في
+ *     المتصفح أبداً — مصدر واحد للرقم مهما تعدد مستهلكوه (النمط ٨ في
+ *     `handover/LESSONS.md`). ويعود الرقم في جسم الرد ليحمله المتصفح إلى
+ *     معاينة الكوبون ثم إلى الحجز بلا اشتقاق ثانٍ.
+ *
+ * (٤) **الإجمالي يُعرض مفصولاً**: `ride_total` (الرحلة بعد الخصم وقبل الخدمات)
+ *     و`extras_total` و`extras`، وكلها من `quote_public`. الفصل ليس تجميلاً:
+ *     الكوبون يخصم الرحلة وحدها والخدمات تُجمع بعده (القرار ب في
+ *     `lib/extras-types.ts`)، وشاشةٌ تُوحي بغير ذلك تَعِد بما لا تفعله القاعدة.
+ *
  * رموز الخطأ التي قد ترجع (تقرأ الواجهة `message` مباشرة في كل الحالات):
  *   invalid-input   ٤٠٠ — جسم الطلب ناقص أو خارج الحدود
- *   no-classes      ٢٠٠ — لا فئة تتسع لعدد الركاب (ليس خطأ خادم)
+ *   no-classes      ٢٠٠ — لا فئة تتسع لعدد الركاب والحقائب (ليس خطأ خادم)
  *   pricing-failed  ٥٠٠/٥٠٣ — فشل دالة التسعير أو بيئة غير مضبوطة
  *   distance-failed ٥٠٠ — احتياطي لا يقع عملياً (طبقة التقدير تضمن مسافة)
  */
@@ -62,6 +96,10 @@ type QuotePriceRow = {
   subcontractor_id?: string | null;
   subcontractor_cost?: number | string | null;
   margin_amount?: number | string | null;
+  /** أعمدة 0031 — اختيارية للسبب نفسه: قاعدة قبل الهجرة لا ترجعها */
+  ride_total?: number | string | null;
+  extras_total?: number | string | null;
+  extras?: unknown;
 };
 
 function errorJson(code: string, message: string, status: number): Response {
@@ -82,8 +120,17 @@ function isFiniteCoords(v: unknown): v is { lat: number; lng: number } {
   );
 }
 
+/** تاريخ ISO صالح للعرض السعري — أو null. لا حدود مستقبلية هنا: هذا مسار معاينة
+ *  لا يُنشئ شيئاً، وحدود الوقت الحقيقية (انحراف الساعة والسقف السنوي وترتيب
+ *  العودة بعد الانطلاق) تُفرض في `/api/booking` وفي `create_booking`. */
+function parseIsoOrNull(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 /** تحقق كامل من جسم الطلب — يرجع null عند أي خلل */
-function parseQuoteRequest(body: unknown): QuoteRequest | null {
+function parseQuoteRequest(body: unknown): QuoteRequestWithExtras | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as Record<string, unknown>;
 
@@ -98,6 +145,14 @@ function parseQuoteRequest(body: unknown): QuoteRequest | null {
   if (waitingHours < 0 || waitingHours > 24) return null;
 
   if (typeof b.roundTrip !== "boolean") return null;
+
+  // الحقائب والخدمات (0031): الرفض صريح لا صامت — قيمة خارج الحدود أو اختيار
+  // مشوَّه يعني ٤٠٠، لا تسعيراً «تقريبياً» بحقائب مبتلَعة.
+  const luggage = parseLuggage(b.luggage);
+  if (luggage === null) return null;
+
+  const extras = parseExtrasSelection(b.extras);
+  if (extras === null) return null;
 
   const originLabel = (b.origin as { label?: unknown }).label;
   const destLabel = (b.destination as { label?: unknown }).label;
@@ -116,6 +171,10 @@ function parseQuoteRequest(body: unknown): QuoteRequest | null {
     passengers,
     roundTrip: b.roundTrip,
     waitingHours,
+    pickupAt: parseIsoOrNull(b.pickupAt),
+    returnAt: parseIsoOrNull(b.returnAt),
+    luggage,
+    extras,
   };
 }
 
@@ -154,7 +213,7 @@ export async function POST(request: Request) {
   if (!input) {
     return errorJson(
       "invalid-input",
-      "بيانات الرحلة غير مكتملة: نقطتا الانطلاق والوصول بإحداثيات صحيحة، وعدد ركاب من ١ إلى ٦٠، وساعات انتظار من ٠ إلى ٢٤.",
+      "بيانات الرحلة غير مكتملة: نقطتا الانطلاق والوصول بإحداثيات صحيحة، وعدد ركاب من ١ إلى ٦٠، وعدد حقائب من ٠ إلى ٢٠.",
       400
     );
   }
@@ -185,26 +244,82 @@ export async function POST(request: Request) {
     );
   }
 
-  // الوسائط المشتركة بين التوقيعين — الإحداثيات وحدها هي الزيادة
+  // ── (٢أ) ساعات الانتظار تُشتق في القاعدة لا هنا ──────────────────────────
+  //
+  // الشاشة لم تعد تسأل عن ساعات انتظار (حُذف الحقل في الدفعة ٣)؛ تسأل عن **موعد
+  // العودة**. والاشتقاق قاعدةُ عمل تملكها Postgres: عودة في اليوم نفسه ⇒ الفارق
+  // مُقرَّباً لأعلى بسقف `MAX_DERIVED_WAITING_HOURS`، وفي يوم آخر ⇒ صفر ومعامل
+  // الذهاب والعودة وحده يسعّر العودة.
+  //
+  // نناديها هنا نداءً مستقلاً لأن `quote_public` تأخذ الساعات لا التاريخين. وما
+  // يعود منها هو **الرقم نفسه** الذي ستشتقّه `create_booking` من التاريخين
+  // ذاتهما، فلا ينحرف المعروض عن المُثبَّت.
+  //
+  // ⚠ **وفشل هذا النداء يُفشل عرض السعر ولا يُبتلع.** لو أرجعنا صفراً عند الفشل
+  // لعرضنا سعراً بلا انتظار ثم أضافته `create_booking` من عندها (فهي تشتقّه
+  // داخلها بصلاحيات المالك) — أي بطاقة بسعر وحجز بسعر أعلى، وهو نمط الفشل ٢ في
+  // `handover/LESSONS.md` بعينه. والصفر المشروع (عودة في يوم آخر) ليس فشلاً:
+  // يأتي **من الدالة** بلا خطأ فيمرّ كما هو.
+  let derivedWaiting = 0;
+  if (input.returnAt && input.pickupAt) {
+    const derived = await supabase.rpc("derive_waiting_hours", {
+      p_pickup_at: input.pickupAt,
+      p_return_at: input.returnAt,
+    });
+    const value = Number(derived.data);
+    if (derived.error || !Number.isFinite(value) || value < 0) {
+      return errorJson(
+        "pricing-failed",
+        "تعذر احتساب سعر رحلة العودة الآن. حاول مرة أخرى، أو اختر «ذهاب فقط».",
+        500
+      );
+    }
+    derivedWaiting = value;
+  }
+
+  // `greatest` لا استبدال — مرآةٌ حرفية لما تفعله `create_booking` (ق٨ خطوة ٢):
+  // العميل قد يطلب انتظاراً أطول من فارق التوقيت، والمشتق **أرضية لا سقف**.
+  // (وهذا اختيار مدة لا حساب مال؛ كل جنيه ما زال داخل SQL.)
+  const waitingHours = Math.max(input.waitingHours, derivedWaiting);
+
+  // الوسائط المشتركة بين التوقيعات — الإحداثيات وحدها هي الزيادة
   const baseArgs = {
     p_distance_km: distance.distanceKm,
     p_passengers: input.passengers,
     p_round_trip: input.roundTrip,
-    p_waiting_hours: input.waitingHours,
+    p_waiting_hours: waitingHours,
   };
 
-  // `quote_public` (هجرة 0012) لا تحمل هوية المتعهد ولا تكلفته ولا الهامش في
-  // نوع إرجاعها أصلاً — فتسريبها إلى المتصفح مستحيل بنيوياً لا بالانضباط.
-  let { data, error } = await supabase.rpc("quote_public", {
+  const publicArgs = {
     ...baseArgs,
     p_origin_lat: input.origin.lat,
     p_origin_lng: input.origin.lng,
     p_dest_lat: input.destination.lat,
     p_dest_lng: input.destination.lng,
+  };
+
+  // `quote_public` (هجرة 0012) لا تحمل هوية المتعهد ولا تكلفته ولا الهامش في
+  // نوع إرجاعها أصلاً — فتسريبها إلى المتصفح مستحيل بنيوياً لا بالانضباط.
+  //
+  // ⚠ **الحقائب والخدمات تُمرَّران دائماً** ولو كانا صفراً/فارغين: تمريرهما
+  // شرطياً يعني توقيعين مختلفين حسب المُدخل، وأولهما يخفي فشل الآخر.
+  let { data, error } = await supabase.rpc("quote_public", {
+    ...publicArgs,
+    p_luggage: input.luggage ?? 0,
+    p_extras: input.extras && input.extras.length > 0 ? input.extras : null,
   });
 
-  // قاعدة لم تُطبَّق عليها هجرة 0012: PostgREST لا يجد الدالة (PGRST202)
-  // فنسقط إلى التوقيع الرباعي القديم بدل تعطيل التسعير بالكامل.
+  // ── سلّم التوافق أثناء النشر — ثلاث درجات، وكلٌّ منها أضعف مما فوقها ──────
+  //
+  // (١) قاعدة قبل 0031: التوقيع الحادي عشر غير موجود ⇒ نُعيد النداء بالتساعي.
+  //     ما يسقط هنا: ترشيح الحقائب وتسعير الخدمات. والخدمات لا تسقط عملياً لأن
+  //     `public_extras()` غير موجودة أصلاً في تلك القاعدة، فالكتالوج يصل فارغاً
+  //     ولا يستطيع الزائر اختيار شيء. أما الحقائب فتُتجاهَل — وهو **سلوك اليوم
+  //     نفسه** قبل الهجرة، لا انحدار جديد، ونافذته دقائق النشر.
+  // (٢) قاعدة قبل 0012: `quote_public` نفسها غير موجودة ⇒ التوقيع الرباعي.
+  if (error && (error.code === "PGRST202" || error.code === "42883")) {
+    ({ data, error } = await supabase.rpc("quote_public", publicArgs));
+  }
   if (error && (error.code === "PGRST202" || error.code === "42883")) {
     ({ data, error } = await supabase.rpc("quote_price", baseArgs));
   }
@@ -215,15 +330,20 @@ export async function POST(request: Request) {
 
   // دالة تُرجع جدولاً ⇒ مصفوفة صفوف؛ الحارس يمنع انهيار .map لو تغير الشكل
   const rows: QuotePriceRow[] = Array.isArray(data) ? (data as QuotePriceRow[]) : [];
-  const offers: Offer[] = rows.map((row) => {
+  const offers: OfferWithExtras[] = rows.map((row) => {
     // `quote_public` لا ترجع مصدر السعر أصلاً؛ يبقى النداء للتوافق مع المسار
     // الاحتياطي القديم، ويظل ينقّح كل ما عدا المصدر.
     const pricing = redactPricing(row);
+    const total = Number(row.total);
+    // قاعدة قبل 0031 لا ترجع العمودين: عندها **سعر الرحلة هو الإجمالي** بلا
+    // خدمات — لا اشتقاق ولا طرح، فقط سقوط إلى الحالة التي كانت قائمة فعلاً.
+    const extrasTotal = row.extras_total == null ? 0 : Number(row.extras_total);
+    const rideTotal = row.ride_total == null ? total : Number(row.ride_total);
     return {
       classSlug: row.class_slug,
       classTitle: row.class_title,
       capacity: Number(row.capacity),
-      total: Number(row.total),
+      total,
       currency: "EGP",
       breakdown: {
         baseFee: Number(row.base_fee),
@@ -233,6 +353,9 @@ export async function POST(request: Request) {
         peakApplied: Boolean(row.peak_applied),
         minApplied: Boolean(row.min_applied),
       },
+      rideTotal: Number.isFinite(rideTotal) ? rideTotal : total,
+      extrasTotal: Number.isFinite(extrasTotal) ? extrasTotal : 0,
+      extras: readExtraLines(row.extras),
       // المفتاح يغيب تماماً حين لا مصدر معروف — لا `pricing: undefined` في JSON
       ...(pricing ? { pricing } : {}),
     };
@@ -262,9 +385,14 @@ export async function POST(request: Request) {
     // بحث تمّ وأنتج «لا فئة مناسبة» — خطوة قمع حقيقية تستحق التسجيل، ونسبتها
     // إلى `quote_viewed` هي بالضبط «كم بحثاً لم ينتج عرضاً».
     trackFunnelBatch([{ event: "search_performed", payload: funnelTrip }]);
+    // الرسالة تسمّي السبب المحتمل الثاني حين يكون قائماً فعلاً: الأهلية صارت
+    // شرطين (ركاب **و**حقائب)، ورسالةٌ تذكر الركاب وحدهم تُرسل عميلاً بحقيبتين
+    // ليقلّل عدد الركاب بلا فائدة.
     return errorJson(
       "no-classes",
-      "لا توجد فئة سيارات تتسع لهذا العدد من الركاب. تواصل معنا لترتيب أكثر من سيارة.",
+      (input.luggage ?? 0) > 0
+        ? "لا توجد فئة سيارات تتسع لعدد الركاب وعدد الحقائب معاً. جرّب حقائب أقل أو تواصل معنا لترتيب أكثر من سيارة."
+        : "لا توجد فئة سيارات تتسع لهذا العدد من الركاب. تواصل معنا لترتيب أكثر من سيارة.",
       200
     );
   }
@@ -274,12 +402,15 @@ export async function POST(request: Request) {
     { event: "quote_viewed", payload: funnelTrip },
   ]);
 
-  const body: QuoteResponse = {
+  const body: QuoteResponseWithExtras = {
     ok: true,
     distanceKm: distance.distanceKm,
     durationMin: distance.durationMin,
     distanceSource: distance.source,
     offers,
+    // الرقم الذي اشتقّته القاعدة — يمضي مع المتصفح إلى معاينة الكوبون وإلى
+    // الحجز، فلا يشتقّه أحد مرتين ولا يظهر رقمان لشيء واحد.
+    waitingHours,
   };
   return Response.json(body, { headers: NO_STORE });
 }

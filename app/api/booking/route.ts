@@ -3,10 +3,14 @@ import { routeDistance } from "@/lib/geo/route";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import type {
   BookingError,
-  CreateBookingRequest,
   CreateBookingResponse,
   PaymentPlan,
 } from "@/lib/booking-types";
+import {
+  parseExtrasSelection,
+  parseLuggage,
+  type CreateBookingRequestWithExtras,
+} from "@/components/booking/extras";
 
 /**
  * POST /api/booking — إنشاء حجز ضيف (بلا حساب) من مدخلات الرحلة.
@@ -41,6 +45,24 @@ import type {
  * ٤٠٩ — لا ٥٠٣ — و`Checkout` يُسقط الكوبون تلقائياً فتنجح المحاولة التالية.
  * و`total` العائد هو الإجمالي بعد الخصم، فما يُقاس في القمع أدناه هو القيمة
  * الحقيقية للحجز لا القيمة قبل الخصم.
+ *
+ * الدفعة ٣ (هجرة 0031) — ثلاثة حقول جديدة تمرّ **كما وصلت** إلى الدالة:
+ *   `returnAt`  موعد العودة. يُتحقق منه هنا بنفس معاملة `pickupAt` حرفياً
+ *               (انحراف ساعة الجهاز + سقف سنة) **وزيادةً**: يجب أن يكون بعد
+ *               موعد الانطلاق، ولا يُقبل بلا موعد انطلاق أصلاً. والقاعدة تعيد
+ *               الفحص نفسه بـ `hint='invalid-input'` — طبقتان لا واحدة، لأن
+ *               `p_pickup_at` بقي بلا تحقق في SQL حتى هذه الهجرة.
+ *   `luggage`   عدد الحقائب. لا أثر له هنا إطلاقاً غير التمرير: الأهلية
+ *               (`luggage_capacity >= p_luggage`) داخل `quote_price` وحدها،
+ *               وفئة لا تتسع ترجع `class-unavailable` كما اليوم.
+ *   `extras`    **رموز وكميات فقط ولا سعر** — نفس مبدأ الكوبون حرفياً.
+ *               `price_extras` تقرأ الأسعار من الكتالوج وتقصّها على `max_qty`،
+ *               و`create_booking` تجمّدها في `booking_extras`.
+ *
+ * ⚠ **ساعات الانتظار لم تعد اختياراً في الشاشة**: تُشتق من موعد العودة داخل
+ * `create_booking` (‏`greatest(p_waiting_hours, derive_waiting_hours(...))`).
+ * وما يصل هنا في `waitingHours` هو الرقم الذي أرجعه `/api/quote` من نفس الدالة،
+ * فالمعروض للعميل والمُثبَّت في الحجز رقم واحد لا رقمان.
  *
  * 🔒 حدّ الـ whitelabel: جسم الرد يُبنى حقلاً حقلاً من `CreateBookingResponse`
  * (مرجع، توكن، إجمالي، مستحق، متبقٍّ، عملة) — فحتى لو أضافت الدالة أعمدة تكلفة
@@ -92,7 +114,7 @@ type CreateBookingRow = {
 };
 
 type ParseResult =
-  | { ok: true; value: CreateBookingRequest }
+  | { ok: true; value: CreateBookingRequestWithExtras }
   | { ok: false; message: string };
 
 function errorJson(code: string, message: string, status: number): Response {
@@ -146,6 +168,37 @@ function parsePickupAt(value: unknown): { ok: true; value: string | null } | { o
   const now = Date.now();
   if (time < now - CLOCK_SKEW_MS) return { ok: false };
   if (time > now + MAX_AHEAD_MS) return { ok: false };
+
+  return { ok: true, value: date.toISOString() };
+}
+
+/**
+ * موعد العودة: نفس حدود موعد الانطلاق **وزيادةً** ترتيبهما.
+ *
+ * ثلاثة رفضات صريحة بدل تجاهل صامت:
+ *   • تاريخ فاسد أو خارج النافذة (ماضٍ · أبعد من سنة) — كما `pickupAt`.
+ *   • عودة بلا انطلاق: `derive_waiting_hours` تحتاج الطرفين، وحجزٌ يحمل عودةً
+ *     بلا ذهاب لقطةٌ ناقصة يقرؤها التشغيل خطأً.
+ *   • عودة ≤ الانطلاق: تُرفض **ولا تُتجاهَل** (نص ق٨ في المواصفة). تجاهلها يعني
+ *     حجزاً يظن صاحبه أنه بعودة وليس فيه عودة.
+ */
+function parseReturnAt(
+  value: unknown,
+  pickupIso: string | null
+): { ok: true; value: string | null } | { ok: false; reason: "invalid" | "no-pickup" | "order" } {
+  if (value === undefined || value === null || value === "") return { ok: true, value: null };
+  if (typeof value !== "string") return { ok: false, reason: "invalid" };
+
+  const date = new Date(value);
+  const time = date.getTime();
+  if (Number.isNaN(time)) return { ok: false, reason: "invalid" };
+
+  const now = Date.now();
+  if (time < now - CLOCK_SKEW_MS) return { ok: false, reason: "invalid" };
+  if (time > now + MAX_AHEAD_MS) return { ok: false, reason: "invalid" };
+
+  if (!pickupIso) return { ok: false, reason: "no-pickup" };
+  if (time <= new Date(pickupIso).getTime()) return { ok: false, reason: "order" };
 
   return { ok: true, value: date.toISOString() };
 }
@@ -223,6 +276,31 @@ function parseBody(body: unknown): ParseResult {
     return { ok: false, message: "موعد الانطلاق يجب أن يكون تاريخاً صحيحاً في المستقبل." };
   }
 
+  const back = parseReturnAt(body.returnAt, pickup.value);
+  if (!back.ok) {
+    return {
+      ok: false,
+      message:
+        back.reason === "order"
+          ? "موعد العودة يجب أن يكون بعد موعد الانطلاق."
+          : back.reason === "no-pickup"
+            ? "حدد موعد الانطلاق أولاً حتى نحسب رحلة العودة."
+            : "موعد العودة يجب أن يكون تاريخاً صحيحاً في المستقبل.",
+    };
+  }
+
+  // الحقائب والخدمات (0031) — رفض صريح لكل سبب، ولا قصّ صامت هنا: القصّ على
+  // `max_qty` قرار القاعدة وحدها (`price_extras`).
+  const luggage = parseLuggage(body.luggage);
+  if (luggage === null) {
+    return { ok: false, message: "عدد الحقائب يجب أن يكون رقماً صحيحاً بين ٠ و٢٠." };
+  }
+
+  const extras = parseExtrasSelection(body.extras);
+  if (extras === null) {
+    return { ok: false, message: "الخدمات الإضافية المختارة غير صالحة. أعد اختيارها من القائمة." };
+  }
+
   const notes = cleanBlock(body.notes, MAX_NOTES_LENGTH);
 
   // رمز الكوبون: يُنظَّف ولا يُتحقق منه هنا. التحقق والحساب والحجز الذرّي
@@ -248,6 +326,9 @@ function parseBody(body: unknown): ParseResult {
       customerWhatsapp,
       pickupAt: pickup.value,
       notes: notes.length > 0 ? notes : null,
+      returnAt: back.value,
+      luggage,
+      extras,
     },
   };
 }
@@ -391,11 +472,32 @@ export async function POST(request: Request) {
   // ومع كوبون على قاعدة لم تُطبَّق عليها 0024 بعد: PostgREST لا يجد التوقيع
   // (PGRST202) فنُعيد المحاولة بلا المعامل — الحجز يتم بالسعر الكامل بدل أن
   // يسقط مسار الحجز كله أثناء نشر الهجرة (نفس نمط التوافق في `/api/quote`).
-  let { data, error } = input.couponCode
-    ? await supabase.rpc("create_booking", { ...baseArgs, p_coupon_code: input.couponCode })
-    : await supabase.rpc("create_booking", baseArgs);
+  //
+  // وحقول 0031 تُلحق **بالشرط لا دائماً**، لنفس السبب: حجزٌ بلا عودة ولا حقائب
+  // ولا خدمات يبقى نداءً بالتوقيع القائم فينجح على قاعدة لم تصلها الهجرة بعد.
+  const extrasSelection = input.extras ?? [];
+  const luggage = input.luggage ?? 0;
+  const hasBatchThreeFields =
+    input.returnAt !== null || luggage > 0 || extrasSelection.length > 0;
 
-  if (error && input.couponCode && (error.code === "PGRST202" || error.code === "42883")) {
+  const args = {
+    ...baseArgs,
+    ...(input.couponCode ? { p_coupon_code: input.couponCode } : {}),
+    ...(input.returnAt ? { p_return_at: input.returnAt } : {}),
+    ...(luggage > 0 ? { p_luggage: luggage } : {}),
+    ...(extrasSelection.length > 0 ? { p_extras: extrasSelection } : {}),
+  };
+
+  let { data, error } = await supabase.rpc("create_booking", args);
+
+  // ⚠ **السقوط مسموح للكوبون وحده.** إسقاط `p_return_at` أو `p_extras` عند
+  // فقدان التوقيع يعني حجزاً بلا موعد عودة في لقطته وبلا الخدمات التي اختارها
+  // العميل ورآها في السعر — أي إنشاء حجز مختلف عمّا وافق عليه، وهو بالضبط ما
+  // رفضته 0024 في حالة الكوبون (`0024_discounts.sql:1035`). فالفشل هنا يقع
+  // **مغلقاً**: ٥٠٣ ورسالة تدعو للتواصل، لا حجزاً ناقصاً بصمت.
+  const missingSignature = (code?: string) => code === "PGRST202" || code === "42883";
+
+  if (error && missingSignature(error.code) && !hasBatchThreeFields && input.couponCode) {
     ({ data, error } = await supabase.rpc("create_booking", baseArgs));
   }
 

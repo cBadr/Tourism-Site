@@ -18,13 +18,15 @@ import {
 } from "lucide-react";
 import { localeHref, telHref, waHref } from "@/components/site/links";
 import { cn } from "@/lib/utils";
-import type { DistanceSource, Offer } from "@/lib/pricing-types";
+import type { DistanceSource } from "@/lib/pricing-types";
+import type { ExtraSelection } from "@/lib/extras-types";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
 import type { PromoBanner } from "@/lib/discount-types";
 import { createFormatter, type LocaleFormatter } from "./format";
 import { PromoBanners } from "./promo-banner";
 import { Checkout, type CheckoutTrip } from "./checkout/checkout";
+import type { OfferWithExtras } from "./extras";
 
 /**
  * بطاقات عروض الأسعار — تعرض ناتج /api/quote كما هو دون أي حساب.
@@ -55,11 +57,21 @@ export type TripSummary = {
   destinationLabel: string;
   passengers: number;
   roundTrip: boolean;
+  /**
+   * ساعات الانتظار **كما اشتقّتها القاعدة** من موعدَي الذهاب والعودة
+   * (‏`derive_waiting_hours` عبر `/api/quote`) — لا كما قدّرها المتصفح.
+   */
   waitingHours: number;
   originLat?: number | null;
   originLng?: number | null;
   destLat?: number | null;
   destLng?: number | null;
+  /** الدفعة ٣ — تُمرَّر كما هي إلى مسار الحجز، ولا يُحسب منها شيء هنا */
+  luggage?: number;
+  pickupAt?: string | null;
+  returnAt?: string | null;
+  /** اختيار الخدمات: رموز وكميات فقط، ولا سعر (D-09) */
+  extras?: ExtraSelection[];
 };
 
 /** رابط صفحة طلب عرض سعر — لما هو خارج الحاسبة (جولات، مناسبات، إيجار يومي) */
@@ -90,11 +102,15 @@ function toCheckoutTrip(trip: TripSummary): CheckoutTrip | null {
     passengers: trip.passengers,
     roundTrip: trip.roundTrip,
     waitingHours: trip.waitingHours,
+    luggage: trip.luggage ?? 0,
+    pickupAt: trip.pickupAt ?? null,
+    returnAt: trip.returnAt ?? null,
+    extras: trip.extras ?? [],
   };
 }
 
 export type OffersProps = {
-  offers: Offer[];
+  offers: OfferWithExtras[];
   distanceKm: number;
   durationMin: number | null;
   distanceSource: DistanceSource;
@@ -128,7 +144,7 @@ const RECOMMENDATIONS = [
 
 /** رسالة واتساب الجاهزة بلغة الزائر — المسار والفئة والسعر لمن يفضّل الاستفسار أولاً */
 function inquiryMessage(
-  offer: Offer,
+  offer: OfferWithExtras,
   trip: TripSummary,
   t: Tx,
   fmt: LocaleFormatter
@@ -146,10 +162,30 @@ function inquiryMessage(
       value: fmt.passengers(trip.passengers),
     }),
   ];
+  if ((trip.luggage ?? 0) > 0) {
+    lines.push(
+      t("inquiry.luggage", "عدد الحقائب: {value}", { value: fmt.digits(trip.luggage ?? 0) })
+    );
+  }
+  if (trip.returnAt) {
+    lines.push(
+      t("inquiry.returnAt", "موعد العودة: {value}", { value: fmt.dateTime(trip.returnAt) ?? "" })
+    );
+  }
   if (trip.waitingHours > 0) {
     lines.push(
       t("inquiry.waiting", "ساعات الانتظار: {value}", {
         value: fmt.hours(trip.waitingHours),
+      })
+    );
+  }
+  // الخدمات بأسمائها كما سعّرتها القاعدة — رسالةٌ تُغفلها تجعل القناة المباشرة
+  // تُسعّر رحلة أخرى غير التي رآها العميل.
+  for (const line of offer.extras) {
+    lines.push(
+      t("inquiry.extra", "خدمة: {title} × {qty}", {
+        title: line.title,
+        qty: fmt.digits(line.qty),
       })
     );
   }
@@ -167,7 +203,7 @@ function inquiryMessage(
  * (المسار المطلق «/#contact» لأن الويدجت يعمل خارج الصفحة الرئيسية أيضاً.)
  */
 function inquiryHref(
-  offer: Offer,
+  offer: OfferWithExtras,
   trip: TripSummary,
   t: Tx,
   fmt: LocaleFormatter,
@@ -184,7 +220,7 @@ function inquiryHref(
 
 /** بنود تفصيل السعر المطبَّقة فقط — بلا صفوف صفرية تشوّش القراءة */
 function breakdownRows(
-  offer: Offer,
+  offer: OfferWithExtras,
   t: Tx,
   fmt: LocaleFormatter
 ): { label: string; value: string }[] {
@@ -252,7 +288,7 @@ function OfferCard({
   fmt,
   locale,
 }: {
-  offer: Offer;
+  offer: OfferWithExtras;
   rank: number;
   isEstimate: boolean;
   trip: TripSummary;
@@ -260,7 +296,7 @@ function OfferCard({
   compact?: boolean;
   /** الحجز الإلكتروني متاح (الإحداثيات حاضرة) */
   canBook: boolean;
-  onBook: (offer: Offer) => void;
+  onBook: (offer: OfferWithExtras) => void;
   t: Tx;
   fmt: LocaleFormatter;
   locale: string;
@@ -268,6 +304,8 @@ function OfferCard({
   const Icon = CLASS_ICONS[offer.classSlug] ?? Car;
   const recommendation = RECOMMENDATIONS[rank];
   const rows = breakdownRows(offer, t, fmt);
+  /** الخدمات موجودة فعلاً في هذا العرض — لا نستنتجها من `extrasTotal` وحده */
+  const hasExtras = offer.extras.length > 0;
   const href = inquiryHref(offer, trip, t, fmt, contact, locale);
   const isExternal = href.startsWith("http");
   const detailsId = `offer-${offer.classSlug}-breakdown`;
@@ -356,15 +394,58 @@ function OfferCard({
               </li>
             ))}
           </ul>
+
+          {/*
+            الخدمات بند مستقل بعد سعر الرحلة — كما تفعل القاعدة حرفياً:
+            `total = ride_total + extras_total` والخصم يقع على الرحلة وحدها.
+            سطرا «إجمالي الرحلة» و«الخدمات» لا يظهران حين لا خدمات، فلا صف صفري.
+          */}
+          {hasExtras ? (
+            <>
+              <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-2">
+                <span className="font-medium">{t("details.rideTotal", "إجمالي الرحلة")}</span>
+                <span className="font-semibold">{fmt.money(offer.rideTotal, offer.currency)}</span>
+              </div>
+              <ul className="flex flex-col gap-1.5">
+                {offer.extras.map((line) => (
+                  <li key={line.slug} className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">
+                      {line.qty > 1
+                        ? t("details.extraLine", "{title} × {qty}", {
+                            title: line.title,
+                            qty: fmt.digits(line.qty),
+                          })
+                        : line.title}
+                    </span>
+                    <span className="font-medium">{fmt.money(line.lineTotal, offer.currency)}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">
+                  {t("details.extrasTotal", "الخدمات الإضافية")}
+                </span>
+                <span className="font-medium">
+                  {fmt.money(offer.extrasTotal, offer.currency)}
+                </span>
+              </div>
+            </>
+          ) : null}
+
           <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-2">
             <span className="font-semibold">{t("details.total", "الإجمالي")}</span>
             <span className="font-bold">{priceLabel}</span>
           </div>
           <p className="text-xs leading-6 text-muted-foreground">
-            {t(
-              "details.note",
-              "البنود أعلاه مكوّنات السعر، والإجمالي هو الناتج النهائي بعد تطبيقها."
-            )}
+            {hasExtras
+              ? t(
+                  "details.noteWithExtras",
+                  "البنود أعلاه مكوّنات سعر الرحلة، والخدمات تُضاف إليه كبند مستقل — وأي رمز خصم يخصم سعر الرحلة وحده."
+                )
+              : t(
+                  "details.note",
+                  "البنود أعلاه مكوّنات السعر، والإجمالي هو الناتج النهائي بعد تطبيقها."
+                )}
           </p>
         </div>
       </details>
@@ -491,7 +572,7 @@ export function Offers({
 }: OffersProps) {
   const t = useT("booking.offers");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
-  const [bookingOffer, setBookingOffer] = React.useState<Offer | null>(null);
+  const [bookingOffer, setBookingOffer] = React.useState<OfferWithExtras | null>(null);
 
   const checkoutTrip = toCheckoutTrip(trip);
   const canBook = checkoutTrip !== null;
@@ -499,7 +580,19 @@ export function Offers({
   // تغيّر الرحلة (بحث جديد) يُلغي أي مسار حجز مفتوح على عرض قديم.
   // نمط «تعديل الحالة عند تغيّر الخصائص» الموثّق في React: تعديل أثناء العرض
   // يعيد التصيير فوراً قبل أي رسم — لا وميض ولا تأثير جانبي.
-  const tripKey = `${trip.originLabel}|${trip.destinationLabel}|${trip.passengers}|${trip.roundTrip}|${trip.waitingHours}`;
+  // كل مُدخل يغيّر السعر داخل المفتاح — وإلا بقي مسار الحجز مفتوحاً على عرض
+  // قديم بعد تغيير الحقائب أو الخدمات أو موعد العودة.
+  const tripKey = [
+    trip.originLabel,
+    trip.destinationLabel,
+    trip.passengers,
+    trip.roundTrip,
+    trip.waitingHours,
+    trip.luggage ?? 0,
+    trip.pickupAt ?? "",
+    trip.returnAt ?? "",
+    (trip.extras ?? []).map((item) => `${item.slug}:${item.qty}`).join(","),
+  ].join("|");
   const [lastTripKey, setLastTripKey] = React.useState(tripKey);
   if (lastTripKey !== tripKey) {
     setLastTripKey(tripKey);
@@ -551,11 +644,25 @@ export function Offers({
             </span>
           ) : null}
           <span>{fmt.passengers(trip.passengers)}</span>
+          {(trip.luggage ?? 0) > 0 ? (
+            <span>
+              {t("summary.luggage", "الحقائب: {value}", {
+                value: fmt.digits(trip.luggage ?? 0),
+              })}
+            </span>
+          ) : null}
           <span>
             {trip.roundTrip
               ? t("summary.roundTrip", "ذهاب وعودة")
               : t("summary.oneWay", "ذهاب فقط")}
           </span>
+          {trip.returnAt ? (
+            <span>
+              {t("summary.returnAt", "العودة: {value}", {
+                value: fmt.dateTime(trip.returnAt) ?? "",
+              })}
+            </span>
+          ) : null}
           {trip.waitingHours > 0 ? (
             <span>
               {t("summary.waiting", "انتظار: {value}", {

@@ -8,6 +8,8 @@ import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { SearchWidget } from "@/components/booking/search-widget";
 import { PromoBanners } from "@/components/booking/promo-banner";
+import { getPublicExtras } from "@/components/booking/extras-catalog";
+import { getMaxLuggageCapacity } from "@/components/booking/fleet-luggage";
 import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
 
@@ -54,13 +56,15 @@ const TRUST_POINTS = [
     key: "clearTerms",
     icon: BadgeCheck,
     title: "بنود واضحة بلا مفاجآت",
-    text: "كل عرض يعرض تفاصيله: المصروف الأساسي، المسافة، الانتظار، والذهاب والعودة.",
+    text: "كل عرض يعرض تفاصيله: المصروف الأساسي، المسافة، الانتظار، والخدمات الإضافية إن اخترتها.",
   },
   {
     key: "instantEdit",
     icon: Clock,
+    // ساعات الانتظار لم تعد حقلاً يغيّره الزائر (الدفعة ٣) — والنص كان يعد
+    // بحقل محذوف، وهو بالضبط «شاشة تَعِد بما لا تفعله».
     title: "تعديل الرحلة في ثوانٍ",
-    text: "غيّر عدد الركاب أو ساعات الانتظار أو نوع الرحلة، ويتحدث السعر فوراً.",
+    text: "غيّر عدد الركاب أو الحقائب أو موعد العودة أو نوع الرحلة، ويتحدث السعر فوراً.",
   },
 ] as const;
 
@@ -69,13 +73,20 @@ export default async function BookPage() {
   // الخصومات (المرحلة ١٢أ): الصفحة الخادمية وحدها تقرأ `site_settings` وجدول
   // البانرات، وتمرّرهما props إلى جزيرة العميل — فلا يقرأ المتصفح إعداداً ولا
   // يستنتج وجود حملة من غياب حقل. البانرات محتوى عرض بلا أثر على أي سعر.
-  const [settings, t, offerBanners, checkoutBanners, discountEnabled] = await Promise.all([
-    getSettings(locale),
-    getT("pages.book", locale),
-    getPromoBanners("offers"),
-    getPromoBanners("checkout"),
-    isDiscountEnabled(),
-  ]);
+  const [settings, t, offerBanners, checkoutBanners, discountEnabled, extras, maxLuggage] =
+    await Promise.all([
+      getSettings(locale),
+      getT("pages.book", locale),
+      getPromoBanners("offers"),
+      getPromoBanners("checkout"),
+      isDiscountEnabled(),
+      // كتالوج الخدمات الإضافية (0031) — الصفحة الخادمية وحدها تقرؤه
+      getPublicExtras(),
+      // سقف عدّاد الحقائب من الأسطول النشط: بدونه يصعد العدّاد إلى ٢٠ ثابتة
+      // فيعرض على العميل رقماً تضمن معه القاعدةُ صفرَ عروض. والفشل يعيد null
+      // فيبقى السقف الثابت كما كان.
+      getMaxLuggageCapacity(),
+    ]);
   const contact = {
     whatsapp: settings.contact.whatsapp,
     phone: settings.contact.phone,
@@ -122,6 +133,8 @@ export default async function BookPage() {
               locale={locale}
               discountEnabled={discountEnabled}
               checkoutBanners={checkoutBanners}
+              extras={extras}
+              maxLuggage={maxLuggage}
             />
           </div>
         </section>

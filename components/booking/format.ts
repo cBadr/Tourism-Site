@@ -120,6 +120,25 @@ export function passengersLabel(count: number, locale: string = DEFAULT_LOCALE):
   return `${toArabicDigits(n)} راكباً`;
 }
 
+/**
+ * صيغة الجمع للحقائب: حقيبة واحدة / حقيبتان / ٦ حقائب / ٢٠ حقيبة.
+ *
+ * وليست ترفاً لغوياً: سقف عدّاد الحقائب يُقرأ من الأسطول (‏`fleet-luggage.ts`)
+ * فيتغير رقمه بتغير سيارات المالك، ونصٌّ يُلصق «حقيبة» بأي عدد يُنتج «٦ حقيبة».
+ * نفس قاعدة `passengersLabel` و`hoursText` حرفياً: ٣–١٠ جمعُ قلة، وما فوقها
+ * تمييزٌ مفرد.
+ */
+export function bagsLabel(count: number, locale: string = DEFAULT_LOCALE): string {
+  const n = Math.max(0, Math.round(count));
+  if (!isArabicLocale(locale)) {
+    return `${formatAmount(n, locale)} ${n === 1 ? "bag" : "bags"}`;
+  }
+  if (n === 1) return "حقيبة واحدة";
+  if (n === 2) return "حقيبتان";
+  if (n <= 10) return `${toArabicDigits(n)} حقائب`;
+  return `${toArabicDigits(n)} حقيبة`;
+}
+
 /** صيغة الجمع للساعات: ساعة واحدة / ساعتان / ٣ ساعات — أو 1 hour / 3 hours */
 export function hoursText(count: number, locale: string = DEFAULT_LOCALE): string {
   const n = Math.max(0, Math.round(count));
@@ -327,6 +346,7 @@ export type LocaleFormatter = {
   money: (value: number, currency: string) => string;
   distance: (km: number) => string;
   passengers: (count: number) => string;
+  bags: (count: number) => string;
   hours: (count: number) => string;
   waiting: (count: number) => string;
   duration: (minutes: number) => string;
@@ -349,6 +369,7 @@ export function createFormatter(locale: string = DEFAULT_LOCALE): LocaleFormatte
     money: (value, currency) => formatMoney(value, currency, resolved),
     distance: (km) => formatDistance(km, resolved),
     passengers: (count) => passengersLabel(count, resolved),
+    bags: (count) => bagsLabel(count, resolved),
     hours: (count) => hoursText(count, resolved),
     waiting: (count) => waitingLabel(count, resolved),
     duration: (minutes) => durationLabel(minutes, resolved),

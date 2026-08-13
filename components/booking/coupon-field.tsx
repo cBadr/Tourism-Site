@@ -6,11 +6,8 @@ import { cn } from "@/lib/utils";
 import { useT, type Tx } from "@/components/site/i18n";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { REJECTION_TEXT } from "@/lib/discounts/messages";
-import type {
-  AppliedDiscount,
-  VerifyCouponRequest,
-  VerifyCouponResponse,
-} from "@/lib/discounts/types";
+import type { AppliedDiscount, VerifyCouponResponse } from "@/lib/discounts/types";
+import type { VerifyCouponRequestWithLuggage } from "./extras";
 import { createFormatter, type LocaleFormatter } from "./format";
 
 /**
@@ -42,6 +39,16 @@ import { createFormatter, type LocaleFormatter } from "./format";
  * `/api/discount/verify` مسار عام يقبل التخمين؛ إرسال رقم العميل إليه يبني
  * ربطاً بين رمز كوبون وشخص في أكثر المسارات انكشافاً. سقف العميل يُفرض في
  * `redeem_coupon` داخل معاملة الحجز حيث الهاتف معروف أصلاً.
+ *
+ * ── وما يغادره **بالضرورة** منذ الدفعة ٣: عدد الحقائب ─────────────────────
+ * الأهلية صارت شرطين (‏`capacity ≥ passengers` **و** `luggage_capacity ≥
+ * luggage`)، والاختيار بعدهما `order by capacity asc limit 2`. فالحقائب
+ * **تُزيح** زوج الفئات المعروض ولا تضيّقه: من يحمل ستّ حقائب لراكبين يرى
+ * «ميني باص وباص»، فإن نادى مسارُ الكوبون `quote_public` بلا حقائب عاد إليه
+ * بـ«سيدان وسوّار» ولم يجد فئته — فيرد ٤٠٩ ونصيحةً بإعادة الحساب لا يمكن أن
+ * تنجح. لذلك تُرسَل الحقائب هنا كما تُرسَل إلى `/api/quote` حرفياً.
+ * ⚠ **ولا تُرسَل الخدمات**: الكوبون يخصم الرحلة وحدها (القرار ب)، والخدمات
+ * تُجمع فوق الرحلة المخصومة في `Checkout` لا في هذه المعاينة.
  */
 
 /** أقصى طول رمز — مرآة لحدّ الخادم، لا حارس (الحارس هناك) */
@@ -55,6 +62,11 @@ export type CouponTripInput = {
   passengers: number;
   roundTrip: boolean;
   waitingHours: number;
+  /**
+   * عدد الحقائب كما سُعِّرت به الرحلة — **مُدخل أهلية لا معلومة عرض**: بدونه
+   * يستقبل مسارُ التحقق زوج فئات آخر فلا يجد فئة العميل (انظر الترويسة).
+   */
+  luggage?: number;
 };
 
 export type CouponFieldProps = {
@@ -114,13 +126,15 @@ export function CouponField({
       return;
     }
 
-    const payload: VerifyCouponRequest = {
+    const payload: VerifyCouponRequestWithLuggage = {
       code: cleaned,
       origin: { lat: trip.originLat, lng: trip.originLng },
       destination: { lat: trip.destLat, lng: trip.destLng },
       passengers: trip.passengers,
       roundTrip: trip.roundTrip,
       waitingHours: trip.waitingHours,
+      // نفس الرقم الذي بُنيت عليه البطاقة — وإلا سعّر الخادم فئتين غير المعروضتين
+      luggage: trip.luggage ?? 0,
       classSlug,
     };
 
@@ -283,21 +297,33 @@ export function CouponField({
 /**
  * صفوف تفصيل السعر بعد الخصم — الإجمالي قبل، قيمة الخصم، الإجمالي بعد.
  * ثلاثة أرقام كلها من `apply_discount`، ولا رابع يُشتق منها هنا.
+ *
+ * `scope` ليس تنسيقاً: منذ الدفعة ٣ صار الكوبون يخصم **سعر الرحلة وحده**
+ * والخدمات تُجمع فوقه (القرار ب في `lib/extras-types.ts`). فحين توجد خدمات في
+ * الحجز تصير كلمة «الإجمالي» كاذبة — وهذه الصفوف تسمّي ما تخصمه فعلاً.
  */
 export function DiscountRows({
   discount,
   t,
   fmt,
+  scope = "total",
 }: {
   discount: AppliedDiscount;
   /** مترجم مساحة `discount` */
   t: Tx;
   fmt: LocaleFormatter;
+  /** `ride` حين تُضاف خدمات بعد الخصم، و`total` حين لا شيء بعده */
+  scope?: "total" | "ride";
 }) {
+  const rideScope = scope === "ride";
   return (
     <>
       <div className="flex items-center justify-between gap-3">
-        <dt className="text-muted-foreground">{t("rows.before", "الإجمالي قبل الخصم")}</dt>
+        <dt className="text-muted-foreground">
+          {rideScope
+            ? t("rows.rideBefore", "سعر الرحلة قبل الخصم")
+            : t("rows.before", "الإجمالي قبل الخصم")}
+        </dt>
         <dd className="font-medium line-through decoration-muted-foreground/60">
           {fmt.money(discount.totalBefore, discount.currency)}
         </dd>
@@ -314,7 +340,11 @@ export function DiscountRows({
         </dd>
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-border pt-2">
-        <dt className="font-semibold">{t("rows.after", "الإجمالي بعد الخصم")}</dt>
+        <dt className="font-semibold">
+          {rideScope
+            ? t("rows.rideAfter", "سعر الرحلة بعد الخصم")
+            : t("rows.after", "الإجمالي بعد الخصم")}
+        </dt>
         <dd className="font-bold">{fmt.money(discount.totalAfter, discount.currency)}</dd>
       </div>
     </>

@@ -58,7 +58,7 @@ begin
     ('public.submit_price_list(uuid)'),
     ('public.review_price_list(uuid, boolean, text)'),
     ('public.quote_price(numeric, integer, boolean, numeric)'),
-    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric)'),
+    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)'),
     ('public.haversine_km(numeric, numeric, numeric, numeric)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
@@ -1110,7 +1110,7 @@ begin
 
   -- (ي-٣-ج) والتوقيع الثماني للتسعير للخادم وحده (الرباعي يبقى متاحاً)
   if has_function_privilege('authenticated',
-       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric)',
+       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)',
        'EXECUTE') then
     raise exception '(ي-٣-ج) ثغرة: المسجَّل ينفّذ التسعير المُفصَّل بالإحداثيات';
   end if;
@@ -1130,14 +1130,36 @@ begin
     raise exception '(ي-٥) ثغرة: دالة كشف الأرقام الداخلية متاحة لدور عام';
   end if;
 
-  -- (ي-٦) التوقيع الرباعي (بلا إحداثيات) يبقى متاحاً للزائر — لا يكشف مصدر
-  -- السعر ولا يمس مسار المتعهدين، وهو ما تعتمد عليه أي واجهة قديمة.
-  -- أما الثماني فللخادم وحده (فُحص في ي-٣-ج) لأن /api/quote يمر بعميل الخدمة.
-  if not has_function_privilege('anon', 'public.quote_price(numeric, integer, boolean, numeric)', 'EXECUTE') then
-    raise exception '(ي-٦) التسعير الأساسي لم يعد متاحاً للزائر';
+  -- (ي-٦)🔒 **غلافا التسعير مسحوبان عن الزائر** (هجرة 0032) — وهذا الفحص كان
+  -- قبلها يحرس وهماً، وهو النمط ٩ في `LESSONS.md` بنصّه.
+  --
+  -- كان يؤكد أن الزائر **يملك بتّ المنحة** على الغلاف الرباعي، ويقرأ ذلك على أنه
+  -- «التسعير الأساسي متاح له». والحقيقة أن النداء كان يفشل دائماً: الغلاف
+  -- `security invoker` وينادي التاسعة `security definer` المسحوبة من `anon` منذ
+  -- 0011 — فيموت في الإطار التالي بـ«permission denied». أي أن البتّ كان مضلِّلاً،
+  -- وقد بُني عليه في 0031 حكمٌ خاطئ («باب خلفي مفتوح») ثم قرارُ إبقاءٍ خاطئ.
+  --
+  -- والفحص الآن **ينفّذ** لا يقرأ بتّاً: هذا هو الفرق بين حارس وطمأنينة.
+  if has_function_privilege('anon', 'public.quote_price(numeric, integer, boolean, numeric)', 'EXECUTE')
+     or has_function_privilege('anon', 'public.quote_price(numeric, integer, boolean, numeric, integer)', 'EXECUTE') then
+    raise exception '(ي-٦) غلاف التسعير عاد ممنوحاً للزائر — منحةٌ لا يستطيع استعمالها تُبنى عليها أحكام خاطئة';
   end if;
+
+  -- والتنفيذ الحيّ: الزائر يسعّر رحلته عبر `quote_public` وحدها ولا شيء غيرها
+  declare
+    v_anon_ok boolean := false;
+  begin
+    set local role anon;
+    perform 1 from public.quote_public(220, 1, false, 0, null, null, null, null, null, 0, null) limit 1;
+    v_anon_ok := true;
+    reset role;
+  exception
+    when others then
+      reset role;
+      raise exception '(ي-٦) الزائر لم يعد يسعّر رحلته عبر quote_public — المسار العام مقطوع: %', sqlerrm;
+  end;
   if has_function_privilege('anon',
-       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric)',
+       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)',
        'EXECUTE') then
     raise exception '(ي-٦) ثغرة: الزائر ينفّذ التسعير المُفصَّل بالإحداثيات';
   end if;
@@ -1151,16 +1173,19 @@ begin
   -- فالحارس هنا يحوّل «تغيّر التوقيع» إلى رسالة صريحة تقول ما يجب تحديثه.
   if to_regprocedure('public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text, text)') is null then
+       text, text, text, text, text, text, timestamptz, text, text,
+       timestamptz, integer, jsonb)') is null then
     raise exception '(ي-٧) توقيع create_booking تغيّر عمّا يفحصه هذا الاختبار — حدّث النص هنا قبل أي شيء';
   end if;
 
   if has_function_privilege('anon', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text, text)', 'EXECUTE')
+       text, text, text, text, text, text, timestamptz, text, text,
+       timestamptz, integer, jsonb)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text, text)', 'EXECUTE') then
+       text, text, text, text, text, text, timestamptz, text, text,
+       timestamptz, integer, jsonb)', 'EXECUTE') then
     raise exception '(ي-٧) ثغرة: create_booking عادت متاحة لدور عام (نقض د١ من 0009)';
   end if;
 

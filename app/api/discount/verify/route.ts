@@ -7,9 +7,12 @@ import type {
   CouponRejected,
   CouponRequestError,
   PublicRejection,
-  VerifyCouponRequest,
   VerifyCouponResponse,
 } from "@/lib/discounts/types";
+import {
+  parseLuggage,
+  type VerifyCouponRequestWithLuggage,
+} from "@/components/booking/extras";
 
 /**
  * POST /api/discount/verify — تحقق عام من رمز كوبون ومعاينة أثره على السعر.
@@ -54,6 +57,20 @@ import type {
  *     حيث الهاتف معروف أصلاً). فلا يُرسل رقم إلى مسار عام يقبل التخمين، ولا
  *     يُبنى هنا أي ربط بين رمز كوبون وشخص.
  *
+ * ── الدفعة ٣ (هجرة 0031): الحقائب تعبر، والخدمات لا ────────────────────────
+ *
+ * **الحقائب `p_luggage` شرط صحة لا حقل إضافي.** الأهلية صارت شرطين، والاختيار
+ * بعدهما `order by capacity asc limit 2` — فالحقائب **تُزيح** زوج الفئات ولا
+ * تضيّقه. نداءٌ بلا حقائب لرحلةٍ سُعِّرت بست حقائب يعيد «سيدان وسوّار» بينما
+ * العميل يحمل رمزه على «ميني باص»، فلا يجد المسارُ فئته ويرد `class-unavailable`
+ * مع نصيحة «أعد حساب السعر» **لا يمكن أن تنجح**: إعادة الحساب تُنتج الفئة نفسها
+ * التي لا يراه هذا المسار. أي حلقة مغلقة برسالة كاذبة — لا رفض كوبون.
+ *
+ * **ولا `p_extras` هنا بقرار المالك (ب).** الكوبون يخصم **سعر الرحلة وحده**،
+ * والمعاينة تقيس أثره على الرحلة؛ ومسار الحجز يجمع الخدمات فوق الرحلة المخصومة
+ * (`checkout.tsx`)، و`create_booking` تفعل الشيء نفسه في القاعدة. تمريرُها هنا
+ * يجعل `totalAfter` إجمالاً ثالثاً لا تحسبه أي جهة أخرى.
+ *
  * ── ما لا يفعله هذا المسار ────────────────────────────────────────────────
  * لا يُصدر حدث قمع ولا يكتب صفاً في `funnel_events`: الموجز يقول صراحةً
  * «`funnel_events` بلا PII بنيوياً — لا تضف إليه حقلاً يحمل رمز كوبون مرتبطاً
@@ -87,8 +104,12 @@ const ABSOLUTE_MAX_PER_MINUTE = 60;
 const CURRENCY = "EGP";
 
 /**
- * صف `quote_public` (التوقيع التساعي، هجرة 0024) — الأعمدة التي يقرؤها هذا
+ * صف `quote_public` (التوقيع الحادي عشر، هجرة 0031) — الأعمدة التي يقرؤها هذا
  * المسار وحدها. لا وجود لعمود تكلفة أو هامش في نوع الإرجاع أصلاً.
+ *
+ * ولا يُقرأ هنا `ride_total` ولا `extras_total`: النداء بلا خدمات أصلاً، فـ
+ * `ride_total = total` حتماً، وقراءةُ عمودٍ يساوي عموداً آخر تُغري بحساب فرقٍ
+ * لا معنى له.
  */
 type QuotePublicRow = {
   class_slug: string;
@@ -152,7 +173,9 @@ function normalizeCode(value: unknown): string {
   return value.replace(/\s+/g, "").slice(0, MAX_CODE_LENGTH).toUpperCase();
 }
 
-type ParseResult = { ok: true; value: VerifyCouponRequest } | { ok: false; message: string };
+type ParseResult =
+  | { ok: true; value: VerifyCouponRequestWithLuggage }
+  | { ok: false; message: string };
 
 function parseBody(body: unknown): ParseResult {
   if (!isRecord(body)) return { ok: false, message: "جسم الطلب غير صالح." };
@@ -198,6 +221,14 @@ function parseBody(body: unknown): ParseResult {
     return { ok: false, message: "اختر فئة السيارة أولاً ثم جرّب رمز الخصم." };
   }
 
+  // الحقائب (0031): نفس مُحلِّل `/api/quote` حرفياً — مصدر واحد للحدود، ورفضٌ
+  // صريح لا ابتلاع: قيمة مشوَّهة تعني ٤٠٠ لا تسعيراً بحقائب صفر ثم «فئة غير
+  // متاحة» لا يفهمها العميل. والغائب صفرٌ فيبقى كل مستدعٍ قديم صحيحاً.
+  const luggage = parseLuggage(body.luggage);
+  if (luggage === null) {
+    return { ok: false, message: "عدد الحقائب يجب أن يكون عدداً صحيحاً بين ٠ و٢٠." };
+  }
+
   return {
     ok: true,
     value: {
@@ -207,6 +238,7 @@ function parseBody(body: unknown): ParseResult {
       passengers,
       roundTrip: body.roundTrip,
       waitingHours,
+      luggage,
       classSlug,
     },
   };
@@ -271,7 +303,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // ── (٣) السعر والخصم في استدعاء واحد بلا أي رقم داخلي يعبر إلى هنا ─────
-  const { data, error } = await supabase.rpc("quote_public", {
+  const quoteArgs = {
     p_distance_km: distance.distanceKm,
     p_passengers: input.passengers,
     p_round_trip: input.roundTrip,
@@ -281,7 +313,23 @@ export async function POST(request: Request): Promise<Response> {
     p_dest_lat: input.destination.lat,
     p_dest_lng: input.destination.lng,
     p_coupon_code: input.code,
+  };
+
+  // ⚠ `p_luggage` يُمرَّر **دائماً** ولو كان صفراً: تمريره شرطياً يعني توقيعين
+  // مختلفين بحسب المُدخل، وأولهما يخفي فشل الآخر. ولا `p_extras` (القرار ب).
+  let { data, error } = await supabase.rpc("quote_public", {
+    ...quoteArgs,
+    p_luggage: input.luggage ?? 0,
   });
+
+  // درجةٌ واحدة في سلّم التوافق، ونظيرها الحرفي في `/api/quote` رقم (١): قاعدة
+  // قبل 0031 لا تعرف التوقيع الحادي عشر. والسقوط هنا **ليس** السقوط الممنوع
+  // أسفله: التوقيع التساعي ما زال يحمل معامل الكوبون فيبقى الحكم حقيقياً، وما
+  // يسقط هو وعي الحقائب — وهو ساقطٌ في `/api/quote` نفسه على تلك القاعدة،
+  // فيبقى الطرفان على زوج الفئات ذاته ولا تنشأ رسالة «الفئة لم تعد متاحة».
+  if (error && (error.code === "PGRST202" || error.code === "42883")) {
+    ({ data, error } = await supabase.rpc("quote_public", quoteArgs));
+  }
 
   if (error) {
     // التوقيع التساعي غير موجود (هجرة 0024 غير مطبَّقة) ⇒ البيئة غير جاهزة.

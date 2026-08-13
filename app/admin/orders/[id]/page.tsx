@@ -5,6 +5,7 @@ import {
   Ban,
   CheckCircle2,
   Coins,
+  ConciergeBell,
   ExternalLink,
   Eye,
   EyeOff,
@@ -108,6 +109,21 @@ type Payment = {
   uploadedByAdmin: boolean;
 };
 
+/**
+ * سطر خدمة إضافية على هذا الحجز — صف في `booking_extras` (هجرة `0031`).
+ *
+ * 🔒 **لقطة مجمَّدة لا مرجع حي**: الاسم وسعر الوحدة والإجمالي كلها مخزَّنة لحظة
+ * الحجز، فتعديل سعر الخدمة في `/admin/extras` غداً لا يعيد كتابة حجز الأمس (نفس
+ * مبرر D-10 ولقطة الكوبون). ولا حساب هنا: `line_total` يُقرأ ولا يُضرب.
+ */
+type BookingExtra = {
+  key: string;
+  title: string;
+  qty: number | null;
+  unitPrice: number | null;
+  lineTotal: number | null;
+};
+
 type EventRow = {
   key: string;
   label: string;
@@ -164,6 +180,16 @@ type Booking = {
 };
 
 const numberOf = (v: unknown): number => asNumber(v) ?? 0;
+
+/** صيغة الجمع العربية للحقائب — عرضٌ محض على غرار `hoursText` في وحدة التنسيق */
+function luggageText(count: number): string {
+  const n = Math.max(0, Math.round(count));
+  if (n === 0) return "بلا حقائب";
+  if (n === 1) return "حقيبة واحدة";
+  if (n === 2) return "حقيبتان";
+  if (n <= 10) return `${toArabicDigits(n)} حقائب`;
+  return `${toArabicDigits(n)} حقيبة`;
+}
 
 /**
  * رسائل النجاح بحسب الإجراء المنفَّذ — كل إجراء يعيد رمزه في `saved` بدل «1»
@@ -314,6 +340,9 @@ async function loadOrder(id: string): Promise<{
   profit: BookingProfit | null;
   /** الرمز الذي يراه المتعهد لهذه الرحلة (0028) — `null` قبل تنفيذ الهجرة */
   partnerCode: string | null;
+  extras: BookingExtra[];
+  /** جدول `booking_extras` مقروء — أي أن هجرة `0031` مطبَّقة */
+  extrasReady: boolean;
 }> {
   const blank = {
     ready: false,
@@ -328,6 +357,8 @@ async function loadOrder(id: string): Promise<{
     profitReady: false,
     profit: null as BookingProfit | null,
     partnerCode: null as string | null,
+    extras: [] as BookingExtra[],
+    extrasReady: false,
   };
 
   const supabase = await createServerSupabase();
@@ -365,18 +396,28 @@ async function loadOrder(id: string): Promise<{
     marginAmount: asNumber(row.margin_amount),
   };
 
-  const [paymentsRes, eventsRes, accountsRes, subcontractorName, profitRes, partnerCodeRes] =
-    await Promise.all([
-      supabase.from("payments").select("*").eq("booking_id", id),
-      supabase.from("booking_events").select("*").eq("booking_id", id),
-      supabase.from("payment_accounts").select("id, label, kind, handle"),
-      resolveSubcontractorName(booking.subcontractorId),
-      loadBookingProfit(supabase, id),
-      // الرمز الذي يراه المتعهد — **يُقرأ من القاعدة ولا يُشتق هنا**: اشتقاقه في
-      // TypeScript يعني صيغتين لقيمة واحدة تنحرفان بلا صوت (النمط ٨ في LESSONS).
-      // وقبل 0028 لا وجود للدالة فيبقى `null` ولا يُعرض شيء.
-      supabase.rpc("partner_trip_code", { p_booking_id: id }),
-    ]);
+  const [
+    paymentsRes,
+    eventsRes,
+    accountsRes,
+    subcontractorName,
+    profitRes,
+    partnerCodeRes,
+    extrasRes,
+  ] = await Promise.all([
+    supabase.from("payments").select("*").eq("booking_id", id),
+    supabase.from("booking_events").select("*").eq("booking_id", id),
+    supabase.from("payment_accounts").select("id, label, kind, handle"),
+    resolveSubcontractorName(booking.subcontractorId),
+    loadBookingProfit(supabase, id),
+    // الرمز الذي يراه المتعهد — **يُقرأ من القاعدة ولا يُشتق هنا**: اشتقاقه في
+    // TypeScript يعني صيغتين لقيمة واحدة تنحرفان بلا صوت (النمط ٨ في LESSONS).
+    // وقبل 0028 لا وجود للدالة فيبقى `null` ولا يُعرض شيء.
+    supabase.rpc("partner_trip_code", { p_booking_id: id }),
+    // لقطة الخدمات الإضافية (0031). القراءة متسامحة: قبل الهجرة يعود خطأ «لا
+    // جدول» فتبقى القائمة فارغة ولا تسقط الشاشة، كما تفعل بقية جداول اللوحة.
+    supabase.from("booking_extras").select("*").eq("booking_id", id),
+  ]);
 
   const accounts = new Map<string, Account>();
   for (const acc of (accountsRes.data ?? []) as Record<string, unknown>[]) {
@@ -457,6 +498,23 @@ async function loadOrder(id: string): Promise<{
     };
   });
 
+  /**
+   * ترتيب العرض بالاسم — `booking_extras` بلا عمود ترتيب (مفتاحه مركّب)،
+   * وترتيبٌ ثابت أهون من ترتيب يتبدّل بين تحميلين. وهذا **عرضٌ لا حساب**:
+   * لا يُجمع مبلغ ولا يُعاد ضربُ كمية في هذا الملف.
+   */
+  const extras: BookingExtra[] = (
+    extrasRes.error ? [] : ((extrasRes.data ?? []) as Record<string, unknown>[])
+  )
+    .map((row, index) => ({
+      key: asText(pick(row, ["extra_id"])) ?? `extra-${index}`,
+      title: asText(pick(row, ["title_snapshot", "titleSnapshot", "title"])) ?? "خدمة إضافية",
+      qty: asNumber(pick(row, ["qty", "quantity"])),
+      unitPrice: asNumber(pick(row, ["unit_price", "unitPrice"])),
+      lineTotal: asNumber(pick(row, ["line_total", "lineTotal"])),
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title, "ar"));
+
   return {
     ready: true,
     booking,
@@ -471,6 +529,8 @@ async function loadOrder(id: string): Promise<{
     profit: profitRes.profit,
     // الدالة تُرجع نصاً مفرداً؛ وقبل 0028 يعود خطأ «لا دالة» فيبقى null بهدوء
     partnerCode: partnerCodeRes.error ? null : (asText(partnerCodeRes.data) ?? null),
+    extras,
+    extrasReady: !extrasRes.error,
   };
 }
 
@@ -648,6 +708,107 @@ function BookingAccountingCard({
   );
 }
 
+/**
+ * الخدمات الإضافية على هذا الحجز — ما اشتراه العميل فوق الرحلة.
+ *
+ * كل رقم هنا **مقروء من لقطة `booking_extras`** لا محسوباً: الكمية وسعر الوحدة
+ * وإجمالي السطر خزّنتها `create_booking` لحظة الحجز، والمجموع يُقرأ من
+ * `trip.extrasTotal` — فلا جمع ولا ضرب في هذا الملف (قرار معماري ٤).
+ *
+ * ⚠ **وهذه البطاقة لا نظير لها في بورتال المتعهد ولا في حمولة الإسناد** — قرار
+ * بدر الثالث: المتعهد لا ينفّذ هذه الخدمات في هذه الدفعة، فرؤيتها تُوهمه بعملٍ
+ * ليس عليه وبمالٍ ليس له.
+ */
+function BookingExtrasCard({
+  extras,
+  extrasReady,
+  extrasTotal,
+  currency,
+}: {
+  extras: BookingExtra[];
+  extrasReady: boolean;
+  extrasTotal: number | null;
+  currency: string;
+}) {
+  return (
+    <Card className="space-y-4 p-5">
+      <div>
+        <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+          <ConciergeBell className="size-4 text-primary" />
+          الخدمات الإضافية
+          <HelpTip>
+            ما اشتراه العميل فوق الرحلة بأسعار لحظة الحجز. الأسماء والأسعار هنا{" "}
+            <span className="font-semibold">نسخة مجمَّدة</span>: تعديل الكتالوج في شاشة
+            «الخدمات الإضافية» لا يغيّر حرفاً في هذا الحجز. وقيمتها تُضاف إلى الإجمالي{" "}
+            <span className="font-semibold">بعد</span> الذروة والخصم معاً — فلا الذروة زادتها
+            ولا الكوبون خصمها، ولا تدخل حساب الهامش ولا سقف موجة البث.
+          </HelpTip>
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          هذه الخدمات ننفّذها نحن — لا تظهر للمتعهد في بورتاله ولا في عرض الإسناد.
+        </p>
+      </div>
+
+      {extras.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs text-muted-foreground">
+                <th className="py-2 text-start font-medium">الخدمة</th>
+                <th className="py-2 text-start font-medium">الكمية</th>
+                <th className="py-2 text-start font-medium">سعر الوحدة</th>
+                <th className="py-2 text-start font-medium">إجمالي السطر</th>
+              </tr>
+            </thead>
+            <tbody>
+              {extras.map((extra) => (
+                <tr key={extra.key} className="border-b border-border last:border-0">
+                  <td className="py-2 pe-3 font-medium">{extra.title}</td>
+                  <td className="py-2 pe-3" dir="ltr">
+                    {extra.qty === null ? "—" : `× ${toArabicDigits(extra.qty)}`}
+                  </td>
+                  <td className="py-2 pe-3" dir="ltr">
+                    {extra.unitPrice === null ? "—" : formatMoney(extra.unitPrice, currency)}
+                  </td>
+                  <td className="py-2 font-bold" dir="ltr">
+                    {extra.lineTotal === null ? "—" : formatMoney(extra.lineTotal, currency)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : extrasReady ? (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          الإجمالي يحمل قيمة خدمات لكن لا صفوف تفصيلية لها في{" "}
+          <code dir="ltr">booking_extras</code> — حجزٌ سبق الهجرة، أو صفوفٌ حُذفت. الرقم أدناه
+          هو ما دفعه العميل فعلاً.
+        </p>
+      ) : (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          تعذّرت قراءة تفصيل الخدمات — تأكد أن جدول <code dir="ltr">booking_extras</code>{" "}
+          منفَّذ (هجرة <code dir="ltr">0031</code>). المبلغ أدناه من لقطة الحجز نفسها.
+        </p>
+      )}
+
+      {extrasTotal !== null && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            إجمالي الخدمات
+            <HelpTip>
+              مقروء من لقطة الحجز (<code dir="ltr">trip.extrasTotal</code>) لا مجموعاً في هذه
+              الشاشة — فهو الرقم نفسه الذي أضافته قاعدة البيانات إلى إجمالي الحجز.
+            </HelpTip>
+          </span>
+          <span dir="ltr" className="text-base font-bold">
+            {formatMoney(extrasTotal, currency)}
+          </span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /** رقم موبايل بصيغة رابط اتصال — الأرقام تُعرض ltr دائماً */
 function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: string | null }) {
   const digits = (v: string) => v.replace(/[^\d+]/g, "");
@@ -699,6 +860,8 @@ export default async function OrderDetailPage({
     profitReady,
     profit,
     partnerCode,
+    extras,
+    extrasReady,
   } = await loadOrder(id);
   if (ready && !booking) notFound();
 
@@ -775,6 +938,19 @@ export default async function OrderDetailPage({
   }
 
   const trip = booking.trip;
+  /**
+   * مفاتيح لقطة الرحلة التي تضيفها هجرة `0031` (‏`returnAt` · `luggage` ·
+   * `waitingDerived` · `extrasTotal`). تُقرأ من الكائن الخام لا من `TripSnapshot`
+   * لأن ملف العقد `lib/booking-types.ts` لا يملكه هذا الوكيل — والقراءة متسامحة
+   * فحجزٌ سبق الهجرة لا يحمل أياً منها ولا يظهر له صفٌّ فارغ.
+   */
+  const tripRaw = booking.trip as Record<string, unknown>;
+  const returnAt = asText(pick(tripRaw, ["returnAt", "return_at"]));
+  const luggage = asNumber(pick(tripRaw, ["luggage"]));
+  const waitingDerived = pick(tripRaw, ["waitingDerived", "waiting_derived"]) === true;
+  const extrasTotal = asNumber(pick(tripRaw, ["extrasTotal", "extras_total"]));
+  const hasExtras = extras.length > 0 || (extrasTotal ?? 0) > 0;
+
   const cancelled = booking.status === "cancelled";
   // `verify_payment` ترفض أي حالة غير «قيد المراجعة» وترفض غياب إيصال pending —
   // فإظهار الزرين في «بانتظار الدفع» كان وعداً كاذباً ينتهي برسالة خطأ.
@@ -885,11 +1061,44 @@ export default async function OrderDetailPage({
           <Row label="الركاب">
             {typeof trip.passengers === "number" ? passengersLabel(trip.passengers) : "—"}
           </Row>
+          {/*
+            الحقائب (0031): تُعرض متى وُجدت في اللقطة — والصفر يُعرض أيضاً لأنه
+            إقرار العميل بأنه بلا حقائب، لا غياب بيانات. وهي شرط أهلية حقيقي:
+            الفئة المعروضة هنا اتسعت لهذا العدد وقت التسعير.
+          */}
+          {luggage !== null ? (
+            <Row
+              label="الحقائب"
+              help="عدد الحقائب الذي اختاره العميل. الفئة المحجوزة اتسعت له وقت التسعير — الأهلية تفحص الركاب والحقائب معاً داخل قاعدة البيانات، فلا تُعرض فئة أصغر من حاجته أصلاً."
+            >
+              {luggageText(luggage)}
+            </Row>
+          ) : null}
           <Row label="نوع الرحلة">{trip.roundTrip ? "ذهاب وعودة" : "اتجاه واحد"}</Row>
-          <Row label="الانتظار">
+          {returnAt ? (
+            <Row
+              label="موعد العودة"
+              help="الموعد الذي طلبه العميل للعودة. عودةٌ في اليوم نفسه تعني أن السائق ينتظر، فتُشتق منها ساعات الانتظار تلقائياً؛ وعودةٌ في يوم آخر تعني أنه ينصرف ويعود، فلا انتظار ويسعّرها معامل الذهاب والعودة وحده."
+            >
+              {dateTimeLabel(returnAt)}
+            </Row>
+          ) : null}
+          <Row
+            label="الانتظار"
+            help={
+              waitingDerived
+                ? "ساعات الانتظار هنا مشتقة تلقائياً من موعد العودة في اليوم نفسه (بتقريب الساعة المبدوءة إلى ساعة كاملة). وإن كان العميل قد طلب انتظاراً أطول فالمحفوظ هو الأكبر منهما."
+                : "ساعات الانتظار كما طلبها العميل. سعر الساعة ثابت لكل فئة ويُضاف بعد معامل الذهاب والعودة وقبل عمولة الذروة."
+            }
+          >
             {typeof trip.waitingHours === "number" && trip.waitingHours > 0
               ? hoursText(trip.waitingHours)
               : "بدون انتظار"}
+            {waitingDerived ? (
+              <Badge variant="outline" className="ms-2">
+                محسوبة من موعد العودة
+              </Badge>
+            ) : null}
           </Row>
           <Row label="موعد الانطلاق">{dateTimeLabel(trip.pickupAt ?? null)}</Row>
           <Row label="الفئة">{booking.classTitle ?? booking.classSlug ?? "—"}</Row>
@@ -931,6 +1140,19 @@ export default async function OrderDetailPage({
             <Row label="الإجمالي">
               <span dir="ltr">{formatMoney(booking.total, booking.currency)}</span>
             </Row>
+            {/*
+              تركيبة الإجمالي حين توجد خدمات: الرقم أعلاه يشمل ثمنها، وسطرٌ واحد
+              يقول كم منه — والتفصيل في بطاقة الخدمات أدناه. قيمة مقروءة من
+              اللقطة لا مطروحة هنا.
+            */}
+            {extrasTotal !== null && extrasTotal > 0 ? (
+              <Row
+                label="منها خدمات إضافية"
+                help="قيمة ما اشتراه العميل فوق الرحلة (كرسي أطفال، واي فاي…). تُضاف بعد الذروة وبعد الخصم معاً — فالكوبون خصم سعر الرحلة وحده، والباقي هو ثمن الخدمات كما هو."
+              >
+                <span dir="ltr">{formatMoney(extrasTotal, booking.currency)}</span>
+              </Row>
+            ) : null}
             <Row
               label="خطة الدفع"
               help="«كامل المبلغ» يعني تحويل الإجمالي مقدماً، و«عربون» يعني تحويل نسبة منه والباقي تحصيل مع السائق. النسب تُضبط من إعدادات الدفع."
@@ -1019,6 +1241,20 @@ export default async function OrderDetailPage({
           </Card>
         </div>
       </div>
+
+      {/*
+        الخدمات الإضافية — بعد بطاقة السعر مباشرة لأنها تفسّر جزءاً من إجمالها،
+        وبعرض كامل لا داخل العمود الضيق لأن سطرها أربعة أعمدة. ولا تُصيَّر أصلاً
+        لحجز بلا خدمات (وهو الغالب)، فلا تُثقل شاشة التشغيل ببطاقة فارغة.
+      */}
+      {hasExtras && (
+        <BookingExtrasCard
+          extras={extras}
+          extrasReady={extrasReady}
+          extrasTotal={extrasTotal}
+          currency={booking.currency}
+        />
+      )}
 
       {/*
         الحساب الفعلي — بعد بطاقة السعر مباشرة لأنه جوابها الواقعي: تلك تقول
@@ -1328,6 +1564,10 @@ export default async function OrderDetailPage({
         bookingId={booking.id}
         bookingStatus={booking.status}
         bookingTotal={booking.total}
+        // إيراد الخدمات يُطرح قبل قياس الهامش الحقيقي: `total` يحمله منذ 0031،
+        // وهو ثمن شيء ننفّذه نحن ولا يراه المتعهد — فعدُّه هامشاً يطلي صفقةً
+        // تحت الأرضية بالأخضر. نفس ما تفعله القاعدة في 0032 و0033.
+        extrasTotal={extrasTotal}
         currency={booking.currency}
         confirmingAssign={confirmingAssign}
         confirmingOverride={confirmingOverride}

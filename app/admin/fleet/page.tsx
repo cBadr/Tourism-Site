@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { VEHICLE_CLASSES } from "@/lib/site-config";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { cn } from "@/lib/utils";
 import { createClass, saveClass, toggleActive } from "./actions";
 
 /**
@@ -35,21 +36,12 @@ type FleetClass = {
   slug: string;
   title: string;
   capacity: number | null;
+  /** سعة الحقائب — عمود هجرة `0031`، و`null` قبل تنفيذها */
+  luggageCapacity: number | null;
   short: string | null;
   active: boolean;
   sort: number;
   tariff: Tariff | null;
-};
-
-/** صفوف قاعدة البيانات كما تأتي (snake_case) قبل التطبيع */
-type ClassRow = {
-  id: string;
-  slug: string;
-  title: string;
-  capacity: number | null;
-  short: string | null;
-  active: boolean | null;
-  sort: number | null;
 };
 
 type TariffRow = {
@@ -61,19 +53,41 @@ type TariffRow = {
   round_trip_factor: number | null;
 };
 
+/** قراءة رقم من صف مجهول البنية — القيمة الغائبة والقيمة غير الرقمية كلتاهما null */
+const asNumber = (v: unknown): number | null => {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+
+const asText = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+
 /**
  * قراءة الفئات وتعريفاتها باستعلامين مستقلين ثم الربط في الذاكرة —
  * أبسط وأمتن من الـ embed لأنه لا يعتمد على اسم علاقة المفتاح الأجنبي.
  * `ready` تعني: البيئة مضبوطة والجدولان موجودان فعلاً (هجرة المرحلة ٣ مُنفَّذة).
+ *
+ * ولماذا `select("*")` بدل تعداد الأعمدة؟ لأن `luggage_capacity` يصل مع هجرة
+ * `0031` وحدها: تسميتُه صراحةً على قاعدة لم تُهاجَر بعد ترفع `42703` فيسقط
+ * **الأسطول كله** إلى وضع المعاينة لأجل عمود واحد. والجدول بلا أعمدة حساسة
+ * (‏`0005`: slug · title · capacity · short · image_url · active · sort).
+ *
+ * و`luggageReady` تُستدل من **الصفوف المقروءة نفسها** — نفس منطق
+ * `receiptFlagsReady` في شاشة الطلب: الجدول الفارغ يُنتج `false`، وهو مقبول لا
+ * سهو لأن مستهلك الراية الوحيد (حقلٌ داخل بطاقة فئة) لا يُصيَّر أصلاً بلا صف.
  */
-async function loadFleet(): Promise<{ classes: FleetClass[]; ready: boolean }> {
+async function loadFleet(): Promise<{
+  classes: FleetClass[];
+  ready: boolean;
+  luggageReady: boolean;
+}> {
   const supabase = await createServerSupabase();
-  if (!supabase) return { classes: [], ready: false };
+  if (!supabase) return { classes: [], ready: false, luggageReady: false };
 
   const [classesRes, tariffsRes] = await Promise.all([
     supabase
       .from("vehicle_classes")
-      .select("id, slug, title, capacity, short, active, sort")
+      .select("*")
       .order("sort", { ascending: true })
       .order("capacity", { ascending: true }),
     supabase
@@ -81,7 +95,8 @@ async function loadFleet(): Promise<{ classes: FleetClass[]; ready: boolean }> {
       .select("class_id, per_km, base_fee, min_price, waiting_hour_price, round_trip_factor"),
   ]);
 
-  if (classesRes.error || tariffsRes.error) return { classes: [], ready: false };
+  if (classesRes.error || tariffsRes.error)
+    return { classes: [], ready: false, luggageReady: false };
 
   const tariffs = new Map<string, Tariff>();
   for (const row of (tariffsRes.data ?? []) as TariffRow[]) {
@@ -94,18 +109,22 @@ async function loadFleet(): Promise<{ classes: FleetClass[]; ready: boolean }> {
     });
   }
 
-  const classes = ((classesRes.data ?? []) as ClassRow[]).map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    capacity: row.capacity,
-    short: row.short,
+  const rows = (classesRes.data ?? []) as Record<string, unknown>[];
+  const luggageReady = rows.some((row) => "luggage_capacity" in row);
+
+  const classes = rows.map((row, index) => ({
+    id: asText(row.id) ?? `class-${index}`,
+    slug: asText(row.slug) ?? "",
+    title: asText(row.title) ?? "",
+    capacity: asNumber(row.capacity),
+    luggageCapacity: asNumber(row.luggage_capacity),
+    short: asText(row.short),
     active: row.active === true,
-    sort: row.sort ?? 0,
-    tariff: tariffs.get(row.id) ?? null,
+    sort: asNumber(row.sort) ?? 0,
+    tariff: tariffs.get(asText(row.id) ?? "") ?? null,
   }));
 
-  return { classes, ready: true };
+  return { classes, ready: true, luggageReady };
 }
 
 /** معاينة شكل الشاشة قبل ربط قاعدة البيانات — بلا أي أرقام (الأسعار من القاعدة حصراً) */
@@ -114,6 +133,7 @@ const PREVIEW_CLASSES: FleetClass[] = VEHICLE_CLASSES.map((c, i) => ({
   slug: c.slug,
   title: c.title,
   capacity: null,
+  luggageCapacity: null,
   short: c.short,
   active: true,
   sort: i,
@@ -125,6 +145,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   title: "اسم الفئة حقل إلزامي.",
   slug: "المعرّف غير صالح — حروف لاتينية صغيرة وأرقام تفصلها شرطات فقط (مثال: mini-bus).",
   capacity: "السعة يجب أن تكون عدداً صحيحاً من ١ فأكثر.",
+  luggage: "سعة الحقائب يجب أن تكون عدداً صحيحاً بين ٠ و٩٩ — وهو المدى الذي تفرضه القاعدة نفسها.",
+  luggagemig:
+    "سعة الحقائب تحتاج هجرة 0031 — العمود luggage_capacity غير موجود في قاعدة البيانات. نفِّذ الهجرة من supabase/migrations ثم أعد المحاولة؛ لم يُحفظ شيء من هذه البطاقة.",
   sort: "ترتيب العرض يجب أن يكون عدداً صحيحاً غير سالب.",
   money: "قيم التعريفة يجب أن تكون أرقاماً غير سالبة — لا تترك حقلاً فارغاً.",
   factor: "معامل الذهاب والعودة يجب أن يكون بين ١ و٣.",
@@ -223,7 +246,16 @@ function NumberField({
   );
 }
 
-function ClassCard({ cls, readOnly }: { cls: FleetClass; readOnly: boolean }) {
+function ClassCard({
+  cls,
+  readOnly,
+  luggageReady,
+}: {
+  cls: FleetClass;
+  readOnly: boolean;
+  /** عمود `luggage_capacity` موجود فعلاً — بدونه لا يُعرض حقلٌ يفشل حفظه دائماً */
+  luggageReady: boolean;
+}) {
   const f = (field: string) => `${cls.slug}-${field}`;
 
   return (
@@ -258,7 +290,12 @@ function ClassCard({ cls, readOnly }: { cls: FleetClass; readOnly: boolean }) {
       </div>
 
       <form action={readOnly ? undefined : saveClass.bind(null, cls.id)} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div
+          className={cn(
+            "grid gap-4",
+            luggageReady ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"
+          )}
+        >
           <TextField
             id={f("title")}
             label="اسم الفئة"
@@ -279,6 +316,25 @@ function ClassCard({ cls, readOnly }: { cls: FleetClass; readOnly: boolean }) {
             min={1}
             help="السعة تتحكم في قاعدة الترشيح: يعرض النظام أصغر فئة تكفي عدد الركاب ثم الفئة الأعلى مباشرة (تحفيزاً للترقية). الأطفال يُحسبون ضمن العدد، وتغيير الرقم يغيّر أي فئة تظهر للعميل فوراً."
           />
+          {/*
+            سعة الحقائب بجوار سعة الركاب لأنها **شرط الأهلية الثاني** لا صفة عرض:
+            الفئة تُعرض إذا اتسعت للركاب **و** للحقائب معاً، والشرطان يُفحصان في
+            المكان نفسه داخل `quote_price` (D-12: لا أهلية في الواجهة).
+          */}
+          {luggageReady && (
+            <NumberField
+              id={f("luggage_capacity")}
+              label="سعة الحقائب"
+              name="luggage_capacity"
+              defaultValue={cls.luggageCapacity}
+              disabled={readOnly}
+              required
+              step="1"
+              min={0}
+              max={99}
+              help="أقصى عدد حقائب تستوعبه الفئة. مفروضة وقت التسعير تماماً كسعة الركاب: الفئة التي لا تتسع لحقائب العميل لا تُعرض عليه أصلاً — لا تظهر بتحذير ولا يرفضها الحجز بعد اختيارها. الصفر يعني «لا تقبل حقائب» فيُخرجها من كل طلب فيه حقيبة واحدة."
+            />
+          )}
           <NumberField
             id={f("sort")}
             label="ترتيب العرض"
@@ -388,7 +444,10 @@ function ClassCard({ cls, readOnly }: { cls: FleetClass; readOnly: boolean }) {
 }
 
 export default async function FleetPage({ searchParams }: PageProps<"/admin/fleet">) {
-  const [params, { classes, ready }] = await Promise.all([searchParams, loadFleet()]);
+  const [params, { classes, ready, luggageReady }] = await Promise.all([
+    searchParams,
+    loadFleet(),
+  ]);
   const wired = hasSupabaseEnv();
   const saved = params.saved === "1";
   const error = typeof params.error === "string" ? params.error : null;
@@ -454,8 +513,17 @@ export default async function FleetPage({ searchParams }: PageProps<"/admin/flee
         </Card>
       )}
 
+      {ready && !luggageReady && classes.length > 0 && (
+        <Card className="p-4 text-sm leading-relaxed text-muted-foreground">
+          سعة الحقائب غير مفعّلة بعد: عمود <code dir="ltr">luggage_capacity</code> غير موجود،
+          فحقلها مخفي من البطاقات ولا يفحص التسعير حقائب العميل. نفِّذ هجرة{" "}
+          <code dir="ltr">0031</code> من <code dir="ltr">supabase/migrations</code> ثم أعد
+          تحميل الصفحة — بقية الشاشة تعمل طبيعياً.
+        </Card>
+      )}
+
       {shown.map((cls) => (
-        <ClassCard key={cls.id} cls={cls} readOnly={readOnly} />
+        <ClassCard key={cls.id} cls={cls} readOnly={readOnly} luggageReady={luggageReady} />
       ))}
 
       <form action={readOnly ? undefined : createClass}>
@@ -465,8 +533,8 @@ export default async function FleetPage({ searchParams }: PageProps<"/admin/flee
               إضافة فئة
               <HelpTip>
                 الفئات الأربع الافتراضية تغطي أغلب الطلبات — أضف فئة جديدة فقط عند وجود سيارة
-                بسعة أو مستوى مختلف (ليموزين مثلاً). تُنشأ الفئة متوقفة بتعريفة صفرية، فاضبط
-                أسعارها من بطاقتها ثم فعّلها.
+                بسعة أو مستوى مختلف (ليموزين مثلاً). تُنشأ الفئة متوقفة بتعريفة صفرية وبسعة
+                حقائب افتراضية، فاضبط أسعارها وسعة حقائبها من بطاقتها ثم فعّلها.
               </HelpTip>
             </h3>
             <p className="text-sm text-muted-foreground">

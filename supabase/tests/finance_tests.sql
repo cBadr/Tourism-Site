@@ -67,7 +67,7 @@ begin
     ('public.record_partner_payout(uuid, uuid, numeric, timestamptz, text)'),
     ('public.record_adjustment(uuid, text, numeric, timestamptz, text)'),
     ('public.available_payment_accounts(numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 
