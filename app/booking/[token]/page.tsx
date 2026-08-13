@@ -324,6 +324,27 @@ export default async function BookingStatusPage({ params }: PageParams) {
 
   const tripRaw = raw["trip"];
   const trip: UnknownRow = isRecord(tripRaw) ? tripRaw : {};
+
+  // الخصم المُجمَّد في **لقطة الرحلة** (`trip -> 'discount'`، هجرة 0024) لا في
+  // عمود مستقل. يُقرأ دفاعياً: حجزٌ أُنشئ قبل الهجرة، أو حجز بلا كوبون، لا يحمل
+  // المفتاح أصلاً فتغيب صفوف الخصم بلا خطأ ولا فراغ.
+  //
+  // و`total` أعلاه هو الإجمالي **بعد** الخصم (القاعدة ٥ في عقد الخصومات)، فهذه
+  // الصفوف تكشف الأصل ولا تعيد حسابه: لا طرح ولا جمع في هذه الصفحة.
+  //
+  // 🔒 لا `clamped` في اللقطة أصلاً — والحجب في القاعدة لا هنا: `get_booking_by_token`
+  // تُرجع `trip` كاملاً وهي ممنوحة لـ anon، فحاملُ التوكن كان سيقرأ الراية مباشرةً
+  // بلا المرور بهذه الصفحة، ومنها يستنتج «التكلفة + الأرضية» من `totalBefore − amount`.
+  // فأُسقطت من `create_booking` في 0024، ومكانها `coupon_redemptions.clamped`
+  // المحجوب عن غير المشرف (نفس قرار حجبها عن `/api/discount/verify`).
+  const discountRaw = trip["discount"];
+  const discount: UnknownRow = isRecord(discountRaw) ? discountRaw : {};
+  const discountAmount = readNumber(discount, "amount");
+  const discountTotalBefore = readNumber(discount, "totalBefore", "total_before");
+  const discountCode = readText(discount, "code");
+  const hasDiscount =
+    discountAmount !== null && discountAmount > 0 && discountTotalBefore !== null;
+
   const originLabel = readText(trip, "originLabel", "origin_label") ?? "";
   const destLabel = readText(trip, "destLabel", "dest_label", "destinationLabel") ?? "";
   const distanceKm = readNumber(trip, "distanceKm", "distance_km");
@@ -526,8 +547,36 @@ export default async function BookingStatusPage({ params }: PageParams) {
           >
             <h2 className="text-base font-bold">{t("amounts.heading", "المبالغ")}</h2>
             <dl className="flex flex-col gap-2.5 text-sm">
+              {hasDiscount ? (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">
+                      {t("amounts.totalBeforeDiscount", "الإجمالي قبل الخصم")}
+                    </dt>
+                    <dd className="font-medium line-through decoration-muted-foreground/60">
+                      {fmt.money(discountTotalBefore as number, currency)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-primary">
+                      {discountCode
+                        ? t("amounts.discountWithCode", "الخصم ({code})", { code: discountCode })
+                        : t("amounts.discount", "الخصم")}
+                    </dt>
+                    <dd className="font-semibold text-primary">
+                      {t("amounts.discountMinus", "‑{amount}", {
+                        amount: fmt.money(discountAmount as number, currency),
+                      })}
+                    </dd>
+                  </div>
+                </>
+              ) : null}
               <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">{t("amounts.total", "إجمالي الرحلة")}</dt>
+                <dt className="text-muted-foreground">
+                  {hasDiscount
+                    ? t("amounts.totalAfterDiscount", "الإجمالي بعد الخصم")
+                    : t("amounts.total", "إجمالي الرحلة")}
+                </dt>
                 <dd className="font-medium">{fmt.money(total, currency)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">

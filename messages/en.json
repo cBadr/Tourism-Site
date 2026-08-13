@@ -446,6 +446,11 @@
         "heading": "Amounts",
         "sectionLabel": "Booking amounts",
         "total": "Trip total",
+        "totalBeforeDiscount": "Total before discount",
+        "discount": "Discount",
+        "discountWithCode": "Discount ({code})",
+        "discountMinus": "-{amount}",
+        "totalAfterDiscount": "Total after discount",
         "dueNow": "Due now",
         "remaining": "Remaining with the driver",
         "remainingNote": "The remainder is collected in cash by the driver on the day of the trip."
@@ -492,6 +497,52 @@
         "notes": "Your notes"
       },
       "footerNote": "Your booking number is {reference} — quote it in any correspondence about this trip."
+    }
+  },
+
+  "discount": {
+    "field": {
+      "label": "Discount code",
+      "placeholder": "e.g. SUMMER25",
+      "help": "Have a discount code? Enter it here and press Apply before confirming.",
+      "appliedNote": "Code {code} applied — you saved {amount}."
+    },
+
+    "actions": {
+      "apply": "Apply",
+      "applying": "Checking…",
+      "remove": "Remove"
+    },
+
+    "rows": {
+      "before": "Total before discount",
+      "discount": "Discount ({code})",
+      "minus": "-{amount}",
+      "after": "Total after discount"
+    },
+
+    "reject": {
+      "unavailable": "This code cannot be used right now. Check the spelling, or continue without it.",
+      "classNotEligible": "This code does not apply to the selected vehicle class. Try another class.",
+      "belowMinTotal": "This code starts from a higher trip total than yours.",
+      "notApplicable": "This code could not be applied to this trip. You can continue at the price shown.",
+      "perCustomerLimit": "This code has already been used the maximum number of times with this number.",
+      "rateLimited": "Too many codes tried in a short time. Wait a minute and try again."
+    },
+
+    "errors": {
+      "empty": "Enter the discount code exactly as you received it.",
+      "failed": "Could not verify the code. Please try again.",
+      "network": "Could not reach the server. Check your connection and try again."
+    },
+
+    "status": {
+      "checking": "Checking the discount code",
+      "applied": "Discount code applied"
+    },
+
+    "banner": {
+      "codeLabel": "discount code"
     }
   }
 }

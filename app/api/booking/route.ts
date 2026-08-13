@@ -32,6 +32,16 @@ import type {
  * `price_source` و`subcontractor_id` و`subcontractor_cost` و`margin_amount` في صف
  * الحجز بنفسها. المسار هنا لا يمرّر شيئاً من ذلك ولا يقرؤه.
  *
+ * المرحلة ١٢أ — الكوبون: الجسم يقبل `couponCode` (الرمز وحده، ولا مبلغ خصم
+ * أبداً — نفس مبدأ «لا سعر من العميل»). يُنظَّف هنا شكلياً ويُمرَّر إلى
+ * `create_booking` التي تستدعي `apply_discount` و`redeem_coupon` داخل معاملتها،
+ * فتفرض أرضية الهامش وتحجز الاستخدام ذرّياً. و**رمزٌ مُرسَل ولم يُطبَّق يُفشل
+ * الحجز** (‏`0024_discounts.sql:1035`): العميل اختار الحجز بسعر مخصوم، وإنشاؤه
+ * بسعر أعلى بلا علمه أسوأ من رسالة خطأ. فيصل ذلك بالرمز `coupon-rejected` بحالة
+ * ٤٠٩ — لا ٥٠٣ — و`Checkout` يُسقط الكوبون تلقائياً فتنجح المحاولة التالية.
+ * و`total` العائد هو الإجمالي بعد الخصم، فما يُقاس في القمع أدناه هو القيمة
+ * الحقيقية للحجز لا القيمة قبل الخصم.
+ *
  * 🔒 حدّ الـ whitelabel: جسم الرد يُبنى حقلاً حقلاً من `CreateBookingResponse`
  * (مرجع، توكن، إجمالي، مستحق، متبقٍّ، عملة) — فحتى لو أضافت الدالة أعمدة تكلفة
  * أو هوية متعهد إلى صف الإرجاع مستقبلاً فلن تتسرب إلى المتصفح من هنا.
@@ -39,6 +49,7 @@ import type {
  * رموز الخطأ (الواجهة تعرض `message` مباشرة في كل الحالات):
  *   invalid-input     ٤٠٠ — مدخلات ناقصة أو خارج الحدود
  *   class-unavailable ٤٠٩ — الفئة المختارة لم تعد صالحة لهذه الرحلة
+ *   coupon-rejected   ٤٠٩ — رمز الخصم لم يعد صالحاً لحظة الحجز (تُسقطه الواجهة)
  *   pricing-failed    ٥٠٠ — تعذّر تثبيت السعر داخل قاعدة البيانات
  *   db-unavailable    ٥٠٣ — مفتاح الخدمة غائب أو الهجرة غير مطبَّقة أو خطأ غير متوقع
  */
@@ -54,6 +65,8 @@ const MIN_NAME_LENGTH = 3;
 const MAX_NAME_LENGTH = 120;
 const MAX_NOTES_LENGTH = 1000;
 const MAX_LABEL_LENGTH = 240;
+/** أقصى طول رمز كوبون — مرآة لحدّ `/api/discount/verify` */
+const MAX_COUPON_LENGTH = 40;
 /** تسامح مع فارق ساعة جهاز الزائر عن الخادم */
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 /** أقصى مدى مستقبلي مقبول لموعد الانطلاق — سنة */
@@ -212,9 +225,17 @@ function parseBody(body: unknown): ParseResult {
 
   const notes = cleanBlock(body.notes, MAX_NOTES_LENGTH);
 
+  // رمز الكوبون: يُنظَّف ولا يُتحقق منه هنا. التحقق والحساب والحجز الذرّي
+  // للاستخدام كلها داخل `create_booking` (المرحلة ١٢أ) — ورمز غير صالح لا يُفشل
+  // الحجز بل يمرّ بلا خصم، فلا يخسر العميل رحلته بسبب حرف مكتوب خطأ.
+  const couponCode = cleanLine(body.couponCode, MAX_COUPON_LENGTH)
+    .replace(/\s+/g, "")
+    .toUpperCase();
+
   return {
     ok: true,
     value: {
+      couponCode: couponCode.length > 0 ? couponCode : null,
       origin,
       destination,
       passengers,
@@ -269,6 +290,26 @@ function mapDbError(error: { code?: string; message?: string; details?: string; 
     };
   }
 
+  // ── رفض الكوبون لحظة الحجز — خطأ عميل قابل للإصلاح لا عطل بنية تحتية ──────
+  //
+  // `create_booking` ترمي `coupon-rejected` حين لا تُطبَّق `apply_discount`
+  // (منتهٍ · فئة غير مشمولة · أرضية الهامش · نفد سقفه بين المعاينة والتأكيد)،
+  // و`redeem_coupon` ترمي `coupon-exhausted` و`coupon-per-customer` داخل نفس
+  // المعاملة — وسقف العميل بالذات **لا تراه المعاينة أصلاً** لأنها بلا هاتف
+  // بقرار تصميمي. وكلها SQLSTATE P0001 فلا يلتقطها فحص رموز PostgREST أدناه.
+  // بلا هذا الفرع تصير كلها ٥٠٣ «تعذّر إنشاء الحجز… حاول مرة أخرى» — إعادةٌ
+  // تفشل حتماً ما دام الرمز في الحالة، والعميل لا يعرف أن إزالته تحلّ المشكلة.
+  //
+  // رسالة واحدة للأسباب الثلاثة (القرار ٨: لا تفرّق للزائر بين الأسباب)، ورمز
+  // مستقل تقرؤه `Checkout` فتُسقط الكوبون تلقائياً وتصير المحاولة التالية ناجحة.
+  if (hint === "coupon-rejected" || hint === "coupon-exhausted" || hint === "coupon-per-customer") {
+    return {
+      code: "coupon-rejected",
+      message: "رمز الخصم لم يعد صالحاً لهذه الرحلة. أزلناه — راجع السعر وأكّد حجزك من جديد.",
+      status: 409,
+    };
+  }
+
   // الدالة غير موجودة أصلاً (هجرة غير مطبَّقة) أو صلاحية التنفيذ لم تُمنح
   // لـ service_role بعد سحبها من anon — كلاهما «البيئة غير جاهزة» لا خطأ عميل
   const code = error.code ?? "";
@@ -319,7 +360,7 @@ export async function POST(request: Request) {
   }
 
   // (٣) الإنشاء والتسعير وتوليد المرجع والتوكن — كله داخل دالة واحدة في Postgres
-  const { data, error } = await supabase.rpc("create_booking", {
+  const baseArgs = {
     p_origin: { label: input.origin.label, lat: input.origin.lat, lng: input.origin.lng },
     p_destination: {
       label: input.destination.label,
@@ -339,7 +380,24 @@ export async function POST(request: Request) {
     p_customer_whatsapp: input.customerWhatsapp,
     p_pickup_at: input.pickupAt,
     p_notes: input.notes,
-  });
+  };
+
+  // الخصم (المرحلة ١٢أ): **الرمز وحده يُمرَّر**، ولا مبلغ من المتصفح إطلاقاً.
+  // `create_booking` تستدعي `apply_discount` و`redeem_coupon` داخل معاملتها،
+  // فالحساب والحجز الذرّي للاستخدام كلاهما في القاعدة — وحجزان متزامنان على آخر
+  // استخدام لا يتجاوزان السقف.
+  //
+  // بلا كوبون: يُستدعى التوقيع القديم حرفياً فلا يتغير شيء لأي حجز عادي.
+  // ومع كوبون على قاعدة لم تُطبَّق عليها 0024 بعد: PostgREST لا يجد التوقيع
+  // (PGRST202) فنُعيد المحاولة بلا المعامل — الحجز يتم بالسعر الكامل بدل أن
+  // يسقط مسار الحجز كله أثناء نشر الهجرة (نفس نمط التوافق في `/api/quote`).
+  let { data, error } = input.couponCode
+    ? await supabase.rpc("create_booking", { ...baseArgs, p_coupon_code: input.couponCode })
+    : await supabase.rpc("create_booking", baseArgs);
+
+  if (error && input.couponCode && (error.code === "PGRST202" || error.code === "42883")) {
+    ({ data, error } = await supabase.rpc("create_booking", baseArgs));
+  }
 
   if (error) {
     const mapped = mapDbError(error);

@@ -1,5 +1,5 @@
 import { Hero } from "@/components/site/hero";
-import { SearchWidget } from "@/components/booking/search-widget";
+import { BookingWidget } from "@/components/booking/booking-widget";
 import type { SectionContentMap } from "@/lib/content-types";
 import type { SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
@@ -13,6 +13,10 @@ import { DEFAULT_LOCALE } from "@/lib/i18n-types";
  *
  * المرحلة ٨: اللغة تُمرَّر إلى الويدجت (جزيرة عميل) فتُنسَّق الأرقام والأسعار
  * بها وتُقرأ نصوصها من مساحة `booking.widget`.
+ *
+ * المرحلة ١٢أ: الويدجت يُركَّب عبر `<BookingWidget>` — غلاف خادمي غير متزامن
+ * يجلب راية تفعيل الخصومات وبانرات العرض ويمرّرها props. القسم نفسه يبقى
+ * متزامناً، فلا يتغير نوعه في سجل الأقسام.
  */
 export function HeroSection({
   content,
@@ -28,7 +32,7 @@ export function HeroSection({
       <Hero settings={settings} content={content} locale={locale} />
       <div className="relative z-10 -mt-12 px-4 pb-6 sm:px-6 md:-mt-16">
         <div className="mx-auto w-full max-w-4xl">
-          <SearchWidget
+          <BookingWidget
             compact
             locale={locale}
             contact={{

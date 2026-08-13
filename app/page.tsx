@@ -7,6 +7,8 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { RenderSections } from "@/components/sections/render";
+import { PromoBanners } from "@/components/booking/promo-banner";
+import { getPromoBanners } from "@/lib/discounts/banners";
 import JsonLd from "@/components/seo/JsonLd";
 
 /**
@@ -31,9 +33,10 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function Home() {
   const locale = await resolveLocale();
-  const [settings, page] = await Promise.all([
+  const [settings, page, homeBanners] = await Promise.all([
     getSettings(locale),
     getPageBySlug("home", locale),
+    getPromoBanners("home"),
   ]);
 
   return (
@@ -41,6 +44,17 @@ export default async function Home() {
       <JsonLd />
       <SiteHeader settings={settings} locale={locale} />
       <main id="main" className="flex-1">
+        {/*
+          بانر موضع «الرئيسية» — شريط فوق أقسام الصفحة، نصّ تحفيزي بلا أثر على
+          أي سعر (نصّ العقد). غيابه (لا بانر نشط) لا يترك فراغاً: المكوّن يُرجع
+          null فلا يُصيَّر الحاوي بمحتوى فارغ.
+        */}
+        {homeBanners.length > 0 ? (
+          <div className="mx-auto w-full max-w-6xl px-4 pt-4 sm:px-6">
+            <PromoBanners banners={homeBanners} />
+          </div>
+        ) : null}
+
         <RenderSections
           sections={page?.sections ?? []}
           settings={settings}

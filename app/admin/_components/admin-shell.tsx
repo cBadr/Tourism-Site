@@ -22,6 +22,7 @@ import {
   Radio,
   Search,
   Settings,
+  TicketPercent,
   Wallet,
   Wrench,
   X,
@@ -47,6 +48,7 @@ type NavItem = {
   href?:
     | "/admin"
     | "/admin/content"
+    | "/admin/discounts"
     | "/admin/dispatch"
     | "/admin/finance"
     | "/admin/fleet"
@@ -81,6 +83,12 @@ const NAV_ITEMS: NavItem[] = [
   { label: "اللغات", icon: Languages, href: "/admin/languages" },
   { label: "الأسطول", icon: Car, href: "/admin/fleet" },
   { label: "التسعير", icon: Coins, href: "/admin/pricing" },
+  // «الخصومات» بعد «التسعير» مباشرة: الرؤية تصنّف الخصومات والتحفيز **مكمّلات
+  // للتسعير** لا قسماً مستقلاً (VISION.md:76 داخل قسم «آلية التسعير»). والخصم
+  // نفسه طبقة تقع بعد بناء السعر، فموضعه في القائمة يتبع موضعه في المعادلة.
+  // البند يبقى فعالاً على مساراته الفرعية (شاشة الكوبون والبانرات) بفحص
+  // startsWith أدناه.
+  { label: "الخصومات", icon: TicketPercent, href: "/admin/discounts" },
   { label: "حسابات الدفع", icon: CreditCard, href: "/admin/payment-accounts" },
   // «المدفوعات» بعد «حسابات الدفع» مباشرة: الشاشتان وجها تحصيل واحد — الحسابات
   // للتحويل اليدوي، وهذه للبوابات الإلكترونية ومطابقة جلساتها (المرحلة ٩).
@@ -109,6 +117,10 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin": "لوحة المعلومات",
   "/admin/content": "المحتوى",
   "/admin/content/new": "صفحة جديدة",
+  // شاشات المرحلة ١٢أ — «البانرات» مسار ثابت فيُلتقط هنا قبل العنوان الديناميكي
+  // لشاشة الكوبون (‏/admin/discounts/<id>) فلا يبتلعه.
+  "/admin/discounts": "الخصومات",
+  "/admin/discounts/banners": "بانرات العروض",
   "/admin/dispatch": "الإسناد",
   "/admin/finance": "المالية",
   "/admin/finance/expenses": "المصروفات",
@@ -136,6 +148,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/stats": "الإحصائيات",
   "/admin/stats/content": "إحصائيات المحتوى والسيو",
   "/admin/stats/customers": "إحصائيات العملاء",
+  "/admin/stats/discounts": "إحصائيات الخصومات",
   "/admin/stats/locales": "إحصائيات اللغات",
   "/admin/stats/orders": "إحصائيات الطلبات",
   "/admin/stats/partners": "إحصائيات المتعهدين",
@@ -271,6 +284,8 @@ export function AdminShell({
   // تُلتقط قبل ذلك من PAGE_TITLES، فلا يبتلعها العنوان الديناميكي.
   const dynamicTitle = (path: string): string | null => {
     if (path.startsWith("/admin/content/")) return "محرر المحتوى";
+    // /admin/discounts/<id> — شاشة كوبون واحد (البانرات مسار ثابت التُقط قبلها)
+    if (path.startsWith("/admin/discounts/")) return "تعديل كوبون";
     if (path.startsWith("/admin/finance/partners/")) return "كشف حساب متعهد";
     // /admin/languages/<code> — طابور مراجعة لغة بعينها
     if (path.startsWith("/admin/languages/")) return "مراجعة الترجمة";

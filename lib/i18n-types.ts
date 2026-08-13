@@ -47,6 +47,17 @@ export type TranslationStatus = "draft" | "reviewed" | "published";
  *  settings : الهوية وبيانات الشركة     (المفتاح: brand.name|brand.tagline|company.activity|seo.*)
  *  service  : أسماء الخدمات الست ووصفها (المفتاح: <slug>.title|<slug>.short)
  *  vehicle  : فئات السيارات             (المفتاح: <slug>.title|<slug>.seats|<slug>.short)
+ *
+ * ⚠ **انحراف عقد قائم ومقصود تركه هنا (المرحلة ١٢أ):** هجرة 0024 وسّعت قيد
+ * `translations_namespace_check` في القاعدة بمساحة سابعة `discount` (D-21)،
+ * وهذا الاتحاد ما زال ستّاً. لم يُوسَّع هنا لأن توسيعه يكسر البناء فوراً في
+ * `app/admin/languages/_components/languages-ui.tsx` — وفيها خريطة
+ * `Record<TranslationNamespace, string>` تحتاج تسمية عربية للمساحة الجديدة،
+ * وهي ملفٌ يملكه بانٍ آخر في هذه المرحلة.
+ *
+ * **الإصلاح خطوتان في التزام واحد:** إضافة `| "discount"` إلى الاتحاد أدناه،
+ * وإضافة مدخلها إلى تلك الخريطة. ولا يترتب على بقائه اليوم عطلٌ ظاهر: لا شيء
+ * يكتب صفوفاً بهذه المساحة بعد. (النمط ٤ في `handover/LESSONS.md`.)
  */
 export type TranslationNamespace = "ui" | "page" | "section" | "settings" | "service" | "vehicle";
 

@@ -28,7 +28,11 @@ import {
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
+import type { PromoBanner } from "@/lib/discount-types";
+import type { AppliedDiscount } from "@/lib/discounts/types";
 import { createFormatter, type LocaleFormatter } from "../format";
+import { CouponField, DiscountRows } from "../coupon-field";
+import { PromoBanners } from "../promo-banner";
 import { readPaymentSettings, splitAmounts } from "./payment";
 import { todayInputValue, toIsoFromLocalInputs } from "./datetime";
 
@@ -42,6 +46,13 @@ import { todayInputValue, toIsoFromLocalInputs } from "./datetime";
  * لا حساب مالي مُلزِم هنا: السعر المعروض وصل من /api/quote (دالة SQL)، ومعاينة
  * العربون في الخطوة ٣ عرضٌ تقديري بقواعد الإعدادات، والمبالغ النهائية تعود من
  * `create_booking` في قاعدة البيانات — لا يُرسل أي مبلغ من المتصفح إطلاقاً.
+ *
+ * المرحلة ١٢أ — الخصم: حقل الكوبون في الخطوة ٣ (قبل اختيار خطة الدفع، لأن
+ * العربون نسبة من الإجمالي). كل رقم فيه من `apply_discount` عبر
+ * `/api/discount/verify`، وما يُرسل عند التأكيد هو **الرمز وحده**: القاعدة تعيد
+ * الحساب وتُجمّد الخصم في لقطة الحجز. والمعروض هنا معاينة لا التزام — فإن نفد
+ * سقف الكوبون بين المعاينة والتأكيد أنشأت القاعدة الحجز بالسعر الكامل، والمبالغ
+ * النهائية تظهر في صفحة متابعة الحجز (وهي مصدرها الوحيد).
  */
 
 /** الرحلة كما تصل من الحاسبة — بإحداثيات النقطتين (شرط بدء الحجز) */
@@ -66,6 +77,14 @@ export type CheckoutProps = {
   compact?: boolean;
   /** لغة الزائر — تصل من الصفحة الخادمية، وغيابها يعني العربية */
   locale?: string;
+  /**
+   * نظام الخصومات مفعَّل — يصل من الصفحة الخادمية عبر ويدجت البحث.
+   * غيابه يعني **مطفأ**: الافتراضي الآمن هو ألّا يظهر حقل الكوبون أصلاً
+   * (القرار ١٠: النظام مطفأ في البذرة، والافتراضي هو ما سيعمل في الإنتاج).
+   */
+  discountEnabled?: boolean;
+  /** بانرات موضع «الحجز» — عرض فقط، بلا أثر على أي سعر */
+  banners?: PromoBanner[];
 };
 
 type Step = 1 | 2 | 3;
@@ -146,11 +165,17 @@ function StepsBar({ current, t, fmt }: { current: Step; t: Tx; fmt: LocaleFormat
 function SummaryCard({
   offer,
   trip,
+  total,
+  originalTotal,
   t,
   fmt,
 }: {
   offer: Offer;
   trip: CheckoutTrip;
+  /** الإجمالي المعروض — بعد الخصم إن طُبِّق */
+  total: number;
+  /** الإجمالي قبل الخصم — null حين لا خصم، فلا يظهر سعر مشطوب بلا سبب */
+  originalTotal: number | null;
   /** مترجم مساحة `booking.offers.summary` — نفس نص ملخص الرحلة في البطاقات */
   t: Tx;
   fmt: LocaleFormatter;
@@ -176,8 +201,15 @@ function SummaryCard({
             </span>
           ) : null}
         </p>
-        <p className="text-base font-extrabold tracking-tight">
-          {fmt.money(offer.total, offer.currency)}
+        <p className="flex items-baseline gap-2">
+          {originalTotal !== null ? (
+            <span className="text-sm font-medium text-muted-foreground line-through">
+              {fmt.money(originalTotal, offer.currency)}
+            </span>
+          ) : null}
+          <span className="text-base font-extrabold tracking-tight">
+            {fmt.money(total, offer.currency)}
+          </span>
         </p>
       </div>
     </div>
@@ -204,11 +236,14 @@ export function Checkout({
   onBack,
   compact = false,
   locale = DEFAULT_LOCALE,
+  discountEnabled = false,
+  banners = [],
 }: CheckoutProps) {
   const router = useRouter();
   const t = useT("booking.checkout");
   const tCommon = useT("common");
   const tSummary = useT("booking.offers.summary");
+  const tDiscount = useT("discount");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
   const uid = React.useId();
 
@@ -225,6 +260,7 @@ export function Checkout({
 
   const [plan, setPlan] = React.useState<PaymentPlan>("deposit");
   const [payment, setPayment] = React.useState<PaymentSettings>(DEFAULT_PAYMENT_SETTINGS);
+  const [discount, setDiscount] = React.useState<AppliedDiscount | null>(null);
 
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -267,8 +303,12 @@ export function Checkout({
     });
   }, [step]);
 
-  const amounts = splitAmounts(offer.total, plan, payment);
-  const depositPreview = splitAmounts(offer.total, "deposit", payment);
+  // الإجمالي الذي تُبنى عليه معاينة العربون: بعد الخصم إن طُبِّق.
+  // `totalAfter` رقمٌ جاء من `apply_discount` — لا يُطرح هنا شيء من شيء.
+  // (والعربون نسبة من الإجمالي بحكم هجرة 0010، فالخصم يغيّره تلقائياً.)
+  const effectiveTotal = discount ? discount.totalAfter : offer.total;
+  const amounts = splitAmounts(effectiveTotal, plan, payment);
+  const depositPreview = splitAmounts(effectiveTotal, "deposit", payment);
 
   function validateStepOne(): FieldErrors {
     const next: FieldErrors = {};
@@ -332,6 +372,9 @@ export function Checkout({
       customerWhatsapp: secondary.length > 0 ? secondary : null,
       pickupAt: toIsoFromLocalInputs(pickupDate, pickupTime),
       notes: notes.trim().length > 0 ? notes.trim() : null,
+      // 🔒 الرمز وحده — ولا `amount` ولا `totalAfter` ولا أي رقم من المعاينة.
+      // `create_booking` تعيد الحساب بنفسها وتُجمّده في اللقطة.
+      couponCode: discount ? discount.code : null,
     };
 
     setSubmitting(true);
@@ -345,6 +388,11 @@ export function Checkout({
       const json = (await res.json()) as CreateBookingResponse | BookingError;
 
       if (!json.ok) {
+        // 🔒 رفض الكوبون لحظة الحجز (نفد سقفه بين المعاينة والتأكيد، أو بلغ هذا
+        // العميل سقفه الشخصي وهو ما لا تراه المعاينة لأنها بلا هاتف): نُسقط
+        // الكوبون هنا وإلا أُعيد إرساله في كل محاولة تالية ففشلت جميعها حتماً.
+        // إسقاطه يجعل التفصيل يعرض السعر الكامل وزرَّ التأكيد قابلاً للنجاح.
+        if (json.code === "coupon-rejected") setDiscount(null);
         setSubmitError(
           json.message || t("errors.createFailed", "تعذّر إنشاء الحجز الآن. حاول مرة أخرى.")
         );
@@ -399,7 +447,18 @@ export function Checkout({
       </div>
 
       <StepsBar current={step} t={t} fmt={fmt} />
-      <SummaryCard offer={offer} trip={trip} t={tSummary} fmt={fmt} />
+
+      {/* بانرات موضع «الحجز» — تحفيز بلا أثر على السعر */}
+      <PromoBanners banners={banners} compact={compact} />
+
+      <SummaryCard
+        offer={offer}
+        trip={trip}
+        total={effectiveTotal}
+        originalTotal={discount ? discount.totalBefore : null}
+        t={tSummary}
+        fmt={fmt}
+      />
 
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         {/* ------------------------- الخطوة ١ ------------------------- */}
@@ -558,6 +617,25 @@ export function Checkout({
         {/* ------------------------- الخطوة ٣ ------------------------- */}
         {step === 3 ? (
           <div className="flex flex-col gap-4">
+            {/*
+              حقل الكوبون قبل اختيار خطة الدفع عمداً: العربون نسبة من الإجمالي،
+              فتطبيق الخصم بعد اختيار الخطة يغيّر الرقم تحت يد الزائر.
+              ولا يظهر الحقل أصلاً حين يكون نظام الخصومات مطفأ — لا حقلاً معطَّلاً
+              يعلن عن ميزة لا تعمل.
+            */}
+            {discountEnabled ? (
+              <CouponField
+                trip={trip}
+                classSlug={offer.classSlug}
+                applied={discount}
+                onApply={setDiscount}
+                suggestedCode={banners.find((banner) => banner.couponCode)?.couponCode ?? null}
+                disabled={submitting}
+                compact={compact}
+                locale={locale}
+              />
+            ) : null}
+
             <p className="flex items-center gap-2 text-sm font-semibold">
               <Wallet className="size-4 shrink-0 text-primary" aria-hidden="true" />
               {t("payment.heading", "كم تدفع الآن؟")}
@@ -626,7 +704,7 @@ export function Checkout({
                     {t("payment.fullOption", "كامل المبلغ الآن")}
                   </span>
                   <span className="shrink-0 text-base font-extrabold">
-                    {fmt.money(offer.total, offer.currency)}
+                    {fmt.money(effectiveTotal, offer.currency)}
                   </span>
                 </span>
                 <span className="ps-6 text-xs leading-6 text-muted-foreground">
@@ -640,10 +718,19 @@ export function Checkout({
 
             {/* خلاصة المبالغ حسب الاختيار */}
             <dl className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">{t("payment.total", "إجمالي الرحلة")}</dt>
-                <dd className="font-medium">{fmt.money(offer.total, offer.currency)}</dd>
-              </div>
+              {/*
+                تفصيل السعر بالخصم: الإجمالي قبل ← قيمة الخصم ← الإجمالي بعد.
+                ثلاثتها من `apply_discount`. وحين لا خصم يبقى الصف الواحد كما كان
+                حرفياً — لا صفوف صفرية تشوّش القراءة.
+              */}
+              {discount ? (
+                <DiscountRows discount={discount} t={tDiscount} fmt={fmt} />
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">{t("payment.total", "إجمالي الرحلة")}</dt>
+                  <dd className="font-medium">{fmt.money(offer.total, offer.currency)}</dd>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">
                   {t("payment.dueNow", "المطلوب تحويله الآن")}

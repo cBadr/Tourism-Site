@@ -70,7 +70,7 @@ begin
     ('public.dispatch_pool(uuid, integer)'),
     ('public.dispatch_ceiling(uuid, integer)'),
     ('public.current_subcontractor_id()'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 
@@ -1521,10 +1521,10 @@ begin
   -- (ي-٦) حدود المرحلتين ٤ و٥ كما هي: لا إضعاف عرضي
   if has_function_privilege('anon', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text)', 'EXECUTE')
+       text, text, text, text, text, text, timestamptz, text, text)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text)', 'EXECUTE') then
+       text, text, text, text, text, text, timestamptz, text, text)', 'EXECUTE') then
     raise exception '(ي-٦) نقض تصليب 0009: create_booking عادت متاحة لدور عام';
   end if;
 

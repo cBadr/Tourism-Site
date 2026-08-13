@@ -63,7 +63,7 @@ begin
     ('public.settle_payment_intent(text, text, text, text, integer, jsonb)'),
     ('public.get_payment_intent_status(uuid)'),
     ('public.to_minor_units(numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

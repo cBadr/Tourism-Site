@@ -101,6 +101,12 @@ export type BookingRow = {
  *                  p_customer_whatsapp text, p_pickup_at timestamptz, p_notes text)
  *   returns table(id uuid, reference text, public_token text, total numeric,
  *                 amount_due numeric, amount_remaining numeric, currency text)
+ *
+ * المرحلة ١٢أ — الخصومات: تُوسَّع الدالة في هجرة 0024 بمعامل **اختياري**
+ * `p_coupon_code text` (العقد: `lib/discount-types.ts`). و`total` المُرجَع يصير
+ * الإجمالي **بعد** الخصم — وهو ما يجعل تقارير الهامش تصح بلا قيد دفتر جديد
+ * (القاعدة ٥ في عقد الخصومات). أعمدة الإرجاع السبعة لم تتغير أسماؤها ولا عددها،
+ * فلا مستهلك قائم يحتاج تعديلاً.
  */
 export type CreateBookingRequest = {
   origin: { label: string; lat: number; lng: number };
@@ -115,6 +121,12 @@ export type CreateBookingRequest = {
   customerWhatsapp?: string | null;
   pickupAt?: string | null;
   notes?: string | null;
+  /**
+   * رمز الكوبون — **الرمز وحده، ولا مبلغ خصم أبداً** (المرحلة ١٢أ).
+   * نفس مبدأ «لا سعر من العميل»: قيمة الخصم تُحسب داخل `create_booking` عبر
+   * `apply_discount` وتُجمَّد في لقطة الحجز. ما يعرضه المتصفح معاينة لا التزام.
+   */
+  couponCode?: string | null;
 };
 
 export type CreateBookingResponse = {
@@ -129,7 +141,12 @@ export type CreateBookingResponse = {
 
 export type BookingError = {
   ok: false;
-  /** invalid-input | class-unavailable | pricing-failed | db-unavailable */
+  /**
+   * invalid-input | class-unavailable | coupon-rejected | pricing-failed | db-unavailable
+   *
+   * `coupon-rejected` (٤٠٩، المرحلة ١٢أ): رمزٌ أُرسل ولم تقبله القاعدة لحظة
+   * الحجز. الواجهة تُسقط الكوبون عند رؤيته وإلا أُعيد إرساله فأخفقت كل محاولة.
+   */
   code: string;
   message: string;
 };

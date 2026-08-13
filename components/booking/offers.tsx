@@ -21,7 +21,9 @@ import { cn } from "@/lib/utils";
 import type { DistanceSource, Offer } from "@/lib/pricing-types";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
+import type { PromoBanner } from "@/lib/discount-types";
 import { createFormatter, type LocaleFormatter } from "./format";
+import { PromoBanners } from "./promo-banner";
 import { Checkout, type CheckoutTrip } from "./checkout/checkout";
 
 /**
@@ -102,6 +104,12 @@ export type OffersProps = {
   compact?: boolean;
   /** لغة الزائر — تصل من الصفحة الخادمية، وغيابها يعني العربية */
   locale?: string;
+  /** نظام الخصومات مفعَّل — غيابه يعني مطفأ (الافتراضي الآمن) */
+  discountEnabled?: boolean;
+  /** بانرات موضع «شاشة العروض» — عرض فقط */
+  offerBanners?: PromoBanner[];
+  /** بانرات موضع «صفحة الحجز» — تمرّ إلى مسار الحجز */
+  checkoutBanners?: PromoBanner[];
 };
 
 /** أيقونة لكل فئة — بديل محايد لأي فئة يضيفها المالك لاحقاً من اللوحة */
@@ -477,6 +485,9 @@ export function Offers({
   contact,
   compact = false,
   locale = DEFAULT_LOCALE,
+  discountEnabled = false,
+  offerBanners = [],
+  checkoutBanners = [],
 }: OffersProps) {
   const t = useT("booking.offers");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
@@ -507,6 +518,8 @@ export function Offers({
         trip={checkoutTrip}
         compact={compact}
         locale={locale}
+        discountEnabled={discountEnabled}
+        banners={checkoutBanners}
         onBack={() => setBookingOffer(null)}
       />
     );
@@ -514,6 +527,9 @@ export function Offers({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* بانرات موضع «شاشة العروض» — فوق البطاقات، بلا أثر على أي سعر معروض */}
+      <PromoBanners banners={offerBanners} compact={compact} />
+
       {/* ملخص الرحلة */}
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">

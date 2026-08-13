@@ -1143,12 +1143,24 @@ begin
   end if;
 
   -- (ي-٧) إنشاء الحجز يبقى محجوباً عن الزائر (تصليب 0009 لم يُمس)
+  --
+  -- ⚠ حارس وجودٍ **قبل** فحص الصلاحية، ودرسٌ مدفوع الثمن: `has_function_privilege`
+  -- على **نصّ** توقيعٍ غير موجود لا تُرجع false — بل ترمي 42883 لأن النص يُحوَّل
+  -- إلى `regprocedure` قبل الفحص، فتسقط المجموعة كلها بخطأ Postgres وتتوقف هذه
+  -- الحراسة عن الحراسة بصمت. وقع ذلك حين أسقطت 0024 التوقيع الخماسي عشر.
+  -- فالحارس هنا يحوّل «تغيّر التوقيع» إلى رسالة صريحة تقول ما يجب تحديثه.
+  if to_regprocedure('public.create_booking(
+       jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
+       text, text, text, text, text, text, timestamptz, text, text)') is null then
+    raise exception '(ي-٧) توقيع create_booking تغيّر عمّا يفحصه هذا الاختبار — حدّث النص هنا قبل أي شيء';
+  end if;
+
   if has_function_privilege('anon', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text)', 'EXECUTE')
+       text, text, text, text, text, text, timestamptz, text, text)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
-       text, text, text, text, text, text, timestamptz, text)', 'EXECUTE') then
+       text, text, text, text, text, text, timestamptz, text, text)', 'EXECUTE') then
     raise exception '(ي-٧) ثغرة: create_booking عادت متاحة لدور عام (نقض د١ من 0009)';
   end if;
 
@@ -1215,15 +1227,33 @@ begin
     raise exception '(ي-١٠) واجهة الزائر غيّرت السعر: للخادم % وللزائر %', v_total, v_total2;
   end if;
 
-  -- ولا يحمل نوع الإرجاع أي عمود داخلي أصلاً
+  -- ولا يحمل نوع الإرجاع أي عمود داخلي أصلاً.
+  --
+  -- الفحص من pg_proc لا من information_schema.parameters: الأخيرة تسمّي أعمدة
+  -- `returns table` بـ OUT في هذا الإصدار وTABLE في غيره، فشرط
+  -- `parameter_mode = 'TABLE'` كان يجعل هذا الفحص **يمرّ بلا أن يفحص شيئاً** —
+  -- حارسُ تسريب whitelabel صامتٌ منذ كُتب. نفس الفخّ موثَّق في dispatch_tests (ب-١).
+  -- ولذلك يسبقه شاهد إيجابي: لو لم نجد عمود total فآلية الفحص نفسها معطلة.
+  if not exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    cross join lateral unnest(p.proargnames, p.proargmodes) as a(argname, argmode)
+    where n.nspname = 'public' and p.proname = 'quote_public'
+      and a.argmode in ('o', 't') and a.argname = 'total'
+  ) then
+    raise exception '(ي-٩) آلية فحص أعمدة الإرجاع معطلة: لم يُعثر على العمود total';
+  end if;
+
   if exists (
     select 1
-    from information_schema.parameters p
-    where p.specific_schema = 'public'
-      and p.specific_name like 'quote\_public%'
-      and p.parameter_mode = 'TABLE'
-      and p.parameter_name in ('price_source', 'subcontractor_id',
-                               'subcontractor_cost', 'margin_amount')
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    cross join lateral unnest(p.proargnames, p.proargmodes) as a(argname, argmode)
+    where n.nspname = 'public' and p.proname = 'quote_public'
+      and a.argmode in ('o', 't')
+      and a.argname in ('price_source', 'subcontractor_id',
+                        'subcontractor_cost', 'margin_amount')
   ) then
     raise exception '(ي-٩) ثغرة whitelabel: quote_public تُرجع عموداً داخلياً';
   end if;

@@ -25,6 +25,7 @@ import type {
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
+import type { PromoBanner } from "@/lib/discount-types";
 import { createFormatter, type LocaleFormatter } from "./format";
 import { Offers, type BookingContact, type TripSummary } from "./offers";
 
@@ -64,6 +65,14 @@ export type SearchWidgetProps = {
   /** لغة الزائر — تصل من الصفحة الخادمية، وغيابها يعني العربية */
   locale?: string;
   className?: string;
+  /**
+   * نظام الخصومات مفعَّل (المرحلة ١٢أ) — يصل من الصفحة الخادمية التي وحدها
+   * تقرأ `site_settings`. غيابه يعني **مطفأ**: لا يظهر حقل كوبون في مسار الحجز.
+   */
+  discountEnabled?: boolean;
+  /** بانرات موضع «شاشة العروض» و«صفحة الحجز» — عرض فقط، بلا أثر على أي سعر */
+  offerBanners?: PromoBanner[];
+  checkoutBanners?: PromoBanner[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -322,6 +331,9 @@ export function SearchWidget({
   compact = false,
   locale = DEFAULT_LOCALE,
   className,
+  discountEnabled = false,
+  offerBanners = [],
+  checkoutBanners = [],
 }: SearchWidgetProps) {
   const t = useT("booking.search");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
@@ -709,6 +721,9 @@ export function SearchWidget({
             contact={contact}
             compact={compact}
             locale={locale}
+            discountEnabled={discountEnabled}
+            offerBanners={offerBanners}
+            checkoutBanners={checkoutBanners}
           />
         </div>
       ) : null}

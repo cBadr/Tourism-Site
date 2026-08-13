@@ -7,6 +7,9 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { SearchWidget } from "@/components/booking/search-widget";
+import { PromoBanners } from "@/components/booking/promo-banner";
+import { getPromoBanners } from "@/lib/discounts/banners";
+import { isDiscountEnabled } from "@/lib/discounts/settings";
 
 /**
  * صفحة الحجز (/book) — الصفحة المخصصة لمحرك التسعير: ترويسة قصيرة،
@@ -63,7 +66,16 @@ const TRUST_POINTS = [
 
 export default async function BookPage() {
   const locale = await resolveLocale();
-  const [settings, t] = await Promise.all([getSettings(locale), getT("pages.book", locale)]);
+  // الخصومات (المرحلة ١٢أ): الصفحة الخادمية وحدها تقرأ `site_settings` وجدول
+  // البانرات، وتمرّرهما props إلى جزيرة العميل — فلا يقرأ المتصفح إعداداً ولا
+  // يستنتج وجود حملة من غياب حقل. البانرات محتوى عرض بلا أثر على أي سعر.
+  const [settings, t, offerBanners, checkoutBanners, discountEnabled] = await Promise.all([
+    getSettings(locale),
+    getT("pages.book", locale),
+    getPromoBanners("offers"),
+    getPromoBanners("checkout"),
+    isDiscountEnabled(),
+  ]);
   const contact = {
     whatsapp: settings.contact.whatsapp,
     phone: settings.contact.phone,
@@ -97,8 +109,20 @@ export default async function BookPage() {
 
         {/* الويدجت بعرض كامل */}
         <section className="py-10 md:py-14">
-          <div className="mx-auto w-full max-w-4xl px-4 sm:px-6">
-            <SearchWidget contact={contact} locale={locale} />
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 sm:px-6">
+            {/*
+              موضع «شاشة العروض» هنا **على مستوى الصفحة** لا داخل النتائج: هذه
+              الصفحة هي شاشة العروض بعينها، والبانر فوق الويدجت يظل مرئياً بعد
+              ظهور النتائج. ولذلك لا يُمرَّر `offerBanners` إلى الويدجت أيضاً —
+              وإلا ظهر البانر نفسه مرتين في الشاشة الواحدة.
+            */}
+            <PromoBanners banners={offerBanners} />
+            <SearchWidget
+              contact={contact}
+              locale={locale}
+              discountEnabled={discountEnabled}
+              checkoutBanners={checkoutBanners}
+            />
           </div>
         </section>
 
