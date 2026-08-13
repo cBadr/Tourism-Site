@@ -8,7 +8,9 @@
     "start": "cross-env NODE_OPTIONS=--max-http-header-size=65536 next start",
     "lint": "eslint",
     "db:migrate": "node scripts/db-migrate.mjs",
-    "db:test": "node scripts/db-test.mjs"
+    "db:test": "node scripts/db-test.mjs",
+    "demo:seed": "node scripts/demo-seed.mjs",
+    "demo:clean": "node scripts/demo-seed.mjs --clean"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
