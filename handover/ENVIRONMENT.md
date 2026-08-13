@@ -27,14 +27,14 @@
 ```bash
 pnpm install                       # تثبيت الاعتماديات
 cp .env.example .env.local         # ثم املأ القيم (الجدول أدناه)
-# ⚠ أضِف سطر DATABASE_URL يدوياً إلى .env.local — غير موجود في .env.example (الصيغة في القسم ٤)
+# ⚠ املأ DATABASE_URL بصيغة الـ Session pooler — موجود في القالب فارغاً (الصيغة في القسم ٤)
 pnpm db:migrate                    # تطبيق الترحيلات 0001–0021
 pnpm db:test                       # التحقق: سبع مجموعات، كلها ALL PASSED
 pnpm dev                           # http://localhost:3000
 ```
 
 > **على جهاز جديد بمشروع Supabase جديد** تسبق الخطوةَ الثانية خطوةٌ صفر: أنشئ مشروع Supabase وانسخ منه `NEXT_PUBLIC_SUPABASE_URL` و`NEXT_PUBLIC_SUPABASE_ANON_KEY` و`SUPABASE_SERVICE_ROLE_KEY` (‏Project Settings ← API) ثم رابط الـ **Session pooler** كـ `DATABASE_URL` (‏Connect ← Session pooler ← URI). الدليل المصوَّر: `supabase/README.md`.
-> **بلا `DATABASE_URL` يتوقف `pnpm db:migrate` فوراً** برسالة عربية (`db-migrate.mjs:21-27`) — وهي أول خطوة تفشل لو نُسخ `.env.example` كما هو.
+> **بلا قيمة في `DATABASE_URL` يتوقف `pnpm db:migrate` فوراً** برسالة عربية (`db-migrate.mjs:21-27`) — وهي أول خطوة تفشل لو نُسخ `.env.example` كما هو بلا ملء القيم.
 > `pnpm dev` وحده يعمل بلا أي متغير: الموقع يعرض المحتوى الافتراضي من `lib/default-content.ts` و`/admin` مفتوح (وضع تطوير).
 
 | الأمر | الملف | ما يفعله |
@@ -83,7 +83,7 @@ pnpm dev                           # http://localhost:3000
 
 | مضبوط | فارغ أو غائب |
 |---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` · `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `SUPABASE_SERVICE_ROLE_KEY` · `SITE_URL` · `DATABASE_URL` · `TELEGRAM_BOT_TOKEN` | `NEXT_PUBLIC_GA_ID` (موجود فارغاً) — وكل ما عداه غير مذكور أصلاً (`NEXT_PUBLIC_SITE_LOCALES`, `RESEND_API_KEY`, `NOTIFY_DISPATCH_KEY`, `CRON_SECRET`, `GOOGLE_MAPS_API_KEY`, …) |
+| `NEXT_PUBLIC_SUPABASE_URL` · `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `SUPABASE_SERVICE_ROLE_KEY` · `SITE_URL` · `DATABASE_URL` · `TELEGRAM_BOT_TOKEN` | الباقي مذكور في القالب وفارغ القيمة: `NEXT_PUBLIC_GA_ID` · `NEXT_PUBLIC_SITE_LOCALES` · `GOOGLE_MAPS_API_KEY` · `RESEND_API_KEY` · `NOTIFY_EMAIL_FROM` · `NOTIFY_DISPATCH_KEY` · `CRON_SECRET` · متغيرات الترجمة الأربعة · `ALLOW_TEST_PAYMENTS` ومفاتيح البوابات الست |
 
 `.env*` كلها في `.gitignore` — لا تُرفع أبداً.
 

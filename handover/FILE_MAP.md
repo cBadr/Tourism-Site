@@ -135,7 +135,7 @@
 | `messages/ar.json` · `messages/en.json` | نصوص الواجهة المملوكة للمستودع |
 | `proxy.ts` | **الوسيط** (لا `middleware.ts`): صيانة ← لغة ← حارس `/admin` |
 | `vercel.json` | الجدولتان: الإشعارات كل دقيقة · دورة البث كل ٥ دقائق |
-| `.env.example` | قالب البيئة — **بلا `DATABASE_URL`، أضِفه يدوياً** (`ENVIRONMENT.md` القسم ٤) |
+| `.env.example` | قالب البيئة — يشمل `DATABASE_URL` بصيغة الـ Session pooler ومتغيرات الترجمة والبوابات (املأ القيم؛ الشرح في `ENVIRONMENT.md`) |
 | `AGENTS.md` / `CLAUDE.md` | تحذير: هذه نسخة Next مختلفة — المرجع `node_modules/next/dist/docs/` |
 
 ---
