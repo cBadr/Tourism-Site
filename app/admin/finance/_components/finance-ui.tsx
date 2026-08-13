@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, XCircle, type LucideIcon } from "lucide-react";
+import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -346,34 +346,14 @@ export function FinanceFeedback({
   );
 }
 
-/** بطاقة مؤشر — الرقم يصل جاهزاً من SQL و«—» تعني «غير معروف» */
-export function KpiCard({
-  title,
-  value,
-  sub,
-  icon: Icon,
-  help,
-  tone,
-}: {
-  title: string;
-  value: ReactNode;
-  sub: string;
-  icon: LucideIcon;
-  help: ReactNode;
-  tone?: string;
-}) {
-  return (
-    <Card className={cn("h-full gap-1 p-4", tone)}>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 shrink-0 text-primary" />
-        <span className="truncate">{title}</span>
-        <HelpTip>{help}</HelpTip>
-      </div>
-      <span className="block text-xl font-bold sm:text-2xl">{value}</span>
-      <span className="block text-xs leading-relaxed text-muted-foreground">{sub}</span>
-    </Card>
-  );
-}
+/**
+ * بطاقة مؤشر — الرقم يصل جاهزاً من SQL و«—» تعني «غير معروف».
+ *
+ * كانت معرَّفة هنا ومكرَّرة في أربعة مواضع أخرى؛ صارت مكوّناً واحداً في
+ * `components/ui/kpi-card.tsx` وبقي التصدير من هنا حتى لا تتغيّر استيرادات
+ * شاشات المالية واللغات. النبرة تُمرَّر الآن بـ `variant` لا بسلسلة أصناف.
+ */
+export { KpiCard } from "@/components/ui/kpi-card";
 
 // ---------------------------------------------------------------------------
 // فلتر الفترة — نموذج GET حتى يبقى الرابط قابلاً للمشاركة والحفظ في المفضلة

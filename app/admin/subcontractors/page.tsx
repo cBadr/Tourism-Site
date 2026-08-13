@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { Label } from "@/components/ui/label";
 import type { SubcontractorStatus } from "@/lib/subcontractor-types";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -263,48 +264,6 @@ async function loadSubcontractors(
 
 const numberText = (v: number | null) => (v === null ? "—" : toArabicDigits(v));
 
-function KpiCard({
-  title,
-  value,
-  sub,
-  icon: Icon,
-  help,
-  href,
-}: {
-  title: string;
-  value: string;
-  sub: string;
-  icon: typeof Handshake;
-  help: string;
-  href?: string;
-}) {
-  const body = (
-    <Card
-      className={cn(
-        "h-full gap-1 p-4",
-        href && "transition-colors hover:bg-muted"
-      )}
-    >
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 text-primary" />
-        {title}
-        <HelpTip>{help}</HelpTip>
-      </div>
-      <span className="block text-2xl font-bold" dir="ltr">
-        {value}
-      </span>
-      <span className="block text-xs text-muted-foreground">{sub}</span>
-    </Card>
-  );
-  return href ? (
-    <Link href={href} className="block">
-      {body}
-    </Link>
-  ) : (
-    body
-  );
-}
-
 function ListsCell({ counts, ready }: { counts: Counts | undefined; ready: boolean }) {
   if (!ready) return <span className="text-muted-foreground">—</span>;
   const approved = counts?.approved ?? 0;
@@ -496,6 +455,7 @@ export default async function SubcontractorsPage({
           sub="كل الشركاء المسجَّلين بأي حالة"
           icon={Handshake}
           help="إجمالي المتعهدين في السجل بلا ترشيح — بمن فيهم المنتظرون والموقوفون. استخدم التبويبات أدناه لترى كل حالة على حدة."
+          valueDir="ltr"
         />
         <KpiCard
           title="قوائم بانتظار المراجعة"
@@ -504,6 +464,13 @@ export default async function SubcontractorsPage({
           icon={ClipboardCheck}
           href="/admin/subcontractors/reviews"
           help="قوائم الأسعار التي أرسلها المتعهدون ولم تُعتمد بعد. لا تدخل التسعير قبل اعتمادها، فكل يوم تأخير يعني رحلات تُسعَّر بتعريفة الكيلومتر بدل سعر الشريك."
+          /*
+            طابور عمل يفرغه المدير بنفسه ⇒ اللون يختفي حين ينتهي.
+            «الفئات المغطاة» بجواره لا تُلوَّن رغم أنها ناقصة غالباً: إنذار
+            يرنّ دائماً لا يُسمع (LESSONS النمط ٢).
+          */
+          variant={(kpis.pendingLists ?? 0) > 0 ? "warning" : "default"}
+          valueDir="ltr"
         />
         <KpiCard
           title="الفئات المغطاة"
@@ -515,6 +482,7 @@ export default async function SubcontractorsPage({
           sub="فئات لها سعر معتمد من متعهد معتمد"
           icon={Layers}
           help="كم فئة سيارة يوجد لها سعر داخل قائمة معتمدة لمتعهد معتمد، من أصل الفئات النشطة. الفئة غير المغطاة تُسعَّر دائماً بتعريفة الكيلومتر."
+          valueDir="ltr"
         />
       </div>
 

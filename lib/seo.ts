@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getSettings } from "@/lib/settings";
+import type { SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE, localeOg, localePath, type LocaleDef } from "@/i18n/config";
 import { getEnabledLocales } from "@/i18n/locales";
 import { getActiveLocale } from "@/i18n/server";
@@ -63,6 +64,68 @@ export async function buildLanguageAlternates(
   return languageAlternates(await getEnabledLocales(), path);
 }
 
+/* ------------------------------------------------------------------ */
+/* الأساس المطلق وصورة المشاركة                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `metadataBase` — الأساس الذي يحلّ عليه Next كل رابط نسبي في الميتاداتا.
+ * غيابه (وكان غائباً تماماً) يعني تحذيراً في كل بناء وروابط `og:` نسبية لا
+ * تفهمها منصات المشاركة أصلاً. `URL` قد ترمي لو كان `SITE_URL` مشوّهاً في
+ * البيئة، فنُرجع `undefined` بدل إسقاط تصيير الصفحة كلها بسبب متغيّر بيئة.
+ */
+function metadataBase(): URL | undefined {
+  try {
+    return new URL(getBaseUrl());
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * صورة المشاركة الافتراضية — ملف حقيقي في `public/brand/` بمقاس ١٢٠٠×٦٣٠،
+ * وهو المقاس الذي تطلبه فيسبوك وواتساب وإكس. بلا نص وبلا اسم علامة: أصل مشترك
+ * لكل نسخة whitelabel، ويحل محله شعار المالك لحظة ضبطه من شاشة الإعدادات.
+ */
+const DEFAULT_OG_IMAGE = { path: "/brand/og-default.png", width: 1200, height: 630 } as const;
+
+/**
+ * يحوّل قيمة صورة قادمة من الإعدادات إلى رابط **مطلق** — أو `null` إن كانت غير
+ * صالحة كصورة مشاركة. المنصات تجلب الصورة من خوادمها لا من متصفح الزائر، فلا
+ * ينفع فيها مسار نسبي ولا `data:` مهما عُرضت في الترويسة سليمة.
+ */
+function absoluteImageUrl(value: string | null): string | null {
+  const raw = (value ?? "").trim();
+  if (raw === "") return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("/")) return absoluteUrl(raw);
+  return null;
+}
+
+/** وصف صورة مشاركة — شكل واحد يقبله `openGraph.images` و`twitter.images` معاً */
+type ShareImage = { url: string; width?: number; height?: number; alt?: string };
+
+/**
+ * صور Open Graph لصفحة — شعار العلامة إن ضبطه المالك، وإلا الصورة الافتراضية.
+ *
+ * المقاسان يُعلَنان **للافتراضية وحدها** لأننا نعرفهما يقيناً؛ أما شعار المالك
+ * فمقاسه مجهول هنا، وإعلان مقاس كاذب يجعل المنصة ترسم إطاراً فارغاً حول صورة
+ * لا تملؤه. غياب المقاس يدفع المنصة إلى قياس الملف بنفسها وهو السلوك الصحيح.
+ */
+function ogImages(settings: SiteSettings): ShareImage[] {
+  const alt = settings.brand.name;
+  const logo = absoluteImageUrl(settings.brand.logoUrl);
+  if (logo !== null) return [{ url: logo, alt }];
+  return [
+    {
+      url: absoluteUrl(DEFAULT_OG_IMAGE.path),
+      width: DEFAULT_OG_IMAGE.width,
+      height: DEFAULT_OG_IMAGE.height,
+      alt,
+    },
+  ];
+}
+
 type PageMetadataInput = {
   /** عنوان الصفحة — يُمرر إلى قالب العنوان في الجذر؛ اتركه فارغاً للصفحة الرئيسية */
   title?: string;
@@ -109,7 +172,12 @@ export async function buildPageMetadata({
     .filter((entry) => entry.code !== activeLocale)
     .map((entry) => entry.ogLocale);
 
+  const base = metadataBase();
+  const images = ogImages(settings);
+  const cardTitle = title ?? settings.brand.name;
+
   return {
+    ...(base !== undefined ? { metadataBase: base } : {}),
     ...(title !== undefined ? { title } : {}),
     description: resolvedDescription,
     ...(isEnabled ? {} : { robots: { index: false, follow: true } }),
@@ -123,8 +191,19 @@ export async function buildPageMetadata({
       ...(alternateOg.length > 0 ? { alternateLocale: alternateOg } : {}),
       url: pageUrl,
       siteName: settings.brand.name,
-      title: title ?? settings.brand.name,
+      title: cardTitle,
       description: resolvedDescription,
+      images,
+    },
+    /**
+     * إكس (تويتر) لا يقرأ `og:image` وحده في بطاقة كبيرة — يحتاج `twitter:card`
+     * صراحةً، وإلا خرج الرابط سطراً نصياً بلا صورة. القيم نفسها بلا حساب ثانٍ.
+     */
+    twitter: {
+      card: "summary_large_image",
+      title: cardTitle,
+      description: resolvedDescription,
+      images,
     },
   };
 }

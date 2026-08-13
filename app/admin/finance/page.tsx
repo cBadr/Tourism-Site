@@ -290,11 +290,8 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
             value={kpisReady ? money(kpis.netProfit) : "—"}
             sub="الإيراد − تكلفة المتعهدين − المصروفات"
             icon={PiggyBank}
-            tone={
-              (kpis.netProfit ?? 0) < 0
-                ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/40"
-                : undefined
-            }
+            /* الخسارة وحدها تُلوَّن — الربح الموجب هو الوضع المتوقَّع ولا خبر فيه */
+            variant={kpisReady && (kpis.netProfit ?? 0) < 0 ? "danger" : "default"}
             help={
               <>
                 الطرح يقع داخل <code dir="ltr">finance_kpis</code> في قاعدة البيانات لا
@@ -356,6 +353,18 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
             }
             sub="محصّلة المقاصة مع كل الشركاء"
             icon={Scale}
+            /*
+              الإشارة تغيّر معنى البطاقة لا حجمها فقط: موجب = علينا دفعة قادمة
+              (كهرماني ينتظر فعلاً منك)، سالب = مالنا في يد الشركاء ويُحصَّل
+              (أزرق للعلم لا للإنذار). الصفر لا يُلوَّن — لا شيء يُفعل.
+            */
+            variant={
+              !kpisReady || kpis.partnerNetDue === null || kpis.partnerNetDue === 0
+                ? "default"
+                : kpis.partnerNetDue > 0
+                  ? "warning"
+                  : "info"
+            }
             help={
               <>
                 مجموع صوافي المقاصة: مستحقاتهم عن الرحلات ناقص ما قبضوه نقداً من العملاء

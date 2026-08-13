@@ -194,12 +194,62 @@
   animation: site-float 14s ease-in-out infinite reverse;
 }
 
+/* ============================================================
+   نبرة البطاقات الدلالية + حركة ظهورها — كتلة إلحاقية فقط،
+   لا تعديل على أي سطر أعلاه.
+
+   الرموز الأربعة أدناه هي **المصدر الوحيد** لألوان الحالة في البطاقات.
+   `components/ui/card.tsx` لا يعرف قيمة لون واحدة — يقرأ `--tone-*` من هنا،
+   فتغيير درجة «النجاح» في نسخة whitelabel أخرى يقع في هذا الملف وحده
+   (اتفاقيات §٣: صفر ألوان مكتوبة داخل مكوّن).
+
+   الدرجات ليست مخترعة: هي نفس درجات emerald/amber/sky المستعملة أصلاً في
+   تنبيهات اللوحة وشاراتها، منقولة إلى رمز واحد بدل تكرارها في ٤٦ ملفاً.
+   والخطر يعيد استعمال `--destructive` القائم ولا يضيف لوناً خامساً.
+   ============================================================ */
+
+:root {
+  --tone-success: oklch(0.596 0.145 163.225);
+  --tone-warning: oklch(0.666 0.179 58.318);
+  --tone-danger: var(--destructive);
+  --tone-info: oklch(0.588 0.158 241.966);
+}
+
+.dark {
+  --tone-success: oklch(0.765 0.177 163.223);
+  --tone-warning: oklch(0.828 0.189 84.429);
+  --tone-danger: var(--destructive);
+  --tone-info: oklch(0.746 0.16 232.661);
+}
+
+/*
+  ظهور خفيف جداً لبطاقات المؤشرات: ٢٤٠ms مرة واحدة عند التركيب.
+  يُعاد تشغيلها عند تغيّر الفترة أو الفلتر لأن الشاشة خادمية بالكامل
+  فتُعاد تركيب البطاقات — بلا سطر جافاسكربت واحد.
+  الحارس هو نفسه حارس `.site-float` أدناه، لا حارس ثانٍ موازٍ له.
+*/
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.card-enter {
+  animation: card-enter 240ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
   .site-float,
-  .site-float-slow {
+  .site-float-slow,
+  .card-enter {
     animation: none;
   }
 }

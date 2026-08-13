@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import type { TripSnapshot } from "@/lib/booking-types";
@@ -210,36 +211,6 @@ const TICK_REASONS: Record<string, string> = {
   "worker-error": "خلل غير متوقع أثناء تشغيل الدورة — راجع سجل الخادم.",
 };
 
-function KpiCard({
-  title,
-  value,
-  sub,
-  icon: Icon,
-  help,
-  tone,
-}: {
-  title: string;
-  value: string;
-  sub: string;
-  icon: typeof Radio;
-  help: string;
-  tone?: string;
-}) {
-  return (
-    <Card className={`h-full gap-1 p-4 ${tone ?? ""}`}>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 text-primary" />
-        {title}
-        <HelpTip>{help}</HelpTip>
-      </div>
-      <span className="block text-2xl font-bold" dir="ltr">
-        {value}
-      </span>
-      <span className="block text-xs text-muted-foreground">{sub}</span>
-    </Card>
-  );
-}
-
 export default async function DispatchPage({ searchParams }: PageProps<"/admin/dispatch">) {
   const [params, loaded] = await Promise.all([searchParams, loadScreen()]);
   const { ready, settings, settingsReady, settingsEmpty, counts, queue, queueFailed } = loaded;
@@ -342,6 +313,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/admin/d
           sub="موجات مفتوحة تنتظر رد المتعهدين"
           icon={Megaphone}
           help={DISPATCH_STATUS_HINTS.broadcasting}
+          valueDir="ltr"
         />
         <KpiCard
           title="مُسند"
@@ -349,6 +321,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/admin/d
           sub="طلبات وجدت منفّذها"
           icon={UserCheck}
           help={DISPATCH_STATUS_HINTS.assigned}
+          valueDir="ltr"
         />
         <KpiCard
           title="طابور يدوي"
@@ -356,11 +329,9 @@ export default async function DispatchPage({ searchParams }: PageProps<"/admin/d
           sub="استنفدت موجاتها وتنتظرك"
           icon={AlertTriangle}
           help={DISPATCH_STATUS_HINTS.manual}
-          tone={
-            (counts.manual ?? 0) > 0
-              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
-              : undefined
-          }
+          /* كل رقم فوق الصفر هنا رحلة مدفوعة بلا منفّذ — إلحاح لا إحصاء */
+          variant={(counts.manual ?? 0) > 0 ? "warning" : "default"}
+          valueDir="ltr"
         />
       </div>
 

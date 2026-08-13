@@ -1,8 +1,6 @@
-import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, XCircle, type LucideIcon } from "lucide-react";
+import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
-import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type {
@@ -236,34 +234,14 @@ export function LanguagesFeedback({
   );
 }
 
-/** بطاقة مؤشر — الرقم يصل جاهزاً و«—» تعني «غير معروف» */
-export function KpiCard({
-  title,
-  value,
-  sub,
-  icon: Icon,
-  help,
-  tone,
-}: {
-  title: string;
-  value: ReactNode;
-  sub: string;
-  icon: LucideIcon;
-  help: ReactNode;
-  tone?: string;
-}) {
-  return (
-    <Card className={cn("h-full gap-1 p-4", tone)}>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 shrink-0 text-primary" />
-        <span className="truncate">{title}</span>
-        <HelpTip>{help}</HelpTip>
-      </div>
-      <span className="block text-xl font-bold sm:text-2xl">{value}</span>
-      <span className="block text-xs leading-relaxed text-muted-foreground">{sub}</span>
-    </Card>
-  );
-}
+/**
+ * بطاقة مؤشر — الرقم يصل جاهزاً و«—» تعني «غير معروف».
+ *
+ * كانت نسخة رابعة مطابقة حرفاً بحرف لنسخة `finance-ui.tsx`؛ صارت المكوّن
+ * المشترك `components/ui/kpi-card.tsx` وبقي التصدير من هنا حتى لا تتغيّر
+ * استيرادات شاشة اللغات. النبرة تُمرَّر بـ `variant` لا بسلسلة أصناف.
+ */
+export { KpiCard } from "@/components/ui/kpi-card";
 
 export const numberText = (value: number | null): string =>
   value === null ? "—" : toArabicDigits(value);

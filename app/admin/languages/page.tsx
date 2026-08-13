@@ -207,11 +207,8 @@ export default async function LanguagesPage({ searchParams }: PageProps<"/admin/
           sub={provider.keyless ? "يعمل بلا مفتاح مدفوع" : "يعمل بمفتاح من متغيرات البيئة"}
           icon={Bot}
           help={provider.note}
-          tone={
-            provider.ready
-              ? undefined
-              : "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
-          }
+          /* مزوّد غير جاهز = زر «ترجم» لن يعمل؛ تنبيه لا خطر */
+          variant={provider.ready ? "default" : "warning"}
         />
         <KpiCard
           title="نشر تلقائي مفعَّل"
@@ -219,11 +216,8 @@ export default async function LanguagesPage({ searchParams }: PageProps<"/admin/
           sub="لغات تنشر المسودة الآلية بلا مراجعة"
           icon={ShieldAlert}
           help="الوضع الصحي هنا صفر. النشر التلقائي مخصص للغات الذيل الطويل التي لا تجد من يراجعها، وثمنه مخاطرة سيو حقيقية."
-          tone={
-            autoCount > 0
-              ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
-              : undefined
-          }
+          /* الوضع الصحي صفر — أي رقم فوقه ترجمة خام تصل للزوار (اعتبار ٨) */
+          variant={autoCount > 0 ? "warning" : "default"}
         />
       </div>
 

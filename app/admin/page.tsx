@@ -21,7 +21,8 @@ import {
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { Card, type CardVariant } from "@/components/ui/card";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { getSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -208,13 +209,18 @@ const money = (value: number | null, currency: string) =>
 
 const countText = (value: number | null) => (value === null ? "—" : toArabicDigits(value));
 
+/**
+ * مؤشر مالي في الشاشة الأولى — غلاف رفيع فوق `KpiCard` المشتركة.
+ * ما يخصّه وحده شيئان: تنسيق المبلغ بعملة الإعدادات، وتكبير بطاقة واحدة
+ * (`emphasis`) لأن «صافي الربح» هو الرقم الذي تُقرأ الثلاثة الأخرى لأجله.
+ */
 function MoneyStat({
   title,
   value,
   currency,
   help,
   icon: Icon,
-  tone,
+  variant,
   emphasis,
 }: {
   title: string;
@@ -222,23 +228,19 @@ function MoneyStat({
   currency: string;
   help: string;
   icon: typeof Wallet;
-  tone?: string;
+  variant?: CardVariant;
   emphasis?: boolean;
 }) {
   return (
-    <Card className={cn("h-full gap-1 p-4", tone)}>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 text-primary" />
-        {title}
-        <HelpTip>{help}</HelpTip>
-      </div>
-      <span
-        className={cn("block font-bold", emphasis ? "text-2xl" : "text-xl")}
-        dir="ltr"
-      >
-        {money(value, currency)}
-      </span>
-    </Card>
+    <KpiCard
+      title={title}
+      value={money(value, currency)}
+      valueDir="ltr"
+      icon={Icon}
+      help={help}
+      variant={variant}
+      valueClassName={emphasis ? undefined : "sm:text-xl"}
+    />
   );
 }
 
@@ -283,13 +285,12 @@ function PeriodKpis({
         icon={Coins}
         emphasis
         help="الإيراد ناقص تكلفة المتعهدين ناقص المصروفات. رقم ربح لا رقم سيولة: قد يكون موجباً وخزينتك شبه فارغة لأن النقد ما زال مع السائقين."
-        tone={
-          profit === null
-            ? undefined
-            : profit < 0
-              ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/40"
-              : "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40"
-        }
+        /*
+          الخسارة وحدها تُلوَّن. كان الربح الموجب يُصبغ بالأخضر دائماً — ولأن
+          الوضع الطبيعي أن يكون موجباً كانت البطاقة خضراء كل يوم، فلم يعد
+          الأخضر يعني شيئاً وصار الأحمر أصعب التقاطاً بين لونين لا لون واحد.
+        */
+        variant={profit !== null && profit < 0 ? "danger" : "default"}
       />
     </div>
   );
@@ -475,12 +476,13 @@ export default async function AdminHomePage() {
             currency={currency}
             icon={Scale}
             help="صافي المقاصة مع كل الشركاء مجتمعين: مستحقاتهم ناقص ما حصّلوه نقداً من عملائنا ناقص ما دفعناه لهم. موجب = ندفع، وسالب = نستردّ — والاتجاه مكتوب في العنوان فلا تقرأ الرقم مجرَّداً."
-            tone={
-              netDue === null || netDue === 0
-                ? undefined
-                : netDue > 0
-                  ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40"
-                  : "border-sky-300 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40"
+            /*
+              الاتجاهان ليسا درجتَي خطورة لشيء واحد بل حالتان مختلفتان:
+              «علينا» دفعة قادمة تخرج من الخزينة (كهرماني)، و«لنا» مال في يد
+              الشركاء يُحصَّل (أزرق). المقاصة الصفرية لا تُلوَّن.
+            */
+            variant={
+              netDue === null || netDue === 0 ? "default" : netDue > 0 ? "warning" : "info"
             }
           />
         </div>

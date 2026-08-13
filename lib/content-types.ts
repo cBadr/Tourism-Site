@@ -21,6 +21,14 @@ export type Page = {
   meta: PageMeta;
   published: boolean;
   sort: number;
+  /**
+   * ختم آخر تعديل بصيغة ISO — مصدره العمود `updated_at` في جدول `pages` الذي
+   * يحدّثه مشغّل `pages_touch_updated_at` (`0003_content.sql:23,27-30`).
+   *
+   * اختياري **هنا** لأن مُحمّل لوحة التحكم (`app/admin/content/loader.ts`) يبني
+   * صفحاته لغرض التحرير ولا يحتاجه؛ أما الواجهة العامة فتضمنه عبر `PublicPage`.
+   */
+  updatedAt?: string | null;
 };
 
 export type SectionType =
@@ -63,6 +71,19 @@ export type Section<T extends SectionType = SectionType> = {
 };
 
 export type PageWithSections = Page & { sections: Section[] };
+
+/**
+ * الصفحة كما تخرج من طبقة المحتوى العامة (`lib/content.ts`) — الفرق الوحيد عن
+ * `PageWithSections` أن ختم آخر تعديل **حقل مطلوب** (وقد تكون قيمته `null` إن
+ * لم يصل العمود من القاعدة).
+ *
+ * لماذا نوع مستقل بدل جعل الحقل مطلوباً في `Page` كلها؟ لأن `updated_at` كان
+ * موجوداً في القاعدة منذ `0003` ومع ذلك سقط صامتاً في التحويل، فبقيت خريطة
+ * الموقع تعلن تاريخ التصيير لكل صفحة — أي أنها تكذب على محركات البحث بكل بناء.
+ * طلبه صراحةً في نوع المخرجات يجعل إسقاطه **خطأ بناء** لا نقصاً صامتاً، دون أن
+ * يُلزم مُحمّل اللوحة بحقل لا يستعمله.
+ */
+export type PublicPage = PageWithSections & { updatedAt: string | null };
 
 /** ثوابت واجهة الإدارة: الاسم العربي + وصف قصير لكل نوع قسم */
 export const SECTION_TYPE_LABELS: Record<SectionType, { label: string; hint: string }> = {

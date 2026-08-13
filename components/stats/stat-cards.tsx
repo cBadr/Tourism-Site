@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 
-import { HelpTip } from "@/components/shared/HelpTip";
-import { Card } from "@/components/ui/card";
+import { KpiCard } from "@/components/ui/kpi-card";
 import type { LoadedStatCard } from "@/lib/stats/cards";
 import {
   deltaDirection,
@@ -98,19 +97,23 @@ export function StatCardTile({
   const hasComparison = deltaDirection(card.deltaPercent) !== null;
 
   return (
-    <Card className="h-full gap-1 p-4">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="truncate">{card.label}</span>
-        {card.help ? <HelpTip>{card.help}</HelpTip> : null}
-      </div>
-      <span dir="ltr" className="block text-start text-xl font-bold sm:text-2xl">
-        {value}
-      </span>
-      <span className="flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
-        <DeltaChip cardKey={card.key} deltaPercent={card.deltaPercent} inverted={inverted} />
-        {hasComparison && comparisonLabel ? <span>مقارنةً بـ {comparisonLabel}</span> : null}
-      </span>
-    </Card>
+    <KpiCard
+      title={card.label}
+      value={value}
+      valueDir="ltr"
+      help={card.help}
+      /*
+        بطاقة الإحصائيات **لا تأخذ نبرة**: الاتجاه معروض في شارة التغيّر أسفلها،
+        وتلوين ست شاشات بالكامل يعيدنا إلى «كل البطاقات متشابهة» بألوان.
+      */
+      subClassName="flex flex-wrap items-center gap-1.5 text-[11px]"
+      sub={
+        <>
+          <DeltaChip cardKey={card.key} deltaPercent={card.deltaPercent} inverted={inverted} />
+          {hasComparison && comparisonLabel ? <span>مقارنةً بـ {comparisonLabel}</span> : null}
+        </>
+      }
+    />
   );
 }
 

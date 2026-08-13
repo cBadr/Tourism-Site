@@ -1,5 +1,5 @@
 import { cache } from "react";
-import type { Page, PageWithSections, Section } from "@/lib/content-types";
+import type { Page, PublicPage, Section } from "@/lib/content-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 
 /**
@@ -31,6 +31,8 @@ type PageRow = {
   meta: Page["meta"] | null;
   published: boolean;
   sort: number;
+  /** يصل ضمن `select("*")` — المشغّل في `0003_content.sql` يضمن تحديثه */
+  updated_at: string | null;
 };
 
 type SectionRow = {
@@ -42,7 +44,7 @@ type SectionRow = {
   visible: boolean;
 };
 
-function mapPage(row: PageRow, sections: SectionRow[]): PageWithSections {
+function mapPage(row: PageRow, sections: SectionRow[]): PublicPage {
   return {
     id: row.id,
     slug: row.slug,
@@ -51,6 +53,9 @@ function mapPage(row: PageRow, sections: SectionRow[]): PageWithSections {
     meta: row.meta ?? { title: null, description: null },
     published: row.published,
     sort: row.sort,
+    // لا تاريخ مُختلَق عند غياب العمود: `null` تعني «لا نعرف» فتُسقط الخريطة
+    // `lastModified` بدل أن تعلن تاريخاً كاذباً
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
     sections: sections
       .filter((s) => s.page_id === row.id)
       .sort((a, b) => a.sort - b.sort)
@@ -65,9 +70,14 @@ function mapPage(row: PageRow, sections: SectionRow[]): PageWithSections {
   };
 }
 
-async function loadDefaults(): Promise<PageWithSections[]> {
-  const { DEFAULT_PAGES } = await import("@/lib/default-content");
-  return DEFAULT_PAGES;
+/**
+ * الاحتياطي — ختمه **ثابت محفور** لا `new Date()`: تاريخ يتغيّر مع كل تصيير
+ * يجعل خريطة الموقع تعلن «تعدّلت كل الصفحات الآن» في كل زحف، فيتعلم الزاحف أن
+ * `lastModified` من هذا الموقع بلا معنى ويتجاهله — بما فيه التعديل الحقيقي.
+ */
+async function loadDefaults(): Promise<PublicPage[]> {
+  const { DEFAULT_PAGES, DEFAULT_CONTENT_UPDATED_AT } = await import("@/lib/default-content");
+  return DEFAULT_PAGES.map((page) => ({ ...page, updatedAt: DEFAULT_CONTENT_UPDATED_AT }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,7 +128,7 @@ function firstRow(data: unknown): Record<string, unknown> | null {
 }
 
 /** يدمج صفحة مترجمة فوق الصفحة العربية — الأقسام تُطابَق بالمعرّف لا بالترتيب */
-function mergePage(base: PageWithSections, payload: unknown): PageWithSections {
+function mergePage(base: PublicPage, payload: unknown): PublicPage {
   const row = firstRow(payload) as LocalizedPagePayload | null;
   if (!row) return base;
 
@@ -157,7 +167,7 @@ function mergePage(base: PageWithSections, payload: unknown): PageWithSections {
 /* ------------------------------------------------------------------ */
 
 /** الصفحات العربية الأساس — مصدر كل احتياطي، ومُذاكَرة لكل طلب */
-const loadBasePages = cache(async (): Promise<PageWithSections[]> => {
+const loadBasePages = cache(async (): Promise<PublicPage[]> => {
   if (!hasEnv()) return loadDefaults();
   try {
     const { createServerSupabase } = await import("@/lib/supabase/server");
@@ -185,7 +195,7 @@ const loadBasePages = cache(async (): Promise<PageWithSections[]> => {
  * الأعم — لا يمر من هنا أصلاً، وتأخير ظهور ترجمة جديدة لا يتجاوز دقيقة.
  */
 const LOCALIZED_TTL_MS = 60_000;
-const localizedMemo = new Map<string, { at: number; pages: PageWithSections[] }>();
+const localizedMemo = new Map<string, { at: number; pages: PublicPage[] }>();
 
 /**
  * إسقاط ذاكرة النسخ المترجمة بعد نشر ترجمة من اللوحة.
@@ -204,7 +214,7 @@ export function clearContentCache(): void {
  * ولغيرها نطلب `localized_page` لكل صفحة على التوازي ثم ندمج فوق العربي.
  * أي فشل — شبكة أو دالة غير موجودة بعد — يرجع بالعربي كاملاً.
  */
-const loadPages = cache(async (locale: string): Promise<PageWithSections[]> => {
+const loadPages = cache(async (locale: string): Promise<PublicPage[]> => {
   const base = await loadBasePages();
   if (locale === DEFAULT_LOCALE || !hasEnv()) return base;
 
@@ -240,7 +250,7 @@ function normalize(locale?: string | null): string {
 }
 
 /** كل الصفحات المنشورة بأقسامها — للـ sitemap والقوائم */
-export async function getPublishedPages(locale?: string): Promise<PageWithSections[]> {
+export async function getPublishedPages(locale?: string): Promise<PublicPage[]> {
   return loadPages(normalize(locale));
 }
 
@@ -248,7 +258,7 @@ export async function getPublishedPages(locale?: string): Promise<PageWithSectio
 export async function getPageBySlug(
   slug: string,
   locale?: string
-): Promise<PageWithSections | null> {
+): Promise<PublicPage | null> {
   const pages = await loadPages(normalize(locale));
   return pages.find((p) => p.slug === slug) ?? null;
 }
@@ -257,7 +267,7 @@ export async function getPageBySlug(
 export async function getPagesByKind(
   kind: Page["kind"],
   locale?: string
-): Promise<PageWithSections[]> {
+): Promise<PublicPage[]> {
   const pages = await loadPages(normalize(locale));
   return pages.filter((p) => p.kind === kind).sort((a, b) => a.sort - b.sort);
 }

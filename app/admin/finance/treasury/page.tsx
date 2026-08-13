@@ -315,11 +315,8 @@ export default async function TreasuryPage({
               value={<Money value={account.balance} currency={currency} />}
               sub={`${account.label} · ${accountKindLabel(account.kind)}`}
               icon={Wallet}
-              tone={
-                (account.balance ?? 0) < 0
-                  ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/40"
-                  : undefined
-              }
+              /* رصيد خزينة سالب حالة لا يجوز أن تمرّ بطرف العين */
+              variant={(account.balance ?? 0) < 0 ? "danger" : "default"}
               help="الرصيد الافتتاحي زائد كل الوارد ناقص كل المنصرف، محسوباً في العرض v_account_balances. لا يتقيّد بفترة الشاشة — هو رصيد الآن."
             />
             <KpiCard
