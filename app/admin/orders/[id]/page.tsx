@@ -6,11 +6,14 @@ import {
   CheckCircle2,
   Coins,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileText,
   MapPin,
   MessageCircle,
   Phone,
   ReceiptText,
+  Upload,
   Wallet,
   XCircle,
 } from "lucide-react";
@@ -27,6 +30,7 @@ import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import type { TripSnapshot } from "@/lib/booking-types";
@@ -54,7 +58,13 @@ import {
 } from "../_components/booking-ui";
 import { DISPATCH_ERRORS } from "../../dispatch/_components/dispatch-ui";
 import { DispatchPanel } from "./_components/dispatch-panel";
-import { cancelBooking, changeStatus, verifyTransfer } from "./actions";
+import {
+  cancelBooking,
+  changeStatus,
+  setReceiptVisibility,
+  uploadAdminReceipt,
+  verifyTransfer,
+} from "./actions";
 
 /**
  * تفاصيل الطلب — شاشة عمل التشغيل على حجز واحد:
@@ -77,6 +87,8 @@ const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|heic|heif)$/i;
 
 type Payment = {
   key: string;
+  /** معرّف صف التحصيل — null يعني صفاً بلا معرّف فلا زر تبديل رؤية له */
+  id: string | null;
   amount: number | null;
   accountId: string | null;
   status: string | null;
@@ -85,6 +97,15 @@ type Payment = {
   receiptUrl: string | null;
   receiptIsImage: boolean;
   receiptMissing: boolean;
+  /**
+   * يسافر صف الإيصال في حمولة `get_booking_by_token`؟ العمود يصل مع هجرة 0027
+   * وافتراضيه `true`، فقبلها — ومع أي صف قديم — القيمة `true` وهي الحقيقة: كل
+   * الإيصالات كانت في الحمولة. و`false` تعني أن الصف **يُسقط من الحمولة نفسها**
+   * فلا يبلغ متصفح العميل بحال، لا أنه يُخفى في طبقة العرض.
+   */
+  visibleToCustomer: boolean;
+  /** رفعه فريق التشغيل نيابة عن العميل (واتساب أو هاتفياً) لا العميل بنفسه */
+  uploadedByAdmin: boolean;
 };
 
 type EventRow = {
@@ -157,6 +178,14 @@ const SAVED_MESSAGES: Record<string, string> = {
     "فُتحت موجة جديدة الآن — أُغلقت عروض الموجة السابقة وبُثَّ الطلب بسقف تكلفة أوسع.",
   manual:
     "أُسند الطلب يدوياً وأُغلقت بقية العروض — الحجز الآن «مُسند»، والسبب مسجَّل في سجل الطلب.",
+  override:
+    "أُسند الطلب فوق سقف الدين وأُغلقت بقية العروض — الحجز الآن «مُسند». السبب الذي كتبته محفوظ في سجل الطلب وفي سجل العروض، وهو الأثر الدائم الوحيد لهذا التجاوز. والسقف نفسه لم يتغيّر: لا يصل هذا المتعهد عرضٌ جديد، وكل إسناد تالٍ له يحتاج التجاوز الصريح نفسه حتى ينزل ما عليه تحت السقف.",
+  receipt:
+    "سُجِّل الإيصال نيابةً عن العميل والحجز الآن «قيد المراجعة» — راجع المبلغ ثم اعتمده أو ارفضه من قسم الإجراءات.",
+  shown:
+    "صار صف هذا الإيصال ضمن حمولة صفحة متابعة العميل — تعرضه الصفحة حيث تسرد إيصالات الحجز، ومنه تقرأ سبب الرفض إن كان مرفوضاً.",
+  hidden:
+    "أُسقط صف الإيصال من حمولة صفحة العميل نفسها لا من عرضها فقط، فلا يصل متصفحه إطلاقاً — ومعه يسقط سبب رفضه إن كان مرفوضاً. ويبقى هنا كاملاً ويبقى أثره المحاسبي كما هو.",
 };
 
 /**
@@ -274,6 +303,8 @@ async function loadOrder(id: string): Promise<{
   booking: Booking | null;
   payments: Payment[];
   paymentsFailed: boolean;
+  /** عمودا 0027 (`visible_to_customer` و`uploaded_by_admin`) موجودان فعلاً */
+  receiptFlagsReady: boolean;
   events: EventRow[];
   eventsFailed: boolean;
   accounts: Map<string, Account>;
@@ -281,18 +312,22 @@ async function loadOrder(id: string): Promise<{
   /** العرض `v_booking_profit` مقروء — أي أن هجرة المرحلة ٧ مطبَّقة */
   profitReady: boolean;
   profit: BookingProfit | null;
+  /** الرمز الذي يراه المتعهد لهذه الرحلة (0028) — `null` قبل تنفيذ الهجرة */
+  partnerCode: string | null;
 }> {
   const blank = {
     ready: false,
     booking: null,
     payments: [] as Payment[],
     paymentsFailed: false,
+    receiptFlagsReady: false,
     events: [] as EventRow[],
     eventsFailed: false,
     accounts: new Map<string, Account>(),
     subcontractorName: null as string | null,
     profitReady: false,
     profit: null as BookingProfit | null,
+    partnerCode: null as string | null,
   };
 
   const supabase = await createServerSupabase();
@@ -330,13 +365,18 @@ async function loadOrder(id: string): Promise<{
     marginAmount: asNumber(row.margin_amount),
   };
 
-  const [paymentsRes, eventsRes, accountsRes, subcontractorName, profitRes] = await Promise.all([
-    supabase.from("payments").select("*").eq("booking_id", id),
-    supabase.from("booking_events").select("*").eq("booking_id", id),
-    supabase.from("payment_accounts").select("id, label, kind, handle"),
-    resolveSubcontractorName(booking.subcontractorId),
-    loadBookingProfit(supabase, id),
-  ]);
+  const [paymentsRes, eventsRes, accountsRes, subcontractorName, profitRes, partnerCodeRes] =
+    await Promise.all([
+      supabase.from("payments").select("*").eq("booking_id", id),
+      supabase.from("booking_events").select("*").eq("booking_id", id),
+      supabase.from("payment_accounts").select("id, label, kind, handle"),
+      resolveSubcontractorName(booking.subcontractorId),
+      loadBookingProfit(supabase, id),
+      // الرمز الذي يراه المتعهد — **يُقرأ من القاعدة ولا يُشتق هنا**: اشتقاقه في
+      // TypeScript يعني صيغتين لقيمة واحدة تنحرفان بلا صوت (النمط ٨ في LESSONS).
+      // وقبل 0028 لا وجود للدالة فيبقى `null` ولا يُعرض شيء.
+      supabase.rpc("partner_trip_code", { p_booking_id: id }),
+    ]);
 
   const accounts = new Map<string, Account>();
   for (const acc of (accountsRes.data ?? []) as Record<string, unknown>[]) {
@@ -357,12 +397,27 @@ async function loadOrder(id: string): Promise<{
       Date.parse(asText(pick(a, ["created_at"])) ?? "")
   );
 
+  /**
+   * هل عمودا 0027 موجودان؟ الفرق جوهري: غيابهما يعني «الهجرة لم تُنفَّذ» فلا
+   * زرّ تبديل رؤية يُعرض (زرٌّ يفشل دائماً)، لا «كل الإيصالات مخفية».
+   *
+   * والاستدلال من **الصفوف المقروءة نفسها**: حجزٌ بلا إيصالات يُنتج `false` هنا
+   * — وهو مقبول لا سهو، لأن مستهلكَي هذه الراية كليهما (الوسم وزر التبديل)
+   * يعيشان داخل حلقة قائمة الإيصالات، فبلا صف واحد لا يُعرض أيٌّ منهما أصلاً
+   * ولا يُقرأ منها شيء. استعلام مخطط إضافي كان سيسأل سؤالاً لا مستهلك لجوابه.
+   */
+  const receiptFlagsReady = rawPayments.some((row) => "visible_to_customer" in row);
+
   const payments: Payment[] = await Promise.all(
     sortedPayments.map(async (p, index) => {
       const path = asText(pick(p, ["receipt_path", "receipt", "path", "file_path"]));
       const signed = path ? await signReceipt(path) : null;
       return {
         key: asText(p.id) ?? `payment-${index}`,
+        id: asText(p.id),
+        // العمود الغائب (قبل 0027) يعني «ظاهر» — وهو السلوك القائم فعلاً
+        visibleToCustomer: pick(p, ["visible_to_customer"]) !== false,
+        uploadedByAdmin: pick(p, ["uploaded_by_admin"]) === true,
         amount: asNumber(pick(p, ["amount", "value"])),
         // لا حقل `kind` في جدول `payments` — الوسيلة صفة الحساب المستقبِل نفسه
         accountId: asText(pick(p, ["account_id", "payment_account_id"])),
@@ -407,12 +462,15 @@ async function loadOrder(id: string): Promise<{
     booking,
     payments,
     paymentsFailed: Boolean(paymentsRes.error),
+    receiptFlagsReady,
     events,
     eventsFailed: Boolean(eventsRes.error),
     accounts,
     subcontractorName,
     profitReady: profitRes.viewReady,
     profit: profitRes.profit,
+    // الدالة تُرجع نصاً مفرداً؛ وقبل 0028 يعود خطأ «لا دالة» فيبقى null بهدوء
+    partnerCode: partnerCodeRes.error ? null : (asText(partnerCodeRes.data) ?? null),
   };
 }
 
@@ -633,12 +691,14 @@ export default async function OrderDetailPage({
     booking,
     payments,
     paymentsFailed,
+    receiptFlagsReady,
     events,
     eventsFailed,
     accounts,
     subcontractorName,
     profitReady,
     profit,
+    partnerCode,
   } = await loadOrder(id);
   if (ready && !booking) notFound();
 
@@ -647,6 +707,9 @@ export default async function OrderDetailPage({
   const error = typeof sp.error === "string" ? sp.error : null;
   const confirmingCancel = sp.confirm === "cancel";
   const confirmingAssign = sp.confirm === "assign";
+  // خطوة التأكيد الثانية للإسناد فوق سقف دين المتعهد — نفس نمط ‎?confirm=cancel‎:
+  // الحالة في الرابط وحده، فلا حالة على العميل والصفحة قابلة للمشاركة والتحديث.
+  const confirmingOverride = sp.confirm === "override";
 
   // رسائل مطابقة لرموز `hint` التي ترفعها دوال المرحلة ٤ — كل حالة برسالتها،
   // فلا يُتهم نقص الصلاحيات في خطأ سببه الحالة أو غياب الإيصال.
@@ -663,6 +726,28 @@ export default async function OrderDetailPage({
     noreceipt:
       "لا يوجد إيصال بانتظار التحقق في هذا الحجز — إما أن العميل لم يرفع إيصالاً بعد، أو أن آخر إيصال سبق البتّ فيه.",
     input: "بيانات الإجراء ناقصة أو غير صالحة — راجع الحقول ثم أعد المحاولة.",
+    // ── رفع الإيصال نيابة عن العميل وإظهاره/إخفاؤه (هجرة 0027)
+    pending:
+      "يوجد إيصال معلّق على هذا الحجز — اعتمده أو ارفضه أولاً ثم ارفع الإيصال الجديد. (الاعتماد يعالج الإيصال المعلّق الأحدث وحده، فصفٌّ ثانٍ كان سيترك الأول معلّقاً بلا زر يغلقه.)",
+    amount:
+      "اكتب مبلغ التحويل كما وصل فعلاً — رقم أكبر من صفر. المبلغ إقرار منك بما دخل الحساب، ولا يُشتق من قيمة الحجز.",
+    nofile: "أرفق صورة إيصال التحويل أو ملف PDF قبل الحفظ.",
+    filetype: "نوع الملف غير مدعوم — أرفق صورة (JPG أو PNG أو WebP) أو ملف PDF.",
+    filesize: "حجم الملف أكبر من ٥ ميجابايت — أرسل صورة أصغر.",
+    upload:
+      "تعذّر رفع الملف إلى المخزن — تأكد من ضبط SUPABASE_SERVICE_ROLE_KEY ومن وجود مخزن receipts، ثم أعد المحاولة. لم يُسجَّل أي إيصال.",
+    nokey:
+      "رفع الإيصال من اللوحة يحتاج SUPABASE_SERVICE_ROLE_KEY في متغيرات البيئة — سياسات مخزن الإيصالات مكتوبة للعميل لا للإدارة. لم يُسجَّل أي إيصال.",
+    norow: "لم يعد هذا الإيصال موجوداً — أعد تحميل الصفحة لترى القائمة الحقيقية.",
+    filemissing:
+      "رُفع الملف ظاهرياً لكن قاعدة البيانات لم تجده في مخزن receipts، فرُفض تسجيل الإيصال ولم يُنشأ أي صف تحصيل. أعد المحاولة — وإن تكرر فراجع أن مخزن receipts موجود وأن SUPABASE_SERVICE_ROLE_KEY يخص هذا المشروع نفسه.",
+    notready:
+      "هذه الميزة تحتاج هجرة 0027 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يُسجَّل أي إيصال ولم تتغيّر رؤية أي إيصال.",
+    // ── سقف ديون المتعهدين (0027) — رمزان لا يجوز أن يسقطا على رسالة الصلاحيات
+    debtlimit:
+      "هذا المتعهد بلغ سقف الدين المسموح، وقاعدة البيانات ترفض إسناد أي رحلة إليه — والرفض عن دَين لا عن صلاحية. حصّل منه المبلغ وسجّله تسويةً، أو ارفع السقف من بطاقة سقف الديون في شاشة المقاصة، أو أسنِد هذه الرحلة وحدها من زر «إسناد فوق سقف الدين» في لوحة الإسناد بسبب مكتوب.",
+    nolimitfn:
+      "الإسناد فوق سقف الدين يحتاج دالة manual_assign_over_limit من هجرة 0027 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب.",
   };
 
   if (!booking) {
@@ -695,6 +780,12 @@ export default async function OrderDetailPage({
   // فإظهار الزرين في «بانتظار الدفع» كان وعداً كاذباً ينتهي برسالة خطأ.
   const canVerify = booking.status === "under_review";
 
+  // نفس المبدأ لرفع الإيصال: `admin_attach_receipt` تقبل الحالتين أدناه وحدهما،
+  // وترفض بوجود إيصال معلّق. الشاشة تقول ذلك قبل الضغط لا بعده.
+  const canAttachReceipt =
+    booking.status === "pending_payment" || booking.status === "under_review";
+  const hasPendingReceipt = payments.some((payment) => payment.status === "pending");
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       {/* الترويسة: الرقم المرجعي والحالة ورابط صفحة المتابعة التي يراها العميل */}
@@ -702,6 +793,28 @@ export default async function OrderDetailPage({
         <h2 className="font-heading text-lg font-bold" dir="ltr">
           {booking.reference}
         </h2>
+        {/*
+          رمز المتعهد (هجرة 0028): المتعهد لا يرى مرجع العميل — لأنه يرى هاتفه
+          بحكم التنفيذ، فلو رأى المرجع أيضاً لاجتمع لديه عاملا «تابع حجزك» فحصل
+          على توكن الحجز ومنه على سعر العميل، أي على هامشنا. ويُعرض هنا كي يبقى
+          التشغيل والمتعهد على أرض واحدة حين يتحدثان عن رحلة بعينها.
+        */}
+        {partnerCode && (
+          <>
+            <span
+              dir="ltr"
+              className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+            >
+              {partnerCode}
+            </span>
+            <HelpTip>
+              الرمز الذي يراه المتعهد لهذه الرحلة في بورتاله بدل رقم الحجز — اذكره له
+              حين تتحدثان عن هذه الرحلة. والمتعهد لا يرى «{booking.reference}» إطلاقاً:
+              هو ورقمُ هاتف العميل معاً يفتحان صفحة الحجز من نموذج «تابع حجزك»، وفيها
+              سعر العميل — أي هامشنا.
+            </HelpTip>
+          </>
+        )}
         <StatusBadge status={booking.status} />
         <HelpTip>
           {isBookingStatus(booking.status)
@@ -919,14 +1032,17 @@ export default async function OrderDetailPage({
       />
 
       {/* المدفوعات والإيصالات */}
-      <Card className="space-y-4 p-5">
+      <Card className="space-y-4 p-5" id="receipts">
         <div>
           <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
             <FileText className="size-4 text-primary" />
             التحويلات والإيصالات
             <HelpTip>
-              كل إيصال يرفعه العميل يظهر هنا. الصور محفوظة في مخزن خاص لا يُقرأ من الإنترنت:
-              ما تراه رابط مؤقت صالح ٥ دقائق فقط يُنشأ عند فتح الصفحة، وينتهي بعدها تلقائياً.
+              هنا كل إيصال على هذا الحجز: ما رفعه العميل من صفحة متابعته، وما رفعه فريق
+              التشغيل نيابةً عنه من النموذج أسفل القائمة. والإيصال المحجوب يظهر لك هنا كاملاً
+              ولا يدخل حمولة صفحة العميل أصلاً — تُسقطه القاعدة من الحمولة قبل إرسالها، فلا
+              يبلغ متصفحه بأي حال. الصور محفوظة في مخزن خاص لا يُقرأ من الإنترنت: ما تراه
+              رابط مؤقت صالح ٥ دقائق فقط يُنشأ عند فتح الصفحة، وينتهي بعدها تلقائياً.
             </HelpTip>
           </h3>
           <p className="text-sm text-muted-foreground">
@@ -941,7 +1057,7 @@ export default async function OrderDetailPage({
           </p>
         ) : payments.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            لم يرفع العميل أي إيصال بعد — الحجز ينتظر التحويل.
+            لا إيصال على هذا الحجز بعد — لا من العميل ولا من فريق التشغيل.
           </p>
         ) : (
           <div className="space-y-3">
@@ -966,6 +1082,35 @@ export default async function OrderDetailPage({
                         </Badge>
                       )}
                       {payment.status && <Badge variant="outline">{payment.status}</Badge>}
+                      {payment.uploadedByAdmin && (
+                        <Badge
+                          variant="outline"
+                          className="border-violet-300 bg-violet-100 text-violet-900 dark:border-violet-700 dark:bg-violet-950 dark:text-violet-100"
+                        >
+                          رفعه التشغيل
+                        </Badge>
+                      )}
+                      {/*
+                        الوسم لا يُعرض قبل 0027: العمود غير موجود فلا ادعاء عن رؤية أحد.
+                        ونصّه يصف **الحمولة** لا الشاشة: ما يقرره العمود هو دخول الصف في
+                        رد `get_booking_by_token` أو إسقاطه منه — أما ترتيب عرضه في صفحة
+                        المتابعة فشأن تلك الصفحة، ولا يجوز أن تَعِد به هذه الشاشة.
+                      */}
+                      {receiptFlagsReady &&
+                        (payment.visibleToCustomer ? (
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100"
+                          >
+                            <Eye className="size-3.5" />
+                            يصل صفحة العميل
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            <EyeOff className="size-3.5" />
+                            محجوب عن صفحة العميل
+                          </Badge>
+                        ))}
                     </div>
                     {account && (
                       <p className="text-xs text-muted-foreground">
@@ -981,6 +1126,35 @@ export default async function OrderDetailPage({
                       {dateTimeLabel(payment.createdAt)} · {relativeTime(payment.createdAt)}
                     </p>
                     {payment.note && <p className="text-xs leading-relaxed">{payment.note}</p>}
+
+                    {/*
+                      تبديل الرؤية: الحجب يقع في القاعدة (تُسقط `get_booking_by_token`
+                      الصف من حمولة صفحة المتابعة) لا في العرض — فحاملُ التوكن يقرأ
+                      الحمولة الخام، وإخفاءٌ في JSX ليس إخفاءً.
+                    */}
+                    {receiptFlagsReady && payment.id ? (
+                      <form
+                        action={setReceiptVisibility.bind(
+                          null,
+                          booking.id,
+                          payment.id,
+                          !payment.visibleToCustomer
+                        )}
+                        className="flex flex-wrap items-center gap-1.5 pt-1"
+                      >
+                        <Button type="submit" variant="outline" size="sm">
+                          {payment.visibleToCustomer ? <EyeOff /> : <Eye />}
+                          {payment.visibleToCustomer ? "احجبه عن صفحة العميل" : "أدخِله في صفحة العميل"}
+                        </Button>
+                        <HelpTip>
+                          الحجب يُسقط صف الإيصال كاملاً من حمولة صفحة المتابعة — لا يصل
+                          متصفح العميل، ولا يصله معه مبلغُه ولا ملاحظتُه. وإن كان الإيصال
+                          مرفوضاً فسبب الرفض يختفي عنه أيضاً، وهو النص الذي يقرؤه اليوم ليعرف
+                          ما ينقص تحويله. والحجب لا أثر له محاسبياً: الإيصال المحجوب إن
+                          اعتُمد يُقيَّد في الدفتر كأي إيصال.
+                        </HelpTip>
+                      </form>
+                    ) : null}
                   </div>
 
                   <div className="shrink-0">
@@ -1021,6 +1195,128 @@ export default async function OrderDetailPage({
             })}
           </div>
         )}
+
+        <Separator />
+
+        {/*
+          رفع إيصال نيابة عن العميل — الحالة الشائعة: يصل التحويل على واتساب أو
+          هاتفياً فيبقى الحجز «بانتظار الدفع» والمال قد وصل. لا اعتماد تلقائي
+          هنا: الرفع ينقل الحجز إلى «قيد المراجعة» ويمر بعدها بنفس زرَّي الاعتماد
+          والرفض المعتادين، فيبقى قرار المال بيد إنسان.
+        */}
+        <div className="space-y-3">
+          <h4 className="flex items-center gap-1.5 text-sm font-bold">
+            <Upload className="size-4 text-primary" />
+            رفع إيصال نيابة عن العميل
+            <HelpTip>
+              يُنشئ إيصالاً على هذا الحجز وينقله إلى «قيد المراجعة»، ثم تعتمده أو ترفضه من
+              قسم الإجراءات كأي إيصال. ولا يصل فريق التشغيل تنبيه «رفع العميل إيصالاً» في
+              هذه الحالة: نصّه يقول إن العميل رفعه، وأنت من رفعه — وتنبيهك بفعلك ضجيج.
+            </HelpTip>
+          </h4>
+
+          {!canAttachReceipt ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              الرفع متاح والحجز «بانتظار الدفع» أو «قيد المراجعة» فقط — وهو نفس ما تفرضه
+              قاعدة البيانات. الحالة الحالية «
+              {isBookingStatus(booking.status) ? STATUS_LABELS[booking.status] : booking.status}
+              ».
+            </p>
+          ) : hasPendingReceipt ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              يوجد إيصال معلّق على هذا الحجز — اعتمده أو ارفضه أولاً ثم ارفع الإيصال الجديد.
+              الاعتماد يعالج الإيصال المعلّق الأحدث وحده، فصفٌّ ثانٍ كان سيترك الأول معلّقاً
+              بلا زر يغلقه.
+            </p>
+          ) : (
+            <form action={uploadAdminReceipt.bind(null, booking.id)} className="space-y-3">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="receipt_file" className="flex items-center gap-1.5">
+                    صورة الإيصال
+                    <HelpTip>
+                      صورة (JPG أو PNG أو WebP) أو ملف PDF بحد ٥ ميجابايت — نفس ما يقبله
+                      المخزن نفسه. يُحفظ في مخزن خاص لا يُقرأ إلا بروابط موقّعة قصيرة العمر
+                      من هذه الشاشة.
+                    </HelpTip>
+                  </Label>
+                  <Input
+                    id="receipt_file"
+                    name="receipt_file"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    required
+                    className="file:me-2 file:text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="receipt_amount" className="flex items-center gap-1.5">
+                    المبلغ الواصل
+                    <HelpTip>
+                      اكتب ما وصل فعلاً كما في كشف الحساب — لا قيمة الحجز. قد يقلّ عن
+                      المطلوب أو يزيد، والدفتر يستوعب الحالتين. ويُثبَّت حساب الاستقبال عند
+                      الاعتماد لا عند الرفع.
+                    </HelpTip>
+                  </Label>
+                  <Input
+                    id="receipt_amount"
+                    name="receipt_amount"
+                    type="number"
+                    inputMode="decimal"
+                    dir="ltr"
+                    step="0.01"
+                    min="0"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="receipt_note" className="flex items-center gap-1.5">
+                  ملاحظة
+                  <HelpTip>
+                    من أين وصل الإيصال ومن استلمه: «وصلت الصورة على واتساب من رقم العميل» أو
+                    «رقم عملية أملاه العميل هاتفياً». تُحفظ مع الإيصال، وتسافر معه في حمولة
+                    صفحة العميل إن أدخلته فيها — فاكتبها بما يصلح أن يقرأه العميل.
+                  </HelpTip>
+                </Label>
+                <textarea
+                  id="receipt_note"
+                  name="receipt_note"
+                  rows={2}
+                  maxLength={500}
+                  className={cn(controlClass, "resize-y leading-relaxed")}
+                  placeholder="مثال: وصلت صورة التحويل على واتساب من رقم العميل"
+                />
+              </div>
+
+              <Label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-input p-3 text-sm font-normal">
+                <span className="leading-relaxed">
+                  <span className="font-medium">أدخِل هذا الإيصال في صفحة العميل</span>
+                  <span className="block text-muted-foreground">
+                    الافتراضي محجوب: الإيصال الذي يرفعه التشغيل داخليٌّ بطبعه، وإدخاله في
+                    حمولة صفحة المتابعة قرار صريح — وبدونه تُسقط القاعدة صفّه من الحمولة فلا
+                    يبلغ متصفح العميل. يمكنك تبديله في أي وقت من زر بطاقة الإيصال أعلى هذا
+                    النموذج.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  name="receipt_visible"
+                  className="size-5 shrink-0 accent-primary"
+                />
+              </Label>
+
+              <div className="flex justify-end">
+                <Button type="submit">
+                  <Upload />
+                  حفظ الإيصال ونقل الحجز للمراجعة
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
       </Card>
 
       {/*
@@ -1034,6 +1330,7 @@ export default async function OrderDetailPage({
         bookingTotal={booking.total}
         currency={booking.currency}
         confirmingAssign={confirmingAssign}
+        confirmingOverride={confirmingOverride}
       />
 
       {/* الإجراءات */}

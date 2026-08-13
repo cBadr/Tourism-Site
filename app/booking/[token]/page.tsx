@@ -12,6 +12,7 @@ import {
   Link2,
   MessageCircle,
   Phone,
+  ReceiptText,
   Route as RouteIcon,
   ShieldCheck,
   TriangleAlert,
@@ -38,7 +39,7 @@ import {
   ReceiptUpload,
   type ReceiptAccountOption,
 } from "@/components/booking/checkout/receipt-upload";
-import type { BookingStatus } from "@/lib/booking-types";
+import type { BookingStatus, ReceiptStatus } from "@/lib/booking-types";
 
 /**
  * صفحة متابعة الحجز /booking/[token] — الصفحة الوحيدة التي يملكها العميل الضيف.
@@ -143,42 +144,86 @@ function readStatus(row: UnknownRow): BookingStatus {
   return found ?? "pending_payment";
 }
 
-/** سبب رفض آخر إيصال — كما كتبه التشغيل في `verify_payment` */
-type RejectionNotice = { note: string | null; at: string | null };
+/**
+ * صف تحصيل كما تصل به `get_booking_by_token` — **ستة مفاتيح لا سابع**.
+ *
+ * الدالة تبني الحمولة بـ `jsonb_build_object` على هذه المفاتيح وحدها، وتُسقط
+ * عمداً `receipt_path` و`account_id` و`verified_by` (‏`booking_tests.sql` يؤكد
+ * غيابها). ولا صورة إيصال هنا بحال: دلو `receipts` خاص ولا سياسة قراءة للعميل
+ * عليه أصلاً، فأي محاولة عرض للصورة رابط مكسور لا ميزة.
+ *
+ * والمصفوفة الواصلة **مُصفّاة في القاعدة** بشرط `visible_to_customer` (هجرة
+ * 0027): ما وصل إلى هنا مرئيٌّ بقرار المشرف، وما أُخفي أُسقط صفّاً كاملاً قبل
+ * أن يغادر Postgres. فلا إخفاء في هذه الطبقة ولا حاجة إليه.
+ */
+type ReceiptView = {
+  id: string;
+  amount: number | null;
+  status: ReceiptStatus;
+  note: string | null;
+  createdAt: string | null;
+  verifiedAt: string | null;
+};
+
+const RECEIPT_STATUS_VALUES: ReceiptStatus[] = ["pending", "approved", "rejected"];
 
 /**
- * آخر إيصال مرفوض من مصفوفة `payments` التي تعيدها `get_booking_by_token`
- * (عناصرها: id, amount, status, note, createdAt, verifiedAt — مرتبة بالأقدم).
- * سبب الرفض إلزامي على المشرف، وهو الفائدة الوحيدة من إظهاره للعميل: يعرف
- * ما ينقص تحويله بدل أن يعيد الرفع بالخطأ نفسه.
+ * قراءة دفاعية لمصفوفة `payments` — مرة واحدة، ومنها يقرأ كل مستهلك في الصفحة
+ * (تنبيه الرفض وسجل الإيصالات معاً) فلا تتعدد نسخ القراءة ولا تنحرف.
+ *
+ * الترتيب يبقى كما جاء من القاعدة (‏`order by p.created_at` داخل `jsonb_agg`):
+ * الأقدم أولاً. لا نعيد ترتيبه هنا كي يبقى للسجل مصدر ترتيب واحد.
+ *
+ * وصفٌّ بحالة لا نعرفها يُسقَط: `payments.status` مقيَّد بـ
+ * `check (status in ('pending','approved','rejected'))` في 0007، فالحالة الرابعة
+ * غير ممكنة بنيوياً — ولو وُلدت يوماً فعرضُها بوصف مخترَع أسوأ من إغفالها.
  */
-function readLatestRejection(row: UnknownRow): RejectionNotice | null {
+function readReceipts(row: UnknownRow): ReceiptView[] {
   const list = row["payments"];
-  if (!Array.isArray(list)) return null;
+  if (!Array.isArray(list)) return [];
 
-  let latest: UnknownRow | null = null;
-  let latestAt = Number.NEGATIVE_INFINITY;
-
+  const receipts: ReceiptView[] = [];
   for (const item of list) {
     if (!isRecord(item)) continue;
-    if (readText(item, "status") !== "rejected") continue;
+    const raw = readText(item, "status");
+    const status = RECEIPT_STATUS_VALUES.find((value) => value === raw);
+    if (!status) continue;
 
-    const at = readText(item, "verifiedAt", "verified_at", "createdAt", "created_at");
+    receipts.push({
+      id: readText(item, "id") ?? "",
+      amount: readNumber(item, "amount"),
+      status,
+      note: readText(item, "note"),
+      createdAt: readText(item, "createdAt", "created_at"),
+      verifiedAt: readText(item, "verifiedAt", "verified_at"),
+    });
+  }
+  return receipts;
+}
+
+/**
+ * آخر إيصال مرفوض. سبب الرفض إلزامي على المشرف، وهو الفائدة الوحيدة من إظهاره
+ * للعميل: يعرف ما ينقص تحويله بدل أن يعيد الرفع بالخطأ نفسه.
+ */
+function latestRejection(receipts: ReceiptView[]): ReceiptView | null {
+  let latest: ReceiptView | null = null;
+  let latestAt = Number.NEGATIVE_INFINITY;
+
+  for (const receipt of receipts) {
+    if (receipt.status !== "rejected") continue;
+
+    const at = receipt.verifiedAt ?? receipt.createdAt;
     const parsed = at ? Date.parse(at) : Number.NaN;
     const key = Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 
     // «>=» لأن المصفوفة مرتبة تصاعدياً أصلاً: التعادل يرجّح الأحدث ترتيباً
     if (latest === null || key >= latestAt) {
-      latest = item;
+      latest = receipt;
       latestAt = key;
     }
   }
 
-  if (!latest) return null;
-  return {
-    note: readText(latest, "note"),
-    at: readText(latest, "verifiedAt", "verified_at", "createdAt", "created_at"),
-  };
+  return latest;
 }
 
 /* ------------------------------------------------------------------ */
@@ -289,6 +334,97 @@ function AccountCard({ account, t }: { account: PaymentAccountView; t: Tx }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* بطاقة إيصال تحويل                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * وصف كل حالة بلسان العميل لا بلسان الدفتر: «pending» عنده انتظارُ فريقنا لا
+ * حالةُ صفٍّ في جدول، و«rejected» لا يُقال «مرفوض» بل «لم يُعتمد» ومعه السبب.
+ */
+const RECEIPT_STATUS_META: Record<
+  ReceiptStatus,
+  { key: string; label: string; badge: string; icon: typeof Hourglass }
+> = {
+  pending: {
+    key: "receipts.status.pending",
+    label: "قيد المراجعة من فريقنا",
+    badge: "bg-muted text-muted-foreground",
+    icon: Hourglass,
+  },
+  approved: {
+    key: "receipts.status.approved",
+    label: "اعتُمد",
+    badge: "bg-primary/10 text-primary",
+    icon: BadgeCheck,
+  },
+  rejected: {
+    key: "receipts.status.rejected",
+    label: "لم يُعتمد",
+    badge: "bg-amber-500/10 text-amber-900 dark:text-amber-200",
+    icon: TriangleAlert,
+  },
+};
+
+function ReceiptCard({
+  receipt,
+  currency,
+  fmt,
+  t,
+}: {
+  receipt: ReceiptView;
+  currency: string;
+  fmt: LocaleFormatter;
+  t: Tx;
+}) {
+  const meta = RECEIPT_STATUS_META[receipt.status];
+  const Icon = meta.icon;
+  const createdLabel = fmt.dateTime(receipt.createdAt);
+  const verifiedLabel = fmt.dateTime(receipt.verifiedAt);
+
+  return (
+    <li className="flex flex-col gap-2.5 rounded-2xl border border-border px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {receipt.amount !== null ? (
+          <span className="text-sm font-bold">{fmt.money(receipt.amount, currency)}</span>
+        ) : (
+          <span aria-hidden="true" />
+        )}
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${meta.badge}`}
+        >
+          <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+          {t(meta.key, meta.label)}
+        </span>
+      </div>
+
+      {/* الملاحظة يكتبها فريق التشغيل (‏`verify_payment` أو رفع اللوحة) — ورفع
+          الضيف يصل بلا ملاحظة، فالسطر يغيب بلا فراغ */}
+      {receipt.note ? (
+        <div className="flex flex-col gap-0.5">
+          <p className="text-xs font-medium text-muted-foreground">
+            {receipt.status === "rejected"
+              ? t("receipts.reasonLabel", "سبب عدم الاعتماد")
+              : t("receipts.noteLabel", "ملاحظة من فريقنا")}
+          </p>
+          <p className="whitespace-pre-line text-sm leading-7">{receipt.note}</p>
+        </div>
+      ) : null}
+
+      {createdLabel || verifiedLabel ? (
+        <div className="flex flex-col gap-1 text-xs leading-6 text-muted-foreground">
+          {createdLabel ? (
+            <p>{t("receipts.receivedAt", "وصلنا في {value}", { value: createdLabel })}</p>
+          ) : null}
+          {verifiedLabel ? (
+            <p>{t("receipts.reviewedAt", "روجع في {value}", { value: verifiedLabel })}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* الصفحة                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -360,9 +496,22 @@ export default async function BookingStatusPage({ params }: PageParams) {
   // الرابط الذي يحفظه العميل هو رابط لغته — العربية بلا بادئة والإنجليزية تحت /en
   const bookingUrl = `${getBaseUrl()}${localePath(locale, `/booking/${token}`)}`;
 
+  // مصفوفة الإيصالات تُقرأ مرة واحدة ويقرأ منها المستهلكان معاً
+  const receipts = readReceipts(raw);
+
   // سبب رفض آخر إيصال — يُعرض فوق بطاقة التحويل ما دام الحجز بانتظار الدفع
-  const rejection = status === "pending_payment" ? readLatestRejection(raw) : null;
-  const rejectionLabel = fmt.dateTime(rejection?.at ?? null);
+  const rejection = status === "pending_payment" ? latestRejection(receipts) : null;
+  const rejectionLabel = fmt.dateTime(rejection?.verifiedAt ?? rejection?.createdAt ?? null);
+
+  // سجل الإيصالات يُظهر ما وصلنا **في كل حالة** لا في «بانتظار الدفع» وحدها:
+  // العميل المؤكَّد يريد أن يرى أن تحويله اعتُمد، والملغى يريد أثر ما أرسله.
+  //
+  // ويُستثنى منه الإيصال الذي يعرضه تنبيه الرفض أعلاه (بالهوية لا بالمعرّف، فلا
+  // يعتمد الاستثناء على مفتاح قد يغيب): التنبيه هو عرضه العملي المصحوب بخطوة
+  // «أعد الرفع»، وتكراره هنا بأسلوب ثانٍ يجعل الشيء الواحد شيئين في عين العميل.
+  const listedReceipts = rejection
+    ? receipts.filter((receipt) => receipt !== rejection)
+    : receipts;
 
   // نص التذييل يحمل رقم الحجز داخل عنصر أحادي الخط باتجاه ltr — نقصّ الرسالة حوله
   const [footerBefore, footerAfter] = splitAroundSlot(
@@ -728,6 +877,36 @@ export default async function BookingStatusPage({ params }: PageParams) {
                   ) : null}
                 </div>
               ) : null}
+            </section>
+          ) : null}
+
+          {/* سجل الإيصالات — ما وصلنا وحالته. القائمة الفارغة لا تصيّر شيئاً */}
+          {listedReceipts.length > 0 ? (
+            <section
+              aria-label={t("receipts.sectionLabel", "إيصالات التحويل")}
+              className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
+            >
+              <div className="flex flex-col gap-1.5">
+                <h2 className="flex items-center gap-2 text-base font-bold">
+                  <ReceiptText className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                  {t("receipts.heading", "إيصالات التحويل")}
+                </h2>
+                <p className="text-sm leading-7 text-muted-foreground">
+                  {t("receipts.lead", "ما وصلنا من إيصالات هذا الحجز وحالة كل منها.")}
+                </p>
+              </div>
+
+              <ul className="flex flex-col gap-3">
+                {listedReceipts.map((receipt, index) => (
+                  <ReceiptCard
+                    key={receipt.id || `${receipt.createdAt ?? ""}#${index}`}
+                    receipt={receipt}
+                    currency={currency}
+                    fmt={fmt}
+                    t={t}
+                  />
+                ))}
+              </ul>
             </section>
           ) : null}
 

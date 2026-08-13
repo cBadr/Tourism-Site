@@ -30,7 +30,8 @@
       "contact": "Contact",
       "about": "About us",
       "book": "Book a ride",
-      "quoteRequest": "Request a quote"
+      "quoteRequest": "Request a quote",
+      "track": "Track your booking"
     },
 
     "footer": {
@@ -460,6 +461,20 @@
         "title": "Your previous receipt was not accepted",
         "fallback": "Check the transfer details below, then upload the receipt again."
       },
+      "receipts": {
+        "sectionLabel": "Transfer receipts",
+        "heading": "Transfer receipts",
+        "lead": "The receipts we have received for this booking and the status of each.",
+        "status": {
+          "pending": "Under review by our team",
+          "approved": "Accepted",
+          "rejected": "Not accepted"
+        },
+        "noteLabel": "A note from our team",
+        "reasonLabel": "Why it was not accepted",
+        "receivedAt": "Received on {value}",
+        "reviewedAt": "Reviewed on {value}"
+      },
       "pay": {
         "sectionLabel": "Complete the payment",
         "heading": "Transfer {amount} to confirm your booking",
@@ -497,6 +512,38 @@
         "notes": "Your notes"
       },
       "footerNote": "Your booking number is {reference} — quote it in any correspondence about this trip."
+    },
+
+    "track": {
+      "metaTitle": "Track your booking",
+      "metaDescription": "Closed your booking page? Enter your booking number and the phone number you used, and we will reopen your booking page with its status and transfer details.",
+      "title": "Track your booking",
+      "lead": "Closed the tab or lost the link? Enter your booking number and the phone number you used, and we will reopen your booking page with its status, transfer details and receipt upload.",
+      "form": {
+        "ariaLabel": "Booking lookup form",
+        "reference": "Booking number",
+        "referenceTip": "A number starting with TR- shown at the top of your booking page. If you no longer have it, contact us and we will find your booking by your phone number.",
+        "referencePlaceholder": "TR-XXXXXX",
+        "referenceHelp": "Enter it as it is — upper and lower case are treated the same.",
+        "phone": "Phone number",
+        "phonePlaceholder": "01xxxxxxxxx",
+        "phoneHelp": "The same number you gave when booking — in any format you wrote it.",
+        "submit": "Open my booking page",
+        "privacyNote": "We ask for both numbers to protect your booking: neither one alone opens anything."
+      },
+      "errors": {
+        "invalidInput": "Enter both the booking number and the phone number, as you gave them when booking.",
+        "notFound": "We could not find a booking with these details. Check the booking number and the phone number you used when booking, or contact us and we will find it for you.",
+        "rateLimited": "Too many attempts in a short time. Wait a moment and try again, or contact us directly.",
+        "dbUnavailable": "The search is unavailable right now for a technical reason on our side. Try again shortly, or contact us directly."
+      },
+      "help": {
+        "title": "Don't know your booking number?",
+        "text": "Contact us from the phone number you booked with and we will open your booking for you — no need to book again.",
+        "contact": "Contact us",
+        "notBookedYet": "Not booked yet?",
+        "bookLink": "Price your trip and book now"
+      }
     }
   },
 

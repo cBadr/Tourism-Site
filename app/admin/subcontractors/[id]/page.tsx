@@ -26,6 +26,11 @@ import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
+  readPartnerCredit,
+  SETTLEMENT_PANEL_TONE,
+  settlementWording,
+} from "../../finance/_components/finance-ui";
+import {
   asNumber,
   asText,
   Banners,
@@ -77,18 +82,31 @@ const hasSupabaseEnv = () =>
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * ملخص مقاصة متعهد — من العرض `v_partner_settlements` (المرحلة ٧).
+ * ملخص مقاصة متعهد — من العرض `v_partner_settlements` (المرحلة ٧، ثم 0027).
  *
  * `netDue` هو الرقم الوحيد الذي يُدفع أو يُطالَب به، **وإشارته تنقلب**:
  * موجب = مستحق له علينا، وسالب = محصَّلٌ زائد عليه لنا. أي شاشة تفترض اتجاهاً
  * واحداً ستُخطئ في نصف الرحلات — لذلك الإشارة تُقرأ هنا ولا تُلغى بقيمة مطلقة.
+ *
+ * وصياغة الإشارة لا تُكتب في هذا الملف: `settlementWording` في شاشات المالية هي
+ * مصدرها الوحيد لخمس شاشات، وهذه إحداها. كانت هنا نسخة يدوية منها (‏`-netDue`
+ * وجملٌ مكرّرة) فحُذفت — نسختان تنحرفان أول ما تتغير واحدة.
  */
 type Settlement = {
   earned: number | null;
   collected: number | null;
   paid: number | null;
   netDue: number | null;
+  /** `abs_net_due` (0017) — حجم الصافي بلا إشارة، محسوباً في القاعدة */
+  absNetDue: number | null;
   tripsCount: number | null;
+  /** `owed_to_us` (0027) — ما عليه لنا، وهو ما يُقارَن بسقف الديون */
+  owedToUs: number | null;
+  /**
+   * `over_limit` (0027) — **بلوغ السقف وحده**: العرض لا يقرأ `block_dispatch`،
+   * فالوسم يظهر ولو كان الحجب مطفأً. null = العمود غائب أي 0027 لم تُنفَّذ.
+   */
+  overLimit: boolean | null;
 };
 
 type Loaded = {
@@ -106,6 +124,11 @@ type Loaded = {
   settlementReady: boolean;
   /** null مع `settlementReady` = لا حركة مالية لهذا الشريك بعد */
   settlement: Settlement | null;
+  /**
+   * مفتاح «حجب العروض» من `partner_credit_settings` — لا من العرض. `null` = لم
+   * يُقرأ الصف، فلا تُقال جملة عن توقّف الإسناد في أيٍّ من الاتجاهين.
+   */
+  blockDispatch: boolean | null;
   currency: string;
 };
 
@@ -124,6 +147,7 @@ async function loadSettlement(
   if (!res.data) return { ready: true, settlement: null };
 
   const row = res.data as Record<string, unknown>;
+  const overLimit = pick(row, ["over_limit", "overLimit"]);
   return {
     ready: true,
     settlement: {
@@ -131,7 +155,10 @@ async function loadSettlement(
       collected: asNumber(pick(row, ["collected"])),
       paid: asNumber(pick(row, ["paid"])),
       netDue: asNumber(pick(row, ["net_due", "netDue"])),
+      absNetDue: asNumber(pick(row, ["abs_net_due", "absNetDue"])),
       tripsCount: asNumber(pick(row, ["trips_count", "tripsCount"])),
+      owedToUs: asNumber(pick(row, ["owed_to_us", "owedToUs"])),
+      overLimit: typeof overLimit === "boolean" ? overLimit : null,
     },
   };
 }
@@ -149,6 +176,7 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     linkedRole: null,
     settlementReady: false,
     settlement: null,
+    blockDispatch: null,
     currency: "EGP",
   };
 
@@ -161,7 +189,7 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
 
   const sub = readSubcontractor(subRes.data as Record<string, unknown>);
 
-  const [vehiclesRes, listsRes, pricing, profileRes, settlementRes, currencyRes] =
+  const [vehiclesRes, listsRes, pricing, profileRes, settlementRes, creditRes, currencyRes] =
     await Promise.all([
       supabase.from("subcontractor_vehicles").select("*").eq("subcontractor_id", id),
       supabase
@@ -174,6 +202,8 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
         ? supabase.from("profiles").select("id, role").eq("id", sub.profileId).maybeSingle()
         : null,
       loadSettlement(supabase, id),
+      // مفتاح «حجب العروض»: العرض لا يحمله، وبدونه لا يجوز قول «الإسناد متوقف»
+      readPartnerCredit(supabase),
       // رمز العملة من قاعدة البيانات لا من الكود — نفس مصدر بقية أسعار الموقع
       supabase.from("pricing_settings").select("currency").limit(1).maybeSingle(),
     ]);
@@ -221,6 +251,8 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
         : null,
     settlementReady: settlementRes.ready,
     settlement: settlementRes.settlement,
+    // `loaded: false` تعني «لم يُقرأ الصف» — وهي ليست «الحجب مطفأ»
+    blockDispatch: creditRes.loaded ? creditRes.settings.blockDispatch : null,
     currency: (!currencyRes.error && asText(currencyRes.data?.currency)) || blank.currency,
   };
 }
@@ -328,44 +360,36 @@ function SettlementTile({
  * ملخص المقاصة — الرقم الذي يُدفع أو يُطالَب به، بصياغة تحترم إشارته.
  *
  * المعادلة كلها في Postgres: `net_due = مستحقاته − ما حصّله نقداً − ما دفعناه`.
- * هنا لا يجري إلا **قراءة الإشارة** لاختيار العبارة العربية الصحيحة:
- *   موجب ⇒ «له علينا» (ندفع له) · سالب ⇒ «عليه لنا» (يردّ إلينا) · صفر ⇒ مصفّى.
- * وتُعرض القيمة المطلقة في السالب لأن «−٣٦٠ له علينا» جملة تُقرأ خطأً؛ الاتجاه
- * تحمله العبارة واللون لا علامة الناقص.
+ * وهذه البطاقة **لا تقرأ الإشارة بنفسها**: `settlementWording` في شاشات المالية
+ * تقرؤها لخمس شاشات، ومنها تصل النبرة والجملة وحجم الرقم ووسم سقف الدين. كانت
+ * هنا نسخة يدوية (‏`-netDue` وثلاث جمل مكرّرة) — والنسختان تنحرفان أول تعديل.
  */
 function SettlementCard({
   subcontractorId,
   companyName,
   settlement,
   ready,
+  blockDispatch,
   currency,
 }: {
   subcontractorId: string;
   companyName: string;
   settlement: Settlement | null;
   ready: boolean;
+  /** «حجب العروض» مفعّل؟ — null = غير معروف، فلا تُقال جملة إنفاذ */
+  blockDispatch: boolean | null;
   currency: string;
 }) {
   const netDue = settlement?.netDue ?? null;
-  const owedToPartner = netDue !== null && netDue > 0;
-  const owedToUs = netDue !== null && netDue < 0;
+  const wording = settlementWording(netDue, settlement?.absNetDue ?? null, currency, {
+    owedToUs: settlement?.owedToUs ?? null,
+    overLimit: settlement?.overLimit ?? null,
+    blockDispatch,
+  });
 
+  // الرقم الكبير يصل من `abs_net_due` في العرض — لا قيمة مطلقة تُحسب هنا
   const headline =
-    netDue === null
-      ? "—"
-      : formatMoney(owedToUs ? -netDue : netDue, currency);
-
-  const verdict = owedToPartner
-    ? "له علينا — ندفع له هذا المبلغ"
-    : owedToUs
-      ? "عليه لنا — يردّ إلينا هذا المبلغ"
-      : "الحساب مصفّى — لا مستحقات في الاتجاهين";
-
-  const tone = owedToPartner
-    ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
-    : owedToUs
-      ? "border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/40"
-      : "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/40";
+    wording.magnitude === null ? "—" : formatMoney(wording.magnitude, currency);
 
   return (
     <Card className="space-y-4 p-5">
@@ -403,15 +427,41 @@ function SettlementCard({
         </p>
       ) : (
         <>
-          <div className={`rounded-lg border p-4 ${tone}`}>
+          <div className={`rounded-lg border p-4 ${SETTLEMENT_PANEL_TONE[wording.tone]}`}>
             <p className="text-xs text-muted-foreground">صافي المقاصة الآن</p>
             <p className="mt-0.5 text-3xl font-bold" dir="ltr">
               {headline}
             </p>
-            <p className="mt-1 text-sm font-medium">{verdict}</p>
+            <p className="mt-1 text-sm font-medium">{wording.verdict}</p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {/*
+            وسم سقف الدين ونصّه يصلان من `settlementWording` حرفياً — لا صياغة
+            جديدة هنا ولا شرط جديد، وإلا صار لكل شاشة سقفٌ خاص بها. والعنوان كان
+            يقول «الإسناد إليه متوقف» بلا شرط، بينما الوسم يصل من عمود لا يقرأ
+            مفتاح «حجب العروض» أصلاً — فصار العنوان نفسه من الصياغة.
+          */}
+          {wording.limitText !== null && (
+            <div className="flex flex-row items-start gap-3 rounded-lg border border-red-300 bg-red-50 p-4 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
+              <Ban className="mt-0.5 size-5 shrink-0" />
+              <div className="space-y-1 text-sm leading-relaxed">
+                <p className="font-semibold">{wording.limitHeadline}</p>
+                <p>{wording.limitHint}</p>
+                <p>
+                  السقف ومفتاح حجبه يُضبطان من{" "}
+                  <Link href="/admin/finance/partners" className="underline">
+                    بطاقة سقف الديون
+                  </Link>{" "}
+                  في شاشة المقاصة.
+                  {wording.dispatchBlocked
+                    ? " ولإسناد رحلة بعينها له رغم ذلك، استعمل الإسناد اليدوي من شاشة الطلب بسبب مكتوب."
+                    : ""}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <SettlementTile
               title="مستحقاته عن الرحلات"
               value={settlement.earned}
@@ -429,6 +479,12 @@ function SettlementCard({
               value={settlement.paid}
               currency={currency}
               help="مجموع الدفعات النقدية المسجَّلة له في الدفتر حتى الآن. كل دفعة تُسجَّل من شاشة كشف الحساب فتُنقص الصافي فوراً."
+            />
+            <SettlementTile
+              title="عليه لنا"
+              value={settlement.owedToUs}
+              currency={currency}
+              help="الدين المرصود عليه — صفر إن كنا نحن المدينين له. يُقارَن بسقف الديون لحجب العروض، ويُرفض به تسجيل أي دفعة له بمجرد أن يزيد على صفر: منع الدفع لا ينظر إلى السقف إطلاقاً، فيقع على جنيه واحد كما يقع على ألف. ويقيس الدين المُثبَت في الدفتر وحده: لا يُقيَّد على رحلة شيء قبل تسجيلها «منفَّذة»، فالرحلات الجارية الآن ليست فيه بعد."
             />
           </div>
 
@@ -495,6 +551,7 @@ export default async function SubcontractorProfilePage({
     linkedRole,
     settlementReady,
     settlement,
+    blockDispatch,
     currency,
   } = await loadSubcontractor(id);
   if (ready && !sub) notFound();
@@ -633,6 +690,7 @@ export default async function SubcontractorProfilePage({
         companyName={sub.companyName}
         settlement={settlement}
         ready={settlementReady}
+        blockDispatch={blockDispatch}
         currency={currency}
       />
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Megaphone, RefreshCw, Send, UserCheck } from "lucide-react";
+import { Megaphone, RefreshCw, Send, ShieldAlert, UserCheck } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -32,7 +32,7 @@ import {
   pick,
   relativeTime,
 } from "../../_components/booking-ui";
-import { manualAssign, startBroadcast } from "../dispatch-actions";
+import { manualAssign, manualAssignOverLimit, startBroadcast } from "../dispatch-actions";
 import { ManualAssignForm, type PartnerOption } from "./manual-assign-form";
 
 /**
@@ -178,6 +178,7 @@ export async function DispatchPanel({
   bookingTotal,
   currency,
   confirmingAssign,
+  confirmingOverride,
 }: {
   bookingId: string;
   bookingStatus: string;
@@ -185,6 +186,8 @@ export async function DispatchPanel({
   bookingTotal: number;
   currency: string;
   confirmingAssign: boolean;
+  /** ‎?confirm=override‎ — خطوة تأكيد الإسناد فوق سقف دين المتعهد */
+  confirmingOverride: boolean;
 }) {
   const { ready, dispatch, offers, offersFailed, settings, settingsLoaded, partners, names } =
     await loadDispatch(bookingId);
@@ -223,7 +226,8 @@ export async function DispatchPanel({
             <span className="font-semibold">موجات</span>: الموجة الأولى لمن تكلفته ≤ التكلفة التي
             سُعِّر بها الطلب (الهامش كامل)، والثانية لمن تكلفته ≤ التكلفة + الهامش (تعادل). وأول
             من يقبل يفوز ويُغلق الطلب أمام الباقين. باستنفاد الموجات يدخل الطلب طابور الإسناد
-            اليدوي.
+            اليدوي. ومن بلغ سقف الدين المضبوط في شاشة المقاصة لا يصله عرض ولا يفوز بقبول —
+            وإسناده يحتاج تجاوزاً صريحاً بسبب مكتوب من زر «إسناد فوق سقف الدين» أدناه.
           </HelpTip>
         </h3>
         <Link
@@ -500,6 +504,30 @@ export async function DispatchPanel({
               </>
             )}
 
+            {/*
+              الباب الوحيد لتجاوز سقف دين المتعهد. يظهر بجوار الإسناد اليدوي —
+              وليس بعد رفض القاعدة فقط — لأن الشاشات المالية تحيل إليه صراحةً
+              («أسند له رحلة بعينها يدوياً من شاشة الطلب بسبب مكتوب»)، ولأن
+              الرسالة التي تحيل إلى زرّ غير موجود طريق مسدود (نمط الفشل ٣).
+            */}
+            {canManual && !confirmingOverride && (
+              <>
+                <Link
+                  href={`/admin/orders/${bookingId}?confirm=override#dispatch`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 transition-colors hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+                >
+                  <ShieldAlert className="size-4" />
+                  إسناد فوق سقف الدين
+                </Link>
+                <HelpTip>
+                  يُسند الرحلة إلى متعهد <span className="font-semibold">بلغ سقف الدين</span>{" "}
+                  رغم بلوغه السقف: الحاجز الذي ترفض به القاعدة إسناده يُرفع لهذه الرحلة
+                  وحدها، بسبب مكتوب إلزامي يبقى في سجل الطلب. ولا حاجة له ما لم يرفض النظام
+                  الإسناد بسبب السقف — الإسناد اليدوي المعتاد يكفي. وهو لا يرفع أرضية الهامش
+                  ولا يقبل متعهداً موقوفاً أو غير معتمد.
+                </HelpTip>
+              </>
+            )}
           </div>
 
           {status === null && bookingStatus !== "confirmed" && bookingStatus !== "assigned" && (
@@ -517,6 +545,30 @@ export async function DispatchPanel({
           {canManual && confirmingAssign && (
             <ManualAssignForm
               action={manualAssign.bind(null, bookingId)}
+              partners={partners}
+              bookingTotal={bookingTotal}
+              currency={currency}
+              marginFloor={settings.minMarginAmount}
+              disabled={!ready}
+            >
+              <Link
+                href={`/admin/orders/${bookingId}#dispatch`}
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
+              >
+                تراجع
+              </Link>
+            </ManualAssignForm>
+          )}
+
+          {/*
+            نفس النموذج بصيغته الثانية وإجراء آخر: `manual_assign_over_limit`
+            بدل `manual_assign`. الخطوة الثانية في الرابط وحده (‎?confirm=override‎)
+            على سابقة ‎?confirm=cancel‎ — لا حالة على العميل، ويعمل بلا جافاسكربت.
+          */}
+          {canManual && confirmingOverride && (
+            <ManualAssignForm
+              action={manualAssignOverLimit.bind(null, bookingId)}
+              variant="over-limit"
               partners={partners}
               bookingTotal={bookingTotal}
               currency={currency}

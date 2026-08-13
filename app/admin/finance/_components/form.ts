@@ -92,11 +92,22 @@ const KNOWN_HINTS = new Set([
   "notready",
 ]);
 
+/**
+ * تلميحات هجرة 0027 (سقف ديون المتعهدين) — رمزها في الشاشة يخالف نص التلميح،
+ * فتُترجم هنا لا في كل مستدعٍ على حدة. بدون هذا الجدول يسقط أي مستدعٍ آخر
+ * لـ `record_partner_payout` على رسالة «فشلت العملية» العامة التي لا تقول شيئاً.
+ */
+const HINT_ALIASES: Record<string, string> = {
+  "partner-owing": "owing",
+  "note-required": "advnote",
+};
+
 export function rpcErrorCode(
   error: { code?: string; hint?: string | null; message?: string } | null
 ): string {
   if (!error) return "save";
   const hint = (error.hint ?? "").trim();
+  if (HINT_ALIASES[hint]) return HINT_ALIASES[hint] as string;
   if (KNOWN_HINTS.has(hint)) return hint;
   if (isMissingFunction(error.code) || isMissingTable(error.code)) return "notready";
   if (error.code === "42501") return "forbidden";

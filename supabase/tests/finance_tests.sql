@@ -401,8 +401,32 @@ begin
   v_po := round(v_t1 * 0.10, 2);
   perform set_config('tours.f_po', v_po::text, false);
 
+  -- 0027 غيّر القاعدة هنا بقرار صريح من المالك: **لا نَدفع لمتعهد بينما لنا عنده
+  -- مال**. وهذا المتعهد مدين لنا بالضبط (وهو ما تثبته هذه الفقرة أصلاً)، فالدفع
+  -- إليه صار مقدَّماً يحتاج قراراً بشرياً مكتوباً. نثبّت الرفض أولاً ثم نمرّ من
+  -- الباب الصريح — فيبقى ما تثبته الفقرة كما هو: القيد ودوره وحسابه والإشارة.
+  declare
+    v_hint text := '';
+  begin
+    begin
+      perform public.record_partner_payout(v_sub, v_cash, v_po, now(), 'FINANCE_TESTS دفعة مقاصة');
+    exception
+      when others then
+        get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+
+    -- الرمز لا مجرد «وقع استثناء»: لولاه لمرّ الفحص لو غابت الدالة أصلاً
+    if coalesce(v_hint, '') <> 'partner-owing' then
+      raise exception '(ج-٠أ) الدفع لمتعهد مدين لنا لم يُرفض بـ partner-owing — الرمز الفعلي «%»',
+        coalesce(nullif(v_hint, ''), 'بلا استثناء');
+    end if;
+  end;
+
   select * into v_rec
-  from public.record_partner_payout(v_sub, v_cash, v_po, now(), 'FINANCE_TESTS دفعة مقاصة');
+  from public.record_partner_payout_advance(
+         v_sub, v_cash, v_po, now(),
+         'FINANCE_TESTS دفعة مقاصة — مقدَّم صريح لمتعهد رصيده سالب'
+       );
 
   if v_rec.entry_id is null then
     raise exception '(ج) record_partner_payout لم تولّد قيداً في الدفتر';

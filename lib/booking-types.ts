@@ -180,6 +180,120 @@ export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
     "حوّل المبلغ على أحد الحسابات المعروضة، ثم ارفع صورة إيصال التحويل. يراجع فريقنا التحويل ويؤكد حجزك خلال دقائق.",
 };
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * الدفعة ٢ من ملاحظات المراجعة — هجرة `0027_batch_two.sql`
+ * (ملحق ٢ في docs/VISION.md: الملاحظات ٣ و٢ و١)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * إعدادات الرحلات — صف وحيد في جدول `trip_settings` (الملاحظة ٣).
+ *
+ * **لماذا جدول مستقل ولا مفتاح في `site_settings`:** ذاك الجدول مقروء علناً
+ * بسياسة `site_settings_select_public` (‏`using (true)` لـ anon)، وسياسة تشغيلية
+ * مثل «متى نلغي الطلب غير المدفوع» لا تُعرض على الزائر. نفس سابقة
+ * `discount_settings` (‏`lib/discounts/settings.ts`) و`dispatch_settings`.
+ *
+ * **الافتراضي الآمن:** الكنس **مطفأ** بالبذرة. ميزة تلغي حجوزات حقيقية بلا تدخل
+ * بشري لا تُشحن مفعّلة (نمط الفشل ٧ في handover/LESSONS.md — بوابة الاختبار
+ * بُذرت مفعّلة مرة). يفعّلها المالك بعد أن يحدد المهلة التي تناسب تشغيله.
+ */
+export type TripSettings = {
+  /** تفعيل الإلغاء التلقائي للطلبات غير المدفوعة */
+  unpaidCancelEnabled: boolean;
+  /** المهلة بالدقائق من إنشاء الحجز حتى الإلغاء التلقائي */
+  unpaidTimeoutMinutes: number;
+};
+
+export const DEFAULT_TRIP_SETTINGS: TripSettings = {
+  unpaidCancelEnabled: false,
+  unpaidTimeoutMinutes: 1440, // ٢٤ ساعة — قيمة مقترحة لا نافذة حتى يُفعَّل المفتاح
+};
+
+/** حالة إيصال التحويل */
+export type ReceiptStatus = "pending" | "approved" | "rejected";
+
+/**
+ * صف تحصيل في `payments` — عمودان جديدان في 0027 (الملاحظة ٢).
+ *
+ * **`visibleToCustomer` يُفرَض داخل `get_booking_by_token` بإسقاط الصف من مصفوفة
+ * `payments` في الحمولة نفسها — لا في طبقة العرض.** حامل التوكن يقرأ الحمولة
+ * الخام من PostgREST، فإخفاءٌ في JSX ليس إخفاءً. والحجب **يسقط الصف كاملاً** لا
+ * يخفي حقلاً منه، لأن `note` يحمل ملاحظة المشرف التشغيلية.
+ *
+ * **الحجب لا يمسّ المحاسبة:** الإيصال المخفي المعتمَد يقيَّد في الدفتر ويستهلك
+ * حد حساب الاستقبال كأي إيصال — الرؤية شأن العميل، والمال شأن الخزينة.
+ */
+export type PaymentReceiptRow = {
+  id: string;
+  bookingId: string;
+  accountId: string | null;
+  amount: number;
+  status: ReceiptStatus;
+  receiptPath: string | null;
+  note: string | null;
+  /** يظهر للعميل في `/booking/[token]`؟ — الافتراضي true فلا يتغير سلوك الصفوف القائمة */
+  visibleToCustomer: boolean;
+  /** رفعه فريق التشغيل نيابة عن العميل (وصله على واتساب أو هاتفياً) لا العميل بنفسه */
+  uploadedByAdmin: boolean;
+  verifiedAt: string | null;
+  createdAt: string;
+};
+
+/**
+ * رموز خطأ نموذج «تابع حجزك» (الملاحظة ١) — كل رمز رسالة عربية مستقلة.
+ * `rate-limited` ليس تجميلاً: `TR-XXXXXX` فضاؤه ٣١⁶ ≈ ٢٩٫٧ بت وقابل للتعداد،
+ * بخلاف التوكن (١٩٢ بت). الحدّ هو ما يمنع المسح، لا سرّية المرجع.
+ */
+export type BookingLookupErrorCode =
+  | "invalid-input" // مرجع أو هاتف بصيغة غير مقبولة
+  | "not-found" // لا حجز يطابق الاثنين معاً
+  | "rate-limited" // تجاوز حدّ المحاولات
+  | "db-unavailable";
+
+/**
+ * تواقيع Postgres التي تضيفها هجرة 0027:
+ *
+ *   trip_config()
+ *     → table(unpaid_cancel_enabled boolean, unpaid_timeout_minutes integer)
+ *     قارئ متسامح على نمط `dispatch_config()`: يرجع صفاً واحداً حتى لو الجدول فارغ.
+ *
+ *   cancel_stale_bookings(p_limit integer default 200)
+ *     → table(scanned integer, cancelled integer, failed integer)
+ *     الكنس الدوري. حارسه `dispatch_ops_allowed()` لا `is_admin()` — لأن
+ *     `set_booking_status` ممنوحة للمشرف وحده ولا تصلح لدورة تعمل بمفتاح الخدمة.
+ *     يستثني: الحجوزات التي لها جلسة بوابة حيّة (`payment_intents` في
+ *     `created|pending` أحدث من المهلة) حتى لا يُلغى حجز والمال في الطريق.
+ *     و`failed` ليس زينة: كل صف داخل كتلة استثناء مستقلة، فصفٌّ واحد سام لا
+ *     يُسقط الدورة كلها ولا يبقى العطب صامتاً — يظهر عدده في رد المسار وفي
+ *     شاشة الإعدادات، ومعه `raise warning` في سجل الخادم.
+ *
+ *   admin_attach_receipt(p_booking_id uuid, p_amount numeric, p_receipt_path text,
+ *                        p_note text, p_visible boolean)
+ *     → uuid (معرّف صف التحصيل)
+ *     رفع الأدمن للإيصال. يقبل الحجز في `pending_payment` أو `under_review` فقط،
+ *     ويرفض بوجود إيصال `pending` آخر (‏`verify_payment` تعالج الأحدث وحده فيبقى
+ *     السابق معلّقاً للأبد). ينقل الحجز إلى `under_review` ويُطفئ إشعار
+ *     «رفع إيصال» الوسيط كما يفعل مسار البوابة في 0020.
+ *
+ *   set_receipt_visibility(p_payment_id uuid, p_visible boolean) → boolean
+ *
+ *   find_booking_by_reference(p_reference text, p_phone text, p_client_key text)
+ *     → table(public_token text)   — **صفر صفوف = لا نتيجة**، لا استثناء
+ *     البحث بمرجع + هاتف. `security definer` تستدعي `normalize_phone` **داخلها**
+ *     — ولا تُمنح `normalize_phone` لـ `anon` بحال (فحص في 0026 يُسقط الهجرة
+ *     والاختبار معاً). و`p_client_key` بصمة مجهولة للعميل تحسبها طبقة الخادم،
+ *     ولا يصل عنوان IP إلى القاعدة أبداً.
+ *
+ *     **قاعدتان في هذه الدالة تحملان الميزة كلها، ونقضُ أيٍّ منهما يُبطل الخانق:**
+ *     (أ) مسار «لا نتيجة» يرجع **صفر صفوف ولا يرمي**. كل نداء PostgREST معاملة
+ *         واحدة، فالاستثناء يُرجعها ومعها صفُّ العدّاد المكتوب لتوّه ⇒ المحاولة
+ *         الفاشلة لا تُحسب، فيبقى التعداد بلا خانق ويُقفَل الباب على العميل
+ *         الشرعي وحده. لذلك تترجم طبقة الخادم **الفراغ** إلى `not-found`.
+ *     (ب) الدالة **غير ممنوحة لـ `anon` ولا `authenticated`** — تُنادى من إجراء
+ *         الخادم بمفتاح الخدمة وحده. ولو مُنحت للزائر لاختار بصمة جديدة كل طلب
+ *         فصار لكل محاولة دلوٌ عدّاده ١ ولا يبلغ الحدّ أبداً.
+ */
+
 /** حالة إشعار في طابور الإرسال */
 export type NotificationChannel = "dashboard" | "telegram" | "email";
 

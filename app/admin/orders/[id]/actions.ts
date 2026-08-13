@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { trackBookingPaid } from "@/lib/analytics/emit";
 import type { BookingStatus } from "@/lib/booking-types";
 import { startDispatchFor } from "@/lib/dispatch/start";
+import { createServiceSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 /**
@@ -31,8 +32,13 @@ const url = (bookingId: string, qs: string) => `/admin/orders/${bookingId}?${qs}
 /**
  * ترجمة `hint` القادم من دوال Postgres إلى رمز الخطأ في الرابط.
  * الرموز المعرَّفة في الهجرة: forbidden / invalid-status / payment-not-found /
- * booking-not-found / illegal-transition / invalid-input.
- * أي رمز غير معروف يسقط على `fallback` الذي يحدده المُنادي.
+ * booking-not-found / illegal-transition / invalid-input، ومنذ 0027:
+ * receipt-pending (إيصال معلّق يمنع رفع إيصال ثانٍ) و receipt-missing (الملف
+ * غير موجود في الدلو رغم نجاح الرفع ظاهرياً).
+ *
+ * ⚠ كل رمز ترفعه دالة نناديها من هنا **يجب أن يوجد في هذا الجدول**: الرمز
+ * المجهول يسقط على `fallback` وهو غالباً `save` — ورسالته تتهم الصلاحيات في
+ * خطأ سببه المخزن أو الحالة (نمط الفشل ٢ في handover/LESSONS.md).
  */
 const HINT_CODES: Record<string, string> = {
   forbidden: "forbidden",
@@ -41,12 +47,28 @@ const HINT_CODES: Record<string, string> = {
   "booking-not-found": "missing",
   "illegal-transition": "status",
   "invalid-input": "input",
+  "receipt-pending": "pending",
+  "receipt-missing": "filemissing",
 };
 
-function hintCode(error: { hint?: string | null } | null, fallback: string): string {
+/**
+ * `overrides` لأن **الرمز الواحد يعني شيئين في دالتين**: `payment-not-found` من
+ * `verify_payment` يعني «لا إيصال ينتظر البتّ» (رسالة `noreceipt`)، ومن
+ * `set_receipt_visibility` يعني «صف الإيصال نفسه اختفى». رسالة واحدة للاثنين
+ * كانت ستُرسل المشغّل يبحث عن إيصال معلّق لا علاقة له بالأمر.
+ */
+function hintCode(
+  error: { hint?: string | null } | null,
+  fallback: string,
+  overrides?: Record<string, string>
+): string {
   const hint = typeof error?.hint === "string" ? error.hint.trim() : "";
-  return HINT_CODES[hint] ?? fallback;
+  return overrides?.[hint] ?? HINT_CODES[hint] ?? fallback;
 }
+
+/** الدالة غير موجودة على هذه القاعدة ⇒ هجرة 0027 لم تُنفَّذ بعد */
+const isMissingFunction = (code: string | undefined | null): boolean =>
+  code === "42883" || code === "PGRST202";
 
 const STATUSES: BookingStatus[] = [
   "pending_payment",
@@ -152,4 +174,171 @@ export async function cancelBooking(bookingId: string, formData: FormData) {
 
   revalidatePath("/", "layout");
   redirect(url(bookingId, "saved=1"));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * رفع الإيصال نيابة عن العميل، وإظهاره أو إخفاؤه (الملاحظة ٢ — هجرة 0027)
+ *
+ * الواقع التشغيلي: كثير من العملاء يرسل صورة التحويل على واتساب أو يقرأ رقم
+ * العملية هاتفياً، فيبقى الحجز «بانتظار الدفع» وقد وصل المال. هذان الإجراءان
+ * يغلقان تلك الفجوة: يرفع فريق التشغيل الإيصال بنفسه فينتقل الحجز إلى «قيد
+ * المراجعة» ويمر بعدها بنفس مسار الاعتماد المعتاد — لا مسار موازٍ ولا اعتماد
+ * تلقائي.
+ *
+ * وكل القرار في SQL كالعادة: `admin_attach_receipt` هي التي تفحص الدور والحالة
+ * ووجود إيصال معلّق وتثبّت المبلغ وتنقل الحالة وتُطفئ الإشعار الوسيط. هنا:
+ * تحقق شكلي من الملف، ورفع، واستدعاء، وترجمة رمز الخطأ.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const BUCKET = "receipts";
+
+/** رفض مبكر يطابق حدّ الدلو نفسه — والدلو هو الحكم النهائي */
+const MAX_BYTES = 5 * 1024 * 1024;
+
+/** الأنواع المقبولة ← الامتداد المخزَّن (مطابقة لإعداد الدلو في المرحلة ٤) */
+const ALLOWED_TYPES: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** الأرقام العربية الهندية مقبولة في الحقول الرقمية وتُحوَّل قبل التحقق */
+const toLatinDigits = (s: string) =>
+  s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+
+/**
+ * قراءة مبلغ من النموذج — **قراءة لا حساب**: لا تقريب ولا سقف ولا نسبة هنا.
+ * `admin_attach_receipt` هي التي تقرّب لخانتين وترفض ما ليس موجباً.
+ */
+function amountOf(formData: FormData, name: string): number | null {
+  const v = formData.get(name);
+  if (typeof v !== "string" || v.trim() === "") return null;
+  const n = Number(toLatinDigits(v.trim()));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** حذف الملف اليتيم بعد فشل الإرفاق — بأفضل جهد، وفشله لا يغيّر رد الشاشة */
+async function removeOrphan(path: string): Promise<void> {
+  const service = createServiceSupabase();
+  if (!service) return;
+  try {
+    await service.storage.from(BUCKET).remove([path]);
+  } catch {
+    // الدلو خاص ولا يُقرأ عاماً — الملف اليتيم مسألة تنظيف لا تسريب
+  }
+}
+
+/**
+ * رفع إيصال نيابة عن العميل.
+ *
+ * ترتيب العمليات مقصود: **الرفع أولاً ثم الاستدعاء**. لو أُنشئ صف التحصيل أولاً
+ * ثم فشل الرفع لبقي إيصال يدّعي صورة لا وجود لها؛ وبالترتيب الحالي أسوأ ما يقع
+ * ملف يتيم — ونحذفه فور فشل الاستدعاء.
+ *
+ * الرفع **بمفتاح الخدمة**: سياسات دلو `receipts` مكتوبة للزائر الرافع لإيصال
+ * حجزه (مسار من مقطعين يبدأ بتوكن حجز ما زال بانتظار الدفع)، ولا تمنح الإدارة
+ * إدراجاً على المسار الإداري. وبغياب المفتاح نرفض برسالة صريحة بدل تسجيل إيصال
+ * بلا صورة.
+ *
+ * ⚠ **ولذلك حارس الدور هنا لا في القاعدة وحدها:** مفتاح الخدمة يتجاوز سياسات
+ * الدلو بحكم تعريفه، و`admin_attach_receipt` تفحص `is_admin()` **بعد** أن يكون
+ * الملف قد كُتب فعلاً. فالفحص يسبق الرفع بنفس شكل `runStaleBookingsSweep` في
+ * `app/admin/settings/actions.ts`.
+ */
+export async function uploadAdminReceipt(bookingId: string, formData: FormData) {
+  // معرّف الحجز يدخل **مسار التخزين** فيُتحقق من شكله قبل أي كتابة.
+  if (!UUID.test(bookingId)) redirect("/admin/orders");
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url(bookingId, "error=env"));
+
+  // حارس صلاحية صريح **قبل أي كتابة في المخزن**: الكتابة تقع بمفتاح الخدمة،
+  // فلا تنطبق عليها حراسة القاعدة، وحارس `admin_attach_receipt` يأتي بعدها.
+  // حارس `/admin` في `proxy.ts` يغطي هذا الإجراء اليوم — وهذه الطبقة الثانية
+  // لا تتكل عليه، وهو ما كان تعليق هذه الدالة يدّعيه قبل أن يكون صحيحاً.
+  const { data: isAdmin, error: roleError } = await supabase.rpc("is_admin");
+  if (roleError || isAdmin !== true) redirect(url(bookingId, "error=forbidden"));
+
+  const file = formData.get("receipt_file");
+  if (!(file instanceof File) || file.size === 0) redirect(url(bookingId, "error=nofile"));
+
+  if (file.size > MAX_BYTES) redirect(url(bookingId, "error=filesize"));
+
+  const extension = ALLOWED_TYPES[file.type];
+  if (!extension) redirect(url(bookingId, "error=filetype"));
+
+  // المبلغ إقرار من المشغّل بما وصل فعلاً — لا يُشتق من الحجز ولا يُقرَّب هنا
+  const amount = amountOf(formData, "receipt_amount");
+  if (amount === null || amount <= 0) redirect(url(bookingId, "error=amount"));
+
+  const note = trimNote(text(formData, "receipt_note"));
+  // مربع اختيار غير مؤشَّر لا يُرسل أصلاً — الغياب يعني «داخلي لا يراه العميل»
+  const visible = formData.get("receipt_visible") != null;
+
+  const service = createServiceSupabase();
+  if (!service) redirect(url(bookingId, "error=nokey"));
+
+  const path = `admin/${bookingId}/${crypto.randomUUID()}.${extension}`;
+  const { error: uploadError } = await service.storage
+    .from(BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (uploadError) redirect(url(bookingId, "error=upload"));
+
+  const { error } = await supabase.rpc("admin_attach_receipt", {
+    p_booking_id: bookingId,
+    p_amount: amount,
+    p_receipt_path: path,
+    p_note: note,
+    p_visible: visible,
+  });
+
+  if (error) {
+    // الملف رُفع ولم يُربط بأي تحصيل ⇒ يتيم: يُحذف قبل الخروج لا بعده
+    await removeOrphan(path);
+    const code = isMissingFunction(error.code) ? "notready" : hintCode(error, "save");
+    redirect(url(bookingId, `error=${code}`));
+  }
+
+  revalidatePath("/", "layout");
+  redirect(url(bookingId, "saved=receipt"));
+}
+
+/**
+ * إظهار إيصال للعميل أو إخفاؤه عنه.
+ *
+ * الحجب يقع في **القاعدة** لا في العرض: `get_booking_by_token` تُسقط الصف من
+ * حمولة صفحة المتابعة، وحاملُ التوكن يقرأ الحمولة الخام — فإخفاءٌ في JSX ليس
+ * إخفاءً. ولا أثر محاسبياً للحجب: الإيصال المخفي المعتمَد يُقيَّد في الدفتر
+ * ويستهلك حد حساب الاستقبال كأي إيصال.
+ */
+export async function setReceiptVisibility(
+  bookingId: string,
+  paymentId: string,
+  visible: boolean
+) {
+  if (!UUID.test(bookingId)) redirect("/admin/orders");
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url(bookingId, "error=env"));
+
+  if (!UUID.test(paymentId)) redirect(url(bookingId, "error=input"));
+
+  const { error } = await supabase.rpc("set_receipt_visibility", {
+    p_payment_id: paymentId,
+    p_visible: visible,
+  });
+
+  if (error) {
+    const code = isMissingFunction(error.code)
+      ? "notready"
+      : hintCode(error, "save", { "payment-not-found": "norow" });
+    redirect(url(bookingId, `error=${code}`));
+  }
+
+  revalidatePath("/", "layout");
+  redirect(url(bookingId, visible ? "saved=shown" : "saved=hidden"));
 }

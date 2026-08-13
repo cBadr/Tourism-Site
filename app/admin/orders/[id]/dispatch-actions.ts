@@ -21,6 +21,11 @@ import { createServerSupabase } from "@/lib/supabase/server";
  *   داخل الدالة، تماماً كـ `verify_payment` و`review_price_list` في المرحلتين
  *   ٤ و٥ — فيُسجَّل المنفِّذ الحقيقي في سجل الطلب.
  *
+ * **وإسنادان لا واحد** منذ 0027: `manualAssign` العادي، و`manualAssignOverLimit`
+ * الذي يمرّ بدالة مستقلة الاسم في القاعدة لتجاوز سقف دين المتعهد بقرار بشري
+ * مكتوب. كلٌّ خلف خطوة تأكيد مستقلة في الرابط (‎?confirm=assign‎ و‎?confirm=override‎)،
+ * فلا يتحول التجاوز إلى «أعد المحاولة».
+ *
  * اتفاقية «إعادة التوجيه بعد العملية»: النجاح والفشل كلاهما redirect برمز في
  * الرابط، والوجهة لوحة الإسناد نفسها (‎#dispatch‎) لا أعلى الصفحة.
  * و`revalidatePath("/", "layout")` لأن الإسناد ينقل الحجز إلى «مُسند» فتتغير
@@ -81,6 +86,14 @@ const HINT_CODES: Record<string, string> = {
   "margin-floor": "margin",
   "min-margin": "margin",
   margin: "margin",
+  // ── سقف ديون المتعهدين (0027): مُشغّل `trip_offers` يرفض الفوز لمن بلغ سقفه.
+  // بلا هذا السطر يسقط الرفض على «فشلت العملية — تأكد أنك مسجل الدخول بحساب
+  // دوره admin»: اتهام صلاحيات في مشكلة دَين، وهو تحديداً ما يحذّر منه تعليق
+  // هذا الجدول أعلاه.
+  "debt-limit": "debtlimit",
+  // `manual_assign_over_limit` ترفض السبب الفارغ. النموذج يفرضه أصلاً، فهذا
+  // مسار لا يُبلغ عادةً — لكنه لو بلغ فالرسالة تقول «اكتب السبب» لا «لا صلاحية».
+  "note-required": "note",
 };
 
 /** رموز فشل غلاف البث (`StartDispatchResult.reason`) — وما عداها `hint` من SQL */
@@ -181,4 +194,55 @@ export async function manualAssign(bookingId: string, formData: FormData) {
 
   revalidatePath("/", "layout");
   redirect(url(bookingId, "saved=manual"));
+}
+
+/**
+ * الإسناد فوق سقف الدين — **الباب الوحيد** لتجاوز حاجز 0027.
+ *
+ * مُشغّل `trip_offers` يرفض فوز متعهد بلغ سقف دينه لنا، ويرفضه على `manual_assign`
+ * كما يرفضه على القبول من البورتال. والتجاوز دالة أخرى باسمها:
+ * `manual_assign_over_limit` ترفع `tours.allow_partner_debt` لهذه المعاملة وحدها
+ * ثم تنادي `manual_assign` نفسها — نفس نمط `manual_assign_with_loss`.
+ *
+ * وهي **ترفع حارساً واحداً لا كل الحرّاس**: أرضية الهامش تبقى سارية، والمتعهد
+ * الموقوف أو غير المعتمد يبقى مرفوضاً. من احتاج تجاوز حاجزين معاً يرفع الأرضية
+ * أو يسدّد الدين أولاً.
+ *
+ * السبب المكتوب شرطٌ في القاعدة نفسها (‏`note-required`) لا في الواجهة وحدها،
+ * لأنه الأثر الدائم الوحيد للقرار: يُكتب في سجل الطلب وفي سبب صف العرض.
+ */
+export async function manualAssignOverLimit(bookingId: string, formData: FormData) {
+  const back = (qs: string) => url(bookingId, `${qs}&confirm=override`);
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(back("error=env"));
+
+  const subcontractorId = text(formData, "manual.subcontractor_id");
+  if (!subcontractorId || !UUID.test(subcontractorId)) redirect(back("error=partner"));
+
+  const payout = num(formData, "manual.payout");
+  if (payout === null || payout < 0 || payout > MAX_PAYOUT) redirect(back("error=payout"));
+
+  const note = text(formData, "manual.note")?.slice(0, MAX_NOTE) ?? null;
+  if (!note) redirect(back("error=note"));
+
+  const { error } = await supabase.rpc("manual_assign_over_limit", {
+    p_booking_id: bookingId,
+    p_subcontractor_id: subcontractorId,
+    p_payout: payout,
+    p_note: note,
+  });
+
+  if (error) {
+    // الدالة غير موجودة ⇒ هجرة **0027** لم تُنفَّذ. ورسالة `notready` العامة تحيل
+    // إلى هجرة المرحلة ٦، فتُرسل المشغّل إلى الملف الخطأ — ولذلك رمز مستقل.
+    const code =
+      typeof error.code === "string" && MISSING_OBJECT.has(error.code)
+        ? "nolimitfn"
+        : rpcCode(error, "save");
+    redirect(back(`error=${code}`));
+  }
+
+  revalidatePath("/", "layout");
+  redirect(url(bookingId, "saved=override"));
 }

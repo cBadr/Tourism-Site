@@ -35,6 +35,7 @@ const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "quote-request",
   "routes",
   "services",
+  "track",
   "api",
 ]);
 

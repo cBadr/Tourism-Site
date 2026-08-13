@@ -70,7 +70,7 @@ export async function SiteHeader({
         {/* التنقل — شاشات متوسطة فأكبر */}
         <nav
           aria-label={t("mainNav", "التنقل الرئيسي")}
-          className="hidden items-center gap-1 md:flex"
+          className="hidden items-center gap-1 lg:flex"
         >
           {links.map((link) => (
             <a
@@ -102,7 +102,9 @@ export async function SiteHeader({
           </a>
 
           {/* قائمة الجوال — بلا JavaScript */}
-          <details className="group relative md:hidden">
+          {/* العتبة `lg` لا `md`: بند «تابع حجزك» رفع روابط التنقّل إلى خمسة،
+              ومع مبدّل اللغة (يظهر فور تفعيل لغة ثانية) يفيض الشريط بين ٧٦٨ و٨٦٠ بكسل. */}
+          <details className="group relative lg:hidden">
             <summary
               className="grid size-9 cursor-pointer list-none place-items-center rounded-xl border border-border bg-background text-foreground transition-colors hover:bg-muted [&::-webkit-details-marker]:hidden"
               aria-label={t("menu", "القائمة")}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, ScrollText } from "lucide-react";
+import { ArrowLeft, Ban, ScrollText } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -19,7 +19,9 @@ import {
   numberOf,
   RangeFilter,
   readCurrency,
+  readPartnerCredit,
   rowsOf,
+  type SettlementCredit,
   SettlementBadge,
   settlementWording,
   type Supabase,
@@ -66,6 +68,25 @@ type Summary = {
   netDue: number | null;
   absNetDue: number | null;
   tripsCount: number | null;
+  /** `owed_to_us` من العرض (0027) — الرقم الذي تقارنه القاعدة بالسقف حرفياً */
+  owedToUs: number | null;
+  /**
+   * `over_limit` من العرض (0027) — **بلوغ السقف وحده**، لا يقرأ «حجب العروض».
+   * null = عمود غائب أي قاعدة لم تُهاجر بعد.
+   */
+  overLimit: boolean | null;
+};
+
+/** ملخص فارغ لشريك لا صفّ مقاصة له بعد — «غير معروف» لا صفر */
+const BLANK_SUMMARY: Omit<Summary, "companyName"> = {
+  earned: null,
+  collected: null,
+  paid: null,
+  netDue: null,
+  absNetDue: null,
+  tripsCount: null,
+  owedToUs: null,
+  overLimit: null,
 };
 
 type Loaded = {
@@ -73,6 +94,11 @@ type Loaded = {
   lines: StatementLine[];
   linesReady: boolean;
   summary: Summary | null;
+  /**
+   * `block_dispatch` من جدول الإعدادات — **لا من العرض**. `null` = لم يُقرأ
+   * الصف، فلا تُقال جملة عن توقّف الإسناد في أيٍّ من الاتجاهين.
+   */
+  blockDispatch: boolean | null;
   missing: string | null;
 };
 
@@ -125,16 +151,19 @@ async function loadStatement(id: string, range: DateRange): Promise<Loaded> {
     lines: [],
     linesReady: false,
     summary: null,
+    blockDispatch: null,
     missing: "قاعدة البيانات",
   };
 
   const supabase = await createServerSupabase();
   if (!supabase) return blank;
 
-  const [currency, statementRes, settlementRes] = await Promise.all([
+  const [currency, statementRes, settlementRes, credit] = await Promise.all([
     readCurrency(supabase),
     callStatement(supabase, id, range),
     supabase.from("v_partner_settlements").select("*").eq("subcontractor_id", id).maybeSingle(),
+    // مفتاح «حجب العروض» لا يعيش في العرض — وبدونه لا يجوز قول «الإسناد متوقف»
+    readPartnerCredit(supabase),
   ]);
 
   const lines: StatementLine[] = statementRes.error
@@ -153,6 +182,7 @@ async function loadStatement(id: string, range: DateRange): Promise<Loaded> {
         }));
 
   const settlementRow = settlementRes.error ? null : firstRow(settlementRes.data);
+  const rawOverLimit = settlementRow?.over_limit ?? settlementRow?.overLimit;
   const summary: Summary | null = settlementRow
     ? {
         companyName: textOf(settlementRow, ["company_name", "companyName", "name"]),
@@ -162,6 +192,8 @@ async function loadStatement(id: string, range: DateRange): Promise<Loaded> {
         netDue: numberOf(settlementRow, ["net_due", "netDue"]),
         absNetDue: numberOf(settlementRow, ["abs_net_due", "absNetDue"]),
         tripsCount: numberOf(settlementRow, ["trips_count", "tripsCount"]),
+        owedToUs: numberOf(settlementRow, ["owed_to_us", "owedToUs"]),
+        overLimit: typeof rawOverLimit === "boolean" ? rawOverLimit : null,
       }
     : null;
 
@@ -178,15 +210,13 @@ async function loadStatement(id: string, range: DateRange): Promise<Loaded> {
     currency,
     lines,
     linesReady: !statementRes.error,
-    summary: summary ? { ...summary, companyName } : companyName ? {
-      companyName,
-      earned: null,
-      collected: null,
-      paid: null,
-      netDue: null,
-      absNetDue: null,
-      tripsCount: null,
-    } : null,
+    summary: summary
+      ? { ...summary, companyName }
+      : companyName
+        ? { companyName, ...BLANK_SUMMARY }
+        : null,
+    // `loaded: false` تعني «لم يُقرأ الصف» — وهي ليست «الحجب مطفأ»
+    blockDispatch: credit.loaded ? credit.settings.blockDispatch : null,
     missing,
   };
 }
@@ -237,13 +267,30 @@ export default async function PartnerStatementPage({
         lines: [],
         linesReady: false,
         summary: null,
+        blockDispatch: null,
         missing: "معرّف المتعهد",
       };
-  const { currency, lines, linesReady, summary, missing } = loaded;
+  const { currency, lines, linesReady, summary, blockDispatch, missing } = loaded;
 
   const wired = hasSupabaseEnv();
   const partnerName = summary?.companyName ?? "متعهد";
   const closing = lines.length > 0 ? lines[lines.length - 1].balance : null;
+
+  /**
+   * صياغة واحدة للشاشة كلها: الوسم في الترويسة، وجملة الإشارة تحتها، وبطاقة
+   * السقف — كلها من `settlementWording` لا من نصوص مكرّرة هنا.
+   */
+  const credit: SettlementCredit = {
+    owedToUs: summary?.owedToUs ?? null,
+    overLimit: summary?.overLimit ?? null,
+    blockDispatch,
+  };
+  const wording = settlementWording(
+    summary?.netDue ?? null,
+    summary?.absNetDue ?? null,
+    currency,
+    credit
+  );
 
   return (
     <div className="statement-sheet mx-auto max-w-5xl space-y-5">
@@ -312,7 +359,7 @@ export default async function PartnerStatementPage({
           )}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               استحقّ عن رحلاته
@@ -346,6 +393,27 @@ export default async function PartnerStatementPage({
           </div>
           <div>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              عليه لنا
+              <HelpTip>
+                الدين المرصود عليه (‏<code dir="ltr">owed_to_us</code>) — صفر إن كنا نحن
+                المدينين له. تقارنه القاعدة بسقف الديون لحجب العروض، وترفض به تسجيل أي
+                دفعة له <span className="font-semibold">بمجرد أن يزيد على صفر</span>:
+                منع الدفع لا ينظر إلى السقف إطلاقاً. ويقيس الدين المُثبَت في الدفتر وحده:
+                لا يُقيَّد على رحلة شيء قبل تسجيلها «منفَّذة»، فالرحلات الجارية الآن ليست
+                فيه بعد.
+              </HelpTip>
+            </span>
+            <Money
+              value={summary?.owedToUs ?? null}
+              currency={currency}
+              className={cn(
+                "font-semibold",
+                (summary?.owedToUs ?? 0) > 0 && "text-sky-700 dark:text-sky-300"
+              )}
+            />
+          </div>
+          <div>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
               الصافي الآن
               <HelpTip>
                 محصّلة الحساب كله لا الفترة المعروضة وحدها. موجب = ندفع له، سالب = نُحصّل
@@ -357,16 +425,51 @@ export default async function PartnerStatementPage({
               absNetDue={summary?.absNetDue ?? null}
               currency={currency}
               withHint={false}
+              credit={credit}
             />
           </div>
         </div>
 
         {summary?.netDue !== null && summary?.netDue !== undefined && (
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {settlementWording(summary.netDue, summary.absNetDue, currency).hint}
-          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{wording.hint}</p>
         )}
       </Card>
+
+      {/*
+        شرح السقف لا يُطبع: الورقة المطبوعة مستند محاسبي يُسلَّم للشريك، وحال
+        الائتمان معه — أنُسند إليه أم لا — شأن تشغيلي داخلي يُقال له مشافهةً لا
+        يُدسّ في كشف حساب.
+        أما الوسم داخل الترويسة فيبقى — لأن إخفاءه كان يعني تفريع صياغة الإشارة
+        عن مصدرها الوحيد في `settlementWording`.
+      */}
+      {wording.limitText !== null && (
+        <Card className="no-print flex flex-row items-start gap-3 border-red-300 bg-red-50 p-4 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
+          <Ban className="mt-0.5 size-5 shrink-0" />
+          <div className="space-y-1 text-sm leading-relaxed">
+            {/*
+              العنوان والأثر من `settlementWording` وحدها: البطاقة كانت تقول
+              «الإسناد إليه متوقف» بلا شرط، والوسم يصل من عمود لا يقرأ مفتاح
+              «حجب العروض» أصلاً — فكانت الجملة تدّعي إنفاذاً قد لا يقع.
+            */}
+            <p className="font-semibold">هذا الشريك {wording.limitHeadline}</p>
+            <p>{wording.limitConsequence}</p>
+            <p>
+              السقف ومفتاح حجبه يُضبطان من{" "}
+              <Link href="/admin/finance/partners" className="underline">
+                بطاقة سقف الديون
+              </Link>{" "}
+              في شاشة المقاصة.
+              {wording.dispatchBlocked
+                ? " ولاستئناف الإسناد إليه: حصّل منه المبلغ وسجّله تسويةً، أو ارفع السقف، أو أسند له رحلة بعينها يدوياً من شاشة الطلب بسبب مكتوب."
+                : ""}
+            </p>
+            <p>
+              والسقف يقيس الدين المُثبَت في الدفتر وحده: الرحلات الجارية التي لم تُسجَّل
+              «منفَّذة» بعد ليست في هذا الرقم، فقد يكون الواقع أكبر مما تراه هنا.
+            </p>
+          </div>
+        </Card>
+      )}
 
       <div className="no-print">
         <RangeFilter

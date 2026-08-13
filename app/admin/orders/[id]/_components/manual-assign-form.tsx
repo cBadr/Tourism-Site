@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useFormStatus } from "react-dom";
-import { Loader2, UserCheck } from "lucide-react";
+import { Loader2, ShieldAlert, UserCheck } from "lucide-react";
 
 import { formatMoney } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -26,16 +26,60 @@ import { controlClass } from "../../_components/booking-ui";
  *
  * لا يستورد شيئاً من طبقة الخادم: القائمة والأرقام والإجراء كلها props من
  * الصفحة الخادمية، ورابط التراجع يصل children جاهزاً (المسارات مُنمَّطة).
+ *
+ * **صيغتان لا نموذجان** (`variant`): الإسناد اليدوي المعتاد، والإسناد فوق سقف
+ * دين المتعهد. الحقول واحدة والمعاينة واحدة — المختلف هو الحاجز الذي يُرفع في
+ * القاعدة والنص الذي يشرحه. وفصلهما إلى ملفين كان سينسخ معاينة الهامش مرتين
+ * فتنحرف إحداهما.
  */
 
 export type PartnerOption = { id: string; label: string };
 
-function SubmitButton({ disabled }: { disabled: boolean }) {
+/**
+ * `standard` = تجاوز لدورة البث وحدها (‏`manual_assign`).
+ * `over-limit` = تجاوز إضافي لسقف دين المتعهد (‏`manual_assign_over_limit`).
+ */
+export type AssignVariant = "standard" | "over-limit";
+
+/** نصوص كل صيغة في مكان واحد — فلا تُبعثر جُملها بين الخادم والعميل */
+const COPY: Record<
+  AssignVariant,
+  {
+    title: string;
+    submit: string;
+    frame: string;
+    noteLabel: string;
+    notePlaceholder: string;
+  }
+> = {
+  standard: {
+    title: "إسناد يدوي — تجاوز لدورة البث",
+    submit: "تأكيد الإسناد اليدوي",
+    frame: "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950",
+    noteLabel: "سبب الإسناد اليدوي",
+    notePlaceholder: "سبب التدخل اليدوي — إلزامي",
+  },
+  "over-limit": {
+    title: "إسناد فوق سقف الدين — تجاوز بقرار مكتوب",
+    submit: "أسنِد رغم بلوغ السقف",
+    frame: "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950",
+    noteLabel: "سبب التجاوز فوق السقف",
+    notePlaceholder: "لماذا تُسند لمتعهد بلغ سقف دينه؟ — إلزامي",
+  },
+};
+
+function SubmitButton({ disabled, variant }: { disabled: boolean; variant: AssignVariant }) {
   const { pending } = useFormStatus();
   return (
     <Button type="submit" variant="destructive" disabled={disabled || pending}>
-      {pending ? <Loader2 className="animate-spin" /> : <UserCheck />}
-      تأكيد الإسناد اليدوي
+      {pending ? (
+        <Loader2 className="animate-spin" />
+      ) : variant === "over-limit" ? (
+        <ShieldAlert />
+      ) : (
+        <UserCheck />
+      )}
+      {COPY[variant].submit}
     </Button>
   );
 }
@@ -47,6 +91,7 @@ export function ManualAssignForm({
   currency,
   marginFloor,
   disabled,
+  variant = "standard",
   children,
 }: {
   action: (formData: FormData) => void | Promise<void>;
@@ -57,6 +102,8 @@ export function ManualAssignForm({
   /** أرضية الهامش من إعدادات الإسناد — `null` قبل تنفيذ الهجرة */
   marginFloor: number | null;
   disabled: boolean;
+  /** أي حاجز يرفعه هذا النموذج — والافتراضي لا يرفع سقف الدين */
+  variant?: AssignVariant;
   /** رابط التراجع — يُبنى في الصفحة الخادمية حفاظاً على تنميط المسارات */
   children?: React.ReactNode;
 }) {
@@ -70,20 +117,42 @@ export function ManualAssignForm({
   const thin =
     margin !== null && !loss && marginFloor !== null && marginFloor > 0 && margin < marginFloor;
 
+  const copy = COPY[variant];
+  const overLimit = variant === "over-limit";
+
   return (
-    <form
-      action={action}
-      className="space-y-4 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950"
-    >
-      <div className="space-y-1">
-        <p className="font-heading text-sm font-bold text-amber-900 dark:text-amber-100">
-          إسناد يدوي — تجاوز لدورة البث
-        </p>
-        <p className="text-sm leading-relaxed text-amber-900/90 dark:text-amber-100/90">
-          يُغلق الطلب على المتعهد الذي تختاره فوراً، وتُلغى كل العروض المفتوحة عند غيره، وينتقل
-          الحجز إلى «مُسند». استخدمه حين تستنفد الموجات أو حين تتفق هاتفياً مع شريك بعينه —
-          وسجّل السبب دائماً.
-        </p>
+    <form action={action} className={cn("space-y-4 rounded-lg border p-4", copy.frame)}>
+      <div
+        className={cn(
+          "space-y-1",
+          overLimit
+            ? "text-red-900 dark:text-red-100"
+            : "text-amber-900 dark:text-amber-100"
+        )}
+      >
+        <p className="font-heading text-sm font-bold">{copy.title}</p>
+        {overLimit ? (
+          <>
+            <p className="text-sm leading-relaxed">
+              هذا النموذج يُسند الرحلة إلى متعهد <span className="font-semibold">بلغ سقف
+              الدين المسموح</span> رغم بلوغه السقف — أي يرفع، لهذه الرحلة وحدها، الحاجزَ الذي
+              ترفض به القاعدة إسناد أي رحلة إليه. والسبب الذي تكتبه يُحفظ في سجل الطلب وفي
+              سجل العروض.
+            </p>
+            <p className="text-sm leading-relaxed">
+              وهو يرفع حاجز الدين وحده: أرضية الهامش تبقى سارية، والمتعهد الموقوف أو غير
+              المعتمد يبقى مرفوضاً. ولا عمود في القاعدة يميّز هذا الإسناد عن الإسناد اليدوي
+              العادي بعد وقوعه — <span className="font-semibold">نصّك هو الأثر الدائم
+              الوحيد</span>، فاذكر فيه أنك أسندت رغم السقف ولماذا.
+            </p>
+          </>
+        ) : (
+          <p className="text-sm leading-relaxed">
+            يُغلق الطلب على المتعهد الذي تختاره فوراً، وتُلغى كل العروض المفتوحة عند غيره،
+            وينتقل الحجز إلى «مُسند». استخدمه حين تستنفد الموجات أو حين تتفق هاتفياً مع شريك
+            بعينه — وسجّل السبب دائماً.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -94,6 +163,9 @@ export function ManualAssignForm({
               القائمة تعرض المتعهدين <span className="font-semibold">المعتمدين</span> وحدهم — غير
               المعتمد لا تدخل أسعاره التسعير ولا يجوز أن تُسند له رحلة. اعتمد الشريك من ملفه أولاً
               إن لم تجده هنا.
+              {overLimit
+                ? " والقائمة هنا لا تميّز من بلغ سقف دينه: اختر الشريك الذي رفضت القاعدة إسناده. واختيارُ شريك تحت السقف من هذا النموذج يعمل كإسناد يدوي عادي — لا أثر للتجاوز حيث لا سقف مبلوغ."
+                : ""}
             </HelpTip>
           </Label>
           <select
@@ -182,10 +254,11 @@ export function ManualAssignForm({
 
       <div className="space-y-1.5">
         <Label htmlFor="manual-note" className="flex items-center gap-1.5">
-          سبب الإسناد اليدوي
+          {copy.noteLabel}
           <HelpTip>
-            إلزامي: يُسجَّل في سجل الطلب ويبقى مرجعاً لأي مراجعة مالية لاحقة. مثال: «استُنفدت
-            الموجتان، اتُّفق هاتفياً مع الشريك على ١٨٠٠».
+            {overLimit
+              ? "إلزامي — وقاعدة البيانات نفسها ترفض السبب الفارغ في هذا المسار لا الواجهة وحدها. يُسجَّل في سجل الطلب وفي سبب صف العرض، وهو ما سيقرؤه من يراجع لاحقاً «لماذا أُسندت رحلة لمتعهد بلغ سقفه». مثال: «اتُّفق معه على السداد من مستحق هذه الرحلة، بموافقة المالك»."
+              : "إلزامي: يُسجَّل في سجل الطلب ويبقى مرجعاً لأي مراجعة مالية لاحقة. مثال: «استُنفدت الموجتان، اتُّفق هاتفياً مع الشريك على ١٨٠٠»."}
           </HelpTip>
         </Label>
         <Input
@@ -193,17 +266,22 @@ export function ManualAssignForm({
           name="manual.note"
           required
           disabled={disabled}
-          placeholder="سبب التدخل اليدوي — إلزامي"
+          placeholder={copy.notePlaceholder}
         />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <SubmitButton disabled={disabled || partners.length === 0} />
+        <SubmitButton disabled={disabled || partners.length === 0} variant={variant} />
         {children}
       </div>
 
       {partners.length === 0 && (
-        <p className="text-sm text-amber-900 dark:text-amber-100">
+        <p
+          className={cn(
+            "text-sm",
+            overLimit ? "text-red-900 dark:text-red-100" : "text-amber-900 dark:text-amber-100"
+          )}
+        >
           لا يوجد متعهد معتمد في السجل — اعتمد شريكاً واحداً على الأقل من شاشة المتعهدين قبل
           الإسناد اليدوي.
         </p>

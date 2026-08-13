@@ -1,5 +1,7 @@
 import { authorizeDispatchRequest, dispatchDenied, NO_STORE } from "@/lib/dispatch/guard";
 import { getDispatchStats, runDispatchTick } from "@/lib/dispatch/tick";
+import { createServiceSupabase } from "@/lib/supabase/admin";
+import { runStaleSweep } from "@/lib/trip-settings";
 
 /**
  * مسار دورة البث (المرحلة ٦).
@@ -20,6 +22,10 @@ import { getDispatchStats, runDispatchTick } from "@/lib/dispatch/tick";
  *
  * الدورة نفسها لا ترمي استثناءً أبداً، لذلك كل رد هنا JSON صالح: النجاح ملخّص،
  * والفشل ملخّص فيه `reason` ورمز حالة يميّز «إعداد ناقص» عن «خلل تشغيلي».
+ *
+ * ومنذ الدفعة ٢ (هجرة 0027) تحمل الدورة عملاً ثانياً: بعد نجاح البث يُشغَّل
+ * **كنس الطلبات غير المدفوعة** (`cancel_stale_bookings`) وتظهر عدّاداته في
+ * المفتاح `sweep` من نفس الرد. لا يغيّر رمز الحالة ولا نتيجة البث بحال.
  */
 
 export const runtime = "nodejs";
@@ -37,9 +43,38 @@ function statusFor(reason: string | undefined): number {
   return 200; // already-running وغيره: حالة تشغيل عادية لا خطأ
 }
 
+/**
+ * كنس الطلبات غير المدفوعة على نفس الدورة (الملاحظة ٣، هجرة 0027).
+ *
+ * لماذا هنا ولا مسار ولا جدولة جديدة؟ لأن هذه هي المهمة المجدولة الوحيدة
+ * المضمونة على كل نسخة (‏`pg_cron` غير مضمون على مشاريع Supabase — عقد المرحلة ٦)،
+ * وإضافة مسار ثانٍ تعني سرّاً ثانياً وجدولة ثانية تُنسى.
+ *
+ * وكما تُستدعى `startDispatchFor` بعد اعتماد التحويل: **الدالة لا ترمي استثناءً
+ * أبداً ولا تغيّر نتيجة الدورة**. حالة الرد ورمزها يبقيان من `summary` وحده —
+ * كنسٌ فشل لا يجعل دورة بثٍّ نجحت تبدو فاشلة للمهمة المجدولة، وسببه يظهر في
+ * `sweep.reason` ليقرأه المالك. والبوابة الحقيقية داخل القاعدة: مفتاح
+ * `unpaid_cancel_enabled` مطفأ ⇒ يرجع الكنس صفرين بهدوء.
+ *
+ * ولا يعمل الكنس إلا بعد **نجاح** الدورة: `ok = false` يعني بيئة ناقصة أو هجرة
+ * غير مطبَّقة، وإلغاء حجوزات على قاعدة بهذا الوصف آخر ما نريد.
+ */
+async function sweepStale(ok: boolean) {
+  if (!ok) return { ok: false, scanned: 0, cancelled: 0, failed: 0, reason: "tick-not-run" };
+
+  const { ok: swept, scanned, cancelled, failed, reason } =
+    await runStaleSweep(createServiceSupabase());
+  return { ok: swept, scanned, cancelled, failed, ...(reason ? { reason } : {}) };
+}
+
 async function runAndRespond(): Promise<Response> {
   const summary = await runDispatchTick();
-  return Response.json(summary, { status: statusFor(summary.reason), headers: NO_STORE });
+  const sweep = await sweepStale(summary.ok);
+
+  return Response.json(
+    { ...summary, sweep },
+    { status: statusFor(summary.reason), headers: NO_STORE }
+  );
 }
 
 export async function POST(request: Request): Promise<Response> {

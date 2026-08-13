@@ -1,36 +1,38 @@
 import { Fragment } from "react";
 import Link from "next/link";
-import { ArrowLeft, HandCoins, Handshake, Scale, X } from "lucide-react";
+import { ArrowLeft, Handshake, Scale } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
 import { isMissingTable } from "@/lib/dispatch/settings";
+import { DEFAULT_PARTNER_CREDIT } from "@/lib/finance-types";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
-import { controlClass } from "../../orders/_components/booking-ui";
 import {
-  AccountField,
-  AmountField,
   FinanceFeedback,
   FinanceNotReady,
   hasSupabaseEnv,
   hrefWith,
   Money,
   numberOf,
-  OccurredAtField,
+  type PartnerCreditState,
   readAccounts,
   readCurrency,
+  readPartnerCredit,
   rowsOf,
   SettlementBadge,
-  settlementWording,
   textOf,
   type TreasuryAccount,
 } from "../_components/finance-ui";
 import { cairoToday } from "../_components/range";
-import { recordPartnerPayout } from "./actions";
+import { PartnerCreditCard } from "./_components/credit-card";
+import {
+  AdvancePayoutForm,
+  type CarriedValues,
+  PayoutForm,
+  type Settlement,
+} from "./_components/payout-forms";
 
 /**
  * مقاصة المتعهدين — الشاشة التي يعيش فيها التواء هذا النشاط المحاسبي.
@@ -46,40 +48,50 @@ import { recordPartnerPayout } from "./actions";
  *
  * الترتيب بالقيمة المطلقة لا بالإشارة: أكبر التزام وأكبر مبلغ عالق عندنا كلاهما
  * يستحق النظر أولاً — وفرزهما بالإشارة يدفن نصف المشكلة في آخر الجدول.
+ *
+ * ── الملاحظة ١٧ (هجرة 0027): سقف الديون ─────────────────────────────────────
+ * الشاشة صارت مكان ضبط السقف أيضاً، وعمودا `owed_to_us` و`over_limit` يصلان من
+ * العرض نفسه. عمود «عليه لنا» ليس تكراراً للصافي السالب: هو **الرقم الذي تقارنه
+ * القاعدة بالسقف حرفياً** (‏`partner_debt()`)، فوضعه مستقلاً يجعل قرار المنع
+ * مقروءاً بدل أن يُستنتج من إشارة.
+ *
+ * و`over_limit` يقيس **بلوغ السقف وحده** ولا يقرأ مفتاح «حجب العروض» — فالوسم
+ * يظهر ولو كان الحجب مطفأً (قرار الهجرة: فقدان رؤية المتجاوزين أسوأ من عدم
+ * حجبهم). ولذلك يُقرأ المفتاح من `partner_credit_settings` ويُمرَّر إلى الصياغة
+ * كي تُقال جملة «الإسناد متوقف» حين تكون صحيحة وحدها.
  */
 
 export const metadata = { title: "مقاصة المتعهدين" };
 
 const PATH = "/admin/finance/partners";
 
-type Settlement = {
-  subcontractorId: string;
-  companyName: string;
-  earned: number | null;
-  collected: number | null;
-  paid: number | null;
-  netDue: number | null;
-  absNetDue: number | null;
-  tripsCount: number | null;
-};
-
 type Loaded = {
   currency: string;
   rows: Settlement[];
   ready: boolean;
   accounts: TreasuryAccount[];
+  credit: PartnerCreditState;
   missing: string | null;
 };
 
 async function loadScreen(): Promise<Loaded> {
   const supabase = await createServerSupabase();
   if (!supabase) {
-    return { currency: "EGP", rows: [], ready: false, accounts: [], missing: "قاعدة البيانات" };
+    return {
+      currency: "EGP",
+      rows: [],
+      ready: false,
+      accounts: [],
+      // الافتراضيات من العقد لا من أرقام مكتوبة هنا
+      credit: { settings: DEFAULT_PARTNER_CREDIT, loaded: false, missing: false },
+      missing: "قاعدة البيانات",
+    };
   }
 
-  const [currency, accountsRes, res] = await Promise.all([
+  const [currency, accountsRes, credit, res] = await Promise.all([
     readCurrency(supabase),
     readAccounts(supabase),
+    readPartnerCredit(supabase),
     supabase.from("v_partner_settlements").select("*"),
   ]);
 
@@ -89,146 +101,95 @@ async function loadScreen(): Promise<Loaded> {
       rows: [],
       ready: false,
       accounts: accountsRes.accounts,
+      credit,
       missing: isMissingTable(res.error.code) ? "v_partner_settlements" : "قراءة المقاصة",
     };
   }
 
   const rows: Settlement[] = rowsOf(res.data)
     .map((row) => {
-      const netDue = numberOf(row, ["net_due", "netDue"]);
+      const overLimit = row.over_limit ?? row.overLimit;
       return {
         subcontractorId: textOf(row, ["subcontractor_id", "subcontractorId", "id"]) ?? "",
         companyName: textOf(row, ["company_name", "companyName", "name"]) ?? "متعهد بلا اسم",
         earned: numberOf(row, ["earned"]),
         collected: numberOf(row, ["collected"]),
         paid: numberOf(row, ["paid"]),
-        netDue,
+        netDue: numberOf(row, ["net_due", "netDue"]),
         // القيمة المطلقة من العرض إن وفّرها؛ وإلا تُشتق للترتيب والصياغة فقط
         absNetDue: numberOf(row, ["abs_net_due", "absNetDue"]),
         tripsCount: numberOf(row, ["trips_count", "tripsCount"]),
+        // عمودا 0027 — غيابهما (قاعدة لم تُهاجر) يعني «غير معروف» لا «صفر/لا»
+        owedToUs: numberOf(row, ["owed_to_us", "owedToUs"]),
+        overLimit: typeof overLimit === "boolean" ? overLimit : null,
       };
     })
     .filter((row) => row.subcontractorId !== "");
 
   /**
    * الترتيب بحجم المبلغ لا بإشارته — ترتيب عرض لا حساب: لا رقم يُشتق منه ولا
-   * يُعرض ناتجه، وكل مبلغ في الجدول يُطبع كما وصل من العرض.
+   * يُعرض ناتجه، وكل مبلغ في الجدول يُطبع كما وصل من العرض. ومن بلغ السقف يقفز
+   * إلى الأعلى مهما صغر مبلغه: هو الصف الذي يحتاج قراراً اليوم.
    */
-  rows.sort(
-    (a, b) =>
-      (b.absNetDue ?? Math.abs(b.netDue ?? 0)) - (a.absNetDue ?? Math.abs(a.netDue ?? 0))
-  );
+  rows.sort((a, b) => {
+    const blocked = Number(b.overLimit === true) - Number(a.overLimit === true);
+    if (blocked !== 0) return blocked;
+    return (b.absNetDue ?? Math.abs(b.netDue ?? 0)) - (a.absNetDue ?? Math.abs(a.netDue ?? 0));
+  });
 
-  return { currency, rows, ready: true, accounts: accountsRes.accounts, missing: null };
+  return { currency, rows, ready: true, accounts: accountsRes.accounts, credit, missing: null };
 }
 
-/** نموذج دفعة لمتعهد واحد — يظهر مكانه في الجدول عند اختيار «سجّل دفعة» */
-function PayoutForm({
-  partner,
-  accounts,
-  currency,
-  today,
-  readOnly,
-}: {
-  partner: Settlement;
-  accounts: TreasuryAccount[];
-  currency: string;
-  today: string;
-  readOnly: boolean;
-}) {
-  const { tone, text } = settlementWording(partner.netDue, partner.absNetDue, currency);
-  const f = (name: string) => `pay-${partner.subcontractorId}-${name}`;
+const SAVED_MESSAGES: Record<string, string> = {
+  "1": "سُجّلت الدفعة وانعكست على المقاصة ورصيد الحساب فوراً.",
+  advance:
+    "سُجّل المقدَّم وقُيّد في الدفتر كأي دفعة — زاد ما لنا عند هذا الشريك بمقداره، وسببه المكتوب يظهر في كشف حسابه.",
+  credit:
+    "حُفظ سقف الديون — يسري فوراً على بثّ العروض وعلى قبولها وعلى تسجيل الدفعات، بلا إعادة نشر.",
+};
 
-  return (
-    <form action={readOnly ? undefined : recordPartnerPayout}>
-      <input type="hidden" name="subcontractor" value={partner.subcontractorId} />
-      <Card className="gap-4 border-primary/40 bg-primary/5 p-4 ring-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <HandCoins className="size-4 text-primary" />
-          <h4 className="font-heading text-sm font-bold">
-            تسجيل دفعة لـ «{partner.companyName}»
-          </h4>
-          <span className="text-xs text-muted-foreground">الوضع الحالي: {text}</span>
-          <Link
-            href={PATH}
-            className="ms-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-3" />
-            إغلاق
-          </Link>
-        </div>
-
-        {tone === "they-owe" && (
-          <p className="rounded-lg bg-amber-100 p-2 text-xs leading-relaxed text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-            انتبه: هذا الشريك <span className="font-semibold">مدين لنا</span> حالياً لأنه
-            قبض من العملاء أكثر من مستحقه. تسجيل دفعة له الآن سيزيد ما لنا عنده — وهو
-            تصرف صحيح فقط إن كنت تدفع مقدماً عن رحلات قادمة.
-          </p>
-        )}
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <AccountField
-            id={f("account")}
-            name="account"
-            accounts={accounts}
-            disabled={readOnly}
-            label="الحساب المنصرف منه"
-            help="الحساب الذي خرج منه المال فعلاً — درج الكاش عادةً في التسويات النقدية."
-          />
-          <AmountField
-            id={f("amount")}
-            currency={currency}
-            disabled={readOnly}
-            label={`المبلغ المدفوع (${currency})`}
-            help="الدفعة الجزئية مسموحة: سجّل ما دفعته فعلاً، ويبقى الباقي ظاهراً في الصافي. لا تُقرَّب الأرقام لتُغلق الحساب."
-          />
-          <OccurredAtField
-            id={f("date")}
-            today={today}
-            disabled={readOnly}
-            label="تاريخ الدفع"
-            help="اليوم الذي سلّمت فيه المبلغ فعلاً — عليه يقع القيد في الدفتر."
-          />
-          <div className="space-y-1.5">
-            <Label htmlFor={f("note")} className="flex items-center gap-1.5">
-              ملاحظة
-              <HelpTip>
-                اختيارية لكنها مفيدة: «تسوية رحلات أغسطس» أو «سُلّمت نقداً بمقر الشركة».
-                تظهر في كشف حساب المتعهد وفي دفتر الخزينة.
-              </HelpTip>
-            </Label>
-            <input
-              id={f("note")}
-              name="note"
-              maxLength={500}
-              disabled={readOnly}
-              className={controlClass}
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end">
-          <Button type="submit" size="sm" disabled={readOnly}>
-            تسجيل الدفعة
-          </Button>
-        </div>
-      </Card>
-    </form>
-  );
-}
+const one = (v: string | string[] | undefined): string | undefined =>
+  Array.isArray(v) ? v[0] : v;
 
 export default async function PartnersSettlementsPage({
   searchParams,
 }: PageProps<"/admin/finance/partners">) {
   const [params, loaded] = await Promise.all([searchParams, loadScreen()]);
-  const { currency, rows, ready, accounts, missing } = loaded;
+  const { currency, rows, ready, accounts, credit, missing } = loaded;
 
   const wired = hasSupabaseEnv();
-  const saved = params.saved === "1";
-  const error = typeof params.error === "string" ? params.error : null;
-  const paying = typeof params.pay === "string" ? params.pay : null;
+  const savedKey = one(params.saved) ?? null;
+  const error = one(params.error) ?? null;
+  const paying = one(params.pay) ?? null;
+  const confirming = one(params.confirm) ?? null;
   const readOnly = !wired || !ready;
   const today = cairoToday();
+
+  /**
+   * «منع الدفع لمدين» **مفروضٌ فعلاً**؟
+   *
+   * غياب الجدول يعني أن هجرة 0027 لم تُنفَّذ، فتصل القيم افتراضياتِ العقد
+   * (‏`blockPayout: true`) لا صفّاً مقروءاً — ولو صدّقناها لحذّر النموذج من رفضٍ
+   * لا يقع، وهذا بعينه نمط «الواجهة تَعِد بما لا تنفّذه القاعدة» معكوساً.
+   */
+  const blockPayout = !credit.missing && credit.settings.blockPayout;
+
+  /**
+   * «حجب العروض» مفعّل؟ — `null` تعني **لا نعرف** لا «مطفأ».
+   *
+   * الوسم «بلغ سقف الدين» يصل من العرض ولا يقرأ هذا المفتاح إطلاقاً (نصّ 0027
+   * عند تعريف `over_limit`)، وهذا المفتاح وحده هو ما يجيز قول «الإسناد إليه
+   * متوقف». فإن لم يُقرأ الصف فعلاً لا تُقال الجملة في أي اتجاه: الوسم يظهر،
+   * والشرح يقول إن حالة المفتاح غير معروفة.
+   */
+  const blockDispatch = credit.loaded ? credit.settings.blockDispatch : null;
+
+  /** قيم النموذج المُعادة في الرابط بعد رفض — لا حالة عميل ولا إعادة كتابة */
+  const carried: CarriedValues = {
+    account: one(params.account),
+    amount: one(params.amount),
+    at: one(params.at),
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -256,8 +217,8 @@ export default async function PartnersSettlementsPage({
       )}
 
       <FinanceFeedback
-        saved={saved}
-        savedMessage="سُجّلت الدفعة وانعكست على المقاصة ورصيد الحساب فوراً."
+        saved={savedKey !== null && savedKey in SAVED_MESSAGES}
+        savedMessage={(savedKey && SAVED_MESSAGES[savedKey]) || "نُفذت العملية."}
         error={error}
       />
 
@@ -272,6 +233,8 @@ export default async function PartnersSettlementsPage({
         </p>
       </Card>
 
+      <PartnerCreditCard state={credit} currency={currency} wired={wired} />
+
       {ready && rows.length === 0 && (
         <Card className="p-5 text-sm text-muted-foreground">
           لا مقاصة مفتوحة مع أي متعهد — لم تُنفَّذ رحلات مُسندة بعد، أو أن كل الحسابات
@@ -284,7 +247,7 @@ export default async function PartnersSettlementsPage({
           {/* شاشات كبيرة: جدول */}
           <Card className="hidden p-0 md:block">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[54rem] text-sm">
+              <table className="w-full min-w-[62rem] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
                     <th className="p-2 text-start font-medium">المتعهد</th>
@@ -313,6 +276,21 @@ export default async function PartnersSettlementsPage({
                         <HelpTip>مجموع الدفعات التي سلّمناها له من خزائننا.</HelpTip>
                       </span>
                     </th>
+                    <th className="p-2 text-start font-medium">
+                      <span className="inline-flex items-center gap-1">
+                        عليه لنا
+                        <HelpTip>
+                          الدين المرصود عليه (‏<code dir="ltr">owed_to_us</code>) — صفر إن
+                          كنا نحن المدينين له، وهو الرقم الذي تبني عليه القاعدة قرارين
+                          مختلفين: تقارنه بالسقف لحجب العروض، وترفض به تسجيل أي دفعة له
+                          <span className="font-semibold"> بمجرد أن يزيد على صفر</span> —
+                          فمنع الدفع لا ينظر إلى السقف إطلاقاً، ويقع على جنيه واحد كما
+                          يقع على ألف. ويقيس الدين المُثبَت في الدفتر وحده: لا يُقيَّد على
+                          رحلة شيء قبل تسجيلها «منفَّذة»، فالرحلات الجارية الآن ليست فيه
+                          بعد.
+                        </HelpTip>
+                      </span>
+                    </th>
                     <th className="p-2 text-start font-medium">الصافي</th>
                     <th className="p-2 text-start font-medium" />
                   </tr>
@@ -320,6 +298,7 @@ export default async function PartnersSettlementsPage({
                 <tbody>
                   {rows.map((row) => {
                     const open = paying === row.subcontractorId;
+                    const advancing = open && confirming === "advance";
                     return (
                       <Fragment key={row.subcontractorId}>
                         <tr
@@ -349,10 +328,24 @@ export default async function PartnersSettlementsPage({
                             <Money value={row.paid} currency={currency} />
                           </td>
                           <td className="p-2">
+                            <Money
+                              value={row.owedToUs}
+                              currency={currency}
+                              className={cn(
+                                (row.owedToUs ?? 0) > 0 && "font-medium text-sky-700 dark:text-sky-300"
+                              )}
+                            />
+                          </td>
+                          <td className="p-2">
                             <SettlementBadge
                               netDue={row.netDue}
                               absNetDue={row.absNetDue}
                               currency={currency}
+                              credit={{
+                                owedToUs: row.owedToUs,
+                                overLimit: row.overLimit,
+                                blockDispatch,
+                              }}
                             />
                           </td>
                           <td className="p-2 text-xs whitespace-nowrap">
@@ -375,14 +368,27 @@ export default async function PartnersSettlementsPage({
                         </tr>
                         {open && (
                           <tr className="border-b border-border">
-                            <td colSpan={7} className="p-2">
-                              <PayoutForm
-                                partner={row}
-                                accounts={accounts}
-                                currency={currency}
-                                today={today}
-                                readOnly={readOnly}
-                              />
+                            <td colSpan={8} className="p-2">
+                              {advancing ? (
+                                <AdvancePayoutForm
+                                  partner={row}
+                                  accounts={accounts}
+                                  currency={currency}
+                                  today={today}
+                                  readOnly={readOnly}
+                                  carried={carried}
+                                />
+                              ) : (
+                                <PayoutForm
+                                  partner={row}
+                                  accounts={accounts}
+                                  currency={currency}
+                                  today={today}
+                                  readOnly={readOnly}
+                                  blockPayout={blockPayout}
+                                  carried={carried}
+                                />
+                              )}
                             </td>
                           </tr>
                         )}
@@ -398,6 +404,7 @@ export default async function PartnersSettlementsPage({
           <div className="space-y-3 md:hidden">
             {rows.map((row) => {
               const open = paying === row.subcontractorId;
+              const advancing = open && confirming === "advance";
               return (
                 <Card key={row.subcontractorId} className="gap-2 p-4">
                   <div className="flex flex-wrap items-center gap-2">
@@ -414,7 +421,7 @@ export default async function PartnersSettlementsPage({
                         : `${toArabicDigits(row.tripsCount)} رحلة`}
                     </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2 text-xs">
                     <span>
                       <span className="block text-muted-foreground">استحقّ</span>
                       <Money value={row.earned} currency={currency} />
@@ -427,11 +434,26 @@ export default async function PartnersSettlementsPage({
                       <span className="block text-muted-foreground">سُدّد له</span>
                       <Money value={row.paid} currency={currency} />
                     </span>
+                    <span>
+                      <span className="block text-muted-foreground">عليه لنا</span>
+                      <Money
+                        value={row.owedToUs}
+                        currency={currency}
+                        className={cn(
+                          (row.owedToUs ?? 0) > 0 && "font-medium text-sky-700 dark:text-sky-300"
+                        )}
+                      />
+                    </span>
                   </div>
                   <SettlementBadge
                     netDue={row.netDue}
                     absNetDue={row.absNetDue}
                     currency={currency}
+                    credit={{
+                      owedToUs: row.owedToUs,
+                      overLimit: row.overLimit,
+                      blockDispatch,
+                    }}
                   />
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <Link
@@ -448,15 +470,27 @@ export default async function PartnersSettlementsPage({
                       <ArrowLeft className="size-3" />
                     </Link>
                   </div>
-                  {open && (
-                    <PayoutForm
-                      partner={row}
-                      accounts={accounts}
-                      currency={currency}
-                      today={today}
-                      readOnly={readOnly}
-                    />
-                  )}
+                  {open &&
+                    (advancing ? (
+                      <AdvancePayoutForm
+                        partner={row}
+                        accounts={accounts}
+                        currency={currency}
+                        today={today}
+                        readOnly={readOnly}
+                        carried={carried}
+                      />
+                    ) : (
+                      <PayoutForm
+                        partner={row}
+                        accounts={accounts}
+                        currency={currency}
+                        today={today}
+                        readOnly={readOnly}
+                        blockPayout={blockPayout}
+                        carried={carried}
+                      />
+                    ))}
                 </Card>
               );
             })}
@@ -464,7 +498,7 @@ export default async function PartnersSettlementsPage({
 
           <p className="text-xs text-muted-foreground">
             {toArabicDigits(rows.length)} متعهد، مرتّبون بحجم الصافي لا بإشارته — فأكبر
-            التزام علينا وأكبر مبلغ عالق عندهم كلاهما في الأعلى.
+            التزام علينا وأكبر مبلغ عالق عندهم كلاهما في الأعلى، ومن بلغ سقف الدين قبلهما.
           </p>
         </>
       )}

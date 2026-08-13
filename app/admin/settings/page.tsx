@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Sparkles, XCircle } from "lucide-react";
+import { toArabicDigits } from "@/components/booking/format";
 import { getSettings } from "@/lib/settings";
 import { saveSettings } from "./actions";
+import { TripSettingsSection } from "./_components/trip-settings-section";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -82,16 +84,42 @@ function ColorField({
   );
 }
 
+/**
+ * رسالة النجاح بحسب النموذج المحفوظ — إعدادات الموقع لها زرها، وإعدادات الرحلات
+ * لها إجراؤها المستقل. رسالة واحدة عامة كانت ستقول «حُفظ» لنموذج لم يُمَس.
+ */
+const SAVED_MESSAGES: Record<string, string> = {
+  "1": "حُفظت الإعدادات وانعكست على الموقع فوراً — افتح الموقع العام للتأكد.",
+  trip: "حُفظت إعدادات الرحلات — المهلة الجديدة سارية من الكنس التالي (المجدول أو اليدوي).",
+};
+
+/** عدّاد وصل في الرابط: أرقام فقط، وما عداها شرطة لا نص خام */
+const counterText = (value: string | string[] | undefined): string =>
+  typeof value === "string" && /^\d{1,9}$/.test(value) ? toArabicDigits(value) : "—";
+
 export default async function SettingsPage({ searchParams }: PageProps<"/admin/settings">) {
   const [settings, params] = await Promise.all([getSettings(), searchParams]);
   const wired = hasSupabaseEnv();
-  const saved = params.saved === "1";
+  const savedCode = typeof params.saved === "string" ? params.saved : null;
+  const saved = savedCode !== null && SAVED_MESSAGES[savedCode] !== undefined;
+  const swept = params.swept === "1";
   const error = typeof params.error === "string" ? params.error : null;
 
   const errorMessages: Record<string, string> = {
     env: "قاعدة البيانات غير مربوطة — لا يمكن الحفظ بعد.",
     name: "اسم العلامة التجارية حقل إلزامي.",
     save: "فشل الحفظ — تأكد أنك مسجل الدخول بحساب دوره admin (راجع supabase/README.md، فخ الصفوف الصفرية).",
+    // ── إعدادات الرحلات (هجرة 0027): رمز مستقل لكل سبب، فلا تُتَّهم الصلاحيات في خطأ إدخال
+    timeout:
+      "المهلة يجب أن تكون عدداً صحيحاً من الدقائق بين ١٥ و٤٣٢٠٠ (ثلاثين يوماً) — وهو نفس المدى المفروض في قاعدة البيانات.",
+    tripnotready:
+      "إعدادات الرحلات غير جاهزة على هذه القاعدة — نفِّذ هجرة 0027 من supabase/migrations ثم أعد المحاولة.",
+    tripsave:
+      "فشل حفظ إعدادات الرحلات — تأكد أنك مسجل الدخول بحساب دوره admin (راجع supabase/README.md، فخ الصفوف الصفرية).",
+    forbidden:
+      "لا تملك صلاحية تشغيل الكنس — يتطلب حساباً دوره admin. سجّل الدخول بحساب مشرف ثم أعد المحاولة.",
+    sweep:
+      "تعذّر تشغيل الكنس — رفضته قاعدة البيانات أو انقطع الاتصال. لم يُلغَ أي حجز، وأعد المحاولة أو راجع سجل الخادم.",
   };
 
   return (
@@ -112,9 +140,29 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
       {saved && (
         <Card className="flex items-center gap-3 border-emerald-300 bg-emerald-50 p-4 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100">
           <CheckCircle2 className="size-5 shrink-0" />
-          <p className="text-sm font-medium">
-            حُفظت الإعدادات وانعكست على الموقع فوراً — افتح الموقع العام للتأكد.
-          </p>
+          <p className="text-sm font-medium">{SAVED_MESSAGES[savedCode ?? "1"]}</p>
+        </Card>
+      )}
+
+      {swept && (
+        <Card className="flex items-start gap-3 border-sky-300 bg-sky-50 p-4 text-sky-900 dark:border-sky-700 dark:bg-sky-950 dark:text-sky-100">
+          <Sparkles className="mt-0.5 size-5 shrink-0" />
+          <div className="text-sm leading-relaxed">
+            <p className="font-medium">
+              نُفِّذ كنس الطلبات غير المدفوعة — فُحص {counterText(params.scanned)} · أُلغي{" "}
+              {counterText(params.cancelled)} · تعذّر {counterText(params.failed)}.
+            </p>
+            <p>
+              الأصفار نتيجة سليمة: المفتاح مطفأ، أو لا حجز تجاوز مهلته، أو كنسٌ آخر يعمل في
+              هذه اللحظة. وكل إلغاء وقع مسجَّل في سجل الحجز نفسه.
+            </p>
+            {typeof params.failed === "string" && /^\d{1,9}$/.test(params.failed) && Number(params.failed) > 0 && (
+              <p className="font-medium">
+                ورقم «تعذّر» فوق الصفر يعني حجوزاً رفضت قاعدةُ البيانات إلغاءها — سببها في
+                سجل الخادم، وبقية الحجوزات أُلغيت كالمعتاد.
+              </p>
+            )}
+          </div>
         </Card>
       )}
 
@@ -332,12 +380,21 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
         </Card>
 
         <Separator />
-        <div className="flex items-center justify-end gap-3 pb-8">
+        <div className="flex items-center justify-end gap-3">
           <Button type="submit" disabled={!wired}>
             حفظ الإعدادات
           </Button>
         </div>
       </form>
+
+      {/*
+        قسم الرحلات **خارج** نموذج الإعدادات أعلاه لا داخله: نموذج داخل نموذج
+        HTML غير صالح، ولأن مفتاحَي الرحلات يُحفظان بإجراء مستقل يكتب في جدول
+        آخر — فحفظهما مع بقية الإعدادات كان سيوهم بأن الزر الأعلى يحفظهما.
+      */}
+      <div className="pb-8">
+        <TripSettingsSection wired={wired} />
+      </div>
     </div>
   );
 }

@@ -114,6 +114,46 @@ export type PartnerSettlement = {
   /** الصافي: موجب = ندفع له، سالب = يدفع لنا */
   netDue: number;
   tripsCount: number;
+  /** القيمة المطلقة للصافي — للترتيب بلا التفات للاتجاه (هجرة 0017) */
+  absNetDue: number;
+  /** ما علينا له من المتعهد = `greatest(-net_due, 0)` — صفر إن كنا نحن المدينين (0027) */
+  owedToUs: number;
+  /** بلغ سقف الدين ⇒ لا عروض جديدة ولا فوز (0027) */
+  overLimit: boolean;
+};
+
+/**
+ * سقف ديون المتعهدين — صف وحيد في `partner_credit_settings` (الملاحظة ١٧، هجرة 0027).
+ *
+ * نص بدر: «قد تترتب على المتعهد مبالغ كبيرة جداً وهذا غير منطقي … المطلوب سقف
+ * معيّن لديون المتعهدين، **فلا ندفع لمتعهد بينما لنا عنده مال**».
+ *
+ * وهما قاعدتان لا واحدة:
+ *   (١) **سقف التعرّض** — من بلغ `debtLimit` لا يستقبل عروضاً ولا يفوز بقبول.
+ *       `debtLimit = 0` تعني **بلا سقف** (الميزة خاملة) على نمط `minMarginAmount`.
+ *   (٢) **منع الدفع لمدين** — `record_partner_payout` ترفض الدفع لمن `net_due < 0`.
+ *       هذا **نقض واعٍ** لسلوك سابق كان موثّقاً بأنه مقصود («الدفع لشريك مدين
+ *       لنا مشروع — مقدَّم عن رحلات قادمة»، `app/admin/finance/partners/actions.ts`)
+ *       — نقضه بدر نصاً، والتجاوز يبقى ممكناً بقرار بشري صريح عبر
+ *       `record_partner_payout_advance` على سابقة `manual_assign_with_loss`.
+ *
+ * **حدّ معرفي مكتوب للمالك:** السقف يقيس الدين **المُثبَت في الدفتر** — ولا يقع
+ * قيدٌ إلا عند `completed`. فرحلاتٌ جارية لم تُنفَّذ بعد لا تظهر فيه. هذا نطاق
+ * الرقم لا عطب فيه (القاعدة المشتقة من D-43: يُشرح الفارق ولا يُجبَر التساوي).
+ */
+export type PartnerCreditSettings = {
+  /** سقف ما يجوز أن يترتب على المتعهد لنا بالجنيه — صفر = بلا سقف */
+  debtLimit: number;
+  /** منع العروض والفوز عند بلوغ السقف */
+  blockDispatch: boolean;
+  /** منع تسجيل دفعة لمتعهد رصيده سالب (مدين لنا) */
+  blockPayout: boolean;
+};
+
+export const DEFAULT_PARTNER_CREDIT: PartnerCreditSettings = {
+  debtLimit: 0,
+  blockDispatch: true,
+  blockPayout: true,
 };
 
 /** سطر التدفق النقدي لفترة — من `cash_flow(from, to, granularity)` */
@@ -162,4 +202,17 @@ export type FinanceKpis = {
  *   record_partner_payout(p_sub uuid, p_account uuid, p_amount numeric, p_at timestamptz, p_note text)
  *   record_adjustment(p_account uuid, p_direction text, p_amount numeric, p_at timestamptz, p_note text)
  * جميعها إدارية (is_admin) عدا العروض التي تحرسها RLS.
+ *
+ * وتضيف هجرة 0027 (سقف الديون):
+ *   partner_credit_config()  → table(debt_limit numeric, block_dispatch boolean, block_payout boolean)
+ *   partner_debt(p_sub uuid) → numeric — ما على المتعهد لنا (‏`greatest(-net_due, 0)`)
+ *   partner_over_debt_limit(p_sub uuid) → boolean — الحكم الوحيد الذي يقرؤه البث والقبول
+ *   record_partner_payout_advance(p_sub uuid, p_account uuid, p_amount numeric,
+ *                                 p_at timestamptz, p_note text)  — التجاوز البشري الصريح
+ *
+ * ⚠ الثلاث الأولى **`security definer` ولا تُمنح لأي دور مستخدم**: هي تقرأ
+ * `v_partner_settlements` وهو `security_invoker` فوق `ledger_entries` المحروس
+ * بـ `is_admin()`. لو نودي عليها بهوية المتعهد نفسه لعادت بصفر صفوف ⇒
+ * `coalesce(net_due, 0) = 0` ⇒ **السقف لا يقع على من وُضع لأجله**. تُستدعى من
+ * داخل دوال ومُشغّلات `security definer` أخرى فقط.
  */

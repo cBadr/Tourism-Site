@@ -22,6 +22,10 @@
 | `lib/i18n-types.ts` | ٨ | قرار «العربية بلا بادئة» · قرار «اللوحة عربية فقط» · أنواع الترجمة |
 | `lib/payments-types.ts` | ٩ | المزوّدون · شكل الصفوف · **القواعد الأربع** (السعر من الخادم، الـ webhook مصدر الحقيقة، التوقيع، الإحكام) |
 | `lib/analytics-types.ts` | ١٠ | الخدمات السبع وأنماط معرّفاتها · أحداث القمع الستة و`FunnelPayload` · عقد `StatCard`/`StatSeries` · شكل `funnel_events` · **قاعدة صفر PII**. ⚠ تعليق التواقيع فيه يذكر `section_stats` و`funnel_daily` ولا يذكر `funnel_summary` ولا `funnel_counts` — فجوة موثَّقة في `OPEN_TASKS.md` |
+| `lib/agent-types.ts` | ١١ | وكيل الذكاء الاصطناعي — **مكتوب ولم يُنفَّذ**: المزوّدون والسقوف وإطار «وضعان لكل قدرة» وسجل الإجراءات (D-37) |
+| `lib/discount-types.ts` | ١٢أ | الكوبونات وبانرات العروض و`discount_settings` · توقيع `apply_discount` وقاعدة **تقليص الخصم لا رفضه** عند أرضية الهامش |
+
+> **أحد عشر ملفاً لا تسعة.** وثلاثة منها وسّعتها الدفعة ٢: `booking-types.ts` (‏`TripSettings` · `ReceiptStatus`/`PaymentReceiptRow` · `BookingLookupErrorCode`) · `finance-types.ts` (‏`PartnerCreditSettings`) · `dispatch-types.ts` (رمز المتعهد بدل مرجع العميل، السطر ٧٧).
 
 ---
 
@@ -29,11 +33,13 @@
 
 | المسار | ماذا فيه |
 |---|---|
-| `supabase/migrations/0001…0023*.sql` | **٢٣ ترحيلاً** — خريطتها بالمرحلة في `ARCHITECTURE.md` القسم ٧ |
-| `supabase/tests/*.sql` | **٨ مجموعات**: `quote` · `booking` · `coverage` · `dispatch` · `finance` · `i18n` · `payment` · `analytics` |
+| `supabase/migrations/0001…0028*.sql` | **٢٨ ترحيلاً** مطبَّقاً، والرقم الحر التالي `0029` — خريطتها بالمرحلة في `ARCHITECTURE.md` القسم ٧ |
+| `supabase/tests/*.sql` | **١٤ مجموعة**: `quote` · `booking` · `coverage` · `dispatch` · `finance` · `i18n` · `payment` · `analytics` · `discount` (١٢أ) · `phone` (الدفعة ١) · **`trip_settings` · `receipt` · `partner_credit` · `lookup`** (الدفعة ٢) |
 | `supabase/README.md` | دليل الربط خطوة بخطوة + **الفخّان الشائعان**: مصدرا صلاحيات `anon`، و«`UPDATE` ينجح بصفر صفوف» |
 | `scripts/db-migrate.mjs` | `pnpm db:migrate` (+ `--upto 0015`) — نواة أداة الـ Whitelabel لاحقاً |
 | `scripts/db-test.mjs` | `pnpm db:test [filter]` |
+| `scripts/db-backup.mjs` · `scripts/db-restore.mjs` | `pnpm db:backup` / `pnpm db:restore` (الدفعة ١) — الدليل الكامل `docs/BACKUP.md`. **الجدولة والوجهة البعيدة مفتوحتان** (`OPEN_TASKS.md` ج) |
+| `scripts/lib/pg-tools.mjs` | الوحدة المشتركة بين النسخ والاستعادة: إيجاد `pg_dump`/`pg_restore` على الجهاز وفحص إصدارهما وتحويل `DATABASE_URL` إلى متغيرات بيئة. **نسخة واحدة عمداً** — تكرارها يعني إصلاح عيب في أحد الملفين وبقاءه في الآخر، وأداة الطوارئ لا تحتمل ذلك |
 
 ---
 
@@ -45,12 +51,15 @@
 | `app/[slug]/page.tsx` | الصفحات الحرة والقانونية — **وُلد لأن صفحات الثقة كانت ٤٠٤** |
 | `app/services/[slug]/page.tsx` · `app/routes/[slug]/page.tsx` · `app/about/page.tsx` | الخدمات · المسارات · من نحن (بميتاداتا وFAQ JSON-LD) |
 | `app/book/page.tsx` | محرك الحجز (الويدجت + العروض + السداد) |
-| `app/booking/[token]/page.tsx` | متابعة الحجز برابط توكن — بلا حساب |
+| `app/booking/[token]/page.tsx` | متابعة الحجز برابط توكن — بلا حساب. ومنذ الدفعة ٢ **يعرض قسم الإيصالات** المصفوفة التي كانت تصل في الحمولة ولا تُصيَّر |
+| `app/track/` (`page.tsx` + `actions.ts`) | **«تابع حجزك»** (الدفعة ٢): مرجع + هاتف ⇒ التوكن. مسارها الجذر `/track` لا `/booking/track` لأن بادئة `/booking` محجوزة كاملةً في `lib/seo/site-paths.ts`. **مفهرَسة عمداً** بخلاف `/booking/[token]` (تلك noindex): من أغلق التبويب يبحث في جوجل قبل أن يبحث في الموقع. والإجراء بمفتاح الخدمة — الدالة غير ممنوحة لأي دور مستخدم (D-48) |
 | `app/quote-request/page.tsx` | «اطلب عرض سعر» لما هو خارج التسعير الفوري |
 | `app/payment/return/[intentId]/page.tsx` | صفحة العودة من البوابة — **عرض فقط، لا تؤكد شيئاً** |
 | `app/layout.tsx` · `app/robots.ts` · `app/sitemap.ts` · `app/manifest.ts` | الجذر و`lang`/`dir` وسباكة السيو |
 
-**مكوّنات العرض:** `components/sections/` (عارضات الأقسام + `render.tsx` الموزِّع) · `components/site/` (الترويسة، التذييل، البطل، الخدمات، الأسطول، التواصل، **`links.ts`** بـ `bookingHref()`/`contactHref()`، مبدّل اللغة) · `components/booking/` (`search-widget.tsx` · `offers.tsx` · `format.ts` **تنسيق محض** · `checkout/`) · `components/seo/JsonLd.tsx` · `components/shared/HelpTip.tsx`.
+**مكوّنات العرض:** `components/sections/` (عارضات الأقسام + `render.tsx` الموزِّع) · `components/site/` (الترويسة، التذييل، البطل، الخدمات، الأسطول، التواصل، **`links.ts`** بـ `bookingHref()`/`contactHref()` وبند «تابع حجزك» في التنقل، مبدّل اللغة) · `components/booking/` (`search-widget.tsx` · `offers.tsx` · `format.ts` **تنسيق محض** · `checkout/`) · `components/seo/JsonLd.tsx` (‏**أُصلحت لغته في الدفعة ١** — كان ينادي الإعدادات بلا وسيط لغة فيقرأ جوجل اسم النشاط بالعربية على الصفحة الإنجليزية) · `components/shared/HelpTip.tsx` · `components/ui/` (‏`button` · `card` · `badge` · `input` · `label` · `separator` · **`kpi-card.tsx`** المضافة في الدفعة ١ لتوحيد بطاقات المؤشرات).
+
+**والأصل الوحيد المضاف للعلامة:** `public/brand/og-default.png` — صورة Open Graph الافتراضية (الدفعة ١).
 
 ---
 
@@ -62,16 +71,17 @@
 | الإحصائيات | `app/admin/stats/` + ست شاشات فرعية: `orders` · `partners` · `treasury` · `customers` · `content` · `locales` | **اتجاه الفترة** لكل قسم. الصفحة الجذر شاشة عامة + قمع؛ لا `actions.ts` لأنها قراءة محضة |
 | الربط الخارجي | `app/admin/integrations/` (+ `actions.ts` و`_components/integrations-ui.tsx`) | معرّفات الخدمات السبع وتفعيلها ومؤشر حالتها |
 | مركز السيو | `app/admin/seo/` (`page.tsx` + `actions.ts` + `_components/{seo-ui,meta-fields}.tsx`) · `seo/audit/page.tsx` (قراءة محضة، بلا `actions.ts`) · `seo/redirects/` (`page.tsx` + `actions.ts` + `loader.ts`) | محرر ميتاداتا جماعي · مدير التحويلات · فحص البيانات المهيكلة |
-| الطلبات | `app/admin/orders/` (+ `[id]/actions.ts` و`[id]/dispatch-actions.ts`) | الحجوزات، تحقق الإيصالات، الإسناد اليدوي |
+| الطلبات | `app/admin/orders/` (+ `[id]/actions.ts` و`[id]/dispatch-actions.ts` و`[id]/_components/`) | الحجوزات، تحقق الإيصالات، الإسناد اليدوي. **والدفعة ٢ أضافت هنا:** نموذج رفع الإيصال نيابة عن العميل ومفتاح ظهور لكل إيصال (`admin_attach_receipt` · `set_receipt_visibility`) · الإسناد فوق سقف الدين (`manual_assign_over_limit`) · عرض **رمز المتعهد** `partner_trip_code` كي يشترك التشغيل والمتعهد في معرّف واحد (D-46) |
 | البث | `app/admin/dispatch/` | إعدادات الموجات والطابور اليدوي |
 | المتعهدون | `app/admin/subcontractors/` (+ `[id]` و`reviews`) | الاعتماد، الملفات، مراجعة قوائم الأسعار |
-| المالية | `app/admin/finance/` (+ `treasury` · `expenses` · `partners/[id]`) | الخزينة، المصروفات، كشوف المتعهدين والمقاصة |
+| المالية | `app/admin/finance/` (+ `treasury` · `expenses` · `partners/[id]` · **`partners/_components/`**) | الخزينة، المصروفات، كشوف المتعهدين والمقاصة. و`partners/_components/`: **`credit-card.tsx`** (بطاقة سقف الديون — الجدول الغائب يظهر كرسالة «نفِّذ هجرة 0027» لا كصفر) و**`payout-forms.tsx`** (نموذج الدفعة + المقدَّم الصريح `record_partner_payout_advance`) |
+| الخصومات | `app/admin/discounts/` (+ `[id]` · `banners/` · `actions.ts` · `input.ts` · `loader.ts` · `_components/fields.tsx`) | الكوبونات وبانرات العروض وإعدادات الخصم (المرحلة ١٢أ، هجرة `0024`) |
 | التسعير والأسطول | `app/admin/pricing/` · `app/admin/fleet/` | التعريفات والهامش والذروة · الفئات والسعات |
 | المحتوى | `app/admin/content/` (+ `new` · `[id]` · `loader.ts`) | الصفحات والأقسام |
 | اللغات | `app/admin/languages/` (+ `[locale]`) | التفعيل والترجمة وطابور المراجعة |
 | المدفوعات | `app/admin/payments/` · `app/admin/payment-accounts/` | البوابات · المحافظ وانستا باي وحدودها |
 | الإشعارات | `app/admin/notifications/` | حالة القنوات + تشغيل العامل يدوياً |
-| الإعدادات | `app/admin/settings/` | العلامة والتواصل والدفع و**`notifications.telegramChatId`** |
+| الإعدادات | `app/admin/settings/` (+ **`_components/trip-settings-section.tsx`**) | العلامة والتواصل والدفع و**`notifications.telegramChatId`**. و`_components/`: قسم **«إعدادات الرحلات»** (الدفعة ٢) — **يملك مفتاحَي الإلغاء التلقائي وحدهما** ويعرض كل مقبض رحلات آخر **للقراءة فقط** مع رابط إلى الشاشة التي تملكه، ومعه زرّ الكنس اليدوي. ولإجرائه `saveTripSettings` **مسار مستقل عن `saveSettings`**: ذاك يبني مصفوفة مفاتيح لـ `site_settings` (وحقلٌ يغيب عنها يُحفظ بنجاح ولا يغيّر شيئاً)، وهذان المفتاحان ليسا في `site_settings` أصلاً لأنه **مقروء لـ `anon`** |
 | الصيانة | `app/admin/maintenance/` | مفتاح وضع الصيانة |
 | طلبات الأسعار | `app/admin/quote-requests/` | نماذج «اطلب عرض سعر» |
 | الدخول | `app/admin/login/` · `app/admin/set-password/` | الدخول وضبط كلمة المرور بعد الدعوة |
@@ -105,11 +115,12 @@
 | `app/api/geocode/route.ts` | اقتراحات الأماكن (Nominatim + كاش) |
 | `app/api/booking/route.ts` · `booking/receipt` · `booking/settings` | إنشاء الحجز · رفع الإيصال · إعدادات صفحة الدفع |
 | `app/api/quote-request/route.ts` | نموذج طلب عرض السعر |
+| `app/api/discount/verify/route.ts` | التحقق من رمز الكوبون (المرحلة ١٢أ) — وخانقه في الذاكرة `lib/discounts/rate-limit.ts` هو نفسه الذي تستعمله `/track` طبقةً أولى |
 | `app/api/payments/start/route.ts` | فتح جلسة دفع لدى المزوّد |
 | `app/api/payments/webhook/[provider]/route.ts` | **مصدر الحقيقة** — توقيع + إحكام + تسوية |
 | `app/api/payments/sandbox/[ref]/route.ts` | صندوق المزوّد الاختباري |
 | `app/api/notifications/dispatch/route.ts` | عامل إرسال الإشعارات (كل دقيقة على Vercel) |
-| `app/api/dispatch/tick/route.ts` | دورة البث (كل ٥ دقائق) |
+| `app/api/dispatch/tick/route.ts` | دورة البث (كل ٥ دقائق) — **ومنذ الدفعة ٢ تحمل عملاً ثانياً**: كنس الطلبات غير المدفوعة بعد **نجاح** البث، وعدّاداته في المفتاح `sweep` من الرد ولا تغيّر رمز حالته. لا مسار ثانٍ ولا سرّ ثانٍ ولا جدولة تُنسى |
 | `app/api/i18n/translate/route.ts` | «ترجم الباقي آلياً» — مسودات فقط |
 
 المساران الأخيران في الجدولة محروسان بـ `lib/dispatch/guard.ts`.
@@ -123,7 +134,9 @@
 | `lib/supabase/{client,server,admin}.ts` | ثلاثة عملاء: متصفح · خادم بجلسة · `service_role` |
 | `lib/geo/{geocode,route,haversine,background}.ts` | الجيوكودنج والمسافات وطبقاتها الأربع والكاش |
 | `lib/payments/` | `registry.ts` · `intents.ts` · `credentials.ts` · `crypto.ts` · `webhook-headers.ts` · `amount.ts` · `providers/` (٦ حقيقية + `test`) |
-| `lib/dispatch/` | `guard.ts` (حارس المسارات المجدولة) · `start.ts` · `tick.ts` · `settings.ts` · `messages.ts` |
+| `lib/dispatch/` | `guard.ts` (حارس المسارات المجدولة) · `start.ts` · `tick.ts` · `settings.ts` (ومنها `isMissingTable`/`isMissingFunction` — تصنيف «الهجرة لم تُنفَّذ» ضد «RLS رفضت»، يقرؤه نصف كود الدفعة ٢) · `messages.ts` |
+| `lib/trip-settings.ts` | **الدفعة ٢** — طبقة الخادم لإعدادات الرحلات والكنس. قارئ واحد لمستهلكَين لا ثالث لهما: قسم الإعدادات (بجلسة المشرف) و`/api/dispatch/tick` (بمفتاح الخدمة) — ونسختان كانتا ستفترقان في تطبيع العدّادات وفي معنى «لم تُنفَّذ الدورة». **لا قرار فيه ولا حساب**، و`runStaleSweep` **لا ترمي أبداً** (الفشل في `reason`) |
+| `lib/discounts/` | `types.ts` · `settings.ts` · `banners.ts` · `messages.ts` · **`rate-limit.ts`** (خانق في ذاكرة النسخة الواحدة — يُصفَّر مع كل نشر ولا يُشارك بين النسخ، وحدوده مكتوبة بصدق في الملف) |
 | `lib/notifications/` | `dispatch.ts` (العامل) · `telegram.ts` · `email.ts` · `render.ts` |
 | `lib/i18n/` | `content.ts` + `mt/` (المزوّدون: mymemory · deepl · google) |
 | `lib/site-config.ts` · `lib/settings.ts` | **كل قيمة علامة تجارية تمر من هنا** — وقيم `site-config` fallback دائم لا مصدر |
@@ -155,6 +168,9 @@
 |---|---|
 | `scripts/db-migrate.mjs` | تطبيق الترحيلات وتتبعها |
 | `scripts/db-test.mjs` | تشغيل مجموعات SQL على القاعدة الحية |
+| `scripts/db-backup.mjs` · `scripts/db-restore.mjs` | `pnpm db:backup` / `pnpm db:restore` (الدفعة ١). **الاستعادة لا تنطلق من جدولة ولا سكربت** — تشترط طرفية تفاعلية وتأكيداً صريحاً. الدليل `docs/BACKUP.md` |
+| `scripts/lib/pg-tools.mjs` | المشترك بينهما (إيجاد أدوات Postgres وفحص إصدارها وتحويل `DATABASE_URL`) |
+| `scripts/demo-seed.mjs` | `pnpm demo:seed` / `pnpm demo:clean` — **ستة أشهر تشغيل مُحاكاة** مرّت كلها بدوال النظام الحقيقية لا بإدراج صفوف خام، وهي المادة التي راجع عليها بدر المنتج. الوسم `DEMO_SEED`. ⚠ `--clean` **يحذف قيوداً من `ledger_entries`** — الاستثناء الوحيد المصرَّح به لـ D-06، ولا يُستعمل على قاعدة فيها عمل حقيقي |
 | `scripts/invite-admin.mjs` | دعوة بريدية + ترقية إلى `admin` |
 | `scripts/promote-admin.mjs` | ترقية حساب قائم (آمن للتكرار) |
 | `scripts/resend-password-link.mjs` | **رابط `token_hash` مباشر** — لأن فاحصات روابط البريد تستهلك رابط الدعوة |
@@ -171,7 +187,8 @@
 | `docs/VISION.md` | **المصدر الأعلى للحقيقة** — رؤية بدر بصياغته + ملحق القرارات |
 | `docs/ROADMAP.md` | ١٤ مرحلة + القرارات المعمارية + **سجل التقدم الحي** |
 | `docs/DISPATCH.md` · `docs/FINANCE.md` · `docs/LANGUAGES.md` · `docs/NOTIFICATIONS.md` | أدلة موضوعية للمرحلة ٦ · ٧ · ٨ · ٤ |
-| `docs/phase-briefs/` | موجزات المراحل — `PHASE-10.md` و`PHASE-11.md`. الموجز يُكتب **قبل** بدء المرحلة ومعه ملف عقدها |
+| `docs/BACKUP.md` | **دليل النسخ والاستعادة** (الدفعة ١): الأوامر · ماذا يشمل الأرشيف وماذا لا يشمل · إجراء الاستعادة خطوة بخطوة وتبعياتها · الوجهات الممكنة (‏§٨ **الجدولة مؤجَّلة بوعي** لأنها تنتظر النشر) |
+| `docs/phase-briefs/` | موجزات المراحل — `PHASE-10.md` · `PHASE-11.md` · `PHASE-12A.md`. الموجز يُكتب **قبل** بدء المرحلة ومعه ملف عقدها |
 | `handover/**` | هذه الحزمة |
 | `PLAN.md` | **مسودة ملغاة** — لا تُعتمد (مكتوب في أول سطر منها) |
 | `README.md` | صار ملفاً حقيقياً بالعربية (‏`b98e53e`) — مدخل المستودع. التوثيق العميق يبقى في `docs/` و`handover/` |
@@ -186,6 +203,10 @@
 | كتل `revoke … from anon, authenticated` في كل ترحيل | حذفها **يفتح الجداول** (‏`TRUNCATE` لا يخضع لـ RLS) |
 | `set search_path = ''` في كل دالة `definer` | بدونه يمكن خطف اسم جدول داخل دالة تعمل بصلاحيات المالك |
 | أي ترحيل **مطبَّق** | التعديل لا يعيد التشغيل — التصحيح ترحيل جديد |
+| `public.partner_trip_code(b.id)` في `portal_offers`/`portal_trips` | إعادةُ `b.reference` مكانها تسلّم المتعهد هامشَ المنصة على كل رحلة (D-46). وفحص ذاتي في `0028` يُسقط الهجرة إن عاد المرجع |
+| شرط `and p.visible_to_customer` داخل `jsonb_agg` في `get_booking_by_token` | حذفه يُعيد صفوف الإيصالات الداخلية إلى حمولة العميل الخام — والإخفاء في الواجهة ليس إخفاءً |
+| مسار «لا نتيجة» في `find_booking_by_reference` (‏`return;` لا `raise`) | تحويله إلى استثناء يُرجع صفَّ العدّاد معه فيُلغي الخانق بلا أن يكسر شيئاً ظاهراً (D-48) |
+| `insert into public.trip_settings … default false` وبذرة `debt_limit = 0` | البذر الآمن مقصود: ميزةٌ تلغي حجوزات أو تحجب شركاء لا تُشحن مفعّلة (D-47 · D-45) |
 | `receipt-test.png` · `receipt-test.txt` في الجذر | مخلّفات اختبار رفع الإيصال — تُحذف قبل النشر لا الآن |
 
 </div>

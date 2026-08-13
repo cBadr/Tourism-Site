@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, XCircle } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -9,7 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { LedgerDirection, LedgerSource, TreasuryAccountKind } from "@/lib/finance-types";
+import { DEFAULT_PARTNER_CREDIT } from "@/lib/finance-types";
+import type {
+  LedgerDirection,
+  LedgerSource,
+  PartnerCreditSettings,
+  TreasuryAccountKind,
+} from "@/lib/finance-types";
 import type { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
@@ -191,6 +197,101 @@ export function Money({
 export type SettlementTone = "we-owe" | "they-owe" | "settled";
 
 /**
+ * حكم سقف الديون كما يصل من `v_partner_settlements` (هجرة 0027) — عمودان
+ * **لا يُشتقّان هنا بحال**:
+ *
+ *   `owed_to_us` = `greatest(-net_due, 0)`: ما على المتعهد لنا، وصفرٌ إن كنا
+ *   نحن المدينين له. وهو **نفس** الرقم الذي تقرؤه `partner_debt()` في القاعدة،
+ *   فما يراه المشرف على الشاشة هو حرفياً ما يُبنى عليه المنع.
+ *
+ *   `over_limit` = **بلوغ السقف وحده**: `debt_limit > 0 and owed_to_us >= debt_limit`.
+ *   والعرض **لا يقرأ `block_dispatch` إطلاقاً** — نصّ الهجرة عند تعريف العرض:
+ *   «لو خلطهما لاختفى الوسم عن كل المتجاوزين بمجرد إطفاء الحجب — فيفقد المالك
+ *   رؤيتهم لا مجرد حجبهم». فالوسم يبقى ظاهراً في الحالتين.
+ *
+ * أما **هل توقّف الإسناد فعلاً** فحكمٌ آخر مكانه `partner_over_debt_limit()`،
+ * وهي تشترط `block_dispatch` فوق بلوغ السقف. ولذلك يُمرَّر المفتاح إلى هنا من
+ * جدول الإعدادات لا من العرض: الوسم غير مشروط به، والجملة التي تدّعي توقّف
+ * الإسناد مشروطة به وحدها (نمط الفشل ٢ في handover/LESSONS.md).
+ */
+export type SettlementCredit = {
+  owedToUs: number | null;
+  overLimit: boolean | null;
+  /**
+   * `block_dispatch` من `partner_credit_settings` — لا من العرض، فهو لا يحمله.
+   * `null` = لم يُقرأ الصف (قاعدة بلا 0027، أو رفض قراءة): حينها لا تُقال جملة
+   * إنفاذ في أيٍّ من الاتجاهين، ويُقال إن الحالة غير معروفة.
+   */
+  blockDispatch: boolean | null;
+};
+
+export type SettlementWording = {
+  tone: SettlementTone;
+  /** صيغة الوسم المختصرة: «له علينا ٥٠٠ ج.م» */
+  text: string;
+  /** جملة الحكم الكاملة — حيث تُعرض المقاصة بطاقةً لا وسماً */
+  verdict: string;
+  /**
+   * حجم الصافي بلا إشارة — للشاشات التي تطبع الرقم كبيراً وحده.
+   * يُقرأ من `abs_net_due` في العرض، فلا تعود شاشةٌ تحسب `Math.abs` بنفسها.
+   */
+  magnitude: number | null;
+  hint: string;
+  /** بلغ السقف؟ من العرض وحده — لا مقارنة أرقام في TypeScript */
+  overLimit: boolean;
+  /** ما عليه لنا كما وصل من العرض — null = غير معروف (لا صفر مخترَع) */
+  owedToUs: number | null;
+  /** نص وسم السقف، أو null حين لا سقف مبلوغ. **لا يتغيّر بمفتاح الحجب** */
+  limitText: string | null;
+  /**
+   * الإسناد متوقف فعلاً؟ = بلغ السقف **و** `block_dispatch` مفعّل. وهو الشرط
+   * الوحيد الذي يجوز أن تُقال تحته جملة «لا يصله عرض ولا يفوز بقبول».
+   */
+  dispatchBlocked: boolean;
+  /** عنوان بطاقة السقف بحسب حالة المفتاح، أو null حين لا سقف مبلوغ */
+  limitHeadline: string | null;
+  /** أثر بلوغ السقف بالحالة الراهنة، أو null حين لا سقف مبلوغ */
+  limitConsequence: string | null;
+  limitHint: string;
+};
+
+/**
+ * حدّ الرقم المعرفي — صحيح في كل الأحوال فيُلحق بأي شرح للسقف.
+ *
+ * السقف يقيس الدين **المُثبَت في الدفتر**، ولا يقع قيدٌ على رحلة قبل تسجيلها
+ * «منفَّذة» (‏`ledger_on_booking_completed`). فالرحلات الجارية الآن — ومعها ما
+ * سيقبضه المتعهد نقداً فيها — ليست في هذا الرقم بعد. كتابة غير ذلك تجعل الشاشة
+ * تَعِد بما لا تنفّذه القاعدة.
+ */
+const LIMIT_LEDGER_NOTE =
+  "والسقف يقيس الدين المُثبَت في الدفتر وحده — لا يُقيَّد على رحلة شيء قبل تسجيلها «منفَّذة»، فالرحلات الجارية الآن ليست محسوبة فيه بعد مهما كان ما سيقبضه فيها.";
+
+/**
+ * صياغة أثر بلوغ السقف — **ثلاث حالات لا حالتان**.
+ *
+ * «لم تُقرأ الإعدادات» ليست «الحجب مطفأ»: الأولى تعني «لا أعرف»، فلا تُقال فيها
+ * جملة إنفاذ ولا جملة نفيه. والوسم نفسه يظهر في الحالات الثلاث لأن العرض يقيس
+ * بلوغ السقف وحده.
+ */
+const LIMIT_STATES = {
+  blocked: {
+    headline: "بلغ سقف الدين — الإسناد إليه متوقف",
+    consequence:
+      "بلغ هذا المتعهد سقف الدين ومفتاح «حجب العروض» مفعّل، فلا يصله عرض جديد ولا يفوز بقبول عرض قديم حتى ينزل ما عليه تحت السقف. والتجاوز لرحلة بعينها يبقى ممكناً بالإسناد اليدوي من شاشة الطلب بسبب مكتوب.",
+  },
+  open: {
+    headline: "بلغ سقف الدين — وحجب العروض مطفأ، فما زال يصله العروض",
+    consequence:
+      "بلغ هذا المتعهد سقف الدين، لكن مفتاح «حجب العروض» مطفأ في بطاقة سقف الديون — فما زال يصله عرض جديد ويفوز بقبوله كأي متعهد آخر. والوسم يبقى ظاهراً عمداً: إخفاؤه مع إطفاء الحجب كان سيُفقدك رؤية من بلغ السقف، وذلك أسوأ من عدم حجبه.",
+  },
+  unknown: {
+    headline: "بلغ سقف الدين — وحالة «حجب العروض» غير معروفة",
+    consequence:
+      "بلغ هذا المتعهد سقف الدين. أما هل توقّف الإسناد إليه فعلاً فلا تقوله هذه الشاشة: تعذّرت قراءة إعدادات سقف الديون، فافتح بطاقة سقف الديون في شاشة المقاصة لترى حالة مفتاح «حجب العروض».",
+  },
+} as const;
+
+/**
  * صياغة صافي المقاصة بالعربية الصحيحة لكل إشارة.
  *
  * `netDue` موجب = نحن مدينون للمتعهد ⇒ «له علينا ٥٠٠ ج.م».
@@ -199,34 +300,79 @@ export type SettlementTone = "we-owe" | "they-owe" | "settled";
  * القيمة المطلقة تُقرأ من العرض إن وفّرها (`abs_net_due`)، وإلا تُشتق هنا —
  * وهي تطبيع عرض لا حساب: الرقم نفسه ومصدره لا يتغيّران، والإشارة وحدها تنتقل
  * من الرقم إلى الكلمات لأن «−٢٠٠ ج.م له علينا» جملة لا يفهمها محاسب.
+ *
+ * **مصدر واحد للإشارة:** خمس شاشات تنادي هذه الدالة (نظرة المالية، قائمة
+ * المقاصات، كشف الحساب، ملف المتعهد، ونموذج الدفع). أي صياغة جديدة — ومنها وسم
+ * السقف — تُضاف هنا ولا تُفرَّع هناك، وإلا انحرفت شاشة عن أخرى في نفس الرقم.
+ * و`credit` اختياري: الشاشة التي لا تمرّره لا يظهر عندها وسم السقف إطلاقاً.
  */
 export function settlementWording(
   netDue: number | null,
   absNetDue: number | null,
-  currency: string
-): { tone: SettlementTone; text: string; hint: string } {
+  currency: string,
+  credit?: SettlementCredit | null
+): SettlementWording {
+  /**
+   * الوسم من العرض وحده (بلوغ السقف)، والجملة من العرض **ومفتاح الحجب معاً**.
+   * فصلهما هنا هو فصل الهجرة نفسها: لا يختفي المتجاوز من الشاشة بإطفاء الحجب،
+   * ولا تُقال جملة «الإسناد متوقف» وهو غير متوقف.
+   */
+  const overLimit = credit?.overLimit === true;
+  const state =
+    credit?.blockDispatch === true
+      ? LIMIT_STATES.blocked
+      : credit?.blockDispatch === false
+        ? LIMIT_STATES.open
+        : LIMIT_STATES.unknown;
+
+  const limit = {
+    overLimit,
+    owedToUs: credit?.owedToUs ?? null,
+    dispatchBlocked: overLimit && credit?.blockDispatch === true,
+    limitText: overLimit ? "بلغ سقف الدين" : null,
+    limitHeadline: overLimit ? state.headline : null,
+    limitConsequence: overLimit ? state.consequence : null,
+    limitHint: overLimit ? `${state.consequence} ${LIMIT_LEDGER_NOTE}` : LIMIT_LEDGER_NOTE,
+  };
+
   if (netDue === null) {
-    return { tone: "settled", text: "—", hint: "الرقم غير متاح — تعذّرت قراءة المقاصة." };
+    return {
+      tone: "settled",
+      text: "—",
+      verdict: "الرقم غير متاح — تعذّرت قراءة المقاصة.",
+      magnitude: null,
+      hint: "الرقم غير متاح — تعذّرت قراءة المقاصة.",
+      ...limit,
+    };
   }
   const magnitude = absNetDue ?? Math.abs(netDue);
   if (netDue > 0) {
     return {
       tone: "we-owe",
       text: `له علينا ${formatMoney(magnitude, currency)}`,
+      verdict: "له علينا — ندفع له هذا المبلغ",
+      magnitude,
       hint: "مستحقاته عن الرحلات المنفَّذة تفوق ما قبضه نقداً من العملاء وما سبق أن دفعناه له — هذا ما ندفعه له في التسوية القادمة.",
+      ...limit,
     };
   }
   if (netDue < 0) {
     return {
       tone: "they-owe",
       text: `عليه لنا ${formatMoney(magnitude, currency)}`,
+      verdict: "عليه لنا — يردّ إلينا هذا المبلغ",
+      magnitude,
       hint: "قبض من العملاء نقداً أكثر من مستحقه، فالفرق مالنا في يده — يُحصَّل منه لا يُدفع له.",
+      ...limit,
     };
   }
   return {
     tone: "settled",
     text: "مقاصة صفرية",
+    verdict: "الحساب مصفّى — لا مستحقات في الاتجاهين",
+    magnitude,
     hint: "ما له وما عليه متساويان — لا دفعة مستحقة في الاتجاهين.",
+    ...limit,
   };
 }
 
@@ -238,24 +384,61 @@ const SETTLEMENT_TONE_CLASS: Record<SettlementTone, string> = {
   settled: "border-border text-muted-foreground",
 };
 
+/** نبرة **لوح** المقاصة الكبير (ملف المتعهد) — نفس النبرات بخلفية أهدأ من الوسم */
+export const SETTLEMENT_PANEL_TONE: Record<SettlementTone, string> = {
+  "we-owe": "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40",
+  "they-owe": "border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/40",
+  settled: "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/40",
+};
+
+/**
+ * وسم السقف: أحمر لا لأنه خطأ بل لأنه **صفٌّ يحتاج قراراً اليوم**. ولا يقول
+ * الأحمر إن الإسناد متوقف — ذلك يتوقف على مفتاح «حجب العروض»، وتقوله الجملة
+ * (‏`limitHeadline` / `limitConsequence`) لا اللون.
+ */
+const LIMIT_TONE_CLASS =
+  "border-red-300 bg-red-100 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100";
+
 export function SettlementBadge({
   netDue,
   absNetDue,
   currency,
   withHint = true,
+  credit,
 }: {
   netDue: number | null;
   absNetDue: number | null;
   currency: string;
   withHint?: boolean;
+  /**
+   * حكم السقف: عمودان من العرض ومفتاح الحجب من الإعدادات. الشاشة التي لا
+   * تمرّره لا يظهر عندها وسم السقف إطلاقاً.
+   */
+  credit?: SettlementCredit | null;
 }) {
-  const { tone, text, hint } = settlementWording(netDue, absNetDue, currency);
+  const { tone, text, hint, limitText, limitHint } = settlementWording(
+    netDue,
+    absNetDue,
+    currency,
+    credit
+  );
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       <Badge variant="outline" className={cn("font-medium", SETTLEMENT_TONE_CLASS[tone])}>
         <span dir="rtl">{text}</span>
       </Badge>
       {withHint ? <HelpTip>{hint}</HelpTip> : null}
+      {limitText !== null && (
+        <>
+          <Badge variant="outline" className={cn("font-medium", LIMIT_TONE_CLASS)}>
+            <span dir="rtl" className="inline-flex items-center gap-1">
+              <Ban className="size-3" />
+              {limitText}
+            </span>
+          </Badge>
+          {withHint ? <HelpTip>{limitHint}</HelpTip> : null}
+        </>
+      )}
     </span>
   );
 }
@@ -280,6 +463,20 @@ export const FINANCE_ERRORS: Record<string, string> = {
   upload:
     "تعذّر رفع المرفق — الحد ٥ ميجابايت وبصيغة صورة أو PDF، ويحتاج الرفع مفتاح SUPABASE_SERVICE_ROLE_KEY في متغيرات البيئة.",
   balance: "رفضت قاعدة البيانات القيد — راجع الرصيد أو حدود الحساب ثم أعد المحاولة.",
+
+  // ── سقف ديون المتعهدين (الملاحظة ١٧، هجرة 0027) ────────────────────────────
+  limit:
+    "سقف الدين يجب أن يكون رقماً موجباً أو صفراً — والصفر يعني «بلا سقف»، أي أن حجب العروض يتعطّل.",
+  creditsave:
+    "تعذّر حفظ سقف الديون — تأكد أنك مسجّل الدخول بحساب دوره admin (فخ الصفوف الصفرية في supabase/README.md).",
+  creditnotready:
+    "جدول partner_credit_settings غير موجود — نفِّذ هجرة 0027 من supabase/migrations ثم أعد المحاولة.",
+  creditschema:
+    "أعمدة جدول سقف الديون لا تطابق العقد — تحديثٌ ينجح ظاهرياً ولا يغيّر شيئاً، فأُوقف. راجع هجرة 0027.",
+  owing:
+    "رفضت قاعدة البيانات الدفعة: هذا المتعهد مدين لنا (رصيده سالب)، و«منع الدفع لمدين» مفعّل في إعدادات السقف. حصّل منه المبلغ أولاً، أو سجّلها مقدَّماً صريحاً من الزر أدناه، أو أطفئ المنع من بطاقة سقف الديون.",
+  advnote:
+    "سبب المقدَّم إلزامي ولا يقلّ عن أربعة أحرف — مقدَّمٌ بلا سبب مكتوب هو ما يفسد الدفاتر بعد ستة أشهر.",
 };
 
 /** بطاقة «المالية غير جاهزة» — تُعرض في كل شاشات المرحلة قبل تنفيذ الهجرة */
@@ -670,6 +867,81 @@ export async function readCurrency(supabase: Supabase): Promise<string> {
   return (!res.error && asText(res.data?.currency)) || "EGP";
 }
 
+/**
+ * «الجدول غير موجود» — ‏42P01 من Postgres وPGRST205 من كاش مخطط PostgREST.
+ *
+ * مكرَّرة هنا عمداً بدل استيراد `lib/dispatch/settings`: ذلك الملف يبدأ بـ
+ * `import "server-only"`، وهذه الوحدة خالية اليوم من أي اعتماد تشغيلي على طبقة
+ * الخادم (استيراد `createServerSupabase` نوعيٌّ يُمحى عند البناء) — وإبقاؤها كذلك
+ * يعني أن أي مكوّن يستورد منها وسماً أو تنسيقاً لا ينفجر لو صار عميلاً يوماً.
+ */
+const isMissingTableCode = (code: string | undefined | null): boolean =>
+  code === "42P01" || code === "PGRST205";
+
+/**
+ * حالة سقف ديون المتعهدين — صف وحيد في `partner_credit_settings` (هجرة 0027).
+ *
+ * التدهور الرشيق نفسه المطبَّق في كل قرّاء المالية: غياب الجدول ⇒ رسالة هجرة،
+ * ورفض القراءة ⇒ الافتراضيات مع `loaded: false`. ولا تُخترع قيمة: الافتراضيات
+ * تأتي من العقد (`DEFAULT_PARTNER_CREDIT`) لا من أرقام مكتوبة هنا.
+ */
+export type PartnerCreditState = {
+  settings: PartnerCreditSettings;
+  /** قُرئ الصف فعلاً من الجدول؟ */
+  loaded: boolean;
+  /** الجدول غير موجود ⇒ هجرة 0027 لم تُنفَّذ بعد */
+  missing: boolean;
+};
+
+/** قيمة منطقية من صف مجهول البنية — PostgREST قد يمرّرها نصاً */
+const flagOf = (
+  row: Record<string, unknown> | null,
+  names: string[],
+  fallback: boolean
+): boolean => {
+  const v = pick(row, names);
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "t" || s === "1") return true;
+    if (s === "false" || s === "f" || s === "0") return false;
+  }
+  return fallback;
+};
+
+export async function readPartnerCredit(supabase: Supabase): Promise<PartnerCreditState> {
+  const res = await supabase.from("partner_credit_settings").select("*").limit(1);
+
+  if (res.error) {
+    return {
+      settings: DEFAULT_PARTNER_CREDIT,
+      loaded: false,
+      missing: isMissingTableCode(res.error.code),
+    };
+  }
+
+  const row = rowsOf(res.data)[0] ?? null;
+  if (!row) return { settings: DEFAULT_PARTNER_CREDIT, loaded: false, missing: false };
+
+  return {
+    loaded: true,
+    missing: false,
+    settings: {
+      debtLimit: numberOf(row, ["debt_limit", "debtLimit"]) ?? DEFAULT_PARTNER_CREDIT.debtLimit,
+      blockDispatch: flagOf(
+        row,
+        ["block_dispatch", "blockDispatch"],
+        DEFAULT_PARTNER_CREDIT.blockDispatch
+      ),
+      blockPayout: flagOf(
+        row,
+        ["block_payout", "blockPayout"],
+        DEFAULT_PARTNER_CREDIT.blockPayout
+      ),
+    },
+  };
+}
+
 export type TreasuryAccount = {
   id: string;
   label: string;
@@ -753,11 +1025,18 @@ export function AccountField({
   );
 }
 
-/** حقل تاريخ الحركة — الافتراضي اليوم، ولا يقبل المستقبل */
+/**
+ * حقل تاريخ الحركة — الافتراضي اليوم، ولا يقبل المستقبل.
+ *
+ * `defaultValue` اختياري ويخدم حالة واحدة: إجراءٌ رُفض فأعاد المشرف إلى النموذج
+ * نفسه بقيمه في الرابط. بلا ذلك يعود الحقل إلى «اليوم» فيبتلع تاريخاً قديماً
+ * كتبه المشرف بيده — وهو تغيير صامت في تاريخ قيد مالي.
+ */
 export function OccurredAtField({
   id,
   name = "occurred_at",
   today,
+  defaultValue,
   disabled,
   label = "تاريخ الحركة",
   help,
@@ -765,6 +1044,7 @@ export function OccurredAtField({
   id: string;
   name?: string;
   today: string;
+  defaultValue?: string;
   disabled?: boolean;
   label?: string;
   help?: ReactNode;
@@ -781,7 +1061,7 @@ export function OccurredAtField({
         type="date"
         dir="ltr"
         max={today}
-        defaultValue={today}
+        defaultValue={defaultValue ?? today}
         disabled={disabled}
         required
       />
