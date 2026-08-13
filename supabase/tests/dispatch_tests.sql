@@ -1548,6 +1548,189 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ي-ب) 🔒 حارس التشغيل يفشل مغلقاً فعلاً — تصليب 0025 البند (٣)
+--
+-- العيب: `0014:131` كان يفحص `current_user in ('postgres','supabase_admin')`
+-- داخل `security definer`. و`current_user` هناك هو **مالك الدالة** (postgres)
+-- لا المستدعي، فالسطر يرجع `true` لكل من بلغه. ومن يبلغه؟ كل جلسة بدور
+-- `authenticated` بلا `sub` في مطالباتها: `is_admin()` تكذب، و`auth.uid()`
+-- فارغة، فتسقط على سطر مالك القاعدة وتُمنح **كامل صلاحيات التشغيل**.
+-- وهذا هو بالضبط ما تصفه LESSONS: «الحارس كان يفشل مفتوحاً: بلا هوية =
+-- صلاحيات كاملة» — أُصلح في 0014 لطبقة واحدة وبقي مفتوحاً في الأخرى.
+--
+-- ⚠ التأكيد (ي-ب-٢) هو المميِّز الحقيقي: على الحارس القديم يمرّ الاستدعاء إلى
+--    ما بعد الحارس فيفشل بـ `invalid-input`؛ وعلى المصحَّح يُردّ بـ `forbidden`.
+--    أي أنه **يحمرّ فعلاً** لو نُقض التصحيح، لا يزيّن نجاحاً قائماً.
+--
+-- والمسبار على مبلغ `null` مقصود: الحارس يسبق كل تحقق آخر في `start_dispatch`
+-- (0013:604 قبل 0013:608)، فالنتيجة تُميَّز بالـ hint وحده بلا أي أثر جانبي —
+-- لا دورة بث تبدأ ولا عرض يُرسل ولا حالة حجز تتغيّر.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_admin  text := current_setting('tours.d_admin', true);
+  v_ident  text := current_setting('tours.d_identities', true);
+  v_prof_b constant uuid := 'd2000000-0000-4000-8000-00000000000b';
+  v_src    text;
+  v_hint   text;
+  v_raised boolean;
+  v_n      integer;
+begin
+  -- ── (ي-ب-١) بنية الحارس ──
+  v_src := pg_get_functiondef('public.dispatch_ops_allowed()'::regprocedure);
+
+  -- شاهد إيجابي للمسبار: نفس أسلوب المطابقة يلتقط رمزاً نعلم وجوده يقيناً.
+  -- بدونه، مسبارٌ معطوب (مصدر فارغ) كان «ينجح» في كل نفي بعده.
+  if position('is_admin' in coalesce(v_src, '')) = 0 then
+    raise exception
+      '(ي-ب-١أ) مسبار المصدر لا يلتقط is_admin — المطابقة معطّلة فلا تصدّق ما بعدها';
+  end if;
+
+  if position('current_user' in v_src) > 0 then
+    raise exception
+      '(ي-ب-١ب) dispatch_ops_allowed ما زالت تفحص current_user — وهو مالك الدالة لا المستدعي، فالحارس يمرّر كل من بلغه';
+  end if;
+
+  if position('session_user' in v_src) = 0 then
+    raise exception
+      '(ي-ب-١ج) dispatch_ops_allowed بلا session_user — اتصال الهجرات والاختبارات سيُرفض';
+  end if;
+
+  -- والحاجز المبكر **بعد** is_admin لا قبله: المشرف يصل manual_assign بدور
+  -- authenticated (app/admin/orders/[id]/dispatch-actions.ts:174)
+  if position('current_setting(''role''' in v_src) = 0 then
+    raise exception '(ي-ب-١د) بلا حاجز مبكر على متغيّر role';
+  end if;
+  if position('is_admin' in v_src) > position('current_setting(''role''' in v_src) then
+    raise exception
+      '(ي-ب-١هـ) الحاجز المبكر سبق فحص is_admin — المشرف نفسه سيُرفض من اللوحة';
+  end if;
+
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    raise notice '  ↳ (ي-ب) لا دور authenticated على هذه القاعدة — الفحوص الحية متخطّاة';
+    raise notice '✔ (ي-ب) بنية حارس التشغيل سليمة (session_user لا current_user، وحاجز بعد is_admin)';
+    return;
+  end if;
+
+  -- ── (ي-ب-٢) 🔒 المميِّز: جلسة بدور authenticated بلا هوية تُردّ ──
+  begin
+    perform set_config('request.jwt.claim.sub', '', false);
+    perform set_config('request.jwt.claims', '', false);
+    execute 'set local role authenticated';
+
+    v_raised := false;
+    v_hint   := null;
+    begin
+      execute 'select count(*) from public.start_dispatch(null::uuid)' into v_n;
+    exception
+      when others then
+        v_raised := true;
+        get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+
+    execute 'reset role';
+  exception
+    when others then
+      execute 'reset role';
+      raise;
+  end;
+
+  if not v_raised then
+    raise exception
+      '(ي-ب-٢) جلسة authenticated بلا هوية نفّذت start_dispatch بلا أي رفض — الحارس يفشل مفتوحاً';
+  end if;
+  if coalesce(v_hint, '') <> 'forbidden' then
+    raise exception
+      '(ي-ب-٢) جلسة authenticated بلا هوية اجتازت الحارس (hint=«%») — الرفض جاء من تحقق لاحق لا من الحارس',
+      coalesce(v_hint, 'بلا');
+  end if;
+
+  -- ── (ي-ب-٣) ومتعهد مسجَّل بهوية حقيقية يُردّ كذلك ──
+  if v_ident is distinct from '1' then
+    raise notice '  ↳ (ي-ب-٣) بلا هويتي متعهدين — متخطّى';
+  else
+    begin
+      perform set_config('request.jwt.claim.sub', v_prof_b::text, false);
+      perform set_config('request.jwt.claims', jsonb_build_object('sub', v_prof_b)::text, false);
+      execute 'set local role authenticated';
+
+      v_raised := false;
+      v_hint   := null;
+      begin
+        execute 'select count(*) from public.start_dispatch(null::uuid)' into v_n;
+      exception
+        when others then
+          v_raised := true;
+          get stacked diagnostics v_hint = pg_exception_hint;
+      end;
+
+      execute 'reset role';
+      perform set_config('request.jwt.claim.sub', '', false);
+      perform set_config('request.jwt.claims', '', false);
+    exception
+      when others then
+        execute 'reset role';
+        perform set_config('request.jwt.claim.sub', '', false);
+        perform set_config('request.jwt.claims', '', false);
+        raise;
+    end;
+
+    if not v_raised or coalesce(v_hint, '') <> 'forbidden' then
+      raise exception
+        '(ي-ب-٣) متعهد مسجَّل اجتاز حارس التشغيل (رُفض=% hint=«%»)',
+        v_raised, coalesce(v_hint, 'بلا');
+    end if;
+  end if;
+
+  -- ── (ي-ب-٤) والمشرف ما زال يمرّ — نصف الاختبار لا زينته ──
+  --    لولا هذا التأكيد لكان «حاجزٌ يردّ authenticated دائماً» اختباراً أخضر
+  --    ولوحةً معطوبة: زرّ «ابدأ البث» و«الإسناد اليدوي» يصلان بدور authenticated.
+  if coalesce(v_admin, '') = '' then
+    raise notice '  ↳ (ي-ب-٤) بلا هوية مشرف — شاهد المشرف متخطّى';
+  else
+    begin
+      perform set_config('request.jwt.claim.sub', v_admin, false);
+      perform set_config('request.jwt.claims', jsonb_build_object('sub', v_admin)::text, false);
+      execute 'set local role authenticated';
+
+      v_raised := false;
+      v_hint   := null;
+      begin
+        execute 'select count(*) from public.start_dispatch(null::uuid)' into v_n;
+      exception
+        when others then
+          v_raised := true;
+          get stacked diagnostics v_hint = pg_exception_hint;
+      end;
+
+      execute 'reset role';
+      perform set_config('request.jwt.claim.sub', '', false);
+      perform set_config('request.jwt.claims', '', false);
+    exception
+      when others then
+        execute 'reset role';
+        perform set_config('request.jwt.claim.sub', '', false);
+        perform set_config('request.jwt.claims', '', false);
+        raise;
+    end;
+
+    -- المتوقع: يتجاوز الحارس ثم يفشل على «معرّف الحجز مطلوب» (0013:608-610)
+    if coalesce(v_hint, '') = 'forbidden' then
+      raise exception
+        '(ي-ب-٤) الحارس ردّ **المشرف** — الحاجز المبكر وُضع قبل is_admin، واللوحة لا تبثّ ولا تُسند يدوياً';
+    end if;
+    if not v_raised or coalesce(v_hint, '') <> 'invalid-input' then
+      raise exception
+        '(ي-ب-٤) المشرف لم يبلغ تحقق المدخلات (رُفض=% hint=«%») — المسبار لم يعد يقيس ما يظن',
+        v_raised, coalesce(v_hint, 'بلا');
+    end if;
+  end if;
+
+  raise notice '✔ (ي-ب) حارس التشغيل: session_user لا current_user، ويردّ كل authenticated بلا صفة مشرف، والمشرف يمرّ';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ك) مسارات الحافة: البدء التلقائي، إلغاء الحجز، والإسناد بلا دورة سابقة
 --
 -- ⚠ اختبار البدء التلقائي يُشغّل الدورة و`auto_start` مرفوع، فتلتقط الدورة **كل**

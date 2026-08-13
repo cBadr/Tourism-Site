@@ -63,7 +63,11 @@ begin
     ('public.settle_payment_intent(text, text, text, text, integer, jsonb)'),
     ('public.get_payment_intent_status(uuid)'),
     ('public.to_minor_units(numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text)'),
+    -- تصليب 0025 البند (١): الجسم انتقل إلى دالة داخلية، والغلافان يستدعيانها
+    ('public.payment_accounts_within_caps(numeric)'),
+    ('public.available_payment_accounts(numeric)'),
+    ('public.available_payment_accounts(text, numeric)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 
@@ -100,6 +104,14 @@ begin
 
   update public.payment_providers pp set account_id = null where pp.account_id = v_acc;
   delete from public.payment_accounts pa where pa.id = v_acc or pa.label like 'PAYMENT_TESTS%';
+
+  -- بقايا هوية المتعهد التي يبنيها القسم (ك) — تشغيلٌ منهار في منتصفه يتركها
+  delete from public.subcontractors s where s.company_name like 'PAYMENT_TESTS%';
+  delete from public.profiles p where p.id = '9a000000-0000-4000-8000-0000000000c1'::uuid;
+  begin
+    delete from auth.users u where u.id = '9a000000-0000-4000-8000-0000000000c1'::uuid;
+  exception when others then null;
+  end;
 
   -- الفئة المؤهلة لراكب واحد كما يرجعها المحرك نفسه لا تخميناً منّا
   select array_agg(q.class_slug order by q.capacity asc)
@@ -1012,6 +1024,198 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ك) 🔒 أرقام حسابات التحصيل ليست لكل مسجَّل — تصليب 0025 البند (١)
+--
+-- ما يُختبر: `available_payment_accounts(numeric)` كانت ممنوحة لـ `authenticated`
+-- بلا حارس (0009:722 ثم 0015:1555)، وهي تعيد `handle` (رقم المحفظة أو الآيبان)
+-- و`holder_name` و`daily_headroom`/`monthly_headroom` — وفرقُ الأخيرين بين
+-- يومين هو **الإيراد اليومي للمنصة**. وكل متعهد في البورتال مستخدم مسجَّل.
+--
+-- ثلاثة شواهد إيجابية قبل كل نفي (النمط ٩ في LESSONS): الحساب مرئي فعلاً من
+-- اتصال المالك · هوية المتعهد فعّالة فعلاً · والزائر بالتوكن ما زال يراه.
+-- بلا هذه الثلاثة يصير «صفر صف» نتيجةً لا تُميَّز عن فيكسترة فاشلة.
+--
+-- والشاهد الثالث تحديداً هو حارس الانحدار الأهم: الحارس لو وُضع في الجسم
+-- المشترك بدل الغلاف الإداري لأُفرغت **صفحة تحويل العميل** من كل حساب بصمت.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_acc   constant uuid := '9a000000-0000-4000-8000-00000000000c';
+  v_user  constant uuid := '9a000000-0000-4000-8000-0000000000c1';
+  v_built boolean := false;
+  v_b     record;
+  v_tok   text;
+  v_n     integer;
+  v_ok    boolean;
+  v_head  numeric;
+begin
+  -- ── الفيكسترة: محفظة معروضة للعميل + حجز ما زال بانتظار الدفع ──
+  -- handle اصطناعي: 0009 تفرض تفرد (kind, handle) فرقمٌ واقعي قد يصطدم بحساب
+  -- حقيقي للمالك على القاعدة الحيّة. واللصيقة PAYMENT_TESTS كي يلتقطها تنظيف (م).
+  insert into public.payment_accounts
+    (id, kind, label, handle, holder_name, opening_balance, active, sort, customer_facing)
+  values
+    (v_acc, 'wallet', 'PAYMENT_TESTS محفظة معروضة', 'PT-WALLET-0250000000', 'اختبار',
+     0, true, 951, true)
+  on conflict (id) do update
+    set customer_facing = true, active = true, handle = 'PT-WALLET-0250000000';
+
+  select * into v_b
+  from public.create_booking(
+    jsonb_build_object('label', 'موقع صحراوي أ', 'lat', 25.000000, 'lng', 27.500000),
+    jsonb_build_object('label', 'موقع صحراوي ب', 'lat', 24.500000, 'lng', 28.200000),
+    1, false, 0, 100, 90, 'test',
+    current_setting('tours.p_class'), 'full',
+    'عميل اختبار الحسابات', '01000009205', null, now() + interval '3 days',
+    'PAYMENT_TESTS_FIXTURE-5'
+  );
+
+  select b.public_token into v_tok from public.bookings b where b.id = v_b.id;
+  if v_tok is null or length(v_tok) < 32 then
+    raise exception '(ك-٠) توكن الحجز غير صالح — لا معنى لاختبار غلاف التوكن بعده';
+  end if;
+  if (select b.status from public.bookings b where b.id = v_b.id) <> 'pending_payment' then
+    raise exception '(ك-٠) حجز الفيكسترة ليس بانتظار الدفع — غلاف التوكن سيرفضه لسبب آخر';
+  end if;
+
+  -- (ك-١) شاهد إيجابي: من اتصال المالك تُرجع الدالة الحساب ومعه المتاح اليومي
+  select count(*) into v_n
+  from public.available_payment_accounts(0) a where a.id = v_acc;
+  if v_n <> 1 then
+    raise exception
+      '(ك-١) الحساب المعروض للعميل غائب عن الدالة من اتصال المالك (% صفاً) — الحارس كسر مسار الإدارة/الهجرات', v_n;
+  end if;
+
+  -- (ك-٢) شاهد إيجابي ثانٍ: غلاف التوكن يعمل للزائر — مسار صفحة الدفع نفسه
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    raise notice '  ↳ (ك-٢) لا دور anon على هذه القاعدة — شاهد الزائر متخطّى';
+  else
+    begin
+      execute 'set local role anon';
+      execute format(
+        'select count(*) from public.available_payment_accounts(%L, 0) a where a.id = %L',
+        v_tok, v_acc) into v_n;
+      execute 'reset role';
+    exception
+      when others then
+        execute 'reset role';
+        raise;
+    end;
+    if v_n <> 1 then
+      raise exception
+        '(ك-٢) الزائر بتوكن حجز صالح لم يرَ حساب التحويل (% صفاً) — صفحة الدفع فارغة', v_n;
+    end if;
+
+    -- وبتوكن فاسد: صفر — الحراسة القائمة لم تُنقض بإعادة الكتابة
+    begin
+      execute 'set local role anon';
+      execute 'select count(*) from public.available_payment_accounts(''garbage'', 0)' into v_n;
+      execute 'reset role';
+    exception
+      when others then
+        execute 'reset role';
+        raise;
+    end;
+    if v_n <> 0 then
+      raise exception '(ك-٢ب) توكن فاسد فتح قائمة الحسابات للزائر (% صفاً)', v_n;
+    end if;
+  end if;
+
+  -- (ك-٣) الحاجز نفسه: متعهد مسجَّل الدخول لا يرى رقم محفظة واحداً
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    raise notice '  ↳ (ك-٣) لا دور authenticated على هذه القاعدة — الفحص الحي متخطّى';
+  else
+    begin
+      insert into auth.users (id, email) values (v_user, 'payment-tests-partner@local.invalid');
+      insert into public.profiles (id, role, full_name)
+      values (v_user, 'subcontractor', 'متعهد اختبار الدفع')
+      on conflict (id) do update set role = excluded.role;
+      insert into public.subcontractors (profile_id, company_name, contact_name, phone, status)
+      values (v_user, 'PAYMENT_TESTS شركة اختبار', 'مسؤول اختبار', '01000009206', 'approved');
+      v_built := true;
+    exception
+      when others then
+        -- التخطّي مقصود لقاعدة بلا مخطط auth، لا لفيكسترة معطوبة. وهذا الفحص هو
+        -- **الوحيد الحيّ** على ثغرة أرقام الحسابات، فابتلاعه يترك الهجرة بلا حارس
+        -- سلوكي ويطبع ALL PASSED كاذباً (النمط ٩: فحصٌ لا يمكن أن يفشل).
+        if to_regclass('auth.users') is not null then
+          raise exception '(ك-٣) تعذّر بناء هوية المتعهد رغم وجود auth.users: % — أصلح الفيكسترة، لا تتخطَّ الفحص', sqlerrm;
+        end if;
+        raise notice '  ↳ (ك-٣) لا مخطط auth على هذه القاعدة — الفحص الحي متخطّى (%)', sqlerrm;
+    end;
+
+    if v_built then
+      begin
+        perform set_config('request.jwt.claim.sub', v_user::text, false);
+        perform set_config('request.jwt.claims', jsonb_build_object('sub', v_user)::text, false);
+        execute 'set local role authenticated';
+
+        -- شاهد إيجابي ثالث: الهوية فعّالة — يقرأ صفَّ شركته بسياسة 0010
+        execute $q$select count(*) from public.subcontractors
+                   where company_name like 'PAYMENT_TESTS%'$q$ into v_n;
+        if v_n <> 1 then
+          raise exception
+            '(ك-٣أ) المتعهد لا يقرأ صف شركته (% صفاً) — الهوية غير فعّالة فلا معنى لما بعدها', v_n;
+        end if;
+
+        -- 🔒 ومع ذلك: صفر حساب من النسخة أحادية الوسيط
+        execute 'select count(*) from public.available_payment_accounts(0)' into v_n;
+        if v_n <> 0 then
+          raise exception
+            '(ك-٣ب) متعهد مسجَّل قرأ % حساب تحصيل — أرقام المحافظ والإيراد اليومي مكشوفة', v_n;
+        end if;
+
+        -- ولا حتى بمبلغ آخر (الترشيح بالحد ليس هو الحارس)
+        execute 'select count(*) from public.available_payment_accounts(999999)' into v_n;
+        if v_n <> 0 then
+          raise exception '(ك-٣ج) المتعهد قرأ % حساباً بمبلغ آخر', v_n;
+        end if;
+
+        -- ولا من الباب الخلفي: الدالة الداخلية ليست له
+        v_ok := false;
+        begin
+          execute 'select count(*) from public.payment_accounts_within_caps(0)' into v_n;
+        exception when others then v_ok := true;
+        end;
+        if not v_ok then
+          raise exception
+            '(ك-٣د) المتعهد نفّذ payment_accounts_within_caps مباشرة (% صفاً) — الحارس التفّ عليه', v_n;
+        end if;
+
+        execute 'reset role';
+        perform set_config('request.jwt.claim.sub', '', false);
+        perform set_config('request.jwt.claims', '', false);
+      exception
+        when others then
+          execute 'reset role';
+          perform set_config('request.jwt.claim.sub', '', false);
+          perform set_config('request.jwt.claims', '', false);
+          raise;
+      end;
+
+      delete from public.subcontractors s where s.company_name like 'PAYMENT_TESTS%';
+      delete from public.profiles p where p.id = v_user;
+      begin
+        delete from auth.users u where u.id = v_user;
+      exception when others then null;
+      end;
+    end if;
+  end if;
+
+  -- (ك-٤) وبعد كل ذلك: المتاح اليومي ما زال يُحسب صحيحاً لمن يستحقه
+  --       (الحارس أُضيف بلا مساس بالمنطق — والقيمة تُشتق من الحد لا من رقم محفور)
+  update public.payment_accounts pa set daily_cap = 1000 where pa.id = v_acc;
+  select a.daily_headroom into v_head
+  from public.available_payment_accounts(0) a where a.id = v_acc;
+  if v_head is distinct from 1000 then
+    raise exception '(ك-٤) المتاح اليومي بعد التصليب: توقعنا الحد كاملاً وحصلنا %', v_head;
+  end if;
+
+  raise notice '✔ (ك) حسابات التحصيل: المالك واللوحة يرونها، والزائر بالتوكن يراها، والمتعهد المسجَّل لا يرى رقماً واحداً';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (م) التنظيف — لا صف اختبار يبقى، وإعدادات المزوّدين تعود كما كانت
 -- ----------------------------------------------------------------------------
 do $$
@@ -1053,6 +1257,15 @@ begin
           where b.trip ->> 'notes' like 'PAYMENT_TESTS_FIXTURE%');
 
   delete from public.bookings b where b.trip ->> 'notes' like 'PAYMENT_TESTS_FIXTURE%';
+
+  -- هوية المتعهد التي يبنيها القسم (ك) — تُمسح هناك، وهذا احتياط تشغيلٍ منهار
+  delete from public.subcontractors s where s.company_name like 'PAYMENT_TESTS%';
+  delete from public.profiles p where p.id = '9a000000-0000-4000-8000-0000000000c1'::uuid;
+  begin
+    delete from auth.users u where u.id = '9a000000-0000-4000-8000-0000000000c1'::uuid;
+  exception when others then null;
+  end;
+
   delete from public.payment_accounts pa where pa.id = v_acc or pa.label like 'PAYMENT_TESTS%';
 
   select count(*) into v_left from public.bookings b

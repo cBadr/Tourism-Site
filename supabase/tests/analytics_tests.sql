@@ -1184,16 +1184,41 @@ do $$
 declare
   v_leak text;
   v_cols text;
+  v_rels text[];
+  v_n    integer;
 begin
+  -- تصليب 0025 البند (٤): `v_stats_discounts` (0024) ممنوح لـ `authenticated`
+  -- مثل السبعة (0024:1924) ولم يكن في أي فحص — لا هنا ولا في 0022 §٩-٣.
+  v_rels := array['v_stats_orders', 'v_stats_dispatch', 'v_stats_partners',
+                  'v_stats_content', 'v_stats_locales', 'v_stats_treasury',
+                  'v_stats_customers'];
+  if to_regclass('public.v_stats_discounts') is not null then
+    v_rels := v_rels || 'v_stats_discounts'::text;
+  end if;
+
+  -- شاهد إيجابي: الفحص أدناه يبحث عن **مخالفات**، ومجموعةٌ فارغة تنجح دائماً.
+  -- فنُثبت أولاً أن الأسماء تطابق عروضاً حقيقية.
+  select count(*)
+    into v_n
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relkind = 'v'
+    and c.relname = any (v_rels);
+
+  if v_n <> coalesce(array_length(v_rels, 1), 0) then
+    raise exception
+      '(ح-٠) وُجد % عرض من % — المسبار لا يرى ما يفحصه فلا معنى لنتيجته',
+      v_n, coalesce(array_length(v_rels, 1), 0);
+  end if;
+
   select string_agg(c.relname, '، ')
     into v_leak
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
     and c.relkind = 'v'
-    and c.relname in ('v_stats_orders', 'v_stats_dispatch', 'v_stats_partners',
-                      'v_stats_content', 'v_stats_locales', 'v_stats_treasury',
-                      'v_stats_customers')
+    and c.relname = any (v_rels)
     and coalesce(
           (select option_value from pg_options_to_table(c.reloptions)
             where option_name = 'security_invoker'), 'false'
@@ -1209,9 +1234,7 @@ begin
     into v_cols
   from information_schema.columns c
   where c.table_schema = 'public'
-    and c.table_name in ('v_stats_orders', 'v_stats_dispatch', 'v_stats_partners',
-                         'v_stats_content', 'v_stats_locales', 'v_stats_treasury',
-                         'v_stats_customers')
+    and c.table_name = any (v_rels)
     and c.column_name in ('customer_name', 'customer_phone', 'customer_whatsapp',
                           'phone', 'email', 'reference', 'public_token');
 
@@ -1219,7 +1242,8 @@ begin
     raise exception '(ح-٢) أعمدة بيانات عميل في عروض إحصائية: %', v_cols;
   end if;
 
-  raise notice '✔ (ح) العروض السبعة كلها security_invoker وبلا عمود بيانات عميل واحد';
+  raise notice '✔ (ح) العروض الـ% كلها security_invoker وبلا عمود بيانات عميل واحد',
+    coalesce(array_length(v_rels, 1), 0);
 end;
 $$;
 
@@ -1521,10 +1545,47 @@ declare
   v_n     integer;
   v_ok    boolean;
   v_rel   text;
+  -- تصليب 0025 البند (٤): العرض الثامن (0024) لم يكن في هذه القائمة، ولا في
+  -- فحص 0022 §٩-٣. منحُه لـ `authenticated` قائم مثل السبعة (0024:1924).
+  v_rels  text[];
+  v_base  integer;
+  v_seen  integer := 0;
 begin
   if not exists (select 1 from pg_roles where rolname = 'authenticated') then
     raise notice '  ↳ (ل) لا دور authenticated في هذه القاعدة — الفحص متخطّى';
     return;
+  end if;
+
+  v_rels := array[
+    'public.v_stats_orders', 'public.v_stats_dispatch', 'public.v_stats_partners',
+    'public.v_stats_content', 'public.v_stats_locales', 'public.v_stats_treasury',
+    'public.v_stats_customers'];
+
+  if to_regclass('public.v_stats_discounts') is not null then
+    v_rels := v_rels || 'public.v_stats_discounts'::text;
+  else
+    raise notice '  ↳ (ل) v_stats_discounts غائب — نفّذ 0024 ليشمله الفحص';
+  end if;
+
+  -- شاهد إيجابي قبل كل نفي: القائمة ليست فارغة، وفيها عرضٌ **يُرجع صفوفاً
+  -- فعلاً من اتصال المالك**. بدون هذا الخط الأساسي يصير «صفر صف للمتعهد»
+  -- نتيجةً لا تُميَّز عن عرضٍ فارغ أصلاً — وهو نمط ٩ في LESSONS حرفياً.
+  if coalesce(array_length(v_rels, 1), 0) < 7 then
+    raise exception '(ل-٠أ) قائمة العروض فيها % عنصراً — الحلقة لا تفحص شيئاً',
+      coalesce(array_length(v_rels, 1), 0);
+  end if;
+
+  foreach v_rel in array v_rels
+  loop
+    execute 'select count(*) from ' || v_rel into v_base;
+    if v_base > 0 then
+      v_seen := v_seen + 1;
+    end if;
+  end loop;
+
+  if v_seen = 0 then
+    raise exception
+      '(ل-٠ب) كل العروض الإحصائية فارغة من اتصال المالك — «صفر صف للمتعهد» لن يثبت شيئاً';
   end if;
 
   begin
@@ -1539,7 +1600,12 @@ begin
     v_built := true;
   exception
     when others then
-      raise notice '  ↳ (ل) تعذّر بناء هوية متعهد (%) — الفحص متخطّى', sqlerrm;
+      -- التخطّي مقصود لقاعدة بلا مخطط auth، لا لفيكسترة معطوبة
+      -- (النمط ٩: فحصٌ لا يمكن أن يفشل).
+      if to_regclass('auth.users') is not null then
+        raise exception '(ل) تعذّر بناء الهوية رغم وجود auth.users: % — أصلح الفيكسترة، لا تتخطَّ الفحص', sqlerrm;
+      end if;
+      raise notice '  ↳ (ل) لا مخطط auth — تعذّر بناء هوية متعهد (%) — الفحص متخطّى', sqlerrm;
   end;
 
   if not v_built then
@@ -1557,11 +1623,9 @@ begin
       raise exception '(ل-١) المتعهد لا يقرأ صف شركته (% صفاً) — الهوية غير فعّالة فلا معنى لما بعدها', v_n;
     end if;
 
-    -- (ل-٢) ومع ذلك: صفر صف من كل عرض إحصائي
-    foreach v_rel in array array[
-      'public.v_stats_orders', 'public.v_stats_dispatch', 'public.v_stats_partners',
-      'public.v_stats_content', 'public.v_stats_locales', 'public.v_stats_treasury',
-      'public.v_stats_customers']
+    -- (ل-٢) ومع ذلك: صفر صف من كل عرض إحصائي — والثامن (v_stats_discounts)
+    --       مشمول منذ 0025 بعد أن كان خارج كل فحص
+    foreach v_rel in array v_rels
     loop
       execute 'select count(*) from ' || v_rel into v_n;
       if v_n <> 0 then

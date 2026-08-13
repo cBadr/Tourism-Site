@@ -71,6 +71,23 @@ begin
   exception when others then null;
   end;
 
+  -- بقايا فيكسترة (ك-ن) — تصليب 0025 البند (٢)
+  delete from public.sections s
+   where s.page_id in ('e5000000-0000-4000-8000-00000000d001'::uuid,
+                       'e5000000-0000-4000-8000-00000000d002'::uuid);
+  delete from public.pages p where p.slug in ('hardening-tests-draft', 'hardening-tests-live');
+  delete from public.vehicle_classes vc where vc.slug = 'hardening-tests-off';
+  delete from public.locales l where l.code = 'zy';
+  delete from public.profiles p
+   where p.id in ('e5000000-0000-4000-8000-0000000000a1'::uuid,
+                  'e5000000-0000-4000-8000-0000000000a2'::uuid);
+  begin
+    delete from auth.users u
+     where u.id in ('e5000000-0000-4000-8000-0000000000a1'::uuid,
+                    'e5000000-0000-4000-8000-0000000000a2'::uuid);
+  exception when others then null;
+  end;
+
   raise notice '✔ (٠) الشروط المسبقة سليمة والأرض نظيفة';
 end;
 $$;
@@ -981,7 +998,12 @@ begin
     v_built := true;
   exception
     when others then
-      raise notice '  ↳ (ك-م) تعذّر بناء هويتَي دخول (%) — الفحص متخطّى', sqlerrm;
+      -- التخطّي مقصود لقاعدة بلا مخطط auth، لا لفيكسترة معطوبة
+      -- (النمط ٩: فحصٌ لا يمكن أن يفشل).
+      if to_regclass('auth.users') is not null then
+        raise exception '(ك-م) تعذّر بناء الهوية رغم وجود auth.users: % — أصلح الفيكسترة، لا تتخطَّ الفحص', sqlerrm;
+      end if;
+      raise notice '  ↳ (ك-م) لا مخطط auth — تعذّر بناء هويتَي دخول (%) — الفحص متخطّى', sqlerrm;
   end;
 
   if not v_built then
@@ -1068,6 +1090,213 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ك-ن) 🔒 المسجَّل لم يعد يرى ما يُحجب عن الزائر — تصليب 0025 البند (٢)
+--
+-- أربع سياسات كانت `using (true)` على دور `authenticated`:
+--   pages (0003:74) · sections (0003:124) · vehicle_classes (0005:147)
+--   · locales (0018:1087)
+-- فكل متعهد في البورتال — وهو مستخدم مسجَّل — يقرأ بها الصفحات غير المنشورة
+-- **بميتاداتاها**، والأقسام المخفية، وفئات السيارات المعطَّلة، واللغات التي لم
+-- تُفعَّل بعد. أي أن مسودة إطلاق أو صفحة تسعير قيد الإعداد كانت مقروءة لمن
+-- يُفترض أنه شريك تنفيذ لا شريك تخطيط.
+--
+-- الفحص هنا حيٌّ لا كتالوجي: هويتان حقيقيتان و`set local role authenticated`.
+-- وكل نفي يسبقه شاهد إيجابي من **نفس الجدول ونفس الدور** — بلا ذلك يمرّ
+-- «صفر صف» حتى لو كان سببه فيكسترة لم تُدرج (النمط ٩ في LESSONS).
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_admin  constant uuid := 'e5000000-0000-4000-8000-0000000000a1';
+  v_user   constant uuid := 'e5000000-0000-4000-8000-0000000000a2';
+  v_draft  constant uuid := 'e5000000-0000-4000-8000-00000000d001';
+  v_live   constant uuid := 'e5000000-0000-4000-8000-00000000d002';
+  v_s_hid  constant uuid := 'e5000000-0000-4000-8000-00000000e001';
+  v_s_vis  constant uuid := 'e5000000-0000-4000-8000-00000000e002';
+  v_s_orph constant uuid := 'e5000000-0000-4000-8000-00000000e003';
+  v_class  constant uuid := 'e5000000-0000-4000-8000-00000000c001';
+  v_built  boolean := false;
+  v_n      integer;
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    raise notice '  ↳ (ك-ن) لا دور authenticated على هذه القاعدة — الفحص متخطّى';
+    return;
+  end if;
+
+  -- ── الفيكسترة: لكل حالة محجوبة نظيرٌ ظاهر، وإلا لم يثبت الفحص إلا الحجب ──
+  delete from public.sections s where s.page_id in (v_draft, v_live);
+  delete from public.pages p where p.id in (v_draft, v_live);
+  delete from public.vehicle_classes vc where vc.id = v_class;
+  delete from public.locales l where l.code = 'zy';
+
+  insert into public.pages (id, slug, kind, title, meta, published, sort) values
+    (v_draft, 'hardening-tests-draft', 'static', 'مسودة إطلاق سرّية',
+     '{"title":"عنوان سيو لم يُنشر","description":"وصف سيو لمسودة."}'::jsonb, false, 998),
+    (v_live,  'hardening-tests-live',  'static', 'صفحة منشورة للاختبار',
+     '{"title":"عنوان سيو منشور","description":"وصف سيو منشور."}'::jsonb, true, 997);
+
+  insert into public.sections (id, page_id, type, content, sort, visible) values
+    (v_s_vis,  v_live,  'rich-text', '{"title":"قسم ظاهر على صفحة منشورة"}'::jsonb, 0, true),
+    (v_s_hid,  v_live,  'rich-text', '{"title":"قسم مخفي على صفحة منشورة"}'::jsonb, 1, false),
+    -- الحالة المركّبة: قسم **ظاهر** لكن صفحته الأمّ مسودة — يجب أن يُحجب أيضاً
+    (v_s_orph, v_draft, 'rich-text', '{"title":"قسم ظاهر تحت مسودة"}'::jsonb, 0, true);
+
+  insert into public.vehicle_classes (id, slug, title, capacity, active, sort)
+  values (v_class, 'hardening-tests-off', 'فئة معطَّلة للاختبار', 4, false, 998);
+
+  insert into public.locales (code, name, native_name, dir, is_default, enabled, auto_publish, sort)
+  values ('zy', 'لغة غير مفعّلة', 'Offish', 'ltr', false, false, false, 98);
+
+  -- اللغة zz من القسم (أ) مفعّلة — نتأكد لأنها شاهدنا الإيجابي على locales
+  update public.locales set enabled = true where code = 'zz';
+
+  begin
+    insert into auth.users (id, email) values
+      (v_admin, 'hardening-tests-admin@local.invalid'),
+      (v_user,  'hardening-tests-partner@local.invalid');
+    insert into public.profiles (id, role, full_name) values
+      (v_admin, 'admin',         'مشرف اختبار التصليب'),
+      (v_user,  'subcontractor', 'متعهد اختبار التصليب')
+    on conflict (id) do update set role = excluded.role;
+    v_built := true;
+  exception
+    when others then
+      -- التخطّي مقصود لقاعدة بلا مخطط auth، لا لفيكسترة معطوبة
+      -- (النمط ٩: فحصٌ لا يمكن أن يفشل).
+      if to_regclass('auth.users') is not null then
+        raise exception '(ك-ن) تعذّر بناء الهوية رغم وجود auth.users: % — أصلح الفيكسترة، لا تتخطَّ الفحص', sqlerrm;
+      end if;
+      raise notice '  ↳ (ك-ن) لا مخطط auth — تعذّر بناء هويتَي دخول (%) — الفحص متخطّى', sqlerrm;
+  end;
+
+  if not v_built then
+    delete from public.sections s where s.page_id in (v_draft, v_live);
+    delete from public.pages p where p.id in (v_draft, v_live);
+    delete from public.vehicle_classes vc where vc.id = v_class;
+    delete from public.locales l where l.code = 'zy';
+    return;
+  end if;
+
+  begin
+    -- ══ متعهد مسجَّل (غير مشرف) ══
+    perform set_config('request.jwt.claim.sub', v_user::text, false);
+    perform set_config('request.jwt.claims', jsonb_build_object('sub', v_user)::text, false);
+    execute 'set local role authenticated';
+
+    -- (ك-ن-١) شاهد إيجابي: يرى المنشور — فالسياسة لم تُغلق بالكامل
+    execute format('select count(*) from public.pages where id = %L', v_live) into v_n;
+    if v_n <> 1 then
+      raise exception
+        '(ك-ن-١) المسجَّل لا يرى الصفحة المنشورة (% صفاً) — السياسة أُغلقت أكثر من اللازم', v_n;
+    end if;
+
+    -- (ك-ن-٢) 🔒 ولا يرى المسودة ولا ميتاداتاها
+    execute format('select count(*) from public.pages where id = %L', v_draft) into v_n;
+    if v_n <> 0 then
+      raise exception '(ك-ن-٢) المسجَّل قرأ صفحة غير منشورة بميتاداتاها (% صفاً)', v_n;
+    end if;
+
+    -- (ك-ن-٣) شاهد إيجابي: القسم الظاهر تحت صفحة منشورة يصله
+    execute format('select count(*) from public.sections where id = %L', v_s_vis) into v_n;
+    if v_n <> 1 then
+      raise exception '(ك-ن-٣) المسجَّل لا يرى القسم الظاهر على صفحة منشورة (% صفاً)', v_n;
+    end if;
+
+    -- (ك-ن-٤) 🔒 ولا القسم المخفي
+    execute format('select count(*) from public.sections where id = %L', v_s_hid) into v_n;
+    if v_n <> 0 then
+      raise exception '(ك-ن-٤) المسجَّل قرأ قسماً مخفياً (% صفاً)', v_n;
+    end if;
+
+    -- (ك-ن-٥) 🔒 والشرط مركّب فعلاً: قسم ظاهر تحت **مسودة** محجوب أيضاً.
+    --         هذا التأكيد وحده يفشل لو نُسخ شرط الزائر ناقصاً (visible فقط).
+    execute format('select count(*) from public.sections where id = %L', v_s_orph) into v_n;
+    if v_n <> 0 then
+      raise exception
+        '(ك-ن-٥) المسجَّل قرأ قسماً ظاهراً تحت صفحة مسودة (% صفاً) — شرط نشر الصفحة الأمّ سقط', v_n;
+    end if;
+
+    -- (ك-ن-٦) شاهد إيجابي: الفئات النشطة تصله (البورتال يبني عليها قوائمه)
+    execute 'select count(*) from public.vehicle_classes where active' into v_n;
+    if v_n < 1 then
+      raise exception
+        '(ك-ن-٦) المسجَّل لا يرى فئة نشطة واحدة — البورتال (app/portal/_lib/data.ts:32) ينكسر';
+    end if;
+
+    -- (ك-ن-٧) 🔒 ولا يرى الفئة المعطَّلة
+    execute format('select count(*) from public.vehicle_classes where id = %L', v_class) into v_n;
+    if v_n <> 0 then
+      raise exception '(ك-ن-٧) المسجَّل قرأ فئة سيارات معطَّلة (% صفاً)', v_n;
+    end if;
+
+    -- (ك-ن-٨) شاهد إيجابي: اللغة المفعّلة تصله
+    execute 'select count(*) from public.locales where code = ''zz''' into v_n;
+    if v_n <> 1 then
+      raise exception '(ك-ن-٨) المسجَّل لا يرى اللغة المفعّلة (% صفاً)', v_n;
+    end if;
+
+    -- (ك-ن-٩) 🔒 ولا يرى غير المفعّلة
+    execute 'select count(*) from public.locales where code = ''zy''' into v_n;
+    if v_n <> 0 then
+      raise exception '(ك-ن-٩) المسجَّل قرأ لغة غير مفعّلة (% صفاً)', v_n;
+    end if;
+
+    execute 'reset role';
+
+    -- ══ المشرف: اللوحة لم تتعطل — وهذا نصف الاختبار لا زينته ══
+    perform set_config('request.jwt.claim.sub', v_admin::text, false);
+    perform set_config('request.jwt.claims', jsonb_build_object('sub', v_admin)::text, false);
+    execute 'set local role authenticated';
+
+    execute format('select count(*) from public.pages where id = %L', v_draft) into v_n;
+    if v_n <> 1 then
+      raise exception
+        '(ك-ن-١٠) المشرف لا يرى المسودة (% صفاً) — شاشة /admin/content فارغة من المسودات', v_n;
+    end if;
+
+    execute format('select count(*) from public.sections where id in (%L, %L)', v_s_hid, v_s_orph)
+      into v_n;
+    if v_n <> 2 then
+      raise exception
+        '(ك-ن-١١) المشرف يرى % قسماً من ٢ مخفيَّين — محرر الأقسام يفقد ما يحرره', v_n;
+    end if;
+
+    execute format('select count(*) from public.vehicle_classes where id = %L', v_class) into v_n;
+    if v_n <> 1 then
+      raise exception '(ك-ن-١٢) المشرف لا يرى الفئة المعطَّلة — شاشة /admin/fleet تفقدها';
+    end if;
+
+    execute 'select count(*) from public.locales where code = ''zy''' into v_n;
+    if v_n <> 1 then
+      raise exception '(ك-ن-١٣) المشرف لا يرى اللغة غير المفعّلة — شاشة /admin/languages تفقدها';
+    end if;
+
+    execute 'reset role';
+    perform set_config('request.jwt.claim.sub', '', false);
+    perform set_config('request.jwt.claims', '', false);
+  exception
+    when others then
+      execute 'reset role';
+      perform set_config('request.jwt.claim.sub', '', false);
+      perform set_config('request.jwt.claims', '', false);
+      raise;
+  end;
+
+  -- ── التنظيف الموضعي ──
+  delete from public.sections s where s.page_id in (v_draft, v_live);
+  delete from public.pages p where p.id in (v_draft, v_live);
+  delete from public.vehicle_classes vc where vc.id = v_class;
+  delete from public.locales l where l.code = 'zy';
+  delete from public.profiles p where p.id in (v_admin, v_user);
+  begin
+    delete from auth.users u where u.id in (v_admin, v_user);
+  exception when others then null;
+  end;
+
+  raise notice '✔ (ك-ن) المسجَّل يرى المنشور والظاهر والنشط والمفعّل وحدها، والمشرف ما زال يرى الكل';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ل) التنظيف — الفيكسترة كلها تزول، وما عداها لم يُمس
 -- ----------------------------------------------------------------------------
 do $$
@@ -1078,6 +1307,23 @@ begin
   delete from public.locales      l where l.code   = 'zz';
   delete from public.sections     s where s.page_id = 'e0000000-0000-4000-8000-000000000001'::uuid;
   delete from public.pages        p where p.slug   = 'i18n-tests-fixture';
+
+  -- فيكسترة (ك-ن) تُمسح في موضعها؛ وهذا احتياط تشغيلٍ انهار في منتصفه
+  delete from public.sections s
+   where s.page_id in ('e5000000-0000-4000-8000-00000000d001'::uuid,
+                       'e5000000-0000-4000-8000-00000000d002'::uuid);
+  delete from public.pages p where p.slug in ('hardening-tests-draft', 'hardening-tests-live');
+  delete from public.vehicle_classes vc where vc.slug = 'hardening-tests-off';
+  delete from public.locales l where l.code = 'zy';
+  delete from public.profiles p
+   where p.id in ('e5000000-0000-4000-8000-0000000000a1'::uuid,
+                  'e5000000-0000-4000-8000-0000000000a2'::uuid);
+  begin
+    delete from auth.users u
+     where u.id in ('e5000000-0000-4000-8000-0000000000a1'::uuid,
+                    'e5000000-0000-4000-8000-0000000000a2'::uuid);
+  exception when others then null;
+  end;
 
   if current_setting('tours.i18n_admin_fixture', true) = '1' then
     perform set_config('request.jwt.claim.sub', '', false);
