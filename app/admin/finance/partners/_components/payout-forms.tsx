@@ -37,6 +37,11 @@ export type Settlement = {
   earned: number | null;
   collected: number | null;
   paid: number | null;
+  /**
+   * `received` — ما سدّده لنا (هجرة 0029)، الحدّ الرابع في المعادلة. `null` تعني
+   * أن العمود غير موجود أي أن الهجرة لم تُنفَّذ — لا أنه صفر.
+   */
+  received: number | null;
   netDue: number | null;
   absNetDue: number | null;
   tripsCount: number | null;
@@ -55,6 +60,8 @@ export type CarriedValues = {
   account?: string;
   amount?: string;
   at?: string;
+  /** مرجع العملية في فرع التحصيل — يُعاد كما كتبه المشرف بعد أي رفض */
+  reference?: string;
 };
 
 /** الحساب المُعاد من الرابط لا يُقبل إلا إن كان ما زال في القائمة */
@@ -102,6 +109,27 @@ export function PayoutForm({
   const advanceHref = hrefWith(PATH, {
     pay: partner.subcontractorId,
     confirm: "advance",
+    account: carried.account,
+    amount: carried.amount,
+    at: carried.at,
+  });
+
+  /**
+   * المخرج المقابل: **التحصيل من متعهد لسنا مدينين له بشيء**.
+   *
+   * اللوح الموحّد يشتق الاتجاه من إشارة `net_due`، فمن كان الصافي في صالحه لا
+   * يفتح له إلا نموذج الدفع — ولا سبيل إلى تسجيل مال يردّه هو إلينا: يعيد زيادة
+   * قبضها من عميل، أو يصحّح فاتورة بعد اكتشاف خطأ. وهي حالة مشروعة لا نادرة،
+   * وبلا هذا الرابط تصير الميزة موجودة بلا باب (النمط ٣ في `LESSONS.md`).
+   *
+   * وشكله شكل رابط المقدَّم حرفياً: خطوة تأكيد في الرابط (‏`?confirm=collect`)،
+   * وموضعٌ ثانوي داخل الفرع المقابل، وحملُ ما كتبه المشرف حتى لا يعيد كتابته.
+   * والقاعدة لا تُسأل رأياً في هذا التجاوز — `record_partner_settlement` تقبل
+   * التحصيل في الحالتين عمداً (تجاوز الدين مسموح: سدادٌ مقدَّم أو ردٌّ لزيادة).
+   */
+  const collectHref = hrefWith(PATH, {
+    pay: partner.subcontractorId,
+    confirm: "collect",
     account: carried.account,
     amount: carried.amount,
     at: carried.at,
@@ -208,7 +236,24 @@ export function PayoutForm({
           </div>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {/*
+            ثانويٌّ عمداً وبنفس شكل رابط المقدَّم في الفرع المقابل: الدفع هو
+            الافتراضي هنا لأن الصافي في صالحه، والتحصيل منه استثناءٌ خلف خطوة
+            تأكيد. وغيابه كان يعني أن مالاً يردّه الشريك إلينا لا سبيل لقيده.
+          */}
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <Link href={collectHref} className="underline hover:text-foreground">
+              بل هو من يردّ إلينا مبلغاً — سجّله تحصيلاً…
+            </Link>
+            <HelpTip>
+              يحدث حين يردّ الشريك زيادةً قبضها من عميل، أو يصحّح فاتورة بعد
+              اكتشاف خطأ فيها — فيدخل المال خزينتنا وهو ليس مديناً لنا أصلاً.
+              الرابط يفتح نموذج التحصيل نفسه بخطوة تأكيد، ويقيّد المبلغ بدور{" "}
+              <code dir="ltr">received</code> فينقلب الصافي في اتجاهنا بمقداره —
+              وهذا صحيح لا خطأ.
+            </HelpTip>
+          </span>
           <Button type="submit" size="sm" disabled={readOnly}>
             تسجيل الدفعة
           </Button>

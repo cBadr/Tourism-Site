@@ -21,6 +21,8 @@ export const UUID_PATTERN =
 export const MAX_AMOUNT = 100_000_000;
 export const MAX_NOTE = 500;
 export const MIN_REASON = 4;
+/** مرجع العملية: رقم تحويل أو معرّف عملية — لا حقل ملاحظات ثانٍ */
+export const MAX_REFERENCE = 120;
 
 const toLatinDigits = (s: string) =>
   s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
@@ -63,6 +65,19 @@ export function noteField(formData: FormData, name = "note"): string | null {
   return note ? note.slice(0, MAX_NOTE) : null;
 }
 
+/**
+ * مرجع العملية — تحقق **شكلي بحت**: نص مقصوص على الحد، أو `null` للفارغ.
+ *
+ * وإلزاميته ليست هنا: القاعدة وحدها تقرأ `kind` من `payment_accounts` وترفع
+ * `reference-required` حين يكون الحساب غير نقدي (هجرة 0029، ق٦ فقرة ٤). وتكرار
+ * الشرط في هذه الطبقة يعني نسخة ثانية من قائمة «الأنواع النقدية» تنحرف عن
+ * الأولى أول ما يُضاف نوع حساب — والواجهة تشرح ولا تحرس.
+ */
+export function referenceField(formData: FormData, name = "reference"): string | null {
+  const reference = textField(formData, name);
+  return reference ? reference.slice(0, MAX_REFERENCE) : null;
+}
+
 /** سبب إلزامي — التسوية بلا سبب مكتوب قيد لا يُراجَع */
 export function reasonField(formData: FormData, name = "note"): string {
   const note = textField(formData, name);
@@ -90,16 +105,37 @@ const KNOWN_HINTS = new Set([
   "missing",
   "forbidden",
   "notready",
+  /**
+   * هجرة 0029 — `record_partner_settlement` ترفعه حين يكون حساب الخزينة المختار
+   * غير نقدي ولا مرجع مكتوب. يمرّ بنصّه (لا اسم مستعار له) لأن الرمز نفسه مفهوم
+   * في الرابط، ورسالته في `FINANCE_ERRORS` تقول للمشرف ماذا يكتب الآن.
+   */
+  "reference-required",
 ]);
 
 /**
- * تلميحات هجرة 0027 (سقف ديون المتعهدين) — رمزها في الشاشة يخالف نص التلميح،
- * فتُترجم هنا لا في كل مستدعٍ على حدة. بدون هذا الجدول يسقط أي مستدعٍ آخر
- * لـ `record_partner_payout` على رسالة «فشلت العملية» العامة التي لا تقول شيئاً.
+ * تلميحات تخالف رمزَها في الشاشة، فتُترجم هنا لا في كل مستدعٍ على حدة. بدون هذا
+ * الجدول يسقط كل واحد منها على رسالة «فشلت العملية» العامة التي لا تقول شيئاً
+ * ولا تدلّ على حقل.
+ *
+ * الأولان من هجرة 0027 (سقف ديون المتعهدين). والأخيران من `record_partner_settlement`
+ * في 0029، وكلاهما كان يسقط على الرسالة العامة: الدالة ترفع `account-not-found`
+ * لحساب خزينة غير موجود و`not-found` لمتعهد غير موجود، بينما الرمزان المعروفان
+ * في `FINANCE_ERRORS` هما `account` و`partner` — والرسالتان موجودتان أصلاً وتقولان
+ * للمشرف ماذا يفعل الآن («أعد تحميل الصفحة واختر من القائمة»).
+ *
+ * ⚠ و`not-found` تلميحٌ **عام في القاعدة** يعني «الصف غير موجود» لا «المتعهد غير
+ * موجود» وحده: ترفعه `reverse_ledger_entry` عن قيد مفقود، وترفعه دوال قوائم
+ * الأسعار في 0010 عن قائمة مفقودة. وترجمته إلى «المتعهد» صحيحة هنا لأن مستدعيات
+ * `rpcErrorCode` اليوم أربعة لا غير — `record_expense` و`record_adjustment`
+ * (ولا ترفعان `not-found` أصلاً) وثلاث دوال متعهد ترفعه بمعنى المتعهد وحده.
+ * فمن يضيف مستدعياً خامساً لدالة ترفعه بمعنى آخر عليه أن يفرّق قبل أن يصل هنا.
  */
 const HINT_ALIASES: Record<string, string> = {
   "partner-owing": "owing",
   "note-required": "advnote",
+  "account-not-found": "account",
+  "not-found": "partner",
 };
 
 export function rpcErrorCode(

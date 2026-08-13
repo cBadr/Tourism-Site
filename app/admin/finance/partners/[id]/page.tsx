@@ -45,6 +45,13 @@ import { type DateRange, rangeSentence, resolveRange } from "../../_components/r
  * (٣) **يُطبع أبيض على أسود بلا شريط جانبي.** قواعد `@media print` أدناه تخفي
  *     تنقّل اللوحة والفلاتر وتفكّ ألوان البطاقات، فتخرج ورقة تُسلَّم لطرف ثانٍ
  *     لا لقطة شاشة من لوحة تحكم.
+ *
+ * ── هجرة 0029: الحدّ الرابع في ورقة تُسلَّم بيد صاحبها ────────────────────────
+ * صارت المعادلة `earned − collected − paid + received`، ولهذه الصفحة تحديداً أثرٌ
+ * أخطر من غيرها: **مستند يخرج من المكتب**. فلزم أمران معاً — بطاقة «سدّده لنا»
+ * أعلى الورقة كي تُطابِق أرقامُ الترويسة الصافيَ المطبوع تحتها، وتسمية عربية
+ * للنوع `settlement` في `KIND_LABELS` كي لا يُطبع رمزٌ لاتيني على السطر الذي
+ * يوثّق سداد الشريك نفسه. وكلاهما وقع فعلاً قبل الإصلاح.
  */
 
 export const metadata = { title: "كشف حساب متعهد" };
@@ -65,6 +72,14 @@ type Summary = {
   earned: number | null;
   collected: number | null;
   paid: number | null;
+  /**
+   * `received` — ما سدّده لنا (هجرة 0029)، الحدّ الرابع في المعادلة.
+   *
+   * بدونه كانت الورقة المطبوعة تعرض ثلاثة أرقام وصافياً **لا يساوي طرحها**:
+   * شريكٌ سدّد ١٬٠٠٠ يستلم مستنداً لا يقفل حسابه بيده. و`null` تعني «العمود
+   * غير موجود» أي قاعدة قبل 0029 — لا «لم يسدّد شيئاً».
+   */
+  received: number | null;
   netDue: number | null;
   absNetDue: number | null;
   tripsCount: number | null;
@@ -82,6 +97,7 @@ const BLANK_SUMMARY: Omit<Summary, "companyName"> = {
   earned: null,
   collected: null,
   paid: null,
+  received: null,
   netDue: null,
   absNetDue: null,
   tripsCount: null,
@@ -102,10 +118,19 @@ type Loaded = {
   missing: string | null;
 };
 
+/**
+ * تسميات أنواع السطور — **خمسة لا أربعة** منذ 0029.
+ *
+ * `settlement` هو الدور الرابع (`received`) كما تسمّيه `partner_statement`.
+ * وغيابه من هذا الجدول كان يُسقط السطر على الاحتياط فيُطبع الرمز اللاتيني
+ * `settlement` عارياً وسط ورقة عربية بالكامل — وعلى السطر الذي يوثّق **سداد
+ * الشريك نفسه** في مستند يُسلَّم له بيده. أي نوع جديد في الدالة يُضاف هنا معه.
+ */
 const KIND_LABELS: Record<string, string> = {
   trip: "رحلة منفَّذة",
   collection: "تحصيل نقدي قبضه",
   payout: "دفعة سُدّدت له",
+  settlement: "سدّده لنا",
   adjustment: "تسوية",
 };
 
@@ -113,6 +138,8 @@ const KIND_HINTS: Record<string, string> = {
   trip: "رحلة نفّذها الشريك فاستحق عنها المبلغ المتفق عليه لحظة الإسناد.",
   collection: "باقي الأجرة الذي قبضه نقداً من العميل نيابةً عنا — مالنا في يده.",
   payout: "دفعة سلّمناها له من إحدى خزائننا.",
+  settlement:
+    "مبلغ ردّه الشريك إلينا نقداً أو تحويلاً فدخل إحدى خزائننا — قيدٌ واحد رفع رصيد الحساب وأنقص ما عليه لنا معاً. ومرجع التحويل في عمود «المرجع» بجواره.",
   adjustment: "تسوية يدوية بسبب مكتوب — خصم اتفاقي، غرامة، أو تصحيح إدخال.",
 };
 
@@ -189,6 +216,8 @@ async function loadStatement(id: string, range: DateRange): Promise<Loaded> {
         earned: numberOf(settlementRow, ["earned"]),
         collected: numberOf(settlementRow, ["collected"]),
         paid: numberOf(settlementRow, ["paid"]),
+        // عمود 0029 — `null` يعني «القاعدة لم تُهاجر» فتظهر «—» لا صفراً كاذباً
+        received: numberOf(settlementRow, ["received"]),
         netDue: numberOf(settlementRow, ["net_due", "netDue"]),
         absNetDue: numberOf(settlementRow, ["abs_net_due", "absNetDue"]),
         tripsCount: numberOf(settlementRow, ["trips_count", "tripsCount"]),
@@ -303,18 +332,20 @@ export default async function PartnerStatementPage({
         </h2>
         <HelpTip>
           سجل زمني لكل ما بيننا وبين الشريك: ما استحقه عن رحلاته، وما قبضه نقداً من
-          عملائنا، وما سلّمناه له. عمود الرصيد يتراكم سطراً بسطر، وآخر سطر فيه هو الرقم
-          الذي تُبنى عليه التسوية.
+          عملائنا، وما سلّمناه له، وما سدّده لنا. عمود الرصيد يتراكم سطراً بسطر، وآخر سطر
+          فيه هو الرقم الذي تُبنى عليه التسوية.
         </HelpTip>
         <div className="ms-auto flex flex-wrap items-center gap-2">
           <PrintButton />
-          {/* نموذج التسديد يعيش في شاشة المقاصات؛ بدون هذا الرابط كان الكشف
-              طريقاً مسدوداً: يقول «سجّل الدفعة» ولا سبيل إليها من هنا. */}
+          {/* لوح التسوية يعيش في شاشة المقاصات؛ بدون هذا الرابط كان الكشف طريقاً
+              مسدوداً: يقول «سجّل الدفعة» ولا سبيل إليها من هنا. والاسم «تسوية» لا
+              «دفعة» منذ 0029: اللوح يقرأ `net_due` ويفتح فرع الدفع أو فرع التحصيل
+              بنفسه، فوعدُ زرٍّ بالدفع وحده يكذب على نصف المتعهدين. */}
           <Link
             href={`/admin/finance/partners?pay=${id}`}
             className="no-print inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            سجّل دفعة
+            تسوية مع المتعهد
           </Link>
           <Link
             href="/admin/finance/partners"
@@ -359,7 +390,20 @@ export default async function PartnerStatementPage({
           )}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {/*
+          ست بطاقات: حدود المعادلة الأربعة بترتيبها، ثم الدين، ثم الصافي.
+          والرابع (‏«سدّده لنا») ليس زينة: بدونه تُطبع ثلاثة أرقام وصافٍ لا
+          يساوي طرحها، فيخرج الشريك بورقة لا تقفل بيده — وأول من يشك فيها هو
+          من سدّد للتوّ ألفاً لا يجدها مكتوبة في أي خانة.
+
+          و**ثلاثة أعمدة في صفّين لا ستة في صفّ**: العناوين هنا جملٌ لا كلمات
+          («حصّل نقداً من العملاء» يحتاج ٢٣١px)، وحاويتها `flex` فلا يلتف نصّها
+          بل يفيض. قيس ذلك على العرض الفعلي: بستة أعمدة يفيض كل عنوان، وبخمسة
+          كان اثنان يفيضان **قبل هذه الإضافة** — عيبٌ قائم صُحّح هنا معها. وثلاثة
+          تسع الجميع بلا فيض، وتُقسم المعادلة قسمةً تُقرأ: الحدود القديمة الثلاثة
+          في صف، والحدّ الجديد والدين والصافي في الذي تحته.
+        */}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               استحقّ عن رحلاته
@@ -390,6 +434,26 @@ export default async function PartnerStatementPage({
               <HelpTip>مجموع الدفعات التي خرجت من خزائننا إليه.</HelpTip>
             </span>
             <Money value={summary?.paid ?? null} currency={currency} className="font-semibold" />
+          </div>
+          <div>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              سدّده لنا
+              <HelpTip>
+                مجموع ما ردّه إلينا نقداً أو تحويلاً (‏<code dir="ltr">received</code> — هجرة
+                0029)، وكلٌّ منه سطرٌ في الكشف أدناه. دخل خزائننا فعلاً وأنقص ما عليه لنا
+                بنفس المقدار، فهو الحدّ الرابع في المعادلة:{" "}
+                <code dir="ltr">earned − collected − paid + received</code>. و«—» هنا تعني
+                أن هجرة 0029 لم تُنفَّذ على هذه القاعدة، لا أنه لم يسدّد شيئاً.
+              </HelpTip>
+            </span>
+            <Money
+              value={summary?.received ?? null}
+              currency={currency}
+              className={cn(
+                "font-semibold",
+                (summary?.received ?? 0) > 0 && "text-emerald-700 dark:text-emerald-300"
+              )}
+            />
           </div>
           <div>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -511,12 +575,25 @@ export default async function PartnerStatementPage({
                   <tr className="border-b border-border text-xs text-muted-foreground">
                     <th className="p-2 text-start font-medium">التاريخ</th>
                     <th className="p-2 text-start font-medium">البيان</th>
-                    <th className="p-2 text-start font-medium">المرجع</th>
+                    <th className="p-2 text-start font-medium">
+                      <span className="inline-flex items-center gap-1">
+                        المرجع
+                        <HelpTip>
+                          مرجع الحجز في سطور الرحلات والتحصيل، ومرجع التحويل في سطور
+                          «سدّده لنا» (هجرة 0030) — رقم العملية كما كُتب لحظة تسجيلها،
+                          وبه وحده يُطابَق السطر مع كشف الحساب البنكي. والنقدية بلا مرجع
+                          لأنها لا تُنتج رقماً.
+                        </HelpTip>
+                      </span>
+                    </th>
                     <th className="p-2 text-start font-medium">
                       <span className="inline-flex items-center gap-1">
                         له علينا (دائن)
                         <HelpTip>
-                          ما يزيد التزامنا تجاهه: مستحق رحلة نفّذها. يرفع رصيده في صالحه.
+                          ما يزيد التزامنا تجاهه، وهما أمران لا أمر واحد: مستحق رحلة
+                          نفّذها، <span className="font-semibold">وما سدّده لنا</span> —
+                          فسداده يُنقص دينه أي يرفع رصيده في صالحه، ولذلك يقع في هذا
+                          العمود لا في المقابل.
                         </HelpTip>
                       </span>
                     </th>

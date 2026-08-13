@@ -15,8 +15,8 @@
 
 | الطبقة | أين | ماذا تملك فعلاً |
 |---|---|---|
-| منطق العمل والمال | `supabase/migrations/*.sql` | الجداول والدوال والـ views والمشغّلات وسياسات RLS — **٢٨ ملفاً** مطبَّقاً (`0001` … `0028`)، والرقم الحر التالي `0029` |
-| عقود الأنواع | `lib/*-types.ts` (**١١ ملفاً**) | نسخة TypeScript من تواقيع SQL + **ترويسة عربية تشرح القرار ومبرره** |
+| منطق العمل والمال | `supabase/migrations/*.sql` | الجداول والدوال والـ views والمشغّلات وسياسات RLS — **٣٠ ملفاً** مطبَّقاً (`0001` … `0030`)، والرقم الحر التالي `0031` **محجوز للدفعة ٣** |
+| عقود الأنواع | `lib/*-types.ts` (**١٢ ملفاً**) | نسخة TypeScript من تواقيع SQL + **ترويسة عربية تشرح القرار ومبرره**. والثاني عشر `extras-types.ts` **عقدٌ مكتوب لمرحلة لم تبدأ** (الدفعة ٣) — وهذا هو العرف: الموجز والعقد قبل أول سطر SQL |
 | الوصول للقاعدة | `lib/supabase/{client,server,admin}.ts` | ثلاثة عملاء لا رابع لهم |
 | التصيير | `app/**` | Server Components افتراضياً؛ `"use client"` محصور في `_components/` |
 | الحراسة والتوجيه | `proxy.ts` في الجذر | صيانة ← تحويلات ← لغة ← حارس `/admin` |
@@ -90,7 +90,7 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 | RLS | مفعّلة على كل جدول عام؛ السياسات مكتوبة بتعليقات عربية داخل الهجرة نفسها |
 | `revoke` ثم `grant` | **إلزامي في كل ترحيل ينشئ جداول** — Supabase تمنح الأدوار العامة صلاحيات واسعة افتراضياً على الجداول الجديدة، ومنها `TRUNCATE` وهي **لا تخضع لـ RLS إطلاقاً** (`0005_pricing.sql:109`، `0007_booking.sql:1259`) |
 | `security definer` | كل دالة تتجاوز RLS تثبّت `set search_path = ''` وتؤهّل كل مرجع (`public.bookings`, `auth.users`) |
-| الحدود البنيوية | `quote_public()` بلا أعمدة داخلية · `portal_offers()` بلا أعمدة عميل **ولا مرجع حجز** (‏`0028`) · `coverage_matches` و`partner_debt` و`partner_over_debt_limit` و`partner_credit_config` **غير ممنوحة لأي دور مستخدم** (`0011` · `0027`) · `find_booking_by_reference` غير ممنوحة لـ `anon` ولا `authenticated` (‏`0027`) |
+| الحدود البنيوية | `quote_public()` بلا أعمدة داخلية · `portal_offers()` بلا أعمدة عميل **ولا مرجع حجز** (‏`0028`) · `coverage_matches` و`partner_debt` و`partner_over_debt_limit` و`partner_credit_config` **غير ممنوحة لأي دور مستخدم** (`0011` · `0027`) · `find_booking_by_reference` غير ممنوحة لـ `anon` ولا `authenticated` (‏`0027`) · **و`portal_balance()` بلا وسيط إطلاقاً** (‏`0029`): أحدث تطبيق لقاعدة «**الحدّ في التوقيع**» — فالنطاق داخلها عبر `current_subcontractor_id()` ولا يمكن تمرير معرّف متعهد آخر ولو بالتجربة، ونوع إرجاعها **لا يحمل `debt_limit`** أصلاً (‏`0030`). وهي الاستثناء الوحيد في عائلة دوال الائتمان الممنوح لـ `authenticated`، **وما يبرّره أنها لا تستطيع أن تُسأل عن غير صاحبها لا أنها تفحص من يسأل** (D-51 · D-53) |
 | الحواجز في **الجدول** لا في الدالة | `trip_offers_one_accepted_key` (فهرس فريد جزئي، `0013`) · حارس «لا يفوز متعهد غير معتمد» (`0014`) · و`0027` يضيف مُشغّلَين: `trip_offers_guard_accept` (سقف الدين) و`partner_payouts_guard_owing` (لا دفعة لمدين). **السبب واحد في كل مرة:** الفحص داخل دالة يتخطاه إدراجٌ مباشر عبر PostgREST أو محرر SQL |
 | الأقل صلاحية | جدولا الكاش بلا أي `grant` للأدوار العامة · `booking_lookup_attempts` بلا منح لأي دور **وبلا سياسة واحدة** (`0027`) · `create_booking` لـ `service_role` وحده · لا `insert` على `bookings` لأحد غيرها |
 | التجاوز البشري بابٌ مسمّى | `manual_assign_with_loss` (أرضية الهامش) · `manual_assign_over_limit` (سقف الدين) · `record_partner_payout_advance` (الدفع لمدين) — لا وسيط `force` ولا استثناء صامت، والاسم نفسه يجعل القرار ظاهراً في سجل الاستدعاءات |
@@ -104,7 +104,7 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 
 | الخاصية | التفصيل |
 |---|---|
-| المكان | `supabase/migrations/0001_core.sql` … `0028_batch_two_hardening.sql` (**٢٨ ملفاً، كلها مطبَّقة**؛ الرقم الحر التالي `0029`) |
+| المكان | `supabase/migrations/0001_core.sql` … `0030_partner_settlement_hardening.sql` (**٣٠ ملفاً، كلها مطبَّقة**؛ الرقم الحر التالي `0031` وهو **محجوز للدفعة ٣**) |
 | الأداة | `pnpm db:migrate` → `scripts/db-migrate.mjs` — يتصل بالسحابة عبر `DATABASE_URL` بمكتبة `pg`، ويتتبع في `public.schema_migrations(name, applied_at)` |
 | الذرّية | كل ملف داخل `begin/commit` مستقل؛ الفشل يُرجع الملف كاملاً ويوقف التنفيذ |
 | إعادة التنفيذ | كل ملف idempotent: `create table if not exists` · `create or replace function` · `drop policy if exists` · كتل `do $$ … $$` |
@@ -132,7 +132,9 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 | `0026_phone_normalization` | الدفعة ١ | `normalize_phone()` بشكل معياري محسوم (‏`01XXXXXXXXX`، والرقم الأجنبي **لا يُخمَّن** بل يُعاد كما هو) + **`bookings.phone_norm` عمود مولَّد مخزَّن** بفهرسه (ومسار احتياطي بمُشغّل حين تتعذّر الأعمدة المولَّدة) + فهرس على `coupon_redemptions` + إعادة بناء هوية العميل في `v_stats_customers` و`section_stats('customers')` و`apply_discount` و`redeem_coupon`. **قبله كان `01012345678` و`+201012345678` أربعة عملاء مختلفين** ⇒ «العميل العائد» كذبة، وسقف الكوبون لكل عميل يُخترق بإضافة `+2` |
 | `0027_batch_two` · `0028_batch_two_hardening` | الدفعة ٢ | **٠٢٧:** `trip_settings` + `trip_config()` + `cancel_stale_bookings()` · عمودا `payments` الجديدان والحجب **داخل `get_booking_by_token`** + `admin_attach_receipt()` + `set_receipt_visibility()` · `partner_credit_settings` + `partner_credit_config()` + `partner_debt()` + `partner_over_debt_limit()` + **مُشغّلا جدول** على `trip_offers` و`partner_payouts` + `manual_assign_over_limit()` + `record_partner_payout_advance()` + عمودان مُلحقان بـ `v_partner_settlements` · `booking_lookup_attempts` + `find_booking_by_reference()`. **٠٢٨ (تصليب بعد مراجعتين):** `partner_trip_code()` بدل مرجع العميل في `portal_offers`/`portal_trips` (**العيب الحرج** — D-46) · الكنس يستثني نشاط الإيصالات ولنافذة سماح البوابة **أرضية ساعة** · سحب صلاحية `trip_offers_guard_accept()` |
 
-> **`0028` أوضح مثال حيّ على D-03:** `0027` كانت مطبَّقة حين أمسكت المراجعتان عيوبها، فذهب العلاج كله إلى ملف جديد ولم يُعدَّل حرفٌ في المطبَّق.
+| `0029_partner_settlement` · `0030_partner_settlement_hardening` | التحصيل من المتعهد | **٠٢٩:** الدور الرابع `received` في قيدَي `settlement_role` معاً (**كلاهما حيٌّ في القاعدة**، وتوسيع أحدهما وحده يترك الآخر يرفض) والمصدر السابع `partner_settlement` · جدول `partner_settlements` بمرجع العملية ومُشغّلاه (قيدٌ واحد عند الإدراج، ومقابلٌ عند الحذف) · `v_partner_settlements` بالمعادلة الرباعية و`received` عموداً **١١** · `partner_statement` بالدور الرابع في **موضعَي** الإشارة وبالنوع `settlement` · `record_partner_settlement()` بمرجع إلزامي لغير النقدية · **إغلاق فخ المبلغ السالب** في `record_partner_adjustment` · `portal_balance()` بلا وسيط. **٠٣٠ (تصليب بعد مراجعتين):** إسقاط `debt_limit` من إرجاع البورتال (**العيب الأعلى، ومصدره المواصفة نفسها**) · الحارس البنيوي أُعيدت صياغته ليعدّ **بالاسم** بعد أن كان لا يمكن أن يفشل · ومرجع العملية صار **مقروءاً** في الكشف و**مجمَّداً** في `finance_rows_immutable` |
+
+> **`0028` و`0030` أوضح مثالين حيَّين على D-03:** الملف السابق كان مطبَّقاً حين أمسكت المراجعتان عيوبه، فذهب العلاج كله إلى ملف جديد ولم يُعدَّل حرفٌ في المطبَّق.
 
 ---
 

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { isMissingTable } from "@/lib/dispatch/settings";
+import { isMissingFunction, isMissingTable } from "@/lib/dispatch/settings";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
   amountField,
@@ -12,13 +12,25 @@ import {
   numberField,
   occurredAtField,
   reasonField,
+  referenceField,
   rpcErrorCode,
   uuidField,
 } from "../_components/form";
 import { cairoInstantForDate } from "../_components/range";
 
 /**
- * إجراءات المقاصة: تسجيل دفعة لمتعهد، والمقدَّم الصريح، وضبط سقف الديون.
+ * إجراءات المقاصة: التسوية الموحّدة باتجاهيها، والمقدَّم الصريح، وسقف الديون.
+ *
+ * ── التسوية الموحّدة (هجرة 0029، و١) ────────────────────────────────────────
+ * الشاشة صارت **مدخلاً واحداً** لكل متعهد، والاتجاه يُشتق من `net_due` في
+ * `v_partner_settlements` لا من اختيار المشرف:
+ *
+ *   `net_due > 0` (له علينا) ⇒ `record_partner_payout`   — دفع، كما هو اليوم
+ *   `net_due < 0` (عليه لنا) ⇒ `record_partner_settlement` — تحصيل، الاتجاه الجديد
+ *
+ * والسبب أن اختيار الاتجاه باليد صنفٌ كامل من خطأ المشغّل لا حالة نادرة: أن
+ * تدفع لمن عليه لك، أو تحاول تسجيل تحصيل دفعةً — وكلاهما يزيد الدين بدل أن
+ * ينقصه. والاشتقاق نفسه يقع في `settlementDirection` على إشارة عمود واحد.
  *
  * الدفعة حركتان في قيد واحد تكتبه `record_partner_payout`: خروج نقد من حساب
  * خزينة، وخصم من الالتزام تجاه الشريك. لذلك لا يُحسب هنا صافٍ جديد ولا يُقارن
@@ -62,6 +74,12 @@ type Carried = {
   amount?: number | null;
   /** تاريخ الحركة `YYYY-MM-DD` كما كتبه المشرف */
   at?: string | null;
+  /**
+   * مرجع العملية في فرع التحصيل. حمله ليس تجميلاً: أشيع رفضٍ في هذا النموذج هو
+   * `reference-required`، وبلا حمله يفقد المشرف رقم التحويل الذي نسخه من إشعار
+   * العملية كلما ردّته القاعدة — فيعود إلى تطبيق البنك ليجده مرة أخرى.
+   */
+  reference?: string | null;
 };
 
 const formUrl = (subcontractor: string, carried: Carried): string => {
@@ -73,6 +91,7 @@ const formUrl = (subcontractor: string, carried: Carried): string => {
     qs.set("amount", String(carried.amount));
   }
   if (carried.at) qs.set("at", carried.at);
+  if (carried.reference) qs.set("reference", carried.reference);
   return `${PATH}?${qs.toString()}`;
 };
 
@@ -122,6 +141,108 @@ export async function recordPartnerPayout(formData: FormData) {
 
   revalidatePath("/admin/finance", "layout");
   redirect(url("saved=1"));
+}
+
+/** أول صف من نتيجة دالة جدولية — `record_partner_settlement` ترجع صفاً واحداً */
+const firstRow = (data: unknown): Record<string, unknown> | null =>
+  Array.isArray(data) ? ((data[0] as Record<string, unknown>) ?? null) : null;
+
+/**
+ * تمرير رقم أرجعته القاعدة إلى الرابط **كما هو** — لا تقريب ولا إعادة حساب.
+ *
+ * PostgREST قد يمرّر `numeric` رقماً أو نصاً بحسب الإعداد، فيُقبل الشكلان ويُرفض
+ * ما عداهما. وما يُرفض هنا لا يُستبدل بصفر: البطاقة تعرض «—» ويبقى الجدول أسفلها
+ * هو الحقيقة المقروءة من العرض.
+ */
+const passThrough = (value: unknown): string | null => {
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed !== "" && Number.isFinite(Number(trimmed)) ? trimmed : null;
+  }
+  return null;
+};
+
+/**
+ * تحصيل من متعهد — الاتجاه الثاني للحساب المفتوح (هجرة 0029).
+ *
+ * تُستدعى من فرع «عليه لنا» في التسوية الموحّدة وحده، ولا تختار اتجاهاً بنفسها:
+ * الاختيار وقع في الشاشة على إشارة `net_due`، والقاعدة تكتب القيد بدور `received`
+ * على حساب خزينة حقيقي — فيرتفع الرصيد وينخفض الدين بقيدٍ واحد.
+ *
+ * **لا يُقارن المبلغ بالدين هنا ولا يُقصّ عليه.** الجزئي هو العرف (يسدّد على
+ * دفعات)، والزائد على الدين مشروع أيضاً فيقلب الصافي إلى موجب — وقصّ ما كتبه
+ * المشرف صامتاً كان سيعني قيداً بمبلغ لم يُسلَّم فعلاً، وهو أسوأ من رقم يبدو
+ * غريباً في الشاشة.
+ *
+ * وإلزامية المرجع لغير النقدية تُفرض في القاعدة وحدها (‏`reference-required`):
+ * الشاشة لا تعرف نوع الحساب إلا مما حمّلته، والقاعدة تعرفه يقيناً. الواجهة
+ * تشرح — والحارس واحد لا اثنان ينحرفان.
+ */
+export async function recordPartnerSettlement(formData: FormData) {
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url("error=env"));
+
+  const subcontractor = uuidField(formData, "subcontractor");
+  if (!subcontractor) redirect(url("error=partner"));
+
+  const back = (code: string, carried: Carried = {}) =>
+    formUrl(subcontractor, { error: code, ...carried });
+
+  const account = uuidField(formData, "account");
+  if (!account) redirect(back("account"));
+
+  const amount = amountField(formData);
+  if (typeof amount === "string") redirect(back(amount, { account }));
+
+  const occurredAt = occurredAtField(formData);
+  if (occurredAt === "date" || occurredAt === "future") {
+    redirect(back(occurredAt, { account, amount }));
+  }
+
+  const reference = referenceField(formData);
+  const kept: Carried = { account, amount, at: occurredAt, reference };
+
+  const { data, error } = await supabase.rpc("record_partner_settlement", {
+    p_sub: subcontractor,
+    p_account: account,
+    p_amount: amount,
+    p_at: cairoInstantForDate(occurredAt),
+    p_reference: reference,
+    p_note: noteField(formData),
+  });
+
+  if (error) {
+    /**
+     * «الدالة غير موجودة» = هجرة 0029 لم تُنفَّذ بعد، ورسالتها تخصّها بالاسم
+     * والرقم لا رسالة `notready` العامة التي تحيل إلى هجرة 0015. أما ٤٢٥٠١
+     * (رفض صلاحية) و`forbidden` و`reference-required` فيصنّفها `rpcErrorCode`.
+     */
+    redirect(
+      back(isMissingFunction(error.code) ? "settlenotready" : rpcErrorCode(error), kept)
+    );
+  }
+
+  /**
+   * ما يسافر في الرابط: **المبلغ المُسجَّل وحده**.
+   *
+   * كان يسافر معه `net` (موقف المتعهد) و`bal` (رصيد حساب الخزينة كاملاً). والرابط
+   * ليس قناة خاصة: يستقر في تاريخ المتصفح، وفي سجلات الخادم، وفي ترويسة `Referer`
+   * لأي رابط خارجي يُنقر من الصفحة بعدها. ورصيد الخزينة تحديداً هو **أعمق رقم في
+   * الشركة** ولا شأن له بهذه العملية أصلاً.
+   *
+   * ولا يضيع شيء بحذفهما: الصافي تقرؤه الصفحة من `v_partner_settlements` والرصيد
+   * من `v_account_balances` بعد `revalidatePath` أدناه — أي **أحدث** مما كان في
+   * الرابط لا أقدم، ومن مصدرهما لا من نسخة منقولة. والمبلغ يبقى لأنه ما كتبه
+   * المشرف للتوّ ولا مصدر ثانياً له في الصفحة.
+   */
+  const row = firstRow(data);
+  const done = new URLSearchParams({ saved: "settlement", who: subcontractor, acc: account });
+  const settled = passThrough(row?.amount);
+  if (settled !== null) done.set("amt", settled);
+
+  revalidatePath("/admin/finance", "layout");
+  redirect(url(done.toString()));
 }
 
 /**

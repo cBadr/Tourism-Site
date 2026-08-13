@@ -91,11 +91,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * وصياغة الإشارة لا تُكتب في هذا الملف: `settlementWording` في شاشات المالية هي
  * مصدرها الوحيد لخمس شاشات، وهذه إحداها. كانت هنا نسخة يدوية منها (‏`-netDue`
  * وجملٌ مكرّرة) فحُذفت — نسختان تنحرفان أول ما تتغير واحدة.
+ *
+ * وهجرة 0029 جعلت المعادلة **رباعية**: `earned − collected − paid + received`.
+ * فبلا قراءة `received` كانت هذه البطاقة تعرض ثلاثة أرقام وصافياً لا يساوي
+ * طرحها — وهو ما يجعل المالك يشك في الصافي وهو سليم.
  */
 type Settlement = {
   earned: number | null;
   collected: number | null;
   paid: number | null;
+  /** `received` (0029) — ما سدّده لنا. null = العمود غائب أي الهجرة لم تُنفَّذ */
+  received: number | null;
   netDue: number | null;
   /** `abs_net_due` (0017) — حجم الصافي بلا إشارة، محسوباً في القاعدة */
   absNetDue: number | null;
@@ -154,6 +160,7 @@ async function loadSettlement(
       earned: asNumber(pick(row, ["earned"])),
       collected: asNumber(pick(row, ["collected"])),
       paid: asNumber(pick(row, ["paid"])),
+      received: asNumber(pick(row, ["received"])),
       netDue: asNumber(pick(row, ["net_due", "netDue"])),
       absNetDue: asNumber(pick(row, ["abs_net_due", "absNetDue"])),
       tripsCount: asNumber(pick(row, ["trips_count", "tripsCount"])),
@@ -359,7 +366,8 @@ function SettlementTile({
 /**
  * ملخص المقاصة — الرقم الذي يُدفع أو يُطالَب به، بصياغة تحترم إشارته.
  *
- * المعادلة كلها في Postgres: `net_due = مستحقاته − ما حصّله نقداً − ما دفعناه`.
+ * المعادلة كلها في Postgres، و**بأربعة حدود** منذ 0029:
+ * `net_due = مستحقاته − ما حصّله نقداً − ما دفعناه له + ما سدّده لنا`.
  * وهذه البطاقة **لا تقرأ الإشارة بنفسها**: `settlementWording` في شاشات المالية
  * تقرؤها لخمس شاشات، ومنها تصل النبرة والجملة وحجم الرقم ووسم سقف الدين. كانت
  * هنا نسخة يدوية (‏`-netDue` وثلاث جمل مكرّرة) — والنسختان تنحرفان أول تعديل.
@@ -401,7 +409,9 @@ function SettlementCard({
             العميل يدفع لنا عرباناً ويسلّم الباقي <span className="font-semibold">نقداً
             للسائق</span>. فالمتعهد يخرج من الرحلة وقد قبض جزءاً من مالنا ونحن مدينون له
             بمستحقه كاملاً. لذلك: <span className="font-semibold">الصافي = مستحقاته − ما
-            حصّله نقداً − ما سبق أن دفعناه له</span>، وقد ينقلب سالباً فيصير هو المدين لنا.
+            حصّله نقداً − ما سبق أن دفعناه له + ما سدّده لنا</span> — أربعة حدود منذ هجرة
+            0029، والحدّ الرابع هو ما يستقبل سداد المتعهد فيخفض دينه بدل أن يعمّقه. وقد
+            ينقلب الصافي سالباً فيصير هو المدين لنا.
           </HelpTip>
         </h3>
         <Link
@@ -461,7 +471,15 @@ function SettlementCard({
             </div>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/*
+            خمس خانات: حدود المعادلة الأربعة بترتيبها، ثم الدين المرصود.
+
+            وثلاثة أعمدة لا خمسة: العناوين جملٌ لا كلمات، وحاويتها `flex` فلا
+            يلتف نصّها بل يفيض. قيس على العرض الفعلي داخل `max-w-4xl`: بخمسة
+            أعمدة يفيض كل عنوان، وبأربعة كان أولان يفيضان **قبل هذه الإضافة** —
+            عيبٌ قائم صُحّح معها. وثلاثة تسع الجميع بلا فيض.
+          */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <SettlementTile
               title="مستحقاته عن الرحلات"
               value={settlement.earned}
@@ -479,6 +497,12 @@ function SettlementCard({
               value={settlement.paid}
               currency={currency}
               help="مجموع الدفعات النقدية المسجَّلة له في الدفتر حتى الآن. كل دفعة تُسجَّل من شاشة كشف الحساب فتُنقص الصافي فوراً."
+            />
+            <SettlementTile
+              title="سدّده لنا"
+              value={settlement.received}
+              currency={currency}
+              help="مجموع ما ردّه إلينا نقداً أو تحويلاً (received — هجرة 0029). دخل خزائننا فعلاً وأنقص ما عليه لنا بنفس المقدار، فهو الحدّ الرابع في المعادلة: الصافي = مستحقاته − ما حصّله نقداً − ما دفعناه له + ما سدّده لنا. و«—» هنا تعني أن هجرة 0029 لم تُنفَّذ على هذه القاعدة، لا أنه لم يسدّد شيئاً."
             />
             <SettlementTile
               title="عليه لنا"

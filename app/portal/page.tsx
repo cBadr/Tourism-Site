@@ -22,20 +22,25 @@ import {
 } from "@/components/portal/portal-ui";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { getSettings } from "@/lib/settings";
 import type { PriceListStatus } from "@/lib/subcontractor-types";
 import { cn } from "@/lib/utils";
-import { isPriceListStatus } from "./_lib/data";
+import { PortalBalanceCard } from "./_components/balance-card";
+import { loadPortalBalance } from "./_lib/balance";
+import { isPriceListStatus, loadCurrency } from "./_lib/data";
 import { isSchemaMissing, portalAccess } from "./_lib/session";
 
 /**
  * لوحة المتعهد — أول ما يراه الشريك بعد الدخول.
  *
- * غرضها سؤال واحد: «ما الذي يمنع أسعاري من العمل الآن؟». لذلك ليست لوحة أرقام
- * بل قائمة تحقق قصيرة تنتهي كل بند فيها برابط إلى الشاشة التي تُنجزه، يليها شرح
- * صريح لآلية التسعير — فالمتعهد الذي يفهم أن سعره تكلفة لا سعر بيع يُسعّر بدقة،
- * والذي لا يفهمها يضخّم أرقامه فيخسر العروض بلا أن يدري لماذا.
+ * غرضها سؤالان بترتيبهما: **«ما حالة حسابي الآن؟»** ثم «ما الذي يمنع أسعاري من
+ * العمل؟». فبطاقة الحساب تتصدّر — وهي وحدها ما يشرح للمتعهد المحجوب لماذا توقفت
+ * الرحلات وبكم تعود — تليها قائمة تحقق قصيرة ينتهي كل بند فيها برابط إلى الشاشة
+ * التي تُنجزه، ثم شرح صريح لآلية التسعير: فالمتعهد الذي يفهم أن سعره تكلفة لا
+ * سعر بيع يُسعّر بدقة، والذي لا يفهمها يضخّم أرقامه فيخسر العروض بلا أن يدري.
  *
- * لا حساب مالي هنا: الأعداد عدّ صفوف، والهامش والسعر النهائي يقعان في Postgres.
+ * لا حساب مالي هنا: الأعداد عدّ صفوف، وكل أرقام الحساب تصل جاهزة بإشارتها من
+ * `portal_balance()`، والهامش والسعر النهائي يقعان في Postgres.
  */
 
 export const metadata = { title: "لوحة المتعهد" };
@@ -93,12 +98,17 @@ export default async function PortalDashboardPage() {
 
   const { supabase, sub } = access;
 
-  const [vehiclesRes, listsRes] = await Promise.all([
+  const [vehiclesRes, listsRes, balance, currency, settings] = await Promise.all([
     supabase
       .from("subcontractor_vehicles")
       .select("id", { count: "exact", head: true })
       .eq("subcontractor_id", sub.id),
     supabase.from("price_lists").select("status").eq("subcontractor_id", sub.id),
+    // بلا وسيط إطلاقاً: نطاق الدالة مثبَّت داخلها على صاحب الجلسة (`_lib/balance.ts`)
+    loadPortalBalance(),
+    loadCurrency(supabase),
+    // قنوات تواصل الإدارة لشريط الحجب — من الإعدادات لا من الكود، والنداء مُذاكَر مع الغلاف
+    getSettings(),
   ]);
 
   const fleetReady = !vehiclesRes.error || !isSchemaMissing(vehiclesRes.error);
@@ -127,6 +137,12 @@ export default async function PortalDashboardPage() {
         الإدارة وما ينتظر المراجعة.
       </PageHeading>
 
+      {/*
+        الحساب يتصدّر: المتعهد المحجوب عن الرحلات يجب أن يقرأ سبب توقفها والمبلغ
+        الذي يعيدها قبل أي شيء آخر في الصفحة — لا تحت قائمة تحقق ولا في شاشة ثانية.
+      */}
+      <PortalBalanceCard result={balance} currency={currency} contact={settings.contact} />
+
       <Card className="gap-3 p-5">
         <div className="flex flex-wrap items-center gap-2">
           <ShieldCheck className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -139,9 +155,8 @@ export default async function PortalDashboardPage() {
           ) : null}
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          حسابك معتمد، فتدخل قوائم أسعارك المعتمدة في تسعير الرحلات التي تغطيها فور اعتمادها.
-          استقبال الطلبات وإسنادها يُفعَّل في مرحلة لاحقة، ولا يتطلب منك شيئاً الآن سوى أن تبقى
-          بياناتك وأسعارك محدّثة.
+          حسابك معتمد: قوائم أسعارك المعتمدة تدخل تسعير الرحلات التي تغطيها، وتصلك عروض تلك
+          الرحلات في صندوق الطلبات. أبقِ بياناتك وأسعارك محدّثة ليبقى وصول العروض متصلاً.
         </p>
       </Card>
 

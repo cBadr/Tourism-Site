@@ -24,8 +24,13 @@
 | `lib/analytics-types.ts` | ١٠ | الخدمات السبع وأنماط معرّفاتها · أحداث القمع الستة و`FunnelPayload` · عقد `StatCard`/`StatSeries` · شكل `funnel_events` · **قاعدة صفر PII**. ⚠ تعليق التواقيع فيه يذكر `section_stats` و`funnel_daily` ولا يذكر `funnel_summary` ولا `funnel_counts` — فجوة موثَّقة في `OPEN_TASKS.md` |
 | `lib/agent-types.ts` | ١١ | وكيل الذكاء الاصطناعي — **مكتوب ولم يُنفَّذ**: المزوّدون والسقوف وإطار «وضعان لكل قدرة» وسجل الإجراءات (D-37) |
 | `lib/discount-types.ts` | ١٢أ | الكوبونات وبانرات العروض و`discount_settings` · توقيع `apply_discount` وقاعدة **تقليص الخصم لا رفضه** عند أرضية الهامش |
+| `lib/extras-types.ts` | الدفعة ٣ | **مكتوب ولم يُنفَّذ** (الهجرة `0031` المحجوزة): تاريخ العودة واشتقاق الانتظار · الحقائب · الخدمات الإضافية. وفيه ثلاثة قرارات حسمها بدر نصاً، أهمها أن **الخدمة طبقةٌ بعد الذروة وخارج أساس الهامش والخصم** — فتصير الجراحة إضافةً لا إعادة ترتيب |
 
-> **أحد عشر ملفاً لا تسعة.** وثلاثة منها وسّعتها الدفعة ٢: `booking-types.ts` (‏`TripSettings` · `ReceiptStatus`/`PaymentReceiptRow` · `BookingLookupErrorCode`) · `finance-types.ts` (‏`PartnerCreditSettings`) · `dispatch-types.ts` (رمز المتعهد بدل مرجع العميل، السطر ٧٧).
+> **اثنا عشر ملفاً لا تسعة.** وثلاثة منها وسّعتها الدفعة ٢: `booking-types.ts` (‏`TripSettings` · `ReceiptStatus`/`PaymentReceiptRow` · `BookingLookupErrorCode`) · `finance-types.ts` (‏`PartnerCreditSettings`) · `dispatch-types.ts` (رمز المتعهد بدل مرجع العميل، السطر ٧٧).
+>
+> **ووسّع التحصيلُ من المتعهد `finance-types.ts` مرة أخرى** (‏`0029`): `PartnerSettlementRole` بأربعة أدوار · `LedgerSource` بمصدر سابع `partner_settlement` · `PartnerSettlementReceiptRow` · `received` في `PartnerSettlement` · `settlement` في `PartnerStatementLine.kind` · وتواقيع `record_partner_settlement` و`portal_balance`.
+>
+> ⚠ **وفيه بندٌ متأخّر عن الواقع:** تعليق التواقيع يصف `portal_balance()` بأنها تُرجع `debt_limit` — **وقد أُسقط في `0030`** (D-53)، ولا تقرؤه أي واجهة. تصحيحه في أول تعديل يلمس الملف؛ ومَن يقرؤه اليوم فليقرأ `0030` معه.
 
 ---
 
@@ -33,8 +38,9 @@
 
 | المسار | ماذا فيه |
 |---|---|
-| `supabase/migrations/0001…0028*.sql` | **٢٨ ترحيلاً** مطبَّقاً، والرقم الحر التالي `0029` — خريطتها بالمرحلة في `ARCHITECTURE.md` القسم ٧ |
-| `supabase/tests/*.sql` | **١٤ مجموعة**: `quote` · `booking` · `coverage` · `dispatch` · `finance` · `i18n` · `payment` · `analytics` · `discount` (١٢أ) · `phone` (الدفعة ١) · **`trip_settings` · `receipt` · `partner_credit` · `lookup`** (الدفعة ٢) |
+| `supabase/migrations/0001…0030*.sql` | **٣٠ ترحيلاً** مطبَّقاً، والرقم الحر التالي `0031` **محجوز للدفعة ٣** — خريطتها بالمرحلة في `ARCHITECTURE.md` القسم ٧. والأخيران: `0029_partner_settlement.sql` (الدور الرابع `received` · جدول `partner_settlements` ومُشغّلاه · `record_partner_settlement` · `portal_balance` · إغلاق فخ المبلغ السالب) و`0030_partner_settlement_hardening.sql` (إسقاط `debt_limit` من البورتال · الحارس البنيوي بصيغة قابلة للفشل · المرجع مقروء ومجمَّد) |
+| `supabase/tests/*.sql` | **١٥ مجموعة**: `quote` · `booking` · `coverage` · `dispatch` · `finance` · `i18n` · `payment` · `analytics` · `discount` (١٢أ) · `phone` (الدفعة ١) · `trip_settings` · `receipt` · `partner_credit` · `lookup` (الدفعة ٢) · **`partner_settlement`** (‏`0029`/`0030`) |
+| `supabase/tests/partner_settlement_tests.sql` | ١٬٥٣٢ سطراً، و**كل كتلة تكتب قيداً تُرجِع نفسها** بـ `raise exception 'ROLLBACK_MARKER'` داخل كتلة استثناء (نقطة حفظ ضمنية) — لأنها تعمل على قاعدة بدر الحيّة بدفترها الحقيقي، وقسمٌ خاص يبرهن أن الإرجاع وقع فعلاً. والمتعهدان والحسابان من صنعها وحدها بوسم `PARTNER_SETTLEMENT_FIXTURE`. **ولا تمسّ `partner_credit_settings` إطلاقاً** |
 | `supabase/README.md` | دليل الربط خطوة بخطوة + **الفخّان الشائعان**: مصدرا صلاحيات `anon`، و«`UPDATE` ينجح بصفر صفوف» |
 | `scripts/db-migrate.mjs` | `pnpm db:migrate` (+ `--upto 0015`) — نواة أداة الـ Whitelabel لاحقاً |
 | `scripts/db-test.mjs` | `pnpm db:test [filter]` |
@@ -74,7 +80,7 @@
 | الطلبات | `app/admin/orders/` (+ `[id]/actions.ts` و`[id]/dispatch-actions.ts` و`[id]/_components/`) | الحجوزات، تحقق الإيصالات، الإسناد اليدوي. **والدفعة ٢ أضافت هنا:** نموذج رفع الإيصال نيابة عن العميل ومفتاح ظهور لكل إيصال (`admin_attach_receipt` · `set_receipt_visibility`) · الإسناد فوق سقف الدين (`manual_assign_over_limit`) · عرض **رمز المتعهد** `partner_trip_code` كي يشترك التشغيل والمتعهد في معرّف واحد (D-46) |
 | البث | `app/admin/dispatch/` | إعدادات الموجات والطابور اليدوي |
 | المتعهدون | `app/admin/subcontractors/` (+ `[id]` و`reviews`) | الاعتماد، الملفات، مراجعة قوائم الأسعار |
-| المالية | `app/admin/finance/` (+ `treasury` · `expenses` · `partners/[id]` · **`partners/_components/`**) | الخزينة، المصروفات، كشوف المتعهدين والمقاصة. و`partners/_components/`: **`credit-card.tsx`** (بطاقة سقف الديون — الجدول الغائب يظهر كرسالة «نفِّذ هجرة 0027» لا كصفر) و**`payout-forms.tsx`** (نموذج الدفعة + المقدَّم الصريح `record_partner_payout_advance`) |
+| المالية | `app/admin/finance/` (+ `treasury` · `expenses` · `partners/[id]` · **`partners/_components/`**) | الخزينة، المصروفات، كشوف المتعهدين والمقاصة. و`partners/_components/` ثلاثة ملفات: **`credit-card.tsx`** (بطاقة سقف الديون — الجدول الغائب يظهر كرسالة «نفِّذ هجرة 0027» لا كصفر) · **`payout-forms.tsx`** (فرع الدفع: نموذج الدفعة + المقدَّم الصريح `record_partner_payout_advance`، وفيه النوعان المشتركان `Settlement` و`CarriedValues`) · **`settlement-forms.tsx`** (فرع التحصيل، `0029`: `CollectionForm` + `SettlementReceipt` بعد الحفظ + `UnknownDirectionCard` حين يتعذّر قراءة الصافي) |
 | الخصومات | `app/admin/discounts/` (+ `[id]` · `banners/` · `actions.ts` · `input.ts` · `loader.ts` · `_components/fields.tsx`) | الكوبونات وبانرات العروض وإعدادات الخصم (المرحلة ١٢أ، هجرة `0024`) |
 | التسعير والأسطول | `app/admin/pricing/` · `app/admin/fleet/` | التعريفات والهامش والذروة · الفئات والسعات |
 | المحتوى | `app/admin/content/` (+ `new` · `[id]` · `loader.ts`) | الصفحات والأقسام |
@@ -96,14 +102,16 @@
 
 | المسار | الصفحة |
 |---|---|
-| `app/portal/page.tsx` | العروض المعروضة عليه الآن |
+| `app/portal/page.tsx` | العروض المعروضة عليه الآن + **بطاقة «حسابك مع المنصة»** (‏`0029`) |
+| `app/portal/_lib/balance.ts` | قراءة `portal_balance()` **بلا حمولة** — ثلاث حالات لا اثنتان: `hidden` (قاعدة قبل `0029` أو لا صف ⇒ لا بطاقة إطلاقاً) · `failed` (عطل ⇒ جملة صريحة) · `ready`. والصافي وحده إلزامي لأنه الإشارة التي تُبنى عليها كل صياغة؛ وبقية الأرقام «—» حين لا تصل — **لا صفر مخترَع في شاشة مال** |
+| `app/portal/_components/balance-card.tsx` | مكوّن خادمي بلا حالة: الصافي بعبارته بضمير المخاطب («لك علينا» / «عليك لنا» / «الحساب مصفّى») + الأرقام الأربعة + شريط الحجب. **لا حساب فيه إطلاقاً** — حتى حجم الدين يُقرأ من `owed_to_us` ولا يُشتق بـ `Math.abs`. وصياغة «سدّد **أكثر من** كذا» مقصودة: المبلغ الرافع للحجب يحمل قرشاً زائداً في القاعدة لأن الحجب يقع عند بلوغ الحدّ لا تجاوزه |
 | `app/portal/trips/` | رحلاته المُسندة |
 | `app/portal/requests/` (+ `data.ts` · `reasons.ts`) | قبول/رفض بأسباب |
 | `app/portal/prices/` (+ `[id]`) | قوائم أسعاره وتقديمها للاعتماد |
 | `app/portal/fleet/` · `app/portal/profile/` | أسطوله وملفه |
 | `app/portal/_lib/{session,data,form}.ts` | الجلسة وقراءة البيانات وأدوات النماذج |
 
-**مكوّناته:** `components/portal/` (`portal-gate` · `portal-nav` · `offer-window` · `place-picker` …).
+**مكوّناته:** `components/portal/` (`portal-gate` · `portal-nav` · `offer-window` · `place-picker` …) — والمشتركة تبقى هناك، أما `app/portal/_components/` فمجلد **خاص بمسار البورتال الجذر** على نمط `_components` المجاور للصفحة في اللوحة.
 
 ---
 
@@ -206,6 +214,9 @@
 | `public.partner_trip_code(b.id)` في `portal_offers`/`portal_trips` | إعادةُ `b.reference` مكانها تسلّم المتعهد هامشَ المنصة على كل رحلة (D-46). وفحص ذاتي في `0028` يُسقط الهجرة إن عاد المرجع |
 | شرط `and p.visible_to_customer` داخل `jsonb_agg` في `get_booking_by_token` | حذفه يُعيد صفوف الإيصالات الداخلية إلى حمولة العميل الخام — والإخفاء في الواجهة ليس إخفاءً |
 | مسار «لا نتيجة» في `find_booking_by_reference` (‏`return;` لا `raise`) | تحويله إلى استثناء يُرجع صفَّ العدّاد معه فيُلغي الخانق بلا أن يكسر شيئاً ظاهراً (D-48) |
+| توقيع `portal_balance()` **بلا وسيط**، والنداء `rpc("portal_balance")` بلا حمولة | أول وسيط `p_sub` يحوّلها من دالة مقصورة على صاحبها إلى تسريب رصيد كل متعهد لكل متعهد (D-51). وفحصٌ ذاتي في `0030` يعدّ الدوال **بالاسم** ويُسقط الهجرة |
+| غياب `debt_limit` من نوع إرجاع `portal_balance()` | إعادته تسلّم كل شريك سقفَ ائتمان المنصة فيجلس تحته (D-53) — ولا يكشفها اختبار لأن كل شيء «يعمل» |
+| فحص `p_amount < 0` في `record_partner_adjustment` | حذفه يعيد فخّاً يعمّق الدين بدل أن يخفضه، بصمت وفي عكس نية كاتبه (D-50) |
 | `insert into public.trip_settings … default false` وبذرة `debt_limit = 0` | البذر الآمن مقصود: ميزةٌ تلغي حجوزات أو تحجب شركاء لا تُشحن مفعّلة (D-47 · D-45) |
 | `receipt-test.png` · `receipt-test.txt` في الجذر | مخلّفات اختبار رفع الإيصال — تُحذف قبل النشر لا الآن |
 
