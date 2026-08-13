@@ -1,0 +1,497 @@
+{
+  "common": {
+    "optional": "optional",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "loading": "Loading…",
+    "retry": "Try again",
+    "close": "Close",
+    "yes": "Yes",
+    "no": "No",
+    "networkError": "We could not reach the server. Check your internet connection and try again.",
+    "genericError": "Something went wrong. Please try again in a moment."
+  },
+
+  "site": {
+    "header": {
+      "skipToContent": "Skip to content",
+      "mainNav": "Main navigation",
+      "mobileNav": "Mobile navigation menu",
+      "menu": "Menu",
+      "bookNow": "Book now",
+      "home": "Home"
+    },
+
+    "nav": {
+      "services": "Services",
+      "fleet": "Fleet",
+      "why": "Why us",
+      "contact": "Contact",
+      "about": "About us",
+      "book": "Book a ride",
+      "quoteRequest": "Request a quote"
+    },
+
+    "footer": {
+      "sections": "Site sections",
+      "services": "Our services",
+      "corridors": "Popular routes",
+      "legalNav": "Legal pages",
+      "sitemap": "Sitemap",
+      "rights": "© {year} {owner} — All rights reserved.",
+      "legal": {
+        "terms": "Terms and conditions",
+        "refundPolicy": "Refund policy",
+        "privacy": "Privacy policy"
+      }
+    },
+
+    "hero": {
+      "bookNow": "Book now",
+      "exploreServices": "Explore our services",
+      "trust": {
+        "modernCars": "Modern vehicles",
+        "professionalDrivers": "Professional drivers",
+        "clearPrices": "Transparent pricing",
+        "support": "24/7 support"
+      }
+    },
+
+    "services": {
+      "eyebrow": "Our services",
+      "title": "Six transport solutions that cover your trip end to end",
+      "description": "From the airport gate to the furthest landmark — pick the service that suits you and leave the road to us."
+    },
+
+    "fleet": {
+      "eyebrow": "Our fleet",
+      "title": "A vehicle class for every group size",
+      "description": "Tell us how many passengers you have and we will suggest the right class — from a light solo ride to a full group."
+    },
+
+    "whyUs": {
+      "eyebrow": "Why us",
+      "title": "Small details that make a comfortable ride",
+      "description": "We take care of everything that keeps your experience smooth, from booking to safe arrival.",
+      "points": {
+        "fleet": {
+          "title": "A modern, varied fleet",
+          "description": "Clean, recent models for every trip size — from a sedan to a full-size bus."
+        },
+        "drivers": {
+          "title": "Professional drivers",
+          "description": "Trained drivers who know the roads, keep to the schedule and look after your comfort."
+        },
+        "pricing": {
+          "title": "Transparent pricing",
+          "description": "A final price agreed before departure — no hidden fees and no surprises on arrival."
+        },
+        "support": {
+          "title": "24/7 support",
+          "description": "A support team available around the clock — before, during and after your trip."
+        }
+      }
+    },
+
+    "contact": {
+      "eyebrow": "Contact us",
+      "title": "We are one message away",
+      "description": "Choose the channel that suits you best and our team will get back to you shortly.",
+      "empty": "Contact channels are coming soon — stay tuned.",
+      "followUs": "Follow us on social media",
+      "channels": {
+        "phone": "Phone call",
+        "whatsapp": "WhatsApp",
+        "telegram": "Telegram",
+        "email": "Email"
+      }
+    },
+
+    "cta": {
+      "title": "Ready to go? Your price is seconds away",
+      "note": "Set your pickup and drop-off points and the number of passengers, pick the right vehicle at a clear price — then confirm your booking straight away.",
+      "action": "Get your price and book now"
+    },
+
+    "whatsappFab": {
+      "label": "Contact us on WhatsApp"
+    },
+
+    "social": {
+      "facebook": "Facebook",
+      "x": "X",
+      "linkedin": "LinkedIn",
+      "github": "GitHub",
+      "instagram": "Instagram"
+    },
+
+    "localeSwitcher": {
+      "label": "Language",
+      "menuLabel": "Choose site language",
+      "current": "Current language: {language}",
+      "switchTo": "View this site in {language}"
+    }
+  },
+
+  "sections": {
+    "faq": {
+      "eyebrow": "FAQ",
+      "title": "Answers to what our customers ask about most"
+    },
+    "features": {
+      "eyebrow": "Features"
+    }
+  },
+
+  "booking": {
+    "units": {
+      "passengers": "{count, plural, =0 {No passengers} one {1 passenger} other {# passengers}}",
+      "hours": "{count, plural, =0 {No waiting} one {1 hour} other {# hours}}",
+      "minutes": "{count, plural, =0 {0 minutes} one {1 minute} other {# minutes}}",
+      "noWaiting": "No waiting",
+      "kilometres": "{value} km",
+      "currency": {
+        "EGP": "EGP"
+      }
+    },
+
+    "search": {
+      "compactTitle": "Get your trip price in seconds",
+      "origin": {
+        "label": "From",
+        "placeholder": "e.g. “Cairo Airport”"
+      },
+      "destination": {
+        "label": "To",
+        "placeholder": "e.g. “your hotel in Hurghada”"
+      },
+      "suggestionsFor": "{field} suggestions",
+      "suggestionsCount": "{count, plural, =0 {No suggestions} one {1 suggestion available} other {# suggestions available}}",
+      "noResults": "No matching results — try a clearer name such as “Cairo International Airport”.",
+      "pickFromList": "Pick the place from the suggestions so we can locate it precisely.",
+      "typeTwoLetters": "Type at least two letters, then pick the place from the suggestions.",
+      "passengers": {
+        "label": "Passengers",
+        "decrease": "Decrease passengers",
+        "increase": "Increase passengers",
+        "note": "Children count towards the total — currently: {current}."
+      },
+      "tripType": {
+        "label": "Trip type",
+        "roundTrip": "Round trip",
+        "roundTripNote": "The price includes the return leg.",
+        "oneWayNote": "One-way trip."
+      },
+      "extras": {
+        "toggle": "More options",
+        "waitingLabel": "Waiting hours",
+        "waitingNote": "The driver waits for you during the trip — charged at a fixed hourly rate."
+      },
+      "hints": {
+        "pickOrigin": "Pick your pickup point from the suggestions — we need its exact location to measure the distance.",
+        "pickDestination": "Pick your destination from the suggestions — we need its exact location to measure the distance."
+      },
+      "errors": {
+        "quoteFailed": "We could not calculate the price right now. Please try again shortly.",
+        "network": "We could not reach the server. Check your internet connection and try again."
+      },
+      "submit": "Get the price",
+      "submitting": "Calculating your price…",
+      "statusCalculating": "Calculating your price",
+      "statusOffers": "{count} price offers are now shown"
+    },
+
+    "offers": {
+      "summary": {
+        "distance": "Distance: {value}",
+        "duration": "About {value}",
+        "waiting": "Waiting: {value}",
+        "roundTrip": "Round trip",
+        "oneWay": "One way"
+      },
+      "capacity": "Up to {value}",
+      "recommendation": {
+        "best": "Best for you",
+        "comfort": "More comfort"
+      },
+      "priceFor": {
+        "roundTrip": "for the round trip",
+        "oneWay": "for the whole trip"
+      },
+      "estimateBadge": "Indicative price — confirmed before booking",
+      "details": {
+        "toggle": "Price breakdown",
+        "baseFee": "Base fee",
+        "distanceCost": "Distance cost",
+        "waitingCost": "Waiting hours",
+        "roundTrip": "Round trip",
+        "roundTripApplied": "Included",
+        "peak": "Peak season",
+        "peakApplied": "Added",
+        "minimum": "Class minimum",
+        "minimumApplied": "Applied",
+        "total": "Total",
+        "note": "The lines above are the components of the price; the total is the final amount after applying them."
+      },
+      "book": "Book this vehicle",
+      "bookAria": "Book {vehicle} for {price}",
+      "bookViaContactAria": "Book {vehicle} for {price} by contacting us directly",
+      "inquireWhatsapp": "Ask on WhatsApp",
+      "inquireWhatsappAria": "Ask about {vehicle} on WhatsApp",
+      "priceNote": "The price is calculated automatically from the distance, the number of passengers and your trip options, and is locked in when you confirm the booking. You can pay the full amount or a deposit, with the rest paid to the driver.",
+      "quoteRequest": {
+        "standalone": "No vehicle class in the calculator fits this trip — we will arrange it manually with more than one vehicle.",
+        "cta": "Request a quote",
+        "inlinePrefix": "Is your trip outside the calculator (a tour, an event, a daily rental)?",
+        "inlineSuffix": "and we will reply with a tailored offer."
+      },
+      "inquiry": {
+        "intro": "Hello, I have a question about a trip I priced on your website:",
+        "from": "From: {value}",
+        "to": "To: {value}",
+        "tripType": "Trip type: {value}",
+        "passengers": "Passengers: {value}",
+        "waiting": "Waiting hours: {value}",
+        "vehicleClass": "Vehicle class: {value}",
+        "price": "Quoted price: {value}"
+      }
+    },
+
+    "checkout": {
+      "title": "Complete your booking",
+      "backToOffers": "Back to offers",
+      "stepsLabel": "Booking steps",
+      "steps": {
+        "trip": "Trip details",
+        "customer": "Your details",
+        "payment": "Payment"
+      },
+      "stepStatus": "Step {index}",
+      "trip": {
+        "heading": "Pickup time",
+        "date": "Date",
+        "time": "Time",
+        "notes": "Notes",
+        "notesPlaceholder": "Flight number, number of bags, a child seat, or any special request…",
+        "notesHelp": "Anything you write here reaches our operations team with your booking."
+      },
+      "customer": {
+        "heading": "Contact details",
+        "name": "Full name",
+        "namePlaceholder": "The name you would like the driver to use",
+        "phone": "Phone number",
+        "phonePlaceholder": "01xxxxxxxxx",
+        "sameWhatsapp": "My WhatsApp number is the same as my phone number",
+        "whatsapp": "WhatsApp number"
+      },
+      "payment": {
+        "heading": "How much would you like to pay now?",
+        "groupLabel": "Payment method",
+        "depositOption": "Deposit now, the rest to the driver",
+        "depositNote": "A {percent}% deposit of the total (minimum {minimum}) — {remaining} is collected by the driver.",
+        "fullOption": "Full amount now",
+        "fullNote": "Nothing left to pay on the day — your confirmation arrives as soon as we review the transfer.",
+        "total": "Trip total",
+        "dueNow": "Due now",
+        "remaining": "Remaining",
+        "remainingWithDriver": "collected by the driver",
+        "afterConfirm": "After you confirm, your booking page opens with the available transfer accounts, where you upload the receipt for our team to review. The final amounts are locked in on that page."
+      },
+      "errors": {
+        "pickupRequired": "Choose the pickup date and time.",
+        "pickupPast": "The pickup time must be in the future.",
+        "nameTooShort": "Enter your full name (at least 3 characters).",
+        "phoneInvalid": "Enter a valid phone number so we can reach you about the trip.",
+        "whatsappInvalid": "That WhatsApp number is not valid.",
+        "createFailed": "We could not create the booking right now. Please try again.",
+        "network": "We could not reach the server. Check your internet connection and try again."
+      },
+      "actions": {
+        "previous": "Previous step",
+        "next": "Next",
+        "confirm": "Confirm booking",
+        "confirming": "Confirming your booking…",
+        "confirmingStatus": "Confirming your booking"
+      }
+    },
+
+    "receipt": {
+      "accountLabel": "I transferred to",
+      "fileLabel": "Receipt image",
+      "fileNote": "An image or PDF up to 5 MB. Expected amount: {amount}.",
+      "submit": "Upload receipt",
+      "submitting": "Uploading the receipt…",
+      "submittingStatus": "Uploading the receipt",
+      "done": "We have received your receipt — your booking is under review and we will confirm it shortly.",
+      "errors": {
+        "unsupportedType": "That file type is not supported — attach an image (JPG, PNG or WebP) or a PDF.",
+        "tooLarge": "The file is larger than 5 MB. Please send a smaller image.",
+        "missingFile": "Attach a photo of the transfer receipt or a PDF.",
+        "uploadFailed": "We could not upload the receipt. Please try again.",
+        "network": "We could not reach the server. Check your internet connection and try again."
+      }
+    },
+
+    "copy": {
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyAria": "Copy {label}",
+      "copiedAria": "{label} copied"
+    }
+  },
+
+  "pages": {
+    "book": {
+      "metaTitle": "Book your ride",
+      "metaDescription": "Price your trip by the kilometre in seconds: set your pickup and drop-off points and the number of passengers, and get a clear price for every suitable vehicle class before you book.",
+      "title": "Price your trip and book in a minute",
+      "lead": "Set your pickup and drop-off points and the number of passengers, and we will show the price of every suitable vehicle class right away — with clear details before any commitment.",
+      "trustTitle": "Why the price here is clear",
+      "trust": {
+        "perKm": {
+          "title": "Priced by the kilometre, not by guesswork",
+          "text": "The distance is measured along the actual road between your two points, and the price is built directly on it."
+        },
+        "autoClass": {
+          "title": "The right class, chosen for you",
+          "text": "We suggest the smallest vehicle that fits your group, and show the next class up if you would like more room."
+        },
+        "clearTerms": {
+          "title": "Clear lines, no surprises",
+          "text": "Every offer shows its breakdown: base fee, distance, waiting time and the return leg."
+        },
+        "instantEdit": {
+          "title": "Adjust your trip in seconds",
+          "text": "Change the passenger count, the waiting hours or the trip type, and the price updates instantly."
+        }
+      }
+    },
+
+    "quoteRequest": {
+      "metaTitle": "Request a quote",
+      "metaDescription": "Is your trip outside the instant calculator? Request a tailored quote for sightseeing tours, events, daily rentals and large groups — we will reply with a clear offer.",
+      "title": "Request a tailored quote",
+      "lead": "For tours, events, daily rentals and everything the instant calculator cannot price — send us your trip details and our team will reply with a clear offer.",
+      "calculatorLink": "Travelling between two points? Get the price instantly",
+      "useCasesTitle": "When should you ask for a tailored quote?",
+      "useCases": {
+        "tours": {
+          "title": "Tours with several stops",
+          "text": "A full-day itinerary with more than one destination — priced as a programme, not as a point-to-point ride."
+        },
+        "events": {
+          "title": "Events and celebrations",
+          "text": "Coordinated movements on a tight schedule with several vehicles at once."
+        },
+        "daily": {
+          "title": "Daily or multi-day rental",
+          "text": "A car with a driver at your disposal by the hour or by the day, at a price agreed in advance."
+        },
+        "groups": {
+          "title": "Large groups and delegations",
+          "text": "Numbers beyond a single vehicle — we arrange the right fleet for them."
+        }
+      },
+      "form": {
+        "service": "Service type",
+        "servicePlaceholder": "Choose a service (optional)",
+        "name": "Full name",
+        "phone": "Phone number",
+        "phonePlaceholder": "01xxxxxxxxx",
+        "details": "Request details",
+        "detailsPlaceholder": "For example: a full-day tour of historic Cairo on the 12th of next month, 6 people, starting from a hotel in Zamalek.",
+        "detailsHelp": "The more detail you give, the faster and more accurate the offer.",
+        "submit": "Send request",
+        "submitting": "Sending your request…",
+        "submittingStatus": "Sending your request",
+        "errors": {
+          "nameTooShort": "Enter your full name (at least 3 characters).",
+          "phoneInvalid": "Enter a valid phone number so we can reach you.",
+          "detailsTooShort": "Describe your request: destination, date and number of people.",
+          "sendFailed": "We could not send your request right now. Please try again.",
+          "network": "We could not reach the server. Check your internet connection and try again."
+        },
+        "done": {
+          "title": "We have received your request",
+          "text": "Our team will review your trip details and get back to you with a tailored quote on the number you gave us.",
+          "reference": "Request number",
+          "backHome": "Back to the homepage"
+        }
+      }
+    },
+
+    "bookingStatus": {
+      "metaTitle": "Track your booking",
+      "metaDescription": "Your booking status, transfer details and receipt upload.",
+      "title": "Your booking details",
+      "titleCancelled": "Cancelled booking",
+      "reference": "Booking number",
+      "referenceCopyLabel": "the booking number",
+      "createdAt": "Created on {value}",
+      "saveLink": "Save this link to follow your booking — it is your only key to this page.",
+      "saveLinkCopyLabel": "the booking link",
+      "stepsLabel": "Booking stages",
+      "steps": {
+        "pendingPayment": "Awaiting payment",
+        "underReview": "Under review",
+        "confirmed": "Confirmed",
+        "completed": "Completed"
+      },
+      "cancelled": {
+        "title": "This booking has been cancelled",
+        "text": "If the cancellation was not intended, contact us and we will rearrange your trip."
+      },
+      "amounts": {
+        "heading": "Amounts",
+        "sectionLabel": "Booking amounts",
+        "total": "Trip total",
+        "dueNow": "Due now",
+        "remaining": "Remaining with the driver",
+        "remainingNote": "The remainder is collected in cash by the driver on the day of the trip."
+      },
+      "rejection": {
+        "sectionLabel": "Why the previous receipt was rejected",
+        "title": "Your previous receipt was not accepted",
+        "fallback": "Check the transfer details below, then upload the receipt again."
+      },
+      "pay": {
+        "sectionLabel": "Complete the payment",
+        "heading": "Transfer {amount} to confirm your booking",
+        "noAccounts": "We will contact you to confirm the payment method — your booking is saved under the number above.",
+        "uploadHeading": "After the transfer: upload the receipt",
+        "accountFallbackLabel": "Transfer account",
+        "accountHolder": "In the name of:",
+        "accountCopyLabel": "the {label} number"
+      },
+      "review": {
+        "sectionLabel": "Review status",
+        "title": "Your receipt is under review",
+        "text": "We have received your transfer receipt and our operations team is reviewing it now. As soon as it is approved, your booking status changes to “Confirmed” on this very page — nothing else is needed from you."
+      },
+      "confirmed": {
+        "sectionLabel": "Confirmed booking",
+        "title": "Your booking is confirmed",
+        "text": "Your transfer has been approved. We will contact you before the pickup time with the vehicle and driver details.",
+        "completedTitle": "Your trip is complete — thank you for trusting us",
+        "completedText": "We look forward to serving you on your next trip.",
+        "whatsapp": "Contact us on WhatsApp",
+        "phone": "Call us"
+      },
+      "trip": {
+        "sectionLabel": "Trip details",
+        "heading": "Trip details",
+        "vehicleClass": "Vehicle class",
+        "passengers": "Passengers",
+        "tripType": "Trip type",
+        "roundTrip": "Round trip",
+        "oneWay": "One way",
+        "distance": "Distance",
+        "waitingHours": "Waiting hours",
+        "pickupAt": "Pickup time",
+        "notes": "Your notes"
+      },
+      "footerNote": "Your booking number is {reference} — quote it in any correspondence about this trip."
+    }
+  }
+}

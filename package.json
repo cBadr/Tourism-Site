@@ -1,0 +1,42 @@
+{
+  "name": "tours-01",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "cross-env NODE_OPTIONS=--max-http-header-size=65536 next dev",
+    "build": "next build",
+    "start": "cross-env NODE_OPTIONS=--max-http-header-size=65536 next start",
+    "lint": "eslint",
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:test": "node scripts/db-test.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.7.0",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.31.0",
+    "next": "16.3.0",
+    "next-intl": "^4.13.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "shadcn": "^4.16.2",
+    "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.4.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.0",
+    "pg": "^8.23.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
