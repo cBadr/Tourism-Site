@@ -1,5 +1,6 @@
 import type { StartPaymentResponse } from "@/lib/payments-types";
 
+import { trackFunnel } from "@/lib/analytics/emit";
 import { isPaymentProviderError } from "@/lib/payments/errors";
 import { attachIntentRef, createIntent, resolveBooking } from "@/lib/payments/intents";
 import { findAdapter } from "@/lib/payments/registry";
@@ -179,6 +180,30 @@ export async function POST(request: Request): Promise<Response> {
     );
     return fail("intent-failed", "تعذّر حفظ بيانات جلسة الدفع. حاول مرة أخرى.", 500);
   }
+
+  // ── قياس القمع (المرحلة ١٠) ─────────────────────────────────────────────
+  //
+  // `booking_started` بعد أن صار للزائر رابط دفع فعلي، لا عند مجرد فتح الصفحة:
+  // هذه هي اللحظة التي «بدأ» فيها الدفع حقاً.
+  //
+  // ولماذا هنا تحديداً: منذ هجرة 0023 تقرأ `funnel_daily` و`funnel_summary`
+  // **كل** أحداث القمع من `public.funnel_events` وحده — لا استثناء لحجزٍ ولا
+  // لتحصيل ولا لطلب سعر. فبلا هذا السطر يبقى العدّاد صفراً إلى الأبد، وفقدان
+  // أي إصدار = فقدان الحدث من اللوحة بالكامل (ثمن المصدر الواحد).
+  //
+  // ⚠ وهذا هو **المسار الإلكتروني وحده**: الحجز المدفوع بتحويل بنكي (وهو
+  // الافتراضي هنا) لا يمر من هذا الملف إطلاقاً، فلا يُسجَّل له الحدث. ولذلك
+  // سُمّي الحدث «اختار وسيلة دفع إلكترونية» لا «بدأ مسار الحجز»، وأُخرج في
+  // 0023 من مراحل القمع الأربع إلى «خارج السلسلة» في `lib/stats/cards.ts` —
+  // وإلا قرأ المالك صفراً على أنه «لا أحد يصل إلى الدفع».
+  //
+  // 🔒 بلا PII: لا توكن المتابعة (وهو مفتاح وصول) ولا اسم المزوّد ولا معرّف
+  // الجلسة. المبلغ والعملة كما قرأهما الخادم من الحجز نفسه.
+  trackFunnel("booking_started", {
+    reference: booking.booking.reference,
+    value: booking.booking.amountDue,
+    currency: booking.booking.currency,
+  });
 
   const ok: StartPaymentResponse = { ok: true, intentId, redirectUrl };
   return Response.json(ok, { status: 200, headers: NO_STORE });

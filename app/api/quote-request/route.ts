@@ -1,3 +1,4 @@
+import { trackFunnel } from "@/lib/analytics/emit";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { SERVICES } from "@/lib/site-config";
 
@@ -193,6 +194,22 @@ export async function POST(request: Request) {
       isRecord(row) && typeof row.reference === "string" && row.reference.length > 0
         ? row.reference
         : null;
+    // ── قياس القمع (المرحلة ١٠) ───────────────────────────────────────────
+    // `quote_requested` كان معرَّفاً في العقد ومعروضاً في جدول `/admin/integrations`
+    // ولا يُستدعى من سطر واحد في المستودع.
+    //
+    // ⚠ ومنذ هجرة 0023 صار هذا السطر **المصدر الوحيد** للحدث: كل ما يعرضه القمع
+    // يُعدّ من `public.funnel_events` وحده، ولا تقرأ `funnel_daily` جدول
+    // `quote_requests` إطلاقاً. فقدان هذا الإصدار = اختفاء «طلب عرض سعر يدوي»
+    // من اللوحة كلياً (لا نقصٌ خفيّ كما كان في 0022) — وهذا هو الثمن المقبول
+    // للمصدر الواحد: رقمٌ يقيس الموقع بصدق، ويسقط كاملاً إن سقط إصداره.
+    // ويعني أيضاً أن حدث Lead لا يصل ميتا ولا جوجل، وهو الحدث الوحيد الذي تهتم
+    // به حملة توليد العملاء.
+    //
+    // 🔒 الرقم المرجعي وحده (QR-…): لا اسم ولا هاتف ولا نص التفاصيل — نفس
+    // انضباط `app/api/booking/route.ts`. ولا يفشل الطلب إن فشل القياس.
+    trackFunnel("quote_requested", reference ? { reference } : {});
+
     const body: QuoteRequestSuccess = { ok: true, reference };
     return Response.json(body, { headers: NO_STORE });
   }

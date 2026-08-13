@@ -15,12 +15,13 @@
 
 | الطبقة | أين | ماذا تملك فعلاً |
 |---|---|---|
-| منطق العمل والمال | `supabase/migrations/*.sql` | الجداول والدوال والـ views والمشغّلات وسياسات RLS — ٢١ ملفاً |
-| عقود الأنواع | `lib/*-types.ts` (٨ ملفات) | نسخة TypeScript من تواقيع SQL + **ترويسة عربية تشرح القرار ومبرره** |
+| منطق العمل والمال | `supabase/migrations/*.sql` | الجداول والدوال والـ views والمشغّلات وسياسات RLS — ٢٣ ملفاً |
+| عقود الأنواع | `lib/*-types.ts` (٩ ملفات) | نسخة TypeScript من تواقيع SQL + **ترويسة عربية تشرح القرار ومبرره** |
 | الوصول للقاعدة | `lib/supabase/{client,server,admin}.ts` | ثلاثة عملاء لا رابع لهم |
 | التصيير | `app/**` | Server Components افتراضياً؛ `"use client"` محصور في `_components/` |
-| الحراسة والتوجيه | `proxy.ts` في الجذر | صيانة ← لغة ← حارس `/admin` |
-| الخدمات الخارجية | `lib/geo` · `lib/notifications` · `lib/payments` · `lib/i18n/mt` | كلها بنمط **تدهور متدرّج**: غياب المزوّد يخفض القدرة ولا يوقف المسار |
+| الحراسة والتوجيه | `proxy.ts` في الجذر | صيانة ← تحويلات ← لغة ← حارس `/admin` |
+| الخدمات الخارجية | `lib/geo` · `lib/notifications` · `lib/payments` · `lib/i18n/mt` · `lib/analytics` | كلها بنمط **تدهور متدرّج**: غياب المزوّد يخفض القدرة ولا يوقف المسار |
+| القياس والإحصائيات | `lib/analytics` · `lib/stats` · `lib/seo` | الكتابة بمفتاح الخدمة، والقراءة من عروض ودوال محروسة — القسم ١٢ |
 
 ---
 
@@ -41,7 +42,7 @@
 | المجموعة | المسارات | اللغة | الحارس |
 |---|---|---|---|
 | الموقع العام | `/` · `/book` · `/booking/[token]` · `/services/[slug]` · `/routes/[slug]` · `/about` · `/[slug]` (الصفحات القانونية) · `/quote-request` · `/payment/return/[intentId]` | عربي بلا بادئة + `/en/...` وأي لغة مفعّلة | مفتوح — يمر على وضع الصيانة |
-| اللوحة | `/admin/**` (شاشة قيادة + ١٦ قسماً، ٢٧ صفحة بالمتفرّعات: `orders` · `dispatch` · `subcontractors` · `finance` · `pricing` · `fleet` · `content` · `languages` · `payments` · `payment-accounts` · `notifications` · `settings` · `maintenance` · `quote-requests` · `login` · `set-password`) | **عربي فقط** | جلسة + فحص دور في `proxy.ts:179` **و** `app/admin/layout.tsx` (طبقتان) |
+| اللوحة | `/admin/**` — **١٩ مجلد قسم و٣٨ ملف `page.tsx`** بالمتفرّعات: `stats` · `orders` · `dispatch` · `subcontractors` · `finance` · `pricing` · `fleet` · `content` · `languages` · `payments` · `payment-accounts` · `notifications` · `integrations` · `seo` · `settings` · `maintenance` · `quote-requests` · `login` · `set-password` — وفوقها `app/admin/page.tsx` (شاشة القيادة). و**القائمة الجانبية ١٨ بنداً** في `app/admin/_components/admin-shell.tsx`: شاشة القيادة + ١٧ قسماً؛ الزائدان عنها هما `login` و`set-password` وهما خارج التنقل بطبيعتهما (وشاشتا المصادقة تُصيَّران بلا شريط جانبي أصلاً) | **عربي فقط** | جلسة + فحص دور في `proxy.ts` **و** `app/admin/layout.tsx` (طبقتان) |
 | بورتال المتعهدين | `/portal` · `/portal/{trips,requests,fleet,prices,prices/[id],profile}` | **عربي فقط** | جلسة + **RLS على مستوى الصف** + دوال `portal_*` بلا أعمدة حساسة |
 
 `/en/admin` يرد **٤٠٤** ولا يتسلل خلف الحارس، لأن الفحص يقع على المسار **الأصلي** قبل إعادة كتابة اللغة.
@@ -52,11 +53,12 @@
 
 > في هذه النسخة من Next اسم الملف `proxy.ts` ويصدّر `proxy()` و`config.matcher`. إنشاء `middleware.ts` ينتج ملفاً **لا يعمل** ويبدو صحيحاً.
 
-الترتيب داخل الدالة ثابت ولا يُقلب (`proxy.ts:45-186`):
+الترتيب داخل الدالة ثابت ولا يُقلب — **أربع طبقات** منذ المرحلة ١٠:
 
 1. **وضع الصيانة** — أولاً وللمسارات العامة وحدها (القراءة مُذاكَرة داخل العملية).
-2. **اللغة** — `canonicalLocalePath()` يحوّل `/ar/x` و`/EN/x` و`/en/x/` بـ **٣٠٨** إلى الشكل الوحيد، ثم يُعاد كتابة `/en/...` داخلياً. والمسار الأصلي يُمرَّر في ترويسة `x-pathname` ليقرأه `app/admin/layout.tsx`.
-3. **حارس `/admin`** — بلا متغيرات بيئة **يمرّ الجميع** (`proxy.ts:137`، وضع تطوير متعمَّد)؛ ومع القاعدة: الدور يُقرأ من `profiles` لا من الكوكي، و`admin`/`ops` يدخلان، و`subcontractor` يُحوَّل إلى `/portal`، وما عداهما إلى `/`.
+2. **تحويلات السيو** (المرحلة ١٠) — جدول `redirects` يديره المالك من `/admin/seo/redirects`. موضعها **بعد الصيانة وقبل اللغة** مقصود: بعد الصيانة كي يبقى «الموقع مغلق» أول قرار؛ وقبل `canonicalLocalePath` كي لا يأخذ رابط قديم بصيغة `/EN/old-page` **قفزتين** (٣٠٨ ثم ٣٠١) — فـ `resolveRedirect` تقشر البادئة بنفسها وتعيد تركيبها قانونياً، والنتيجة قفزة واحدة والزائر لا يفقد لغته. لا تلمس `/admin` ولا `/portal` ولا `/api` ولا الأصول، والقراءة **مُذاكَرة ٣٠ ثانية داخل العملية** لا استعلام على كل طلب، **والفشل آمن: أي خطأ = لا تحويل**.
+3. **اللغة** — `canonicalLocalePath()` يحوّل `/ar/x` و`/EN/x` و`/en/x/` بـ **٣٠٨** إلى الشكل الوحيد، ثم يُعاد كتابة `/en/...` داخلياً. والمسار الأصلي يُمرَّر في ترويسة `x-pathname` — يقرؤها `app/admin/layout.tsx` **وحارس وسوم القياس** (القسم ١٢).
+4. **حارس `/admin`** — بلا متغيرات بيئة **يمرّ الجميع** (وضع تطوير متعمَّد)؛ ومع القاعدة: الدور يُقرأ من `profiles` لا من الكوكي، و`admin`/`ops` يدخلان، و`subcontractor` يُحوَّل إلى `/portal`، وما عداهما إلى `/`.
 
 `config.matcher` يستثني `_next/static` و`_next/image` و`favicon.ico` فقط — كل ما عداها يمر بالوسيط لأن الصيانة يجب أن تسبق تصيير أي صفحة.
 
@@ -97,7 +99,7 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 
 | الخاصية | التفصيل |
 |---|---|
-| المكان | `supabase/migrations/0001_core.sql` … `0021_payments_hardening.sql` (٢١ ملفاً، كلها مطبَّقة) |
+| المكان | `supabase/migrations/0001_core.sql` … `0023_analytics_funnel.sql` (٢٣ ملفاً، كلها مطبَّقة) |
 | الأداة | `pnpm db:migrate` → `scripts/db-migrate.mjs` — يتصل بالسحابة عبر `DATABASE_URL` بمكتبة `pg`، ويتتبع في `public.schema_migrations(name, applied_at)` |
 | الذرّية | كل ملف داخل `begin/commit` مستقل؛ الفشل يُرجع الملف كاملاً ويوقف التنفيذ |
 | إعادة التنفيذ | كل ملف idempotent: `create table if not exists` · `create or replace function` · `drop policy if exists` · كتل `do $$ … $$` |
@@ -119,6 +121,7 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 | `0015_finance` · `0016_finance_corrections` · `0017_settlement_abs` | ٧ | الخزينة و`ledger_entries` والمصروفات ودفعات المتعهدين والمقاصة والتدفق النقدي · تصحيح `net_due` ومسارات التصحيح · `abs_net_due` |
 | `0018_i18n` · `0019_enabled_locales` | ٨ | `locales` + `translations` وطابور المراجعة · `enabled_locales()` بعدّاد نصوص منشورة |
 | `0020_payments` · `0021_payments_hardening` | ٩ | `payment_providers` + `payment_intents` + `payment_events` ودوالها الأربع · تعطيل بوابة الاختبار وفحص العملة |
+| `0022_analytics` · `0023_analytics_funnel` | ١٠ | `funnel_events` (بلا PII) + `redirects` + **سبعة عروض** `v_stats_*` + `analytics_admin_allowed()` + `stats_delta()` + `section_stats()` + `funnel_daily()` + `funnel_summary()` + `prune_funnel_events()` + مساعدتا الصفوف `stats_content_rows()` و`stats_locales_rows()` + بذر مفتاح `integrations` · **تصحيح نموذج القمع** إلى سلسلة رباعية من مصدر واحد (‏`0023` يستبدل `funnel_summary` و`funnel_daily`) + `funnel_counts()` الداخلية |
 
 ---
 
@@ -178,7 +181,61 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 
 ---
 
-## ١٢) ما **لا** يوجد في هذا المستودع (لا تبحث عنه)
+## ١٢) القياس والإحصائيات — من يكتب ومن يقرأ (المرحلة ١٠)
+
+**المبدأ الحاكم:** أرقام اللوحة تُبنى على جدول **في قاعدتنا** لا على ما تقوله جوجل. مانع إعلانات يُسقط سكربتات جوجل وميتا صامتاً والصفحة تُصيَّر سليمة — ومع ذلك تبقى أرقام `/admin/stats` صحيحة.
+
+### الكتابة — نقطة خروج واحدة
+
+```
+حدث تحويل (بحث · عرض · حجز · دفع · طلب سعر · بدء بوابة)
+   ↓  lib/analytics/emit.ts        ← نقطة الخروج الوحيدة، ولا ترمي استثناءً أبداً
+   ↓  after() من next/server       ← بعد إرسال الرد، فلا يدفع الزائر ثمن القياس
+   ├─ صف في public.funnel_events   ← دائماً وأولاً، بمفتاح الخدمة (admin.ts)
+   └─ Meta CAPI (خادمية)           ← booking_paid وحده، وبشرط التفعيل ووجود التوكن
+```
+
+| البند | التفصيل |
+|---|---|
+| **مَن يكتب** | `app/api/quote/route.ts` (‏`search_performed` + `quote_viewed`) · `app/api/booking/route.ts` (‏`booking_created`) · `app/api/payments/start/route.ts` (‏`booking_started`) · `app/api/payments/webhook/[provider]/route.ts` و`app/admin/orders/[id]/actions.ts` (‏`booking_paid`) · `app/api/quote-request/route.ts` (‏`quote_requested`) |
+| **بأي هوية** | **`service_role` حصراً** عبر `lib/supabase/admin.ts`. `anon` و`authenticated` بلا `INSERT` على `funnel_events` إطلاقاً — منحةٌ سابقة بـ `with check (true)` كانت تتيح لأي زائر تسميم أرقام المالك وتضخيم الجدول |
+| **ماذا يُكتب** | خمسة أعمدة لا سادس لها: `event, reference, class_slug, value, currency`. **صفر PII وصفر أرقام داخلية** — لا اسم ولا هاتف ولا `public_token` (وهو مفتاح وصول للحجز) ولا هوية متعهد ولا تكلفته ولا هامش الموقع |
+| **لا يُفشل الطلب أبداً** | كل مسار داخل `try/catch`، بما فيه **غياب الجدول نفسه** (قاعدة لم تُطبَّق عليها 0022: الرمز `42P01` أو `PGRST205` يُبتلع بهدوء) |
+| **نظير المتصفح** | `lib/analytics/browser.ts` يطلق نفس الأحداث إلى GA4 وبكسل ميتا من جلسة الزائر — **لا يمكن إطلاقها من الخادم** لأنها تعيش في المتصفح. جدول ترجمة الأسماء مشترك بين الطرفين في `lib/analytics/events.ts` فلا ينحرف اسم بين القناتين |
+
+### نموذج القمع — سلسلة واحدة من مصدر واحد (هجرة 0023)
+
+`search_performed` → `quote_viewed` → `booking_created` → `booking_paid`، **كلها من `funnel_events` وحده**. و`quote_requested` و`booking_started` يُعرضان **خارج السلسلة** بعدّادهما وحده و`rate_percent = null` و`in_chain = false` (الأول مسار دخول موازٍ، والثاني لا يقع إلا على مسار البوابة الإلكترونية والافتراضي في المنصة تحويل بنكي). والعدّ يدمج بالمرجع — `count(*) filter (where reference is null) + count(distinct reference)` — فالويبهوك المكرر لا يضخّم رقماً.
+
+> **حدّ معرفي لا عطل:** القمع يقيس **الرحلة على الموقع** لا إجمالي أعمال الشركة. الأرقام المرجعية للحجوزات والتحصيل مكانها قسم الطلبات وقسم الخزينة، والفارق بينهما ليس عطلاً. خلطُ الاثنين هو بالضبط ما أنتج «معدل تحول > ١٠٠٪» في 0022.
+
+### حارس الأسطح — أين يقع وكيف يفشل
+
+`app/layout.tsx` هو **الجذر الوحيد** في المشروع: لا `<html>` في `app/admin/layout.tsx` ولا في `app/portal/layout.tsx`، فكل شاشة إدارية أو بورتالية تُصيَّر داخله. وحقنُ الوسوم بلا فحص مسار كان يرفع إلى مايكروسوفت إعادةَ تشغيل جلسة فيها بيانات العميل وتكلفة المتعهد.
+
+الحارس في `lib/analytics/tags.tsx` ← `isMeasurableSurface()`:
+- يقرأ ترويسة `x-pathname` التي يضبطها `proxy.ts` بالمسار **الأصلي**، **ويفشل مغلقاً**: لا ترويسة ⇒ لا وسم.
+- **يقشر بادئة اللغة أولاً** ثم يرفض `/admin` و`/portal` و`/api` — وإلا صار `/en/admin` ثغرة في الحارس (نفس منطق D-22).
+- ولا خدمة مضبوطة ومفعّلة ⇒ يرجع `null` كاملاً: **صفر سكربت وصفر طلب لجهة خارجية**، لا «سكربت فارغ».
+- وسما التحقق (Search Console وBing) ليسا هنا: مكانهما `<head>` عبر `metadata.verification` في `app/layout.tsx`.
+
+### القراءة — من العروض والدوال إلى الشاشات
+
+| الطبقة | التفصيل |
+|---|---|
+| الحارس | `analytics_admin_allowed()` — **مطابق حرفياً** لـ `finance_admin_allowed()` و`i18n_admin_allowed()`: مشرف أو عميل خدمة أو اتصال مالك القاعدة، **ويفشل مغلقاً** لكل ما عداهم. أول سطر في كل دالة إحصائية |
+| العروض السبعة | `v_stats_orders` · `v_stats_dispatch` · `v_stats_partners` · `v_stats_treasury` · `v_stats_customers` · `v_stats_content` · `v_stats_locales` — كلها `security_invoker = true` فوق جداول سياستها `is_admin()`، فالمتعهد يرى **صفر صف** لا أرقاماً جزئية (والرقم الجزئي أخطر من الرفض لأنه يبدو صحيحاً). ولا عمود تكلفة متعهد ولا هامش ولا بيانات عميل في نوع الإرجاع أصلاً |
+| الدوال | `section_stats(section, from, to)` تُغذّي بطاقات كل قسم · `funnel_daily(from, to)` السلاسل الزمنية · `funnel_summary(from, to)` مراحل القمع · `funnel_counts()` داخلية · `stats_delta()` التغيّر النسبي **بـ `null` لا صفر** حين لا مقارنة ممكنة · `prune_funnel_events(days)` التقليم (بلا مستدعٍ اليوم — `OPEN_TASKS.md`) |
+| طبقة القراءة | `lib/stats/read.ts` وحدها تستدعي كل ما سبق (‏`rpc` للدوال و`from()` للعروض) وتصنّف الفشل؛ و`lib/stats/format.ts` **تنسيق محض** — لا حساب — بما فيه اتجاه سهم التغيّر **وقطبيته** (تدهور لا يظهر بالأخضر) |
+| الشاشات | `/admin/stats` + ست شاشات قسم، تبني كلها فوق `components/stats/section-screen.tsx` برسوم **SVG مكتوبة يدوياً — لا مكتبة رسوم في المشروع** |
+
+### التحويلات والسيو
+
+جدول `redirects` يُدار من `/admin/seo/redirects`، ويقرؤه `proxy.ts` عبر `lib/seo/redirects.ts`: فهرس مبني مرة و**مُذاكَر ٣٠ ثانية داخل العملية** (لا استعلام على كل طلب)، بسقف قفزات، ويتخطى `/admin` و`/portal` و`/api` والأصول قبل أي قراءة قاعدة. `lib/seo/validate.ts` ترفض الحلقة والتعارض والتحويل فوق مسار حيّ قبل الحفظ. وبطاقات مركز السيو الثلاث تقرأ `v_stats_content` — المحروس بـ `is_admin()` وحدها، فدور `ops` يرى «—» (قرار أمني معلَّق في `OPEN_TASKS.md`).
+
+---
+
+## ١٣) ما **لا** يوجد في هذا المستودع (لا تبحث عنه)
 
 - لا `middleware.ts` — الاسم `proxy.ts`.
 - لا اختبارات JavaScript/TypeScript ولا Jest/Vitest/Playwright — الاختبارات **SQL** في `supabase/tests/` وتعمل على القاعدة الحية.
@@ -186,6 +243,7 @@ components/booking/offers.tsx      ← بطاقات الفئات المؤهلة 
 - لا CI/CD ولا GitHub Actions — ولا حتى مستودع git خاص بالمشروع حتى خطوة التسليم (جذر git هو مجلد المستخدم).
 - لا Sentry ولا رصد أخطاء ولا نسخ احتياطي مجدول (مؤجَّلان ليوم النشر — `OPEN_TASKS.md`).
 - لا `tenant_id` ولا أي أثر لتعدد المستأجرين — الـ whitelabel نسخة كاملة لكل علامة.
-- `README.md` ما زال قالب `create-next-app` — التوثيق الحقيقي في `docs/` و`handover/`.
+- لا مكتبة رسوم بيانية (‏Chart.js/Recharts/D3) — كل رسوم `/admin/stats` **SVG مكتوب يدوياً** في `components/stats/`.
+- `README.md` صار ملفاً حقيقياً بالعربية — لكن التوثيق العميق يبقى في `docs/` و`handover/`.
 
 </div>

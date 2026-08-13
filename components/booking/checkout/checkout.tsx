@@ -27,6 +27,7 @@ import {
 } from "@/lib/booking-types";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
+import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import { createFormatter, type LocaleFormatter } from "../format";
 import { readPaymentSettings, splitAmounts } from "./payment";
 import { todayInputValue, toIsoFromLocalInputs } from "./datetime";
@@ -350,6 +351,16 @@ export function Checkout({
         setSubmitting(false);
         return;
       }
+
+      // القمع في المتصفح (المرحلة ١٠): نظير `trackFunnel("booking_created")`
+      // في `/api/booking`. الأرقام من رد الخادم لا من حساب هنا، و`publicToken`
+      // **لا يخرج**: هو مفتاح وصول للحجز لا معرّف قياس.
+      trackBrowserFunnel("booking_created", {
+        reference: json.reference,
+        value: json.total,
+        currency: json.currency,
+        classSlug: offer.classSlug,
+      });
 
       // نُبقي حالة الإرسال قائمة أثناء التوجيه حتى لا يُرسل الطلب مرتين
       router.push(localePath(locale, `/booking/${json.publicToken}`));

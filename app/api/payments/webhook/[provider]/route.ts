@@ -1,3 +1,4 @@
+import { trackBookingPaid } from "@/lib/analytics/emit";
 import { startDispatchFor } from "@/lib/dispatch/start";
 import { isPaymentProviderError } from "@/lib/payments/errors";
 import { bookingIdForRef, settleIntent } from "@/lib/payments/intents";
@@ -192,6 +193,16 @@ export async function POST(
       // لا يرمي أبداً بعقده: فشل البث لا يجوز أن يُفشل تأكيد دفعة وصلت
       const result = await startDispatchFor(bookingId);
       dispatch = result.started ? "started" : (result.reason ?? "skipped");
+
+      // (٦) حدث الشراء (المرحلة ١٠) — **بعد** `outcome.confirmed` لا قبله،
+      //     فلا يُطلق إلا على تسوية غيّرت الحالة فعلاً. والحدث المُعاد إرساله
+      //     من البوابة لا يمر من هنا أصلاً (`confirmed` تعني `settled` وحدها)
+      //     فلا شراء مكرر في تقارير ميتا.
+      //
+      //     لا ينتظر شيئاً ولا يرمي: الجدولة بـ `after` تقع بعد إرسال الرد،
+      //     وكل مسارات الخطأ مبتلعة داخلياً. أي throw هنا كان سيقلب ٢٠٠ إلى
+      //     خطأ فيعيد المزوّد الإرسال إلى الأبد ثم يعطّل نقطة النهاية.
+      trackBookingPaid(bookingId);
     }
   }
 

@@ -1,3 +1,4 @@
+import { trackFunnel } from "@/lib/analytics/emit";
 import { routeDistance } from "@/lib/geo/route";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import type {
@@ -364,5 +365,24 @@ export async function POST(request: Request) {
     amountRemaining: Number(row.amount_remaining ?? 0),
     currency: String(row.currency ?? "EGP"),
   };
+
+  // ── قياس القمع (المرحلة ١٠) ─────────────────────────────────────────────
+  //
+  // 🔒 الحمولة تُبنى حقلاً حقلاً من `FunnelPayload`، وما يغيب عنها مقصود:
+  //   • لا `customerName` ولا `customerPhone` ولا `customerWhatsapp` — PII.
+  //   • لا `publicToken` — هو **مفتاح وصول** إلى صفحة متابعة الحجز، وتسريبه
+  //     إلى جوجل أو ميتا تسريب صلاحية لا تسريب رقم.
+  // والحدث `booking_created` لا `booking_paid`: الحجز هنا ما زال بحالة
+  // `pending_payment`. عدّه شراءً يعني أن كل حجز مهجور يصير إيراداً في تقارير
+  // الإعلانات — أرقام تبدو ممتازة وهي كاذبة.
+  trackFunnel("booking_created", {
+    reference: body.reference,
+    value: body.total,
+    currency: body.currency,
+    classSlug: input.classSlug,
+    passengers: input.passengers,
+    distanceKm: distance.distanceKm,
+  });
+
   return Response.json(body, { headers: NO_STORE });
 }

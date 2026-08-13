@@ -1,5 +1,7 @@
+import { trackFunnelBatch } from "@/lib/analytics/emit";
 import { routeDistance } from "@/lib/geo/route";
 import { createServiceSupabase } from "@/lib/supabase/admin";
+import type { FunnelPayload } from "@/lib/analytics-types";
 import type { Offer, QuoteError, QuoteRequest, QuoteResponse } from "@/lib/pricing-types";
 import type { OfferPricing, PriceSource } from "@/lib/subcontractor-types";
 
@@ -236,13 +238,41 @@ export async function POST(request: Request) {
     };
   });
 
+  // ── قياس القمع (المرحلة ١٠) ─────────────────────────────────────────────
+  //
+  // هذا هو التغيير الوحيد الذي تلمس به المرحلة ١٠ مساراً قائماً، وعقده صريح في
+  // `lib/analytics-types.ts`: **رخيص، ولا يفشل الطلب إن فشل**. عملياً:
+  //   • `trackFunnelBatch` يجدول العمل بـ `after` فيقع **بعد** إرسال الرد ⇒
+  //     الزائر لا يدفع ملّي‑ثانية واحدة ثمناً للقياس على أسخن مسار عام.
+  //   • الحدثان يُكتبان بإدراج واحد ⇒ رحلة شبكة واحدة لا اثنتان.
+  //   • الدالة لا ترمي أبداً، وجدول غير موجود بعد يُبتلع بصمت.
+  //
+  // 🔒 الحمولة تُبنى حقلاً حقلاً من `FunnelPayload` ولا تُنسخ من `input`: لا سعر
+  // ولا مصدر سعر ولا أي أثر لمتعهد. ولا نُخرج قيمة أرخص عرض هنا لسببين — أن
+  // انتقاءها حساب في TypeScript وهو ممنوع، وأن قيمة القمع الحقيقية تُقاس عند
+  // الحجز لا عند العرض.
+  const funnelTrip: FunnelPayload = {
+    ...(input.origin.label !== "" ? { originLabel: input.origin.label } : {}),
+    ...(input.destination.label !== "" ? { destLabel: input.destination.label } : {}),
+    passengers: input.passengers,
+    distanceKm: distance.distanceKm,
+  };
+
   if (offers.length === 0) {
+    // بحث تمّ وأنتج «لا فئة مناسبة» — خطوة قمع حقيقية تستحق التسجيل، ونسبتها
+    // إلى `quote_viewed` هي بالضبط «كم بحثاً لم ينتج عرضاً».
+    trackFunnelBatch([{ event: "search_performed", payload: funnelTrip }]);
     return errorJson(
       "no-classes",
       "لا توجد فئة سيارات تتسع لهذا العدد من الركاب. تواصل معنا لترتيب أكثر من سيارة.",
       200
     );
   }
+
+  trackFunnelBatch([
+    { event: "search_performed", payload: funnelTrip },
+    { event: "quote_viewed", payload: funnelTrip },
+  ]);
 
   const body: QuoteResponse = {
     ok: true,

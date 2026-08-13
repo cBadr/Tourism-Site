@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Banknote,
+  BarChart3,
   Bell,
   Car,
   ClipboardList,
@@ -17,7 +18,9 @@ import {
   LayoutDashboard,
   Menu,
   MessageSquareQuote,
+  Plug,
   Radio,
+  Search,
   Settings,
   Wallet,
   Wrench,
@@ -47,6 +50,7 @@ type NavItem = {
     | "/admin/dispatch"
     | "/admin/finance"
     | "/admin/fleet"
+    | "/admin/integrations"
     | "/admin/languages"
     | "/admin/maintenance"
     | "/admin/notifications"
@@ -55,7 +59,9 @@ type NavItem = {
     | "/admin/payments"
     | "/admin/pricing"
     | "/admin/quote-requests"
+    | "/admin/seo"
     | "/admin/settings"
+    | "/admin/stats"
     | "/admin/subcontractors";
   /** رقم المرحلة في خارطة الطريق — للعناصر المؤجلة فقط */
   phase?: string;
@@ -63,6 +69,10 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "لوحة المعلومات", icon: LayoutDashboard, href: "/admin" },
+  // «الإحصائيات» بعد «لوحة المعلومات» مباشرة: لوحة المعلومات صورة اليوم، وهذه
+  // اتجاه الفترة وتفصيلها لكل قسم من الأقسام الستة (المرحلة ١٠). البند يبقى
+  // فعالاً على مساراتها الفرعية كلها (فحص startsWith أدناه).
+  { label: "الإحصائيات", icon: BarChart3, href: "/admin/stats" },
   { label: "الطلبات", icon: ClipboardList, href: "/admin/orders" },
   { label: "طلبات الأسعار", icon: MessageSquareQuote, href: "/admin/quote-requests" },
   { label: "المحتوى", icon: FileText, href: "/admin/content" },
@@ -83,6 +93,14 @@ const NAV_ITEMS: NavItem[] = [
   // «المالية» فُعِّلت في المرحلة ٧: الخزينة والمصروفات ومقاصة المتعهدين وكشوف
   // الحساب. البند يبقى فعالاً على مساراتها الفرعية كلها (فحص startsWith أدناه).
   { label: "المالية", icon: Wallet, href: "/admin/finance" },
+  // ⚠ بندا المرحلة ١٠ التاليان تبنيهما شاشتان يملكهما وكيلان آخران في نفس
+  // المرحلة (`/admin/integrations` معرّفات القياس، و`/admin/seo` مركز السيو).
+  // أُضيفا هنا لأن ملف القائمة يملكه وكيل واحد، وشاشة بلا مدخل في التنقل =
+  // شاشة لم تُبنَ (النمط ٣ في handover/LESSONS.md). **عند الدمج: تأكد أن
+  // الصفحتين موجودتان فعلاً وإلا احذف بندهما** — رابط ٤٠٤ ظاهر أهون من شاشة
+  // مخفية، لكن لا هذا ولا ذاك يُترك.
+  { label: "الربط الخارجي", icon: Plug, href: "/admin/integrations" },
+  { label: "مركز السيو", icon: Search, href: "/admin/seo" },
   { label: "وضع الصيانة", icon: Wrench, href: "/admin/maintenance" },
   { label: "الإعدادات", icon: Settings, href: "/admin/settings" },
 ];
@@ -97,6 +115,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/finance/partners": "مقاصة المتعهدين",
   "/admin/finance/treasury": "الخزينة",
   "/admin/fleet": "الأسطول والتعريفة",
+  "/admin/integrations": "الربط الخارجي",
   "/admin/languages": "اللغات",
   "/admin/maintenance": "وضع الصيانة",
   "/admin/notifications": "الإشعارات",
@@ -105,7 +124,22 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/payments": "بوابات الدفع",
   "/admin/pricing": "التسعير",
   "/admin/quote-requests": "طلبات الأسعار",
+  "/admin/seo": "مركز السيو",
+  // تبويبا مركز السيو — بنفس نصّي `export const metadata` في الصفحتين، وإلا
+  // قرأ المالك «لوحة التحكم» في الترويسة و«تحويلات الروابط» في تبويب المتصفح
+  // فظنّ أنه غادر القسم.
+  "/admin/seo/audit": "فحص البيانات المهيكلة",
+  "/admin/seo/redirects": "تحويلات الروابط",
   "/admin/settings": "الإعدادات",
+  // شاشات الإحصائيات الست + نظرتها العامة (المرحلة ١٠). مسارات ثابتة كلها،
+  // فتُلتقط من هنا ولا يحتاج أيٌّ منها عنواناً ديناميكياً.
+  "/admin/stats": "الإحصائيات",
+  "/admin/stats/content": "إحصائيات المحتوى والسيو",
+  "/admin/stats/customers": "إحصائيات العملاء",
+  "/admin/stats/locales": "إحصائيات اللغات",
+  "/admin/stats/orders": "إحصائيات الطلبات",
+  "/admin/stats/partners": "إحصائيات المتعهدين",
+  "/admin/stats/treasury": "إحصائيات الخزينة",
   "/admin/subcontractors": "المتعهدون",
   "/admin/subcontractors/reviews": "مراجعة الأسعار",
 };

@@ -1,0 +1,72 @@
+/**
+ * خريطة المسارات الحقيقية في الموقع — يستعملها التحقق من التحويلات وحده.
+ *
+ * لماذا تحتاجها أصلاً؟ لأن أخطر خطأ في مدير التحويلات هو تحويل مسار **يعمل
+ * فعلاً**: صفحة حية تختفي من الموقع بلا رسالة خطأ ولا أثر في السجلات، ويكتشفها
+ * المالك من هبوط الزيارات بعد أسابيع. فالتحقق يمنعه عند الحفظ لا بعده.
+ *
+ * مصدران للحقيقة يُدمجان:
+ *  (١) مسارات يملكها نظام الملفات في `app/` — الثابتة منها مكتوبة أدناه.
+ *  (٢) صفحات جدول `pages` بمساراتها العامة — تُمرَّر من الشاشة وقت التحقق،
+ *      و**تشمل المسودة** أيضاً: مسودة اليوم منشورة غداً، وتحويل يبتلعها عيب
+ *      نائم لا يظهر إلا لحظة النشر.
+ *
+ * ملاحظة عن المقاطع الديناميكية: `/services/[slug]` و`/routes/[slug]`
+ * و`/booking/[token]` لا يمكن تعدادها كاملة، فالبادئة نفسها محجوزة — أي تحويل
+ * من `/services/...` أو `/routes/...` أو `/booking/...` أو `/payment/...`
+ * يُرفض. هذا أشد قليلاً من اللازم (قد يكون الـ slug غير موجود فعلاً) لكنه
+ * الاتجاه الآمن: منع تحويل يصطدم بصفحة حية أهم من السماح بتحويل مسار ميت.
+ */
+
+import type { PageKind } from "@/lib/content-types";
+
+/** المسار العام لصفحة محتوى — نفس منطق `app/sitemap.ts` وقائمة المحتوى */
+export function pagePublicPath(kind: PageKind, slug: string): string {
+  switch (kind) {
+    case "home":
+      return "/";
+    case "service":
+      return `/services/${slug}`;
+    case "corridor":
+      return `/routes/${slug}`;
+    case "static":
+      return `/${slug}`;
+  }
+}
+
+/**
+ * مسارات ثابتة يملكها ملف حقيقي في `app/` — لا صف لها في `pages`.
+ * مطابقة لقائمة `RESERVED_SLUGS` في `app/[slug]/page.tsx` مع الجذر وصفحاتها.
+ */
+export const APP_OWNED_PATHS: readonly string[] = [
+  "/",
+  "/about",
+  "/book",
+  "/quote-request",
+];
+
+/**
+ * بادئات محجوزة بالكامل: كل ما تحتها يملكه مقطع ديناميكي أو نظام آخر.
+ * `/admin` و`/portal` و`/api` مذكورة هنا للتحقق وإن كان الوسيط يستثنيها أصلاً —
+ * فالمالك يجب أن يرى **سبب** الرفض في اللوحة لا أن يحفظ قاعدة لا تعمل أبداً.
+ */
+export const RESERVED_PATH_PREFIXES: readonly string[] = [
+  "/services",
+  "/routes",
+  "/booking",
+  "/payment",
+  "/admin",
+  "/portal",
+  "/api",
+  "/_next",
+  "/brand",
+  "/images",
+];
+
+/** ملفات سيو ثابتة يولّدها التطبيق */
+export const RESERVED_EXACT_FILES: readonly string[] = [
+  "/favicon.ico",
+  "/robots.txt",
+  "/sitemap.xml",
+  "/manifest.webmanifest",
+];

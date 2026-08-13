@@ -28,8 +28,8 @@
 pnpm install                       # تثبيت الاعتماديات
 cp .env.example .env.local         # ثم املأ القيم (الجدول أدناه)
 # ⚠ املأ DATABASE_URL بصيغة الـ Session pooler — موجود في القالب فارغاً (الصيغة في القسم ٤)
-pnpm db:migrate                    # تطبيق الترحيلات 0001–0021
-pnpm db:test                       # التحقق: سبع مجموعات، كلها ALL PASSED
+pnpm db:migrate                    # تطبيق الترحيلات 0001–0023
+pnpm db:test                       # التحقق: ثماني مجموعات، كلها ALL PASSED
 pnpm dev                           # http://localhost:3000
 ```
 
@@ -54,11 +54,11 @@ pnpm dev                           # http://localhost:3000
 
 | المتغير | مطلوب؟ | الوظيفة | ماذا ينكسر بدونه |
 |---|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | **نعم** | عنوان مشروع Supabase | `createServerSupabase()` ترجع `null` (`lib/supabase/server.ts:16`) ⇒ الموقع يعرض المحتوى الافتراضي من `lib/default-content.ts`، وكل Server Action يخرج بـ `error=env`، و**حارس `/admin` في `proxy.ts:137` يمرّر الجميع** (وضع تطوير متعمَّد) |
+| `NEXT_PUBLIC_SUPABASE_URL` | **نعم** | عنوان مشروع Supabase | `createServerSupabase()` ترجع `null` (`lib/supabase/server.ts:16`) ⇒ الموقع يعرض المحتوى الافتراضي من `lib/default-content.ts`، وكل Server Action يخرج بـ `error=env`، و**حارس `/admin` في `proxy.ts:181` يمرّر الجميع** (وضع تطوير متعمَّد) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **نعم** | المفتاح العام (محمي بـ RLS) | نفس ما سبق |
 | `SUPABASE_SERVICE_ROLE_KEY` | **نعم** | مفتاح الخادم — يتجاوز RLS (`lib/supabase/admin.ts:15`) | إنشاء الحجز، كتابة كاش المسافات، عامل إرسال الإشعارات، وسكربتات الدعوة — كلها تفشل. **لا يبدأ بـ `NEXT_PUBLIC_` أبداً** |
 | `SITE_URL` | نعم للإنتاج | الرابط المطلق (بلا `/` في النهاية) | `lib/seo.ts:23` يسقط على `VERCEL_URL` ثم `localhost` ⇒ canonical وsitemap وOG خاطئة؛ و`app/api/payments/start/route.ts:51` يبني روابط العودة من البوابة خطأً |
-| `NEXT_PUBLIC_GA_ID` | اختياري | معرّف GA4 بصيغة `G-XXXXXXXXXX` | `components/analytics.tsx:9` لا يحقن السكربت — لا تتبّع (**فارغ حالياً**) |
+| ~~`NEXT_PUBLIC_GA_ID`~~ | **ملغى** | كان معرّف GA4 من البيئة | **لم يعد يُقرأ من أي ملف** منذ المرحلة ١٠ (وحُذف `components/analytics.tsx` الذي كان يقرؤه). المعرّفات كلها من `/admin/integrations` وتُخزَّن في `site_settings.integrations` — القرار ١ في `lib/analytics-types.ts`: نسخة الـ whitelabel الثانية لها معرّفاتها، ولو عاشت في البيئة لصار كل إطلاق علامة نشراً جديداً. احذفه من بيئتك |
 | `NEXT_PUBLIC_SITE_LOCALES` | اختياري | اللغات التي يعرف الوسيط **توجيهها** (`i18n/config.ts:110`) | الافتراضي `ar,en`. لغة تُفعَّل من اللوحة ولا تُذكر هنا ⇒ `/fr/...` لا يعمل رغم اكتمال ترجمتها. الرمز يجب أن يكون داخل `LOCALE_CATALOG` (ar, en, fr, de, it, es, ru) وإلا يُتجاهل بصمت |
 | `TELEGRAM_BOT_TOKEN` | اختياري | توكن البوت (`lib/notifications/telegram.ts:21`) | القناة تُسجَّل «متجاوَزة» بسبب واضح في `/admin/notifications` (**مضبوط حالياً**) |
 | `RESEND_API_KEY` | اختياري | مفتاح البريد (`lib/notifications/email.ts:20`) | لا بريد إطلاقاً؛ الجرس وتليجرام يعملان (**غير مضبوط**) |
@@ -83,7 +83,7 @@ pnpm dev                           # http://localhost:3000
 
 | مضبوط | فارغ أو غائب |
 |---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` · `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `SUPABASE_SERVICE_ROLE_KEY` · `SITE_URL` · `DATABASE_URL` · `TELEGRAM_BOT_TOKEN` | الباقي مذكور في القالب وفارغ القيمة: `NEXT_PUBLIC_GA_ID` · `NEXT_PUBLIC_SITE_LOCALES` · `GOOGLE_MAPS_API_KEY` · `RESEND_API_KEY` · `NOTIFY_EMAIL_FROM` · `NOTIFY_DISPATCH_KEY` · `CRON_SECRET` · متغيرات الترجمة الأربعة · `ALLOW_TEST_PAYMENTS` ومفاتيح البوابات الست |
+| `NEXT_PUBLIC_SUPABASE_URL` · `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `SUPABASE_SERVICE_ROLE_KEY` · `SITE_URL` · `DATABASE_URL` · `TELEGRAM_BOT_TOKEN` | الباقي مذكور في القالب وفارغ القيمة: `NEXT_PUBLIC_SITE_LOCALES` · `GOOGLE_MAPS_API_KEY` · `RESEND_API_KEY` · `NOTIFY_EMAIL_FROM` · `NOTIFY_DISPATCH_KEY` · `CRON_SECRET` · متغيرات الترجمة الأربعة · `ALLOW_TEST_PAYMENTS` ومفاتيح البوابات الست |
 
 `.env*` كلها في `.gitignore` — لا تُرفع أبداً.
 
@@ -132,7 +132,7 @@ node scripts/db-migrate.mjs --upto 0015   # يطبّق حتى رقم معيّن 
 
 | الخاصية | التفصيل |
 |---|---|
-| المصدر | `supabase/migrations/*.sql` بالترتيب الأبجدي — حالياً `0001_core.sql` … `0021_payments_hardening.sql` (**٢١ ملفاً، كلها مطبَّقة**) |
+| المصدر | `supabase/migrations/*.sql` بالترتيب الأبجدي — حالياً `0001_core.sql` … `0023_analytics_funnel.sql` (**٢٣ ملفاً، كلها مطبَّقة**) |
 | التتبّع | جدول `public.schema_migrations(name, applied_at)` — الملف المُطبَّق لا يُعاد |
 | الذرّية | كل ملف داخل `begin/commit` مستقل؛ الفشل يُرجع الملف كاملاً ويوقف التنفيذ (`db-migrate.mjs:62-72`) |
 | مستقبلاً | نفس السكربت هو أداة «طبّق على كل نسخ الـ Whitelabel» في المرحلة ١٤ |
@@ -146,7 +146,7 @@ pnpm db:test              # كل المجموعات
 pnpm db:test booking      # ترشيح بجزء من اسم الملف
 ```
 
-سبع مجموعات في `supabase/tests/`: `quote_tests.sql` · `booking_tests.sql` · `coverage_tests.sql` · `dispatch_tests.sql` · `finance_tests.sql` · `i18n_tests.sql` · `payment_tests.sql`.
+**ثماني** مجموعات في `supabase/tests/`: `analytics_tests.sql` · `booking_tests.sql` · `coverage_tests.sql` · `dispatch_tests.sql` · `finance_tests.sql` · `i18n_tests.sql` · `payment_tests.sql` · `quote_tests.sql`.
 
 | نقطة | التفصيل |
 |---|---|
@@ -168,7 +168,7 @@ pnpm db:test booking      # ترشيح بجزء من اسم الملف
 | ترقية يدوية من SQL | `supabase/README.md` القسم ٤ | خطة الطوارئ إن تعذّرت السكربتات |
 
 الحساب القائم اليوم: **`cbadrx100@gmail.com` بدور `admin`** وكلمة مرور ضبطها بدر بنفسه.
-الأدوار في `public.profiles.role`: `admin` · `ops` · `subcontractor` · `customer`. حارس `proxy.ts:179` يسمح لـ `admin` و`ops` بدخول `/admin`، ويحوّل `subcontractor` إلى `/portal` وما عداه إلى `/`.
+الأدوار في `public.profiles.role`: `admin` · `ops` · `subcontractor` · `customer`. حارس `proxy.ts:223` يسمح لـ `admin` و`ops` بدخول `/admin`، ويحوّل `subcontractor` إلى `/portal` وما عداه إلى `/`.
 
 ---
 
@@ -176,14 +176,14 @@ pnpm db:test booking      # ترشيح بجزء من اسم الملف
 
 | الخدمة | الحالة | ما ينقص وأثره |
 |---|---|---|
-| **Supabase** | ✅ حية — المفاتيح و`DATABASE_URL` مضبوطة، ٢١ ترحيلاً مطبَّقاً، الاختبارات خضراء | لا شيء |
+| **Supabase** | ✅ حية — المفاتيح و`DATABASE_URL` مضبوطة، **٢٣** ترحيلاً مطبَّقاً، الاختبارات خضراء (ثماني مجموعات) | لا شيء |
 | **تليجرام** | 🟨 التوكن مضبوط في `.env.local`، **معرّف المحادثة غير مضبوط** | الإشعارات تُصف في `notifications` وتُتخطّى القناة. الحل: `docs/NOTIFICATIONS.md` §٢-٣ لاستخراج المعرّف من `getUpdates`، ثم لصقه في `/admin/settings` ← حقل `notifications.telegramChatId` (المعرّف ليس سرّاً فمكانه اللوحة) |
 | **البريد** | ❌ لا مفتاح Resend | لا رسائل بريد لأي حدث؛ باقي القنوات تعمل |
 | **الخرائط** | 🟢 مجاني بالكامل: Nominatim للجيوكودنج + OSRM للمسافات + كاش دائم في Postgres — **لا مفتاح Google** | الدقة أقل قليلاً وترتيب اقتراحات الأماكن أضعف (انظر `OPEN_TASKS.md`). ضبط `GOOGLE_MAPS_API_KEY` يفعّل الطبقة الأولى بلا أي تغيير كود |
 | **بوابات الدفع** | ❌ لا حساب واحد. ستة محوّلات حقيقية مكتوبة وخامدة: Paymob · Stripe · PayPal · 2Checkout · BinancePay · NowPayments (`lib/payments/providers/`) | التحصيل اليوم يدوي (محافظ + انستا باي + إيصال). بوابة `test` **معطَّلة في القاعدة** (`0021_payments_hardening.sql`) وبحارس بيئة مستقل |
 | **الدومين** | ❌ غير مشترى — قرار مؤجَّل صراحةً حتى اكتمال المنظومة | ساعة السيو لم تبدأ. أُثيرت التكلفة مرتين وحُسمت — **لا تُعاد المناقشة** |
 | **Vercel** | ❌ لا مشروع. `vercel.json` جاهز بجدولتين: `/api/notifications/dispatch` كل دقيقة و`/api/dispatch/tick` كل ٥ دقائق | لا نشر. محلياً تُشغَّل الدورتان يدوياً من `/admin/notifications` أو بنداء المسار من الطرفية |
-| **GA4 / GSC / Meta / Clarity** | ❌ لا شيء مربوط (المرحلة ١٠) | `NEXT_PUBLIC_GA_ID` فارغ ⇒ لا تتبّع |
+| **GA4 / GSC / Meta / Clarity** | ❌ لا معرّف مضبوط بعد (الشاشة جاهزة) | تُضبط كلها من `/admin/integrations` لا من البيئة. السرّ الوحيد في البيئة هو `META_CAPI_ACCESS_TOKEN`. بلا معرّف: صفر سكربت وصفر طلب لجهة خارجية (القرار ٧) |
 | **مزوّد ترجمة** | 🟢 MyMemory المجاني بلا مفتاح (بحصة صغيرة) | ضبط `MYMEMORY_EMAIL` يرفعها مجاناً |
 
 </div>

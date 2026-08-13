@@ -21,6 +21,7 @@
 | `lib/finance-types.ts` | ٧ | الالتواء المحاسبي · مصادر القيد · أنواع حسابات الخزينة |
 | `lib/i18n-types.ts` | ٨ | قرار «العربية بلا بادئة» · قرار «اللوحة عربية فقط» · أنواع الترجمة |
 | `lib/payments-types.ts` | ٩ | المزوّدون · شكل الصفوف · **القواعد الأربع** (السعر من الخادم، الـ webhook مصدر الحقيقة، التوقيع، الإحكام) |
+| `lib/analytics-types.ts` | ١٠ | الخدمات السبع وأنماط معرّفاتها · أحداث القمع الستة و`FunnelPayload` · عقد `StatCard`/`StatSeries` · شكل `funnel_events` · **قاعدة صفر PII**. ⚠ تعليق التواقيع فيه يذكر `section_stats` و`funnel_daily` ولا يذكر `funnel_summary` ولا `funnel_counts` — فجوة موثَّقة في `OPEN_TASKS.md` |
 
 ---
 
@@ -28,8 +29,8 @@
 
 | المسار | ماذا فيه |
 |---|---|
-| `supabase/migrations/0001…0021*.sql` | **٢١ ترحيلاً** — خريطتها بالمرحلة في `ARCHITECTURE.md` القسم ٧ |
-| `supabase/tests/*.sql` | ٧ مجموعات: `quote` · `booking` · `coverage` · `dispatch` · `finance` · `i18n` · `payment` |
+| `supabase/migrations/0001…0023*.sql` | **٢٣ ترحيلاً** — خريطتها بالمرحلة في `ARCHITECTURE.md` القسم ٧ |
+| `supabase/tests/*.sql` | **٨ مجموعات**: `quote` · `booking` · `coverage` · `dispatch` · `finance` · `i18n` · `payment` · `analytics` |
 | `supabase/README.md` | دليل الربط خطوة بخطوة + **الفخّان الشائعان**: مصدرا صلاحيات `anon`، و«`UPDATE` ينجح بصفر صفوف» |
 | `scripts/db-migrate.mjs` | `pnpm db:migrate` (+ `--upto 0015`) — نواة أداة الـ Whitelabel لاحقاً |
 | `scripts/db-test.mjs` | `pnpm db:test [filter]` |
@@ -57,7 +58,10 @@
 
 | القسم | المسار | يدير |
 |---|---|---|
-| لوحة القيادة | `app/admin/page.tsx` | مؤشرات سريعة |
+| لوحة القيادة | `app/admin/page.tsx` | مؤشرات سريعة — **صورة اليوم** |
+| الإحصائيات | `app/admin/stats/` + ست شاشات فرعية: `orders` · `partners` · `treasury` · `customers` · `content` · `locales` | **اتجاه الفترة** لكل قسم. الصفحة الجذر شاشة عامة + قمع؛ لا `actions.ts` لأنها قراءة محضة |
+| الربط الخارجي | `app/admin/integrations/` (+ `actions.ts` و`_components/integrations-ui.tsx`) | معرّفات الخدمات السبع وتفعيلها ومؤشر حالتها |
+| مركز السيو | `app/admin/seo/` (`page.tsx` + `actions.ts` + `_components/{seo-ui,meta-fields}.tsx`) · `seo/audit/page.tsx` (قراءة محضة، بلا `actions.ts`) · `seo/redirects/` (`page.tsx` + `actions.ts` + `loader.ts`) | محرر ميتاداتا جماعي · مدير التحويلات · فحص البيانات المهيكلة |
 | الطلبات | `app/admin/orders/` (+ `[id]/actions.ts` و`[id]/dispatch-actions.ts`) | الحجوزات، تحقق الإيصالات، الإسناد اليدوي |
 | البث | `app/admin/dispatch/` | إعدادات الموجات والطابور اليدوي |
 | المتعهدون | `app/admin/subcontractors/` (+ `[id]` و`reviews`) | الاعتماد، الملفات، مراجعة قوائم الأسعار |
@@ -73,6 +77,8 @@
 | الدخول | `app/admin/login/` · `app/admin/set-password/` | الدخول وضبط كلمة المرور بعد الدعوة |
 
 **النمط:** كل قسم = `page.tsx` + `actions.ts` مجاور + `_components/` للأجزاء التي تحتاج العميل. الشكل القياسي لأي Server Action في `CONVENTIONS.md` القسم ٤، ومرجعه الحي `app/admin/pricing/actions.ts`.
+
+**مكوّنات الإحصائيات** (مشتركة بين الشاشات الست): `components/stats/` — `stats-ui.tsx` · `section-screen.tsx` (الهيكل الموحّد لأي شاشة قسم) · `stat-cards.tsx` · `stat-chart.tsx` · `stat-bars.tsx` · `stat-funnel.tsx` · `stat-range.tsx`. **كل الرسوم SVG مكتوبة يدوياً — لا مكتبة رسوم في المشروع إطلاقاً.**
 
 ---
 
@@ -123,6 +129,9 @@
 | `lib/site-config.ts` · `lib/settings.ts` | **كل قيمة علامة تجارية تمر من هنا** — وقيم `site-config` fallback دائم لا مصدر |
 | `lib/content.ts` · `lib/default-content.ts` | قراءة المحتوى من القاعدة · المرآة الافتراضية حين لا قاعدة |
 | `lib/seo.ts` · `lib/maintenance.ts` · `lib/utils.ts` | الروابط المطلقة والـ canonical · مفتاح الصيانة · أدوات |
+| `lib/analytics/` | `emit.ts` (**نقطة الخروج الوحيدة** لكل حدث قمع — كتابة خادمية بمفتاح الخدمة، ولا ترمي أبداً) · `browser.ts` (‏GA4/Pixel من المتصفح) · `tags.tsx` (حقن الوسوم + **حارس الأسطح** `isMeasurableSurface`) · `meta-capi.ts` · `events.ts` (جدول ترجمة أسماء الأحداث، مشترك بين الخادم والمتصفح) · `services.ts` (سجل الخدمات السبع والتحقق من صيغ المعرّفات) |
+| `lib/stats/` | `read.ts` (كل قراءات الإحصائيات: `section_stats` · `funnel_daily` · `funnel_summary` · عروض `v_stats_*`) · `sections.ts` (الأقسام الستة وترتيبها) · `cards.ts` (بناء القمع من الصفوف) · `range.ts` (المدى الزمني بتوقيت القاهرة) · `format.ts` (**تنسيق محض** + اتجاه الدلتا وقطبيتها) |
+| `lib/seo/` | `redirects.ts` (فهرس التحويلات + **كاش ٣٠ ثانية داخل العملية** + `resolveRedirect` بسقف قفزات) · `validate.ts` (رفض حلقة/تعارض/مسار حيّ) · `meta.ts` (حدود العنوان والوصف) · `audit.ts` (فحص الصفحات والبيانات المهيكلة) · `site-paths.ts` (المسارات المحجوزة التي يملكها التطبيق) |
 
 ---
 
@@ -133,7 +142,7 @@
 | `i18n/config.ts` | `LOCALE_CATALOG` (٧ لغات) · `DEFAULT_LOCALE` · `canonicalLocalePath()` · `ROUTING_LOCALES` من `NEXT_PUBLIC_SITE_LOCALES` |
 | `i18n/{request,server,messages,locales}.ts` | ربط next-intl وقراءة النصوص |
 | `messages/ar.json` · `messages/en.json` | نصوص الواجهة المملوكة للمستودع |
-| `proxy.ts` | **الوسيط** (لا `middleware.ts`): صيانة ← لغة ← حارس `/admin` |
+| `proxy.ts` | **الوسيط** (لا `middleware.ts`): صيانة ← **تحويلات السيو** ← لغة ← حارس `/admin`. ويضبط ترويسة `x-pathname` بالمسار **الأصلي** — يقرؤها `app/admin/layout.tsx` وحارس وسوم القياس |
 | `vercel.json` | الجدولتان: الإشعارات كل دقيقة · دورة البث كل ٥ دقائق |
 | `.env.example` | قالب البيئة — يشمل `DATABASE_URL` بصيغة الـ Session pooler ومتغيرات الترجمة والبوابات (املأ القيم؛ الشرح في `ENVIRONMENT.md`) |
 | `AGENTS.md` / `CLAUDE.md` | تحذير: هذه نسخة Next مختلفة — المرجع `node_modules/next/dist/docs/` |
@@ -162,9 +171,10 @@
 | `docs/VISION.md` | **المصدر الأعلى للحقيقة** — رؤية بدر بصياغته + ملحق القرارات |
 | `docs/ROADMAP.md` | ١٤ مرحلة + القرارات المعمارية + **سجل التقدم الحي** |
 | `docs/DISPATCH.md` · `docs/FINANCE.md` · `docs/LANGUAGES.md` · `docs/NOTIFICATIONS.md` | أدلة موضوعية للمرحلة ٦ · ٧ · ٨ · ٤ |
+| `docs/phase-briefs/` | موجزات المراحل — يحوي **`PHASE-10.md` وحده**؛ موجز المرحلة ١١ لم يُكتب بعد وهو أول ما يُكتب قبل بدئها |
 | `handover/**` | هذه الحزمة |
 | `PLAN.md` | **مسودة ملغاة** — لا تُعتمد (مكتوب في أول سطر منها) |
-| `README.md` | ما زال قالب `create-next-app` — لا معلومة فيه |
+| `README.md` | صار ملفاً حقيقياً بالعربية (‏`b98e53e`) — مدخل المستودع. التوثيق العميق يبقى في `docs/` و`handover/` |
 
 ---
 

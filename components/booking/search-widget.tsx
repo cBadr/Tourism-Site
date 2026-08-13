@@ -24,6 +24,7 @@ import type {
 } from "@/lib/pricing-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
+import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import { createFormatter, type LocaleFormatter } from "./format";
 import { Offers, type BookingContact, type TripSummary } from "./offers";
 
@@ -414,6 +415,14 @@ export function SearchWidget({
       }
 
       setResult(json);
+
+      // القمع في المتصفح (المرحلة ١٠): نظير الحدثين اللذين يكتبهما `/api/quote`
+      // في قاعدتنا — هنا لجوجل وميتا وحدهما. بلا مرجع ولا قيمة: انتقاء «أرخص
+      // عرض» حسابٌ في المتصفح، وقيمة القمع الحقيقية تُقاس عند الحجز لا عند
+      // العرض (نفس تعليل الخادم حرفياً). ولا عنوان انطلاق ولا وجهة إطلاقاً.
+      trackBrowserFunnel("search_performed");
+      trackBrowserFunnel("quote_viewed");
+
       // الإحداثيات جزء أصيل من ملخص الرحلة: بدونها تعتبر بطاقةُ العرض الحجزَ
       // الإلكتروني غير متاح (toCheckoutTrip يُرجع null) فتسقط على قناة التواصل.
       setTrip({

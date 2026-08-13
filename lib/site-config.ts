@@ -5,6 +5,7 @@
  * وهذه القيم الافتراضية هي fallback حتى تُربط قاعدة البيانات (وتبقى fallback بعدها).
  */
 
+import { DEFAULT_INTEGRATIONS, type IntegrationsSettings } from "@/lib/analytics-types";
 import { DEFAULT_PAYMENT_SETTINGS, type PaymentSettings } from "@/lib/booking-types";
 
 export type BrandSettings = {
@@ -69,6 +70,16 @@ export type SiteSettings = {
   notifications: NotificationSettings;
   /** إعدادات الدفع المحلي — النوع من عقد lib/booking-types.ts (مصدر واحد لا نسخة) */
   payment: PaymentSettings;
+  /**
+   * معرّفات خدمات القياس السبع — النوع من عقد lib/analytics-types.ts
+   * (مصدر واحد لا نسخة، تماماً كـ PaymentSettings).
+   *
+   * القرار ١ في المرحلة ١٠: المعرّفات في القاعدة لا في متغيّرات البيئة، لأن
+   * نسخة الـ whitelabel الثانية لها معرّفاتها — ولو عاشت في البيئة لصار كل
+   * إطلاق علامة جديدة نشراً جديداً. أما الأسرار (توكن Meta CAPI) فتبقى في
+   * البيئة: جدول `site_settings` مقروء علناً بسياسة `site_settings_select_public`.
+   */
+  integrations: IntegrationsSettings;
 };
 
 export type ServiceDef = {
@@ -131,4 +142,8 @@ export const DEFAULT_SETTINGS: SiteSettings = {
     emailEnabled: true,
   },
   payment: DEFAULT_PAYMENT_SETTINGS,
+  // الافتراضي الآمن: كل خدمة مطفأة وبلا معرّف ⇒ صفر سكربت خارجي على موقع
+  // منشور حتى يقرر المالك صراحةً من `/admin/integrations` (درس «الافتراضي
+  // الخطر» في handover/LESSONS.md — بوابة الدفع التجريبية بُذرت مفعّلة مرة).
+  integrations: DEFAULT_INTEGRATIONS,
 };

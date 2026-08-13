@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { trackBookingPaid } from "@/lib/analytics/emit";
 import type { BookingStatus } from "@/lib/booking-types";
 import { startDispatchFor } from "@/lib/dispatch/start";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -94,7 +95,16 @@ export async function verifyTransfer(bookingId: string, approve: boolean, formDa
   // ولا تغيّر نتيجة الاعتماد: البوابة `dispatch_settings.autoStart` تقرر التنفيذ،
   // وأي فشل في البث يُسجَّل ويُعالَج من طابور الإسناد اليدوي — ولا يُفشل اعتماد
   // تحويل وصل فعلاً.
-  if (approve) await startDispatchFor(bookingId);
+  if (approve) {
+    await startDispatchFor(bookingId);
+
+    // حدث الشراء (المرحلة ١٠) — **التوأم المنسي** لخطاف الويبهوك: التحويل
+    // البنكي المعتمد يدوياً هو المسار الافتراضي في هذه المنصة، وتجاهل هذه
+    // النقطة كان سيعني موقعاً يبيع فعلاً وصفراً في تقارير جوجل وميتا.
+    // بعد نجاح `verify_payment` وحده (أي بعد أن صار الحجز مؤكداً في القاعدة)،
+    // ولا ينتظر شيئاً: الجدولة بـ `after` تعمل حتى مع `redirect()` بعدها.
+    trackBookingPaid(bookingId);
+  }
 
   revalidatePath("/", "layout");
   redirect(url(bookingId, "saved=1"));

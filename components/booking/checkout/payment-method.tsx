@@ -4,6 +4,7 @@ import * as React from "react";
 import { CreditCard, FlaskConical, LoaderCircle, ShieldCheck, TriangleAlert, Wallet } from "lucide-react";
 
 import { useT } from "@/components/site/i18n";
+import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import { cn } from "@/lib/utils";
 
 /**
@@ -104,6 +105,11 @@ export function PaymentMethodChoice({
         setBusy(false);
         return;
       }
+
+      // القمع في المتصفح: نظير `trackFunnel("booking_started")` في
+      // `/api/payments/start`، وفي نفس لحظته (بعد أن صار للزائر رابط دفع فعلي).
+      // بلا حمولة إطلاقاً: التوكن مفتاح وصول، والمبلغ لا يعرفه المتصفح أصلاً.
+      trackBrowserFunnel("booking_started");
 
       // مغادرة الصفحة إلى المزوّد — لا نُنهي حالة الانتظار كي لا يُضغط الزر مرتين
       window.location.assign(redirectUrl);

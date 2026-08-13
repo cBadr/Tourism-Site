@@ -3,7 +3,8 @@ import { Cairo, Geist_Mono, Inter } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getSettings } from "@/lib/settings";
 import { getActiveLocale, getActiveLocaleDef } from "@/i18n/server";
-import { Analytics } from "@/components/analytics";
+import { AnalyticsTags } from "@/lib/analytics/tags";
+import { normalizeIntegrations, resolveIntegration } from "@/lib/analytics/services";
 import "./globals.css";
 
 /**
@@ -40,16 +41,38 @@ const geistMono = Geist_Mono({
  * العنوان الافتراضي وقالبه ووصف الموقع كلها نصوص مترجمة في `site_settings`،
  * فتُقرأ بلغة الطلب لا بالعربية دائماً — وإلا حمل تبويب المتصفح في `/en`
  * اسم علامة عربياً. `getSettings("ar")` تختصر إلى القراءة العربية نفسها.
+ *
+ * ── المرحلة ١٠: وسما التحقق (Search Console وBing) ──────────────────────────
+ * يخرجان من هنا لا من `<head>` مكتوب بيد: لا وسم head يدوي في هذا المشروع
+ * إطلاقاً، و`metadata.verification` هي واجهة Next الرسمية لهما
+ * (`google` ⇒ google-site-verification، و`other["msvalidate.01"]` ⇒ بينج).
+ *
+ * القرار ٧: الحقل **يغيب تماماً** حين تكون الخدمة مطفأة أو بلا معرّف — لا وسم
+ * فارغ ولا وسم بقيمة null. و`resolveIntegration` تُعيد فحص صيغة المعرّف قبل
+ * إخراجه، فصفٌّ عُدّل بيد في القاعدة لا يزرع نصاً عشوائياً في ترويسة كل صفحة.
  */
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getActiveLocale();
   const settings = await getSettings(locale);
+
+  const integrations = normalizeIntegrations(settings.integrations);
+  const google = resolveIntegration("gsc", integrations.gsc).id;
+  const bing = resolveIntegration("bing", integrations.bing).id;
+
   return {
     title: {
       default: settings.brand.name,
       template: settings.seo.titleTemplate,
     },
     description: settings.seo.defaultDescription,
+    ...(google || bing
+      ? {
+          verification: {
+            ...(google ? { google } : {}),
+            ...(bing ? { other: { "msvalidate.01": bing } } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -74,7 +97,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col font-sans">
         {/* مزوّد الرسائل لجزر العميل (ويدجت البحث، مسار الحجز، نماذج الطلب) */}
         <NextIntlClientProvider>{children}</NextIntlClientProvider>
-        <Analytics />
+        {/* وسوم القياس من اللوحة (المرحلة ١٠) — ترجع null بلا أي سكربت حين
+            لا خدمة مضبوطة ومفعّلة. وسما التحقق في generateMetadata أعلاه. */}
+        <AnalyticsTags />
       </body>
     </html>
   );

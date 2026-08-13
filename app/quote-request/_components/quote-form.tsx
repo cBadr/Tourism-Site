@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { ServiceDef } from "@/lib/site-config";
 import { useT } from "@/components/site/i18n";
+import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import { createFormatter } from "@/components/booking/format";
 
 /**
@@ -112,6 +113,12 @@ export function QuoteRequestForm({
         setSubmitting(false);
         return;
       }
+
+      // القمع في المتصفح: نظير `trackFunnel("quote_requested")` في
+      // `/api/quote-request`. الرقم المرجعي وحده (QR-…) — لا اسم ولا هاتف.
+      trackBrowserFunnel("quote_requested", {
+        ...(json.reference ? { reference: json.reference } : {}),
+      });
 
       setReference(json.reference);
       setDone(true);
