@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { splitLocale } from "@/i18n/config";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { ACCOUNT_HOME_PATH, ACCOUNT_LOGIN_PATH, safeNextPath } from "../_lib/session";
 
@@ -25,7 +26,12 @@ import { ACCOUNT_HOME_PATH, ACCOUNT_LOGIN_PATH, safeNextPath } from "../_lib/ses
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams, origin } = request.nextUrl;
 
-  const to = (path: string, param: "done" | "error", code: string) =>
+  /**
+   * المَعلم الثلاثة أسماء لا اسم واحد لأن الوجهتين تقرآن مفردات مختلفة: شاشة
+   * الدخول تقرأ `done`/`error` (‏`_lib/messages.ts`)، وشاشة «حجوزاتي» تقرأ
+   * `notice`/`error` (‏`bookings/page.tsx`). واسمٌ لا تقرؤه الوجهة = رمزٌ صامت.
+   */
+  const to = (path: string, param: "done" | "notice" | "error", code: string) =>
     NextResponse.redirect(new URL(`${path}?${param}=${code}`, origin));
 
   // (١) رفضٌ صريح من Supabase (رابط منتهٍ أو مستهلَك) — يصل في `error*`
@@ -51,5 +57,30 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   const next = safeNextPath(searchParams.get("next"), ACCOUNT_HOME_PATH);
-  return to(next, "done", "confirmed");
+
+  /**
+   * ⚠ **الرمز يُرسَل حيث له جملة، ولا يُرسَل حيث لا خريطة تقرؤه.**
+   *
+   * كان هذا السطر `to(next, "done", "confirmed")` — و`next` وجهتُه الافتراضية
+   * (وشبه الوحيدة) شاشةُ «حجوزاتي»، وهي تقرأ `?error=` و`?notice=` ولا تقرأ
+   * `done` بحال. فكان العميل يؤكد بريده ويهبط على قائمته **بلا سطر واحد يقول
+   * إن التأكيد نجح** — رمزٌ صامت، وهو العيب الذي تُبنى كل خرائط هذا السطح
+   * لمنعه. (ورسالة `confirmed` في `_lib/messages.ts` تخصّ شاشة الدخول وحدها،
+   * ومن يهبط هنا صار له جلسة فلا يمرّ بها أصلاً — فالمَعلم كان يبدو مخدوماً
+   * وهو غير مخدوم.)
+   *
+   * فالمَعلم يُضاف الآن **فقط** حين تكون الوجهة الشاشةَ التي تملك الجملة
+   * (‏`notice=confirmed` في `NOTICE_TEXT`)، ووجهةٌ أخرى يختارها `?next=` — وهي
+   * مسارٌ داخليٌّ أي صفحة كانت — تُترك نظيفة: وصولُ العميل إليها وقد صار داخلاً
+   * أصدقُ من رمزٍ لا تعرفه.
+   *
+   * ⚠ **والمقارنة بعد قشر بادئة اللغة** لا على النص الخام: `next` يصل من نموذج
+   * الدخول مقنَّناً بـ`localePath`، فوجهةُ زائر الإنجليزية `/en/account/bookings`
+   * — وتساوٍ نصّيّ مع `/account/bookings` كان سيُسقط رسالتَه وحده. وهي الشاشة
+   * نفسها، فالفرق بادئةٌ لا وجهة (القاعدة ١ — العربية بلا بادئة).
+   */
+  if (splitLocale(next).pathname === ACCOUNT_HOME_PATH) {
+    return to(next, "notice", "confirmed");
+  }
+  return NextResponse.redirect(new URL(next, origin));
 }

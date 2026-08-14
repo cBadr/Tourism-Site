@@ -41,6 +41,14 @@
 -- حقيقيتين: نفس التوكن من الحسابين يعطي **سطراً لكلٍّ منهما**، ولا ينزع أحدهما
 -- من الآخر (المفتاح مركّب) — وحجزُ الثاني لا يظهر عند الأول إطلاقاً.
 --
+-- ── الحاجز الرابع: (ي) درجةُ الإثبات تُخزَّن ولا تُستنتج (‏0045) ──────────
+--
+-- الحيازةُ إثباتُ **اطّلاع** لا إثباتُ **هويّة**، وروابط الحجوزات تُعاد توجيهاً.
+-- فـ`link_source` يفرّق بين `'reference'` (المرجع والهاتف مُثبَتان) و`'token'`
+-- (حيازة فقط)، كي يستطيع ملءٌ تلقائيٌّ قادم أن يمتنع عن الثانية. ويُقاس **من
+-- الصفّ المخزَّن بعد نداء الدالتين حيّتين**، لا بقراءة أجسامهما — ومعه الربط
+-- المزدوج في الاتجاهين: الترقية تقع، والتنزيل لا يقع.
+--
 -- ── لماذا لا يلمس هذا الملف بيانات حقيقية ────────────────────────────────
 --   • **الاختبار يملك بياناته كلها**: حسابان بمعرّفين ثابتين ينتهيان بـ`c0001`
 --     و`c0002`، وحجزان بمرجعين `TR-CT0001` و`TR-CT0002`، ووسم `CUSTOMER_TESTS`
@@ -708,7 +716,146 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
--- (ي) التنظيف
+-- (ي) 🔒 الحاجز الرابع: درجةُ الإثبات `link_source` — المساران والربط المزدوج
+-- ----------------------------------------------------------------------------
+-- (0045) الحيازةُ إثباتُ **اطّلاع** لا إثباتُ **هويّة**: روابط الحجوزات تُعاد
+-- توجيهاً، فأي ملءٍ تلقائيّ يقرأ هاتفاً من رابطٍ حيازيّ يورّث بيانات صاحب الحجز
+-- لمن أُرسل إليه الرابط — أي خطر §٢ من بابٍ ثانٍ بعد أن أُغلق الأول.
+--
+-- والقياس هنا **بقراءة الصفّ المخزَّن بعد نداء الدالتين حيّتين** لا بقراءة
+-- أجسامهما. والحالة التي وصلت إليها المجموعة قبل هذا القسم هي بعينها ما يلزم:
+-- الحساب أ ربط TR-CT0001 **بالتوكن** في (هـ)، والحساب ب ربط TR-CT0002
+-- **بالمرجع** في (ز-١) وTR-CT0001 **بالتوكن** في (ح-١).
+--
+-- ── والربط المزدوج في الاتجاهين، وهو لبّ القسم ─────────────────────────────
+--   ↑ حيازةٌ ثم إثبات ⇒ **ترقية تقع**. ولو رُفعت `already-linked` قبل الكتابة
+--     لرجعت المعاملة **ومعها الترقية** فلم تقع أبداً — آليّة **D-48** على شيءٍ
+--     آخر، وفحصٌ يمرّ فوقها أخضر.
+--   ↓ إثباتٌ ثم حيازة ⇒ **رفضٌ ولا تنزيل**. رابطٌ فَقَد إثباته يُسكِت الملء
+--     التلقائي إلى الأبد بسببٍ لا يظهر في شاشة ولا سجلّ.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_a     uuid := '00000000-0000-4000-8000-0000000c0001';
+  v_b     uuid := '00000000-0000-4000-8000-0000000c0002';
+  v_id1   uuid;
+  v_id2   uuid;
+  v_tok2  text;
+  v_src   text;
+  v_got   text;
+  v_hint  text;
+  v_state text;
+  v_n     integer;
+begin
+  select b.id into v_id1 from public.bookings b where b.reference = 'TR-CT0001';
+  select b.id, b.public_token into v_id2, v_tok2
+    from public.bookings b where b.reference = 'TR-CT0002';
+
+  -- شاهدٌ موجب: ثلاثة روابط وقعت فعلاً في (هـ) و(ز-١) و(ح-١). بدونه يكون كل
+  -- «is distinct from» أدناه حكماً على صفوفٍ لا وجود لها — أي فحصاً لا يقيس.
+  select count(*) into v_n from public.customer_bookings cb
+   where cb.profile_id in (v_a, v_b);
+  if v_n <> 3 then
+    raise exception '(ي) الكاشف يقرأ % رابطاً لا ثلاثة — حالةُ المجموعة ليست ما يفترضه هذا القسم', v_n;
+  end if;
+
+  -- ── (ي-١) الحيازة تُخزَّن حيازةً، والإثبات يُخزَّن إثباتاً ─────────────────
+  select cb.link_source into v_src from public.customer_bookings cb
+   where cb.profile_id = v_a and cb.booking_id = v_id1;
+  if v_src is distinct from 'token' then
+    raise exception '(ي-١) ربطُ (هـ) بالتوكن خزّن «%» لا token — الحيازة تُسجَّل إثباتاً، وأي ملءٍ تلقائيّ سيقرأ منها هاتفاً',
+      coalesce(v_src, '(بلا صفّ)');
+  end if;
+
+  select cb.link_source into v_src from public.customer_bookings cb
+   where cb.profile_id = v_b and cb.booking_id = v_id2;
+  if v_src is distinct from 'reference' then
+    raise exception '(ي-١) ربطُ (ز-١) بالمرجع خزّن «%» لا reference — الإثبات يضيع فيمتنع الملء التلقائي عمّن أثبت',
+      coalesce(v_src, '(بلا صفّ)');
+  end if;
+
+  select cb.link_source into v_src from public.customer_bookings cb
+   where cb.profile_id = v_b and cb.booking_id = v_id1;
+  if v_src is distinct from 'token' then
+    raise exception '(ي-١) ربطُ (ح-١) بالتوكن خزّن «%» لا token', coalesce(v_src, '(بلا صفّ)');
+  end if;
+
+  -- ── (ي-٢) القيد يرفض قيمةً ثالثة — **بإدراجٍ حيّ** لا بقراءة نصّ القيد ────
+  -- والزوج (أ، TR-CT0002) غير مربوط، فلا يحجب المفتاحُ المركّب انتهاكَ القيد.
+  -- والحكم بـ`sqlstate` كي لا يُقرأ فشلٌ لسببٍ آخر نجاحاً للحارس.
+  v_state := null;
+  begin
+    insert into public.customer_bookings (profile_id, booking_id, link_source)
+    values (v_a, v_id2, 'guess');
+    v_state := '(قُبلت)';
+  exception when others then
+    get stacked diagnostics v_state = returned_sqlstate;
+  end;
+  if v_state <> '23514' then
+    raise exception '(ي-٢) إدراج قيمةٍ ثالثة في link_source انتهى بـ«%» لا 23514 — القيد غائب أو يفشل لسببٍ آخر', v_state;
+  end if;
+
+  -- ── (ي-٣) 🔒 الربط المزدوج ↑: حيازةٌ ثم إثبات ⇒ ترقية، ولا رفض ───────────
+  -- وتفريغُ دلو الحساب أ أولاً: (ز-٤) استنفدت رصيده **عمداً** لقياس الخانق،
+  -- فنداءُ مرجعٍ هنا كان سيرتطم بـ`rate-limited` ويُقرأ «الترقية مرفوضة» — وهو
+  -- بعينه الفشل الكاذب الذي أصلحته 0045 في فحص 0044 الذاتي. والمحاولاتُ محذوفة
+  -- في التنظيف على أي حال، فالحذف هنا تقديمُ خطوةٍ لا توسيعُ أثر.
+  delete from public.booking_lookup_attempts where client_key = 'acct:' || v_a::text;
+
+  perform set_config('request.jwt.claim.sub', v_a::text, false);
+  v_got := null;
+  begin
+    select l.reference into v_got
+      from public.link_booking_by_reference('TR-CT0001', '01000000001', 'probe') l;
+  exception when others then
+    get stacked diagnostics v_hint = pg_exception_hint;
+    raise exception '(ي-٣) 🔴 الترقية رُفضت بتلميح «%» — والرفع قبل الكتابة يُرجع الترقية معه فلا تقع أبداً (آليّة D-48)',
+      coalesce(v_hint, '(بلا)');
+  end;
+  if v_got is distinct from 'TR-CT0001' then
+    raise exception '(ي-٣) الترقية أعادت «%» لا TR-CT0001', coalesce(v_got, '(صفر صفوف)');
+  end if;
+
+  select cb.link_source into v_src from public.customer_bookings cb
+   where cb.profile_id = v_a and cb.booking_id = v_id1;
+  if v_src is distinct from 'reference' then
+    raise exception '(ي-٣) 🔴 بقيت الدرجة «%» بعد إثباتٍ ناجح — العميل أثبت هاتفه ولم يُسجَّل', coalesce(v_src, '(بلا صفّ)');
+  end if;
+
+  -- ولا ربطَ جديد وُلد من الترقية: المفتاح مركّب، والعدد ثابت
+  select count(*) into v_n from public.customer_bookings cb
+   where cb.profile_id in (v_a, v_b);
+  if v_n <> 3 then
+    raise exception '(ي-٣) صار عدد الروابط % لا ثلاثة — الترقية أدرجت صفاً بدل أن تُعدّل', v_n;
+  end if;
+
+  -- ── (ي-٤) 🔒 الربط المزدوج ↓: إثباتٌ ثم حيازة ⇒ رفض، ولا تنزيل ───────────
+  perform set_config('request.jwt.claim.sub', v_b::text, false);
+  v_hint := null;
+  begin
+    perform * from public.link_booking_by_token(v_tok2);
+    raise exception '(ي-٤) الحيازة فوق إثبات مرّت بلا رفض';
+  exception when others then
+    get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+  if v_hint is distinct from 'already-linked' then
+    raise exception '(ي-٤) تلميح الحيازة فوق إثبات «%» لا already-linked', coalesce(v_hint, '(بلا)');
+  end if;
+
+  select cb.link_source into v_src from public.customer_bookings cb
+   where cb.profile_id = v_b and cb.booking_id = v_id2;
+  if v_src is distinct from 'reference' then
+    raise exception '(ي-٤) 🔴 التنزيل وقع: صارت الدرجة «%» بعد حيازةٍ فوق إثبات — رابطٌ مُثبَت فقد إثباته', coalesce(v_src, '(بلا صفّ)');
+  end if;
+
+  perform set_config('request.jwt.claim.sub', '', false);
+
+  raise notice '✔ (ي) link_source: التوكن ⇒ token والمرجع ⇒ reference (مقيسةً من الصفّ بعد نداءٍ حيّ)، والقيد يرفض الثالثة بـ23514، والترقية تقع بلا صفٍّ جديد، والتنزيل لا يقع';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ك) التنظيف
 -- ----------------------------------------------------------------------------
 do $$
 declare
@@ -738,10 +885,10 @@ begin
    where cb.profile_id in ('00000000-0000-4000-8000-0000000c0001'::uuid,
                            '00000000-0000-4000-8000-0000000c0002'::uuid);
   if v_n <> 0 then
-    raise exception '(ي) بقي % رابطاً بعد التنظيف', v_n;
+    raise exception '(ك) بقي % رابطاً بعد التنظيف', v_n;
   end if;
 
-  raise notice '✔ (ي) التنظيف تم — لا حساب ولا حجز ولا رابط ولا عدّاد ولا أثر في السجل';
+  raise notice '✔ (ك) التنظيف تم — لا حساب ولا حجز ولا رابط ولا عدّاد ولا أثر في السجل';
 end;
 $$;
 
@@ -750,6 +897,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — حسابات العملاء: جدول الربط بـRLS مفعّلة وصفر سياسات وصفر منح لدور عام ورصدٍ تدقيقي، وmy_bookings اثنا عشر عموداً هي عين MyBookingRow بلا تكلفة ولا هامش ولا price_source ولا public_token — اسماً وقيمةً معاً، **وعميلٌ مسجَّل الدخول يقرأ صفراً من bookings وv_booking_profit وv_stats_orders وv_stats_customers ومن جدول الربط نفسه** بينما صاحب القاعدة يقرأ صفوفه، ولا سياسة SELECT جديدة على bookings، والربط بالمرجع **يفوّض** إلى خانق find_booking_by_reference و«لا نتيجة» ترجع صفر صفوف بلا استثناء (D-48)، وهاتفٌ خاطئ لا يربط ولا يفرّق، والهوية من الجلسة وحدها فالتوكن نفسه يعطي سطراً لكل حساب بلا نزع ولا يرى أحدهما حجز الآخر، ولا زائر ينفّذ دالةً واحدة';
+  raise notice 'ALL PASSED — حسابات العملاء: جدول الربط بـRLS مفعّلة وصفر سياسات وصفر منح لدور عام ورصدٍ تدقيقي، وmy_bookings اثنا عشر عموداً هي عين MyBookingRow بلا تكلفة ولا هامش ولا price_source ولا public_token — اسماً وقيمةً معاً، **وعميلٌ مسجَّل الدخول يقرأ صفراً من bookings وv_booking_profit وv_stats_orders وv_stats_customers ومن جدول الربط نفسه** بينما صاحب القاعدة يقرأ صفوفه، ولا سياسة SELECT جديدة على bookings، والربط بالمرجع **يفوّض** إلى خانق find_booking_by_reference و«لا نتيجة» ترجع صفر صفوف بلا استثناء (D-48)، وهاتفٌ خاطئ لا يربط ولا يفرّق، والهوية من الجلسة وحدها فالتوكن نفسه يعطي سطراً لكل حساب بلا نزع ولا يرى أحدهما حجز الآخر، ولا زائر ينفّذ دالةً واحدة، **ودرجةُ الإثبات مخزَّنة ومقيسة من الصفّ بعد نداءٍ حيّ**: التوكن ⇒ token والمرجع ⇒ reference، والقيد يرفض قيمةً ثالثة بـ23514، والربط المزدوج يرتقي (حيازة ثم إثبات) ولا ينزل (إثبات ثم حيازة)';
 end;
 $$;

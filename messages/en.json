@@ -484,6 +484,13 @@
     },
 
     "bookingStatus": {
+      "account": {
+        "anonymousHint": "Have an account with us? Sign in and your trips gather in a single list — and this page stays your way into this booking either way.",
+        "loginCta": "Sign in",
+        "linkHint": "Add this trip to your account and you will find it under \"My bookings\", with no need for this link.",
+        "linkCta": "Add it to my account"
+      },
+
       "metaTitle": "Track your booking",
       "metaDescription": "Your booking status, transfer details and receipt upload.",
       "title": "Your booking details",
@@ -646,6 +653,49 @@
       "title": "My bookings",
       "lead": "Every trip in one place: its status, its time and its amount — and each booking page one click away.",
 
+      "login": {
+        "metaTitle": "Sign in to your account",
+        "metaDescription": "Sign in to find your earlier bookings in one place, or create an account in a minute.",
+        "title": "Your account",
+        "lead": "Sign in to find your earlier bookings in one place, and book again without re-entering your details.",
+        "noAccountNeeded": "You do not need an account to track a booking: enter the booking number and your phone on the tracking page.",
+        "trackLink": "Track your booking",
+        "helpText": "Trouble signing in?",
+        "helpLink": "Contact us"
+      },
+
+      "bar": {
+        "signedIn": "Signed in",
+        "signedInAs": "Signed in as",
+        "signOut": "Sign out"
+      },
+
+      "auth": {
+        "tabsAriaLabel": "Sign in or create an account",
+        "signIn": "Sign in",
+        "signUp": "New account",
+        "name": "Name",
+        "nameOptional": "(optional)",
+        "email": "Email address",
+        "password": "Password",
+        "passwordHelp": "At least {min} characters.",
+        "submitSignIn": "Sign in",
+        "submitSignUp": "Create my account",
+        "loading": "Working…"
+      },
+
+      "authErrors": {
+        "invalidCredentials": "Those sign-in details are not correct — check the email address and the password.",
+        "emailNotConfirmed": "Your email is not activated yet — open the confirmation message we sent you, then sign in again.",
+        "rateLimited": "Too many attempts in a row — wait a moment and try again.",
+        "weakPassword": "That password is too short or too weak — make it at least 8 characters and mix letters and numbers.",
+        "invalidEmail": "That email address is not in a valid format — check it and try again.",
+        "signupsDisabled": "Self sign-up is closed at the moment. Contact us and we will open an account for you.",
+        "network": "We could not reach the server — check your internet connection and try again.",
+        "env": "The database is not connected yet — sign-in and sign-up are enabled once the Supabase variables are set.",
+        "unknown": "We could not complete that — please try again."
+      },
+
       "status": {
         "pendingPayment": "Awaiting payment",
         "underReview": "Under review",
@@ -689,7 +739,14 @@
 
       "notices": {
         "linked": "We added the booking to your account — you will find it in the list below.",
-        "alreadyLinked": "This booking is already in your account — you will find it in the list below."
+        "alreadyLinked": "This booking is already in your account — you will find it in the list below.",
+        "signedOut": "You have been signed out. Your bookings are kept exactly as they are, and signing in brings you back to them.",
+        "checkEmail": "We sent a confirmation message to your email. Open it and click the link to activate your account, and check your spam folder if you cannot find it.",
+        "confirmed": "Your email is confirmed and your account is active — welcome.",
+        "emailConfirmed": "Your email is confirmed and your account is active — welcome. Here are your bookings.",
+        "confirmFailed": "We could not confirm that link. Sign in to request a new message, or contact us.",
+        "confirmExpired": "That confirmation link has expired or was already used. Sign in to request a new one.",
+        "env": "The service is unavailable right now for a technical reason on our side. Try again shortly, or contact us."
       },
 
       "errors": {

@@ -115,6 +115,12 @@ export function readLoginNotice(params: SearchParams): AccountLoginCode | null {
  * فكلمة المرور لا تصل إلى أي إجراء خادمي ولا إلى أي سجل من سجلاتنا. الثمن أن
  * رسالة الخطأ حالةٌ على العميل، والمكسب أن الخادم **لا يرى الكلمة إطلاقاً**.
  * والانضباط نفسه محفوظ: رمزٌ لكل سبب، وخريطة مُفهرسة بالنوع لا نصوص متناثرة.
+ *
+ * ⚠ **والخريطة تحمل مفتاح ترجمة لا نصاً خاماً** — كسائر خرائط هذا السطح. كانت
+ * `Record<AuthErrorCode, string>` بنصوصٍ عربية تُعرض كما هي، فكان زائرُ `/en`
+ * يرى نموذجاً إنجليزياً ورسالةَ خطئه عربية. وهو العيب نفسه الذي شُحنت به بطاقة
+ * الطاقم: نصٌّ في المكان لا مفتاحٌ في `messages/*.json`. والاحتياطي يبقى عربياً
+ * (القاعدة الرابعة في عقد المرحلة ٨: الترجمة الغائبة تعني العربية لا مفتاحاً خاماً).
  */
 export type AuthErrorCode =
   | "invalid-credentials"
@@ -127,17 +133,43 @@ export type AuthErrorCode =
   | "env"
   | "unknown";
 
-export const AUTH_ERROR_TEXT: Record<AuthErrorCode, string> = {
-  "invalid-credentials": "بيانات الدخول غير صحيحة — تحقق من البريد الإلكتروني وكلمة المرور.",
-  "email-not-confirmed":
-    "لم يُفعَّل بريدك بعد — افتح رسالة التأكيد التي أرسلناها لك ثم أعد تسجيل الدخول.",
-  "rate-limited": "محاولات كثيرة متتالية — انتظر قليلاً ثم أعد المحاولة.",
-  "weak-password": "كلمة المرور قصيرة أو ضعيفة — اجعلها ٨ أحرف على الأقل وامزج الحروف والأرقام.",
-  "invalid-email": "صيغة البريد الإلكتروني غير صحيحة — راجعها وأعد المحاولة.",
-  "signups-disabled": "التسجيل الذاتي مغلق حالياً. تواصل معنا وسنفتح لك حسابك.",
-  network: "تعذر الاتصال بالخادم — تحقق من اتصالك بالإنترنت وحاول مجدداً.",
-  env: "قاعدة البيانات غير مربوطة بعد — يُفعَّل الدخول والتسجيل بعد ضبط متغيرات Supabase.",
-  unknown: "تعذّر إتمام العملية — حاول مرة أخرى.",
+export const AUTH_ERROR_TEXT: Record<AuthErrorCode, { key: string; fallback: string }> = {
+  "invalid-credentials": {
+    key: "authErrors.invalidCredentials",
+    fallback: "بيانات الدخول غير صحيحة — تحقق من البريد الإلكتروني وكلمة المرور.",
+  },
+  "email-not-confirmed": {
+    key: "authErrors.emailNotConfirmed",
+    fallback: "لم يُفعَّل بريدك بعد — افتح رسالة التأكيد التي أرسلناها لك ثم أعد تسجيل الدخول.",
+  },
+  "rate-limited": {
+    key: "authErrors.rateLimited",
+    fallback: "محاولات كثيرة متتالية — انتظر قليلاً ثم أعد المحاولة.",
+  },
+  "weak-password": {
+    key: "authErrors.weakPassword",
+    fallback: "كلمة المرور قصيرة أو ضعيفة — اجعلها ٨ أحرف على الأقل وامزج الحروف والأرقام.",
+  },
+  "invalid-email": {
+    key: "authErrors.invalidEmail",
+    fallback: "صيغة البريد الإلكتروني غير صحيحة — راجعها وأعد المحاولة.",
+  },
+  "signups-disabled": {
+    key: "authErrors.signupsDisabled",
+    fallback: "التسجيل الذاتي مغلق حالياً. تواصل معنا وسنفتح لك حسابك.",
+  },
+  network: {
+    key: "authErrors.network",
+    fallback: "تعذر الاتصال بالخادم — تحقق من اتصالك بالإنترنت وحاول مجدداً.",
+  },
+  env: {
+    key: "authErrors.env",
+    fallback: "قاعدة البيانات غير مربوطة بعد — يُفعَّل الدخول والتسجيل بعد ضبط متغيرات Supabase.",
+  },
+  unknown: {
+    key: "authErrors.unknown",
+    fallback: "تعذّر إتمام العملية — حاول مرة أخرى.",
+  },
 };
 
 /**

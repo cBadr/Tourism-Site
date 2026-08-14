@@ -1,5 +1,6 @@
 import { LogOut, UserRound } from "lucide-react";
 
+import { getT, resolveLocale } from "@/lib/i18n/content";
 import { readAccountGate } from "./_lib/session";
 import { signOutAccount } from "./actions";
 
@@ -27,10 +28,19 @@ import { signOutAccount } from "./actions";
  * ولا `noindex` هنا: الميتاداتا تُدمج بالحقل عبر المقاطع، فوسمٌ في الغلاف كان
  * سيسحب `/account/login` — وهي **صفحة وصولٍ مفهرَسة عمداً** — إلى خارج الفهرس
  * معه. فكل صفحة تملك وسمها: «حجوزاتي» `noindex` بنصّها، والدخول مفهرَسة.
+ *
+ * ⚠ **ونصّا الشريط مفتاحان لا نصّان في المكان.** كانا مكتوبين عربيةً هنا، وهذا
+ * الغلاف يعلو **كل** صفحة من صفحات الحساب — فكان زائرُ `/en` يرى شريطاً عربياً
+ * فوق شاشةٍ إنجليزية في كل صفحة منها. (نفس عيب بطاقة الطاقم حرفياً.)
  */
 export default async function AccountLayout({ children }: LayoutProps<"/account">) {
   const gate = await readAccountGate();
   if (gate.state !== "active") return <>{children}</>;
+
+  // ⚠ **بعد حارس الجلسة لا قبله**: الغلاف يعمل على كل طلبات `/account` بما فيها
+  //    من لا جلسة له، وقراءةُ الترجمات لمن لن يرى الشريط أصلاً كلفةٌ بلا مقابل.
+  const locale = await resolveLocale();
+  const t = await getT("pages.account", locale);
 
   // البريد مُثبَتٌ بالدخول نفسه؛ والاسم يكتبه صاحبه. ولا هاتفَ هنا بحال:
   // `profiles.phone` منسوخٌ من حمولة تسجيلٍ غير مُتحقَّق منها (العقد §٢)،
@@ -44,8 +54,8 @@ export default async function AccountLayout({ children }: LayoutProps<"/account"
           <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
             <UserRound className="size-3.5 shrink-0" aria-hidden="true" />
             <span className="truncate">
-              مسجّل دخولك{label ? " باسم " : ""}
-              {label ? <span className="font-medium text-foreground">{label}</span> : null}
+              {label ? t("bar.signedInAs", "مسجّل دخولك باسم") : t("bar.signedIn", "مسجّل دخولك")}
+              {label ? <span className="font-medium text-foreground"> {label}</span> : null}
             </span>
           </span>
 
@@ -59,7 +69,7 @@ export default async function AccountLayout({ children }: LayoutProps<"/account"
               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               <LogOut className="size-3.5" aria-hidden="true" />
-              خروج
+              {t("bar.signOut", "خروج")}
             </button>
           </form>
         </div>

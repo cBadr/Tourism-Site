@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LogIn, TriangleAlert, UserPlus } from "lucide-react";
 
 import { createBrowserSupabase } from "@/lib/supabase/client";
+import { useT } from "@/components/site/i18n";
 import {
   AUTH_ERROR_TEXT,
   toAuthErrorCode,
@@ -37,6 +38,14 @@ import {
  *
  * ولا `console.log` واحد في هذا الملف: أي طباعة داخل معالج النموذج تصل أدوات
  * المطوّر وإضافات المتصفح، وقد تحمل ما في الحقول.
+ *
+ * ── والنصوص كلها مفاتيح، ولا حرف عربي مكتوب في المكان ──────────────────────
+ *
+ * `useT` لا `getT`: هذه جزيرة عميل، و`NextIntlClientProvider` مركَّب في
+ * `app/layout.tsx` فوق الشجرة كلها (‏`components/site/i18n.ts` هو الجسر المعتمد).
+ * والاحتياطي العربي مكتوب بجوار كل مفتاح، فالترجمة الغائبة تعني العربية لا
+ * مفتاحاً خاماً — وهو ما شُحن مكسوراً في بطاقة الطاقم: نصٌّ في المكان، فرأى
+ * زائرُ `/en` نموذجاً إنجليزياً بحقولٍ عربية.
  */
 
 type Mode = "signin" | "signup";
@@ -56,6 +65,7 @@ type AccountAuthFormProps = {
 
 export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) {
   const router = useRouter();
+  const t = useT("pages.account");
   const supabase = React.useMemo(() => createBrowserSupabase(), []);
 
   const [mode, setMode] = React.useState<Mode>("signin");
@@ -120,7 +130,18 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
         return;
       }
 
-      // تأكيدات البريد مطفأة في المشروع ⇒ الجلسة جاهزة فوراً
+      /**
+       * ⚠ **الفرع الحيّ اليوم هو الذي فوقه لا هذا.** كان مكتوباً هنا أن
+       * «تأكيدات البريد مطفأة في المشروع» — والقياس على `auth.users` يقول
+       * العكس: صفٌّ مسجَّل في 2026-08-14 له `confirmation_sent_at` و
+       * `email_confirmed_at` **فارغ**، أي أن التأكيد مفعَّل ومطلوب. فهذا الفرع
+       * لا يقع إلا لو أُطفئ التأكيد من لوحة Supabase، وهو مكتوبٌ ليعمل حينها
+       * بلا تعديل — لا لأنه المسار المعتاد.
+       *
+       * 🔎 **وشرطٌ يملكه بدر لا الكود**: رابط التأكيد لا يهبط على
+       * `/account/callback` إلا إن كان في قائمة «Redirect URLs» عند Supabase —
+       * وإلا ذهب إلى «Site URL» فصار العميل مؤكَّداً بلا أن يمرّ بمهبطنا.
+       */
       router.replace(next);
       router.refresh();
       return;
@@ -143,13 +164,13 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
       {/* مبدّل الوضع — زرّان لا رابطان: لا إعادة تحميل ولا فقدان ما كُتب */}
       <div
         role="tablist"
-        aria-label="الدخول أو إنشاء حساب"
+        aria-label={t("auth.tabsAriaLabel", "الدخول أو إنشاء حساب")}
         className="grid grid-cols-2 gap-1 rounded-2xl bg-muted p-1"
       >
         {(
           [
-            ["signin", "تسجيل الدخول"],
-            ["signup", "حساب جديد"],
+            ["signin", t("auth.signIn", "تسجيل الدخول")],
+            ["signup", t("auth.signUp", "حساب جديد")],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -173,7 +194,7 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
         {dbMissing && (
           <div className="flex items-start gap-2 rounded-2xl border border-amber-500/50 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>{AUTH_ERROR_TEXT.env}</span>
+            <span>{t(AUTH_ERROR_TEXT.env.key, AUTH_ERROR_TEXT.env.fallback)}</span>
           </div>
         )}
 
@@ -182,14 +203,17 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
             role="alert"
             className="rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-xs leading-relaxed text-destructive"
           >
-            {AUTH_ERROR_TEXT[error]}
+            {t(AUTH_ERROR_TEXT[error].key, AUTH_ERROR_TEXT[error].fallback)}
           </div>
         )}
 
         {signup && (
           <div className="flex flex-col gap-2">
             <label htmlFor="account-name" className="text-sm font-medium">
-              الاسم <span className="text-muted-foreground">(اختياري)</span>
+              {t("auth.name", "الاسم")}{" "}
+              <span className="text-muted-foreground">
+                {t("auth.nameOptional", "(اختياري)")}
+              </span>
             </label>
             <input
               id="account-name"
@@ -207,7 +231,7 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
 
         <div className="flex flex-col gap-2">
           <label htmlFor="account-email" className="text-sm font-medium">
-            البريد الإلكتروني
+            {t("auth.email", "البريد الإلكتروني")}
           </label>
           <input
             id="account-email"
@@ -225,7 +249,7 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
 
         <div className="flex flex-col gap-2">
           <label htmlFor="account-password" className="text-sm font-medium">
-            كلمة المرور
+            {t("auth.password", "كلمة المرور")}
           </label>
           <input
             id="account-password"
@@ -243,7 +267,7 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
           />
           {signup && (
             <p id="account-password-help" className="text-xs leading-5 text-muted-foreground">
-              {MIN_PASSWORD} أحرف على الأقل.
+              {t("auth.passwordHelp", "{min} أحرف على الأقل.", { min: MIN_PASSWORD })}
             </p>
           )}
         </div>
@@ -258,7 +282,11 @@ export function AccountAuthForm({ next, checkEmailPath }: AccountAuthFormProps) 
           ) : (
             <LogIn className="size-5" aria-hidden="true" />
           )}
-          {loading ? "جارٍ التنفيذ..." : signup ? "أنشئ حسابي" : "دخول"}
+          {loading
+            ? t("auth.loading", "جارٍ التنفيذ...")
+            : signup
+              ? t("auth.submitSignUp", "أنشئ حسابي")
+              : t("auth.submitSignIn", "دخول")}
         </button>
       </form>
     </div>
