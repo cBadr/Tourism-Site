@@ -1,12 +1,11 @@
 "use server";
 
-import { createHash } from "node:crypto";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { localePath } from "@/lib/i18n-types";
 import { resolveLocale } from "@/lib/i18n/content";
 import { createServiceSupabase } from "@/lib/supabase/admin";
-import { checkPerMinute, clientIp } from "@/lib/discounts/rate-limit";
+import { checkPerMinute } from "@/lib/discounts/rate-limit";
+import { requestClientKey } from "@/lib/lookup/client-key";
 import type { BookingLookupErrorCode } from "@/lib/booking-types";
 
 /**
@@ -87,41 +86,12 @@ function trackUrl(locale: string, error?: BookingLookupErrorCode): string {
 }
 
 /**
- * عنوان الزائر — من `clientIp` وحدها، ولا نسخة ثانية من ترتيب الترويسات هنا.
- *
- * تلك الدالة تأخذ `Request` والإجراء الخادمي لا يملك واحداً؛ يملك ترويسات الطلب
- * الجاري وحدها. فنمرّر غلافاً يحمل `headers` بدل إعادة كتابة الترتيب (منصة ←
- * وسيط ← **آخر** عنصر في `x-forwarded-for`) نسخةً ثانية تنحرف يوم يُصحَّح الأصل.
- * وذلك الترتيب هو بيت القصيد: النسخة الساذجة في `app/api/quote-request/route.ts`
- * تأخذ **أول** عنصر في السلسلة، وهو ما يكتبه العميل ⇒ خانق يُدار بتدوير ترويسة.
+ * ⚠ **البصمة انتقلت ولم تتغيّر.** كانت `requestIp` و`fingerprint` مكتوبتين هنا
+ * حين كان هذا السطح وحده يفوّض إلى `find_booking_by_reference`. ثم صار له ثانٍ
+ * («أضِف حجزاً سابقاً» في `/account/bookings`)، ونسخُ **ترتيبِ ملحٍ أمنيّ** مرتين
+ * يعني نسختين تنحرفان يوم يُصحَّح الأصل — فالوحدة المشتركة `lib/lookup/client-key.ts`
+ * تحمل الجسمين بتعليقيهما كما هما، وهذا الملف يناديها (القاعدة ١٢: فوِّض ولا تستنسخ).
  */
-async function requestIp(): Promise<string> {
-  try {
-    const list = await headers();
-    return clientIp({ headers: list } as unknown as Request);
-  } catch {
-    // خارج سياق طلب (لا يقع عملياً في إجراء نموذج) — دلو مشترك أضيق لا أوسع
-    return "unknown";
-  }
-}
-
-/**
- * بصمة مجهولة للعميل — هذا وحده ما يصل القاعدة.
- *
- * ⚠ **ترتيب الاحتياطيات ليس تجميلاً.** الملح الصريح `LOOKUP_SALT` أولاً، ثم
- * **مفتاح الخدمة** — وهو سرٌّ خادميّ لا يخرج إلى حزمة المتصفح أبداً. ولا يصح
- * السقوط على `NEXT_PUBLIC_SUPABASE_URL`: قيمةٌ **علنية** تُقرأ من أي صفحة، وملحٌ
- * منشور يجعل البصمة قابلة للعكس بتجربة فضاء IPv4 كله (٤ مليارات) — فيصير جدول
- * المحاولات سجلَّ عناوين، وهو نقضٌ لما يَعِد به تعليق الجدول نفسه في الهجرة.
- * والسقوط الأخير قيمة ثابتة: بيئةٌ بلا سرّ واحد ليست بيئة إنتاج بحال.
- */
-function fingerprint(ip: string): string {
-  const salt =
-    process.env.LOOKUP_SALT ??
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    "tours-lookup";
-  return createHash("sha256").update(`${ip}:${salt}`, "utf8").digest("hex").slice(0, 32);
-}
 
 /** نص من الحقل: تحويل الخانات ثم تشذيب ثم سقف طول */
 function field(formData: FormData, name: string, maxLength: number): string {
@@ -141,8 +111,7 @@ export async function findBooking(formData: FormData): Promise<void> {
   const locale = await resolveLocale();
 
   // ── (١) الخانق في الذاكرة — قبل قراءة البيئة وقبل تحليل المدخلات ─────────
-  const ip = await requestIp();
-  const clientKey = fingerprint(ip);
+  const clientKey = await requestClientKey();
   const verdict = checkPerMinute(`track:${clientKey}`, MAX_ATTEMPTS_PER_MINUTE);
   if (!verdict.ok) redirect(trackUrl(locale, "rate-limited"));
 

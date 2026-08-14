@@ -66,20 +66,14 @@ export const hasSupabaseEnv = () =>
 /**
  * أخطاء «الجدول/العمود/الدالة غير موجودة» — تعني أن هجرة المرحلة ٥ لم تُنفَّذ
  * (أو نُفِّذت جزئياً)، وهي حالة عرض لا حالة فشل: نعرض بطاقة تشرح الخطوة الناقصة
- * بدل شاشة خطأ. رموز Postgres ورموز PostgREST معاً لأن الأخيرة تسبق الأولى أحياناً.
+ * بدل شاشة خطأ.
+ *
+ * ⚠ **الجسم انتقل ولم يُنسخ** إلى `lib/supabase/schema-errors.ts` حين احتاجه سطحُ
+ * حسابات العملاء (‏١٢ب): نسخةٌ ثانية كانت ستنحرف يوم يُضاف رمزٌ إلى إحداهما.
+ * وإعادة التصدير هنا تُبقي اثني عشر موضع استيراد قائماً بلا تعديل سطر واحد.
  */
-const SCHEMA_ERROR_CODES = new Set([
-  "42P01", // undefined_table
-  "42703", // undefined_column
-  "42883", // undefined_function
-  "PGRST202", // دالة غير موجودة في كاش المخطط
-  "PGRST204", // عمود غير موجود في كاش المخطط
-  "PGRST205", // جدول غير موجود في كاش المخطط
-]);
-
-export function isSchemaMissing(error: { code?: string | null } | null | undefined): boolean {
-  return Boolean(error?.code && SCHEMA_ERROR_CODES.has(error.code));
-}
+export { isSchemaMissing } from "@/lib/supabase/schema-errors";
+import { isSchemaMissing } from "@/lib/supabase/schema-errors";
 
 /** أعمدة المتعهد التي يقرأها البورتال — snake_case مطابق لعقد lib/subcontractor-types.ts */
 const SUB_COLUMNS =

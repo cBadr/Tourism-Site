@@ -38,6 +38,7 @@ import { CopyButton } from "@/components/booking/checkout/copy-button";
 import { PrintButton } from "@/components/booking/print-button";
 import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
 import { readEnabledGateways } from "@/components/booking/checkout/gateways";
+import { LinkThisBooking } from "@/app/account/_components/link-this-booking";
 import {
   PaymentMethodChoice,
   type GatewayChoice,
@@ -1626,6 +1627,11 @@ export default async function BookingStatusPage({ params }: PageParams) {
               </div>
             ) : null}
           </section>
+
+          {/* «أضِف هذا الحجز إلى حسابي» — المدخل الثاني للربط في العقد §٥،
+              وحيازةُ التوكن هي الإثبات. تظهر لصاحب الجلسة، وتدعو غيره إلى
+              الدخول بلا أن تشترطه: الحساب طبقةُ راحة لا بوابة. */}
+          <LinkThisBooking token={token} locale={locale} t={t} />
 
           {/* تذييل مساعد */}
           <p className="text-center text-xs leading-6 text-muted-foreground">

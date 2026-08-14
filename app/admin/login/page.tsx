@@ -71,6 +71,11 @@ export default function AdminLoginPage() {
 
     // الوجهة بحسب الدور: المتعهد إلى بورتاله، والمشرف إلى اللوحة.
     // بدون هذا يهبط المتعهد على /admin فيعيده الحارس، فتبدو الشاشة كأنها عطل.
+    //
+    // والعميل ثالثهم منذ المرحلة ١٢ب: `profiles.role` افتراضه `'customer'` منذ
+    // `0001`، فكل من يسجّل من الموقع يصله هذا الفرع. ولولاه لهبط على `/admin`
+    // فرمى به الحارس إلى الرئيسية — دخولٌ ينجح ويبدو كأنه فشل، وهو بعينه العطل
+    // الظاهري الذي كُتب هذا الفرع أصلاً لعلاجه عند المتعهد.
     let destination = "/admin";
     if (data.user) {
       const { data: profile } = await supabase
@@ -79,6 +84,7 @@ export default function AdminLoginPage() {
         .eq("id", data.user.id)
         .maybeSingle();
       if (profile?.role === "subcontractor") destination = "/portal";
+      else if (profile?.role === "customer") destination = "/account/bookings";
     }
 
     router.replace(destination);

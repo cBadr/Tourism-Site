@@ -32,7 +32,8 @@
       "about": "About us",
       "book": "Book a ride",
       "quoteRequest": "Request a quote",
-      "track": "Track your booking"
+      "track": "Track your booking",
+      "account": "My bookings"
     },
 
     "footer": {
@@ -636,6 +637,105 @@
         "contact": "Contact us",
         "notBookedYet": "Not booked yet?",
         "bookLink": "Price your trip and book now"
+      }
+    },
+
+    "account": {
+      "metaTitle": "My bookings",
+      "metaDescription": "All your bookings in one place, and a way to add an earlier booking to your account.",
+      "title": "My bookings",
+      "lead": "Every trip in one place: its status, its time and its amount — and each booking page one click away.",
+
+      "status": {
+        "pendingPayment": "Awaiting payment",
+        "underReview": "Under review",
+        "confirmed": "Confirmed",
+        "completed": "Completed",
+        "cancelled": "Cancelled"
+      },
+
+      "row": {
+        "unknownOrigin": "Pickup point",
+        "unknownDest": "Drop-off point",
+        "pickup": "Pickup time",
+        "passengers": "Passengers",
+        "class": "Vehicle class",
+        "createdAt": "Booking date",
+        "bookedOn": "Booked on {value}",
+        "total": "Trip total",
+        "remaining": "Remaining in cash: {value}",
+        "open": "Open booking page"
+      },
+
+      "list": {
+        "heading": "Your trips ({count})"
+      },
+
+      "form": {
+        "ariaLabel": "Add an earlier booking",
+        "heading": "Add another booking",
+        "headingFirst": "Add an earlier booking",
+        "lead": "Booked before you created your account? Enter the booking number and the phone number you used, and we will add it to your bookings.",
+        "reference": "Booking number",
+        "referenceTip": "A number starting with TR- shown at the top of your booking page and in the confirmation message. If you no longer have it, contact us and we will find your booking by your phone number.",
+        "referencePlaceholder": "TR-XXXXXX",
+        "referenceHelp": "Enter it as it is — upper and lower case are treated the same.",
+        "phone": "Phone number",
+        "phonePlaceholder": "01xxxxxxxxx",
+        "phoneHelp": "The same number you gave when booking — in any format you wrote it.",
+        "submit": "Add this booking to my account",
+        "privacyNote": "We ask for both numbers to protect your booking: neither one alone adds anything."
+      },
+
+      "notices": {
+        "linked": "We added the booking to your account — you will find it in the list below.",
+        "alreadyLinked": "This booking is already in your account — you will find it in the list below."
+      },
+
+      "errors": {
+        "env": "The service is unavailable right now for a technical reason on our side. Try again shortly, or contact us directly.",
+        "auth": "Your session has ended. Sign in again and retry.",
+        "schema": "The account feature is not fully set up on this server yet. Contact us and we will open your booking for you.",
+        "invalidInput": "Enter both the booking number and the phone number, as you gave them when booking.",
+        "rateLimited": "Too many attempts in a short time. Wait a moment and try again, or contact us directly.",
+        "notFound": "We could not find a booking with these details. Check the booking number and the phone number you used when booking, or contact us and we will find it for you.",
+        "save": "The action failed right now for a technical reason on our side. Try again shortly, or contact us directly.",
+        "openDenied": "This booking is no longer among your account's bookings. Refresh the page, and contact us if it stays that way.",
+        "openMissing": "We could not open this booking page right now. Try again shortly, or contact us directly."
+      },
+
+      "anonymous": {
+        "title": "Sign in to see your bookings",
+        "text": "An account is a convenience, not a gate: you can always book and track without one. With an account your trips gather in a single list, with no link to hunt for.",
+        "login": "Sign in",
+        "track": "Track a booking by its number"
+      },
+
+      "env": {
+        "title": "The service is unavailable right now",
+        "text": "We could not reach your account for a technical reason on our side. Try again shortly, or open your booking by its number from the tracking page."
+      },
+
+      "schema": {
+        "title": "The account feature is being set up",
+        "text": "The bookings list is not enabled on this server yet. You can open any booking with its number and your phone from the tracking page."
+      },
+
+      "failed": {
+        "title": "We could not show your bookings",
+        "text": "We could not read your list for a technical reason on our side — your bookings are safe as they are. Reload the page shortly, or open your booking by its number."
+      },
+
+      "empty": {
+        "title": "No bookings in your account yet",
+        "text": "Your account is ready and the list starts with your first booking. If you booked before creating the account, add it with the form below; if you have not booked yet, price your trip in a minute.",
+        "book": "Price your trip and book it"
+      },
+
+      "help": {
+        "title": "Can't find a booking you know you made?",
+        "text": "Bookings are not added to an account automatically — add it with its number and phone, or contact us and we will do it for you.",
+        "contact": "Contact us"
       }
     }
   },

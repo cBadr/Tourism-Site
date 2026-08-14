@@ -118,6 +118,7 @@ export function socialHrefs(socials: SocialSettings): string[] {
   });
 }
 
+
 export type CompanyInfo = {
   legalName: string | null;
   activity: string;

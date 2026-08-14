@@ -1,4 +1,4 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   fetchMaintenanceState,
@@ -27,9 +27,11 @@ import {
  *     الوضع مفعّلاً رجع الزائر بصفحة ٥٠٣ من `lib/maintenance.ts` قبل أي تصيير.
  *     المسارات المستثناة يحددها `isMaintenanceBypassedPath` وحده (لوحة التحكم،
  *     بوابة المتعهدين، `/api`، الأصول الثابتة وملفات السيو) — كسرها يعني
- *     إقفال الباب على من يُفترض أن يُطفئ الوضع من الداخل. وحامل كوكي جلسة
- *     Supabase يتصفح الموقع العام عادياً ما دام `allowAdmin` مفعّلاً، فيرى
- *     الفريق أثر عمله أثناء الصيانة.
+ *     إقفال الباب على من يُفترض أن يُطفئ الوضع من الداخل. و**من كان دوره في
+ *     `profiles` من الفريق** يتصفح الموقع العام عادياً ما دام `allowAdmin`
+ *     مفعّلاً، فيرى أثر عمله أثناء الصيانة. وكان الشرط قبل المرحلة ١٢ب مجرّد
+ *     وجود كوكي باسم جلسة Supabase — فسقط يوم صار كل عميل `authenticated`
+ *     (وكان يسقط قبلها بكوكي ملفَّق أصلاً؛ التفصيل عند الفحص نفسه أدناه).
  *
  * (٢) التحويلات (المرحلة ١٠): جدول `redirects` يديره المالك من
  *     `/admin/seo/redirects`. موضعها هنا — **بعد الصيانة وقبل اللغة** — مقصود:
@@ -63,21 +65,114 @@ import {
  * العملية بمهلة قصيرة، فالطلب المعتاد لا ينتظر شبكة، وفشل أيّهما لا يوقف الموقع.
  * لا SDK لـ Supabase يُحمَّل هنا إلا في حارس اللوحة وحده.
  */
+/** الأدوار التي تعني «من الفريق» في سياق معاينة الصيانة — ولا رابع لها */
+const TEAM_ROLES: ReadonlySet<string> = new Set(["admin", "ops", "subcontractor"]);
+
+/**
+ * هل صاحب هذا الطلب من الفريق فعلاً؟ — **جلسة مُتحقَّق منها ودورٌ من القاعدة**.
+ *
+ * لا يُقرأ الدور من الكوكي بحال: حمولة JWT تقول `role: authenticated` لكل
+ * مستخدم — للعميل والمتعهد والمشرف سواء — فالدور الحقيقي في `profiles` وحده،
+ * وهو نفس مصدرِ حارس `/admin` أسفل هذا الملف.
+ *
+ * **ويفشل مغلقاً**: بلا متغيرات بيئة، أو بجلسة لا تُقرأ، أو بخطأ شبكة ⇒ «ليس من
+ * الفريق» ⇒ صفحة الصيانة. وهذا الاتجاه الصحيح للفشل هنا تحديداً: من يُفترض أن
+ * يُطفئ الوضع يدخل من `/admin` وهو **مستثنى** من الصيانة أصلاً، فلا يُقفل أحد
+ * على نفسه بهذا التشدّد.
+ */
+async function isTeamSession(
+  request: NextRequest,
+  sink: { name: string; value: string; options: CookieOptions }[]
+): Promise<boolean> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) return false;
+
+  try {
+    const supabase = createServerClient(url, anonKey, {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          // التوكن المُجدَّد يُجمَع هنا ويُكتب على الاستجابة أياً كانت — إسقاطه
+          // يترك المتصفح بتوكنٍ مُبطَل، أي خروجاً مفاجئاً بعد انتهاء الصيانة.
+          for (const cookie of cookiesToSet) {
+            request.cookies.set(cookie.name, cookie.value);
+            sink.push(cookie);
+          }
+        },
+      },
+    });
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    return typeof profile?.role === "string" && TEAM_ROLES.has(profile.role);
+  } catch {
+    return false;
+  }
+}
+
+/** يحمل كوكيز التجديد على استجابة جاهزة (٥٠٣ الصيانة) بلا لمس جسمها ولا حالتها */
+function withCookies(
+  response: Response,
+  cookies: { name: string; value: string; options: CookieOptions }[]
+): Response {
+  if (cookies.length === 0) return response;
+  const carried = new NextResponse(response.body, response);
+  for (const { name, value, options } of cookies) carried.cookies.set(name, value, options);
+  return carried;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  /**
+   * كوكيز تجديد الجلسة التي قد يكتبها فحص المعاينة أدناه — تُحمل على أي استجابة
+   * نُرجعها. وبدون حملها يُسقَط التوكن المُجدَّد، فيبقى لدى المتصفح توكنٌ مُبطَل
+   * ⇒ خروجٌ مفاجئ لمن تصفّح أثناء الصيانة. وهي فارغة في كل طلب لا يمرّ بالفحص.
+   */
+  const sessionRefresh: { name: string; value: string; options: CookieOptions }[] = [];
 
   // ── (١) وضع الصيانة — قبل أي شيء آخر، وللمسارات العامة وحدها ─────────────
   if (!isMaintenanceBypassedPath(pathname)) {
     const state = await fetchMaintenanceState();
 
     if (state.maintenance.enabled) {
-      // بوابة تجربة لا بوابة أمان: وجود كوكي الجلسة يكفي لتخطي صفحة الصيانة،
-      // والتحقق الحقيقي من الدور يبقى في RLS وفي حارس /admin أدناه.
+      /**
+       * 🔒 **تصحيح المرحلة ١٢ب — وقد قِيس حياً قبل كتابته وبعده.**
+       *
+       * كان الفحص هنا **وجودَ كوكي باسمٍ يطابق النمط** لا أكثر، بحجّة أنها
+       * «بوابة تجربة لا بوابة أمان». وكان ذلك محتملاً ما دام كل صاحب جلسة في
+       * النظام موظفاً أو متعهداً (**D-20**). و١٢ب تنقض هذه المقدّمة نصّاً: كل
+       * زائر يملأ نموذج تسجيل يصير `authenticated` — أي أن **كل عميل** يتخطّى
+       * صفحة الصيانة، وهي الشاشة التي يُفترض أنها تحجب الزوار وحدهم.
+       *
+       * والقياس أظهر ما هو أوسع: طلبٌ يحمل
+       * `sb-abcdefghijklmnop-auth-token=fake-value-not-a-real-jwt` — قيمةٌ
+       * ملفَّقة بالكامل — رجع **٢٠٠** بينما رجع الزائر بلا كوكي **٥٠٣**. أي أن
+       * التخطّي لم يكن يحتاج حساباً أصلاً، بل سطراً واحداً في أدوات المطوّر.
+       *
+       * فالفحص الآن على **الدور المقروء من القاعدة** بجلسةٍ مُتحقَّق منها، وهو
+       * ما يجعل «الفريق» تعني الفريق. والترتيب يحفظ الكلفة: النمط الرخيص أولاً،
+       * فلا يدفع زائرُ الصيانة العادي أي نداء شبكة، والنداء لا يقع إلا حين يكون
+       * وضع الصيانة **مفعّلاً** ومع الطلب كوكي — وهي حالة نادرة بطبيعتها.
+       */
       const teamPreview =
         state.maintenance.allowAdmin &&
-        hasSupabaseSessionCookie(request.cookies.getAll().map((cookie) => cookie.name));
+        hasSupabaseSessionCookie(request.cookies.getAll().map((cookie) => cookie.name)) &&
+        (await isTeamSession(request, sessionRefresh));
 
-      if (!teamPreview) return maintenanceResponse(state);
+      if (!teamPreview) return withCookies(maintenanceResponse(state), sessionRefresh);
     }
   }
 
@@ -155,10 +250,16 @@ export async function proxy(request: NextRequest) {
   withPath.set(LOCALE_HEADER, locale);
   withPath.set(LOCALE_PATH_HEADER, `${localePathname}${request.nextUrl.search}`);
 
-  const pass = () =>
-    rewriteTo
+  const pass = () => {
+    const response = rewriteTo
       ? NextResponse.rewrite(rewriteTo, { request: { headers: withPath } })
       : NextResponse.next({ request: { headers: withPath } });
+    // فارغة في كل طلب لم يمرّ بفحص معاينة الصيانة — أي في كل طلب تقريباً
+    for (const { name, value, options } of sessionRefresh) {
+      response.cookies.set(name, value, options);
+    }
+    return response;
+  };
 
   // ── (٤) حارس اللوحة — كل ما دون /admin يمر بلا أي استدعاء ────────────────
   if (!pathname.startsWith("/admin")) {

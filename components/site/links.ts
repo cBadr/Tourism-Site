@@ -1,3 +1,4 @@
+import { waNumber } from "@/lib/phone";
 import { socialHref, type SiteSettings, type SocialSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { Tx } from "./i18n";
@@ -33,6 +34,22 @@ export const NAV_LINKS = [
    * كاملة، ومن يتصفح لأول مرة يجب أن تلقاه الخدمات لا نموذج متابعة لا يعنيه.
    */
   { href: "/track", key: "track", label: "تابع حجزك" },
+  /**
+   * «حجوزاتي» — المرحلة ١٢ب: من أنشأ حساباً يحتاج **مدخلاً ظاهراً** إليه، وسطحٌ
+   * لا يُنادى من أي شاشة غير مبنيّ من وجهة نظر مالكه (القاعدة ١٧).
+   *
+   * ويُعرض للزائر المجهول كذلك عن قصد: الصفحة تلقاه ببطاقة «سجّل دخولك» ومعها
+   * طريق `/track` لمن لا يريد حساباً — والرؤية تنصّ أن رحلة العميل مرسومة
+   * كاملةً بلا حساب، فالحساب طبقةُ راحة لا بوابة. وإخفاء المدخل عمّن لا جلسة له
+   * كان يستلزم قراءة الجلسة في **الترويسة**، أي في كل صفحة من الموقع.
+   *
+   * وهي بعد «تابع حجزك» لا قبله: من يبحث عن حجز واحد فقدَ رابطه يجد أقصر طريق
+   * أولاً، ومن له حساب يعرف أن قائمته آخر القائمة.
+   *
+   * ⚠ والصفحة `noindex/nofollow` ولا تدخل خريطة الموقع (ليست في
+   * `APP_OWNED_PATHS`) — فالرابط مدخلُ إنسان لا مسار زحف.
+   */
+  { href: "/account/bookings", key: "account", label: "حجوزاتي" },
 ] as const;
 
 /** روابط القائمة بلغة الزائر — النص من مساحة `site.nav` والمسار من localePath */
@@ -51,9 +68,20 @@ export function localeHref(path: string, locale: string = DEFAULT_LOCALE): strin
   return hash ? `${prefixed}#${hash}` : prefixed;
 }
 
-/** يبني رابط wa.me من رقم قد يحتوي مسافات أو رموزاً */
+/**
+ * رابط محادثة واتساب مع رقمنا.
+ *
+ * ⚠ الرقم يمرّ بـ`waNumber` لا بنزع الرموز: المخزَّن محليٌّ (`01010000506`)
+ * و`wa.me` يشترط الصيغة الدولية، فالنزع وحده كان يفتح رسالة «الرقم غير صالح»
+ * في **كل** سطح يناديه. الشرح الكامل عند `waNumber` في `lib/phone.ts`.
+ *
+ * ويبقى الإرجاع `string` لأن كل مناديه يضعه في `href` مباشرةً؛ وحين يتعذّر بناء
+ * الرقم يعود إلى `wa.me` بلا وجهة — يفتح واتساب ولا يدّعي محادثةً مع رقمٍ خاطئ.
+ * ومن يملك بديلاً أحسن (‏`contactHref`) يفحص القيمة قبل النداء أصلاً.
+ */
 export function waHref(whatsapp: string): string {
-  return `https://wa.me/${whatsapp.replace(/\D/g, "")}`;
+  const number = waNumber(whatsapp);
+  return number ? `https://wa.me/${number}` : "https://wa.me/";
 }
 
 /**
