@@ -39,6 +39,12 @@
  *   تُعطَّل الثلاثة أثناء الزرع وتُعاد في `finally` (و`--clean` يعيدها أيضاً
  *   كصمام أمان). إن قُتل السكربت قتلاً قاسياً فأعِدها بـ:
  *   `node scripts/demo-seed.mjs --clean`.
+ * ⚠ و`subcontractor_drivers` يحمل `updated_at` ومُشغّلاً عليه
+ *   (`subcontractor_drivers_touch`) — ومع ذلك **لا يُضاف إلى القائمة**، لأن
+ *   المُشغّل `before update` وهذا السكربت **يُدرج ولا يُحدّث** صفوف السائقين
+ *   إطلاقاً، فلا يُطلقه شيء. تعطيلُ مُشغّل لا يعمل يوسّع نافذة الخطر (قاعدة
+ *   حيّة بمُشغّل معطَّل) بلا مقابل. ومن يضيف يوماً مساراً يُحدّث سائقاً بتاريخ
+ *   ماضٍ فعليه أن يضيفه هنا حينها.
  *
  * ── الوسم والمسح ───────────────────────────────────────────────────────────
  * كل صف مزروع يحمل الوسم `DEMO_SEED` في عمود نصّي واحد لجدوله:
@@ -52,8 +58,22 @@
  *   payment_events  → event_id        يبدأ بـ DEMO_SEED
  *   auth.users      → email           ينتهي بـ @demo-seed.invalid (نطاق محجوز RFC 2606)
  * وما لا عمود نصّي له (payments · booking_events · dispatches · trip_offers ·
- * payment_intents · ledger_entries · notifications) يُمسك بمفتاحه الأجنبي إلى
- * الصف الموسوم. **لا يُستعمل النطاق الزمني كمُسنَد مسح إطلاقاً.**
+ * payment_intents · ledger_entries · notifications · subcontractor_vehicles ·
+ * subcontractor_drivers) يُمسك بمفتاحه الأجنبي إلى الصف الموسوم.
+ * **لا يُستعمل النطاق الزمني كمُسنَد مسح إطلاقاً.**
+ *
+ * ⚠ وسجلّا الشريك (`subcontractor_vehicles` و`subcontractor_drivers`) بلا عمود
+ *   نصّي يُوسَم — يُمسكان بـ`subcontractor_id` وحده. وسلوك مفتاحيهما **مقروء من
+ *   الكتالوج الحيّ لا مفترَض**: `confdeltype = 'c'` على الاثنين، أي أن حذف
+ *   المتعهد الموسوم يكنسهما تتالياً. ومع ذلك يحذفهما `--clean` صراحةً قبله —
+ *   للعدّاد (كما يفعل بـ`payment_intents`)، ولأن حذفاً صريحاً يبقى صحيحاً لو
+ *   بدّلت هجرةٌ لاحقة المفتاح إلى `set null`. والتحقق الذاتي يقيس ما بقي معلّقاً
+ *   بمعرّفات المتعهدين المحذوفين، فيفشل لو سقط أيٌّ من الاثنين.
+ *
+ * وأعمدة طاقم الرحلة على `dispatches` (‏`assigned_vehicle_id` ·
+ * `assigned_driver_id` · `crew_by_admin` · `crew_at`) **لا تحتاج تنظيفاً**:
+ * `dispatches_booking_id_fkey` بـ`on delete cascade` (مقروء من الكتالوج أيضاً)،
+ * فصفُّ الدورة نفسه يزول مع حجزه — ولا يبقى عمود يُنظَّف.
  * والشيء الوحيد خارج القاعدة صورةُ إيصال واحدة في دلو `receipts` على المسار
  * `demo_seed/receipt.png` — لا CASCADE يبلغها، فيحذفها `--clean` صراحةً بمفتاح
  * الخدمة (وبلا المفتاح يطبع تحذيراً بالمسار ليُحذف من اللوحة).
@@ -63,6 +83,11 @@
  *   مقصور على صفوف الديمو الموسومة، ويمر باتصال مالك القاعدة (`postgres`) الذي
  *   يتجاوز RLS والـ grants — ولا يوجد بديل: قيدٌ ديمو غير محذوف يبقى في كشف
  *   الحساب والخزينة إلى الأبد. لا يلمس السكربت أي قيد لم يزرعه هو.
+ *
+ * ⚠ واستثناء ثانٍ أضيق: `partner_payouts` و`partner_settlements` **المسجَّلة
+ *   يدوياً من اللوحة على متعهد ديمو** تُحذف بمُسنَد المتعهد لا بالوسم. مفتاحاهما
+ *   `on delete restrict`، فصفٌّ واحد منهما يُسقط التنظيف كله في منتصفه — وهو
+ *   ما وقع فعلاً. والحذف يُعلَن بعدّاده في المخرجات، ولا يبلغ متعهدي المالك.
  *
  * ── ما لا يلمسه هذا السكربت أبداً ──────────────────────────────────────────
  * الحجوزات القائمة كلها (منها TR-DX8U6T و TR-ZWXK7D)، والمتعهد القائم «شركة
@@ -547,6 +572,130 @@ const arabicName = () => `${pick(FIRST)} ${pick(LAST)}`;
 const arabicPhone = () => `${pick(["010", "011", "012", "015"])}${rInt(10000000, 99999999)}`;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// (٤-١) طواقم المتعهدين — سائقون وألوان مركبات (الدفعة ٥، الملاحظة ٥)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * مولّد عشوائي **ثانٍ** ببذرة مجاورة — لا نفس المولّد.
+ *
+ * السبب بنيوي لا تجميلي: كل سحبة من `rnd()` تزيح السلسلة كلها لما بعدها. فلو
+ * سحب السائقون والألوان والطاقم أرقامهم من المولّد الرئيسي لتغيّرت **كل**
+ * حجوزات الستة أشهر: مساراتها ومصائرها وأي متعهد فاز بها — أي أن إضافة ميزةٍ
+ * تُعيد كتابة البيانات التي بُنيت عليها قراءات سابقة ولقطات شاشة. مولّد ثانٍ
+ * يجعل الدفعة ٥ **إضافةً خالصة**: ما كان يُزرع أمس يُزرع اليوم حرفاً بحرف،
+ * والجديد وحده جديد. (وهو نفس ما حرص عليه `receiptPng` حين امتنع عن لمس
+ * `rnd()` — انظر تعليقها.)
+ */
+const rndCrew = mulberry32(SEED + 1);
+const cInt = (a, b) => a + Math.floor(rndCrew() * (b - a + 1));
+const cPick = (arr) => arr[Math.floor(rndCrew() * arr.length)];
+const cChance = (p) => rndCrew() < p;
+
+/**
+ * ألوان المركبات — نصّ حرّ بالعربية كما ينصّ `0040` على عمود `color`
+ * («فضي» و«رمادي فاتح» وصفان مشروعان، ولا قائمة مغلقة).
+ * والتكرار في القائمة **هو** الترجيح: الأبيض والفضي يغلبان على أساطيل النقل
+ * السياحي في مصر، وقائمةٌ متساوية الاحتمالات تُنتج أسطولاً بألوان لا يشبه أي
+ * أسطول حقيقي — والغرض من هذا السكربت كله أن تبدو البيانات كعمل قائم.
+ */
+const VEHICLE_COLORS = [
+  "أبيض", "أبيض", "أبيض", "أبيض", "أبيض",
+  "فضي", "فضي", "فضي", "فضي",
+  "أسود", "أسود", "أسود",
+  "رمادي", "رمادي",
+  "رمادي فاتح",
+  "بيج",
+  "أزرق داكن",
+];
+
+/**
+ * ⚠ هاتف السائق يخالف عرف أرقام المتعهدين أعلاه **عن قصد** — اقرأ هذا قبل أن
+ * «توحّد» الاثنين.
+ *
+ * أرقام جهات اتصال المتعهدين (`01001472583` وأخواتها في `PARTNERS`) تبدو أرقاماً
+ * مصرية حقيقية، وهي مقبولة هناك لأنها لا تغادر اللوحة والبورتال: لا شاشة تعرضها
+ * لعميل، ولا أحد يتصل بها إلا نحن.
+ *
+ * أما رقم السائق فالدفعة ٥ **تكشفه للعميل** داخل `get_booking_by_token` قبل موعد
+ * الالتقاء بمدة، وصفحة `/booking/[token]` تعرضه بوصفه «رقم من سيأتيك» — أي أنه
+ * رقمٌ **يُطلَب فعلاً**. وعرضٌ تجريبي يُفتح أمام المالك وضيوفه معناه أن أول من
+ * يجرّب سيتصل. فرقمٌ «معقول الشكل» هنا قد يكون رقم إنسان حقيقي لا علاقة له بنا،
+ * يرن هاتفه لأننا اخترنا الواقعية في الحقل الخطأ.
+ *
+ * فالشكل صناعيٌّ لا يُخطئه أحد: `010` ثم أصفار ثم عدّاد. ويبقى **صحيح الشكل**
+ * (أحد عشر رقماً ببادئة مشغّل مصرية) كي يمر عليه تطبيع الهاتف من الدفعة ١ مروراً
+ * حقيقياً لا كحالة شاذة مستثناة.
+ */
+let driverPhoneSeq = 0;
+const driverPhone = () => `0100000${String(++driverPhoneSeq).padStart(4, "0")}`;
+
+/**
+ * رقم الرخصة — للشريك والإدارة، **ولا يصل العميل** (غائب من نوع إرجاع
+ * `get_booking_by_token` أصلاً، ويحرسه `crew_tests` القسم ح).
+ *
+ * والبادئة الحرفية ليست زينة: الفحص الشامل في `audit_tests` (ب-٣-٥) يمسح
+ * `audit_log` كله بحثاً عن `01` وتسعة أرقام بعدها محاطةً بحدود كلمة، ورقمُ رخصةٍ
+ * رقميٌّ محض بأحد عشر خانة قد يصادف النمط فيرنّ إنذارٌ كاذب — وهو بالضبط ما وقع
+ * سابقاً مع هاش مسار إيصال. `license_no` ليس عموداً محجوباً (ولا يحتاج: لا يصل
+ * العميل)، فيُكتب بشكلٍ لا يلتبس برقم هاتف أصلاً.
+ */
+const driverLicense = () => `DL-${cInt(2019, 2026)}-${cInt(100000, 999999)}`;
+
+/** المتعهد الذي يحمل سجلّه سائقاً متوقفاً — انظر seedDrivers أدناه */
+const INACTIVE_DRIVER_PARTNER = "nasr";
+
+/**
+ * يزرع سجلّ سائقي متعهد واحد ويُرجع `{ total, stopped }`.
+ *
+ * ثلاثة إلى خمسة: أقلُّ من ثلاثة يجعل قائمة الاختيار في نموذج الطاقم سطراً أو
+ * سطرين فلا تُرى كقائمة، وأكثرُ من خمسة لا يضيف شيئاً إلى العرض.
+ *
+ * وواحدٌ **متوقف** عند متعهد واحد بعينه (`INACTIVE_DRIVER_PARTNER`): مسارُ
+ * «المتوقف لا يظهر في قائمة الاختيار» في `crew-panel.tsx` شرطٌ حقيقي في الكود
+ * (`row.active || row.id === selectedId`) وليس له حالةٌ واحدة في القاعدة اليوم،
+ * فيبقى غير مرئي حتى يكسره أحد. وهذا السائق يُسنَد لاحقاً إلى رحلةٍ **منفّذة**
+ * (انظر قسم الطاقم) فيُغطّى طرفا الشرط معاً: يختفي من قائمة رحلةٍ جديدة، ويبقى
+ * مقروءاً بوسم «متوقف» على الرحلة التي نفّذها فعلاً — وهي القصة الحقيقية:
+ * سائقٌ ترك الشركة بعد أن قاد لها شهوراً.
+ *
+ * ⚠ الأسماء من النصف الأول من `FIRST` وحده: النصف الثاني أسماء نسائية، وسجلّ
+ *   أسطول نقل سياحي مصري لا يبدو كذلك — والغرض بيانات تُشبه الواقع لا عيّنة
+ *   متوازنة.
+ */
+async function seedDrivers(p, subId, joinedAt) {
+  const MALE_FIRST = FIRST.slice(0, 20);
+  const total = cInt(3, 5);
+  const used = new Set();
+  let stopped = 0;
+
+  for (let i = 0; i < total; i++) {
+    let name = `${cPick(MALE_FIRST)} ${cPick(LAST)}`;
+    while (used.has(name)) name = `${cPick(MALE_FIRST)} ${cPick(LAST)}`;
+    used.add(name);
+
+    // الأولان مع الانضمام، ومن بعدهما يُضاف على مدار الشهور كما ينمو الأسطول.
+    // 🔒 والسقف `END`: كل صف في هذا السكربت يقع داخل نافذة المحاكاة، وسائقٌ
+    //    «انضم» بعد آخر يوم يظهر في السجل بتاريخ مستقبلي بلا رحلة تفسّره.
+    const at =
+      i < 2
+        ? joinedAt
+        : new Date(Math.min(addDays(joinedAt, cInt(10, 150)).getTime(), END.getTime()));
+
+    const isStopped = p.key === INACTIVE_DRIVER_PARTNER && i === total - 1;
+    if (isStopped) stopped++;
+
+    await q(
+      `insert into public.subcontractor_drivers
+         (subcontractor_id, name, phone, license_no, active, created_at, updated_at)
+       values ($1::uuid, $2::text, $3::text, $4::text, $5::boolean, $6::timestamptz, $6::timestamptz)`,
+      [subId, name, driverPhone(), driverLicense(), !isStopped, iso(at)]
+    );
+  }
+
+  return { total, stopped };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // (٥) الاتصال
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -908,6 +1057,39 @@ async function clean() {
   await del("expenses", `delete from public.expenses where note like $1`, [`${TAG}%`]);
   await del("partner_payouts", `delete from public.partner_payouts where note like $1`, [`${TAG}%`]);
 
+  // (د-٢) ⚠ حركةٌ مالية **بلا وسم** على متعهد ديمو — وهي حالة لا يمكن تفاديها:
+  //       المالك يفتح `/admin/finance/partners` أثناء العرض ويسجّل دفعةً أو
+  //       تسوية على متعهد ديمو (وهذا بالضبط ما بُنيت البيانات لأجله)، فالصف
+  //       يحمل ملاحظته هو لا الوسم.
+  //
+  //       ومفتاحا الجدولين `on delete restrict` — مقروءان من الكتالوج لا
+  //       مفترضين — فصفٌّ واحد منهما **يوقف حذف المتعهد ويُسقط التنظيف كله في
+  //       منتصفه**، تاركاً القاعدة نصف ممسوحة ومُشغّلات `updated_at` معطَّلة.
+  //       (وقد أسقطه فعلاً: خمس تسويات ودفعة واحدة سجّلها المالك بيده.)
+  //
+  //       فالمُسنَد هنا **المتعهد** لا الوسم — وهو مُسنَد آمن: `demo_ids` لا
+  //       تحوي إلا متعهدي الديمو، فلا يقترب هذا الحذف من متعهدي المالك.
+  //       وموضعه قبل الدفتر لنفس سبب (د): لكلٍّ مُشغّل حذف يكتب قيداً عاكساً.
+  //       ولا صمت: يُطبع ما حُذف بلا وسم صراحةً — إدخالٌ يدوي يذهب بلا خبر
+  //       أسوأ من تنظيف يفشل.
+  const orphanPayouts = await del(
+    "partner_payouts (بلا وسم)",
+    `delete from public.partner_payouts p
+      where p.subcontractor_id in (select d.id from pg_temp.demo_ids d where d.kind = 'sub')`
+  );
+  const orphanSettlements = await del(
+    "partner_settlements",
+    `delete from public.partner_settlements ps
+      where ps.subcontractor_id in (select d.id from pg_temp.demo_ids d where d.kind = 'sub')`
+  );
+  if (orphanPayouts || orphanSettlements) {
+    line(
+      `   ℹ حُذفت حركات مالية يدوية على متعهدي الديمو: ` +
+        `${num(orphanPayouts)} دفعة · ${num(orphanSettlements)} تسوية — ` +
+        "سجّلتها من اللوحة على متعهد تجريبي، ولا معنى لبقائها بعد ذهابه."
+    );
+  }
+
   // (هـ) الدفتر — ⚠ الاستثناء الصريح على قاعدة append-only (انظر الترويسة).
   //      العاكسة أولاً: reverses_entry_id بـ on delete restrict.
   const ledgerWhere = `
@@ -960,6 +1142,15 @@ async function clean() {
     `delete from public.subcontractor_vehicles v
       where v.subcontractor_id in (select d.id from pg_temp.demo_ids d where d.kind = 'sub')`
   );
+  // سجلّ السائقين (‏0040) — يتتالى مع المتعهد (`confdeltype = 'c'`، مقروء من
+  // الكتالوج لا مفترَض)، ويُحذف صراحةً هنا لسببين: عدّادٌ يُرى، وصحّةٌ تبقى لو
+  // بدّلت هجرةٌ لاحقة المفتاح. وترتيبه بعد الحجوزات مقصود: `dispatches` زالت
+  // معها، فلا صفَّ إسناد يشير إلى سائق نحذفه (ولو بقي، فمفتاحه `set null`).
+  await del(
+    "subcontractor_drivers",
+    `delete from public.subcontractor_drivers dr
+      where dr.subcontractor_id in (select d.id from pg_temp.demo_ids d where d.kind = 'sub')`
+  );
   await del(
     "subcontractors",
     `delete from public.subcontractors s
@@ -988,8 +1179,16 @@ async function clean() {
   if (removed) line(`   ✔ ${"receipts/الصورة".padEnd(26)} ${String(removed).padStart(6)} ملف`);
 
   head("٣) التحقق الذاتي — صفر صف باقٍ");
+  // ⚠ سجلّا الشريك يُقاسان **بمعرّفات المتعهدين المحذوفين** المحفوظة في
+  //   `pg_temp.demo_ids`، لا بوسمٍ نصّي (لا عمود لهما)، ولا بمقارنة مع
+  //   `subcontractors` (فهي فارغة الآن، فتُنتج صفراً مهما بقي). فلو سقط الحذف
+  //   الصريح وبدّلت هجرةٌ المفتاح إلى `set null` لظهر الرقم هنا فوراً.
   const left = await one(
     `select
+       (select count(*) from public.subcontractor_drivers dr
+         where dr.subcontractor_id in (select d.id from pg_temp.demo_ids d where d.kind = 'sub')) as drivers,
+       (select count(*) from public.subcontractor_vehicles v
+         where v.subcontractor_id in (select d.id from pg_temp.demo_ids d where d.kind = 'sub')) as vehicles,
        (select count(*) from public.bookings        where trip ->> 'notes' like $1) as bookings,
        (select count(*) from public.subcontractors  where notes   like $1)          as subs,
        (select count(*) from public.quote_requests  where details like $1)          as quotes,
@@ -1377,13 +1576,17 @@ async function seed() {
     );
 
     // (ج) الأسطول — 🔒 بلا مركبة نشطة في الفئة لا يدخل المتعهد البث إطلاقاً
+    //
+    // واللون عمودٌ أضافته `0040`، ويُملأ هنا لا يُترك فارغاً: صفحة متابعة العميل
+    // تعرضه بوصفه ما يميّز سيارته عند الرصيف («سيدان — أبيض · أ ب ج ٤٢١٧»)،
+    // فأسطولٌ بلا ألوان يُظهر الميزة ناقصةً في الشاشة التي بُنيت لها.
     for (const slug of partnerClasses) {
       const n = slug === "sedan" ? rInt(2, 5) : slug === "suv" ? rInt(1, 3) : 1;
       for (let i = 0; i < n; i++) {
         await q(
           `insert into public.subcontractor_vehicles
-             (subcontractor_id, class_slug, label, model_year, plate, seats, active, created_at)
-           values ($1::uuid, $2::text, $3::text, $4::int, $5::text, $6::int, true, $7::timestamptz)`,
+             (subcontractor_id, class_slug, label, model_year, plate, seats, color, active, created_at)
+           values ($1::uuid, $2::text, $3::text, $4::int, $5::text, $6::int, $7::text, true, $8::timestamptz)`,
           [
             sub.id,
             slug,
@@ -1391,11 +1594,22 @@ async function seed() {
             rInt(2018, 2026),
             `${pick(["أ ب ج", "س ص ط", "ر ز ن", "ل م ه"])} ${rInt(1000, 9999)}`,
             classCapacity[slug] ?? null,
+            cPick(VEHICLE_COLORS),
             iso(joinedAt),
           ]
         );
       }
     }
+
+    // (ج-٢) سجلّ السائقين — نظير الأسطول حرفاً بحرف، وبإدراج خام لنفس السبب:
+    //       **لا دالة نظام تُنشئ سائقاً**. البورتال يكتب في الجدول مباشرةً عبر
+    //       PostgREST (‏`app/portal/drivers/actions.ts`)، فهذا هو مسار النظام
+    //       نفسه لا التفافٌ حوله — تماماً كصفّ المتعهد وصفوف الأسطول أعلاه.
+    //
+    //       والسبب الذي يجعل هذا الجزء لازماً لا تحسينياً: بلا سائق واحد في
+    //       السجل يرى الشريك في «رحلاتي» حالةَ «أضف سائقيك» بدل نموذج الطاقم،
+    //       فتصير الدفعة ٥ كلها غير قابلة للعرض.
+    const drivers = await seedDrivers(p, sub.id, joinedAt);
 
     // (د) قوائم الأسعار — بالدوال الحقيقية: إنشاء ← إرسال. والاعتماد يؤجَّل إلى
     //     الشهر الذي انضم فيه المتعهد (انظر activatePartner أدناه).
@@ -1443,11 +1657,13 @@ async function seed() {
       profileId,
       joinedAt,
       listIds,
+      drivers,
       activated: false,
     });
     line(
       `   ✔ ${p.name.padEnd(30)} ${p.status.padEnd(10)} ` +
         `${listIds.length} قائمة · ${partnerClasses.length} فئة · ` +
+        `${drivers.total} سائق${drivers.stopped ? ` (منهم ${drivers.stopped} متوقف)` : ""} · ` +
         `${profileId ? "بحساب دخول" : "بلا حساب"} · انضم ${iso(joinedAt).slice(0, 10)}`
     );
   }
@@ -1832,17 +2048,36 @@ async function seed() {
   }
   line(`   ✔ ${num(expenseCount)} مصروفاً بإجمالي ${money(expenseTotal)}`);
 
-  // دفعات المقاصة: جزء من مستحق كل متعهد شهرياً — كي لا يكون كشف الحساب واردَ استحقاق فقط
+  /**
+   * دفعات المقاصة: جزء من **المستحق الصافي** لكل متعهد شهرياً — كي لا يكون كشف
+   * الحساب واردَ استحقاق فقط.
+   *
+   * ⚠ الأساس `net_due` لا `earned`، وليس هذا تدقيقاً محاسبياً بل شرط بقاء
+   *   السكربت حياً. المتعهد يخرج من الرحلة وقد **قبض نقداً** من العميل جزءاً من
+   *   مالنا، فالمعادلة `earned − collected − paid + received` (‏D-49) لا `earned`
+   *   وحدها. والحساب من `earned` كان يدفع له أضعاف ما نملكه عنده — مقيسٌ على هذه
+   *   القاعدة: دُفع لـ«النصر» ٨٣٬١١٢ وقد حصّل بنفسه ٦٨٬٩٠٨ من أصل ١٣٤٬٣٥٦ مستحقاً،
+   *   فانقلب رصيده إلى **مدينٍ لنا** بـ١٧٬٦٦٤. ثم يرفض
+   *   `partner_payouts_guard_owing` (‏0027) الدفعة التالية رفضاً قاطعاً ويُسقط
+   *   الزرع كله عند رابع متعهد — قبل أحداث القمع والطاقم واللمسات الأخيرة.
+   *   عيبٌ حيٌّ منذ الدفعة ٢، لم يظهر لأن أحداً لم يُعِد الزرع بعدها.
+   *
+   * 🔒 والرقم يُقرأ من `v_partner_settlements` لا يُحسب هنا: «لا حساب مال في
+   *    TypeScript» ليست قاعدة للتطبيق وحده — سكربتٌ يحسب المقاصة بنفسه يصير
+   *    مصدر حقيقة ثانياً ينحرف عن الأول بهدوء.
+   *
+   * 🔒 وكل دفعة داخل `try`: حارسٌ مشروع في القاعدة يجب أن يوقف **الدفعة** لا
+   *    السكربت. من يضيف حارساً ثالثاً غداً يجد زرعاً ينقص دفعةً، لا زرعاً ميتاً.
+   */
   let payoutCount = 0;
   let payoutTotal = 0;
+  let payoutBlocked = 0;
   for (const p of approvedPartners) {
-    const earned = await one(
-      `select coalesce(sum(e.amount), 0) as v
-         from public.ledger_entries e
-        where e.subcontractor_id = $1 and e.settlement_role = 'earned' and e.reverses_entry_id is null`,
+    const due = await one(
+      `select net_due from public.v_partner_settlements where subcontractor_id = $1::uuid`,
       [p.id]
     );
-    let remaining = Number(earned.v) * rFloat(0.55, 0.88);
+    let remaining = Number(due?.net_due ?? 0) * rFloat(0.55, 0.88);
     if (remaining < 500) continue;
     const months = Object.keys(MONTHLY_BOOKINGS).filter(
       (mk) => Number(mk.split("-")[1]) > p.joinMonth
@@ -1854,22 +2089,68 @@ async function seed() {
       const day = mk === "2026-08" ? 10 : 25;
       const amount = Math.round(per * rFloat(0.7, 1.25));
       if (amount < 200 || amount > remaining) continue;
-      await q(
-        `select public.record_partner_payout($1::uuid, $2::uuid, $3::numeric, $4::timestamptz, $5::text)`,
-        [
-          p.id,
-          cashAccount.id,
-          amount,
-          iso(new Date(Date.UTC(y, m - 1, day, rInt(11, 17), rInt(0, 59)))),
-          `${TAG} — مقاصة ${AR_MONTH[mk]} مع «${p.name}»`,
-        ]
-      );
-      remaining -= amount;
-      payoutCount++;
-      payoutTotal += amount;
+      try {
+        await q(
+          `select public.record_partner_payout($1::uuid, $2::uuid, $3::numeric, $4::timestamptz, $5::text)`,
+          [
+            p.id,
+            cashAccount.id,
+            amount,
+            iso(new Date(Date.UTC(y, m - 1, day, rInt(11, 17), rInt(0, 59)))),
+            `${TAG} — مقاصة ${AR_MONTH[mk]} مع «${p.name}»`,
+          ]
+        );
+        remaining -= amount;
+        payoutCount++;
+        payoutTotal += amount;
+      } catch (e) {
+        payoutBlocked++;
+        if (payoutBlocked <= 3) {
+          line(`\n   ⚠ رُفضت دفعة لـ«${p.name}»: ${e.message.split("\n")[0]}`);
+        }
+      }
     }
   }
-  line(`   ✔ ${num(payoutCount)} دفعة مقاصة بإجمالي ${money(payoutTotal)}`);
+  line(
+    `   ✔ ${num(payoutCount)} دفعة مقاصة بإجمالي ${money(payoutTotal)}` +
+      (payoutBlocked ? ` · ورفضت القاعدة ${num(payoutBlocked)} (حارس مشروع — راجعها)` : "")
+  );
+
+  /**
+   * ومقدَّمٌ صريح واحد لآخر متعهد معتمد — كي يبقى **الاتجاه الثاني** من الحساب
+   * المفتوح ظاهراً في العرض: «المتعهد مدين لنا».
+   *
+   * لماذا عمداً وبدالةٍ أخرى؟ لأن الحساب مع الشريك يجري في الاتجاهين بطبيعته
+   * (‏D-49)، وشاشتا `/admin/finance/partners` و«حسابك مع المنصة» في البورتال
+   * تعالجان الإشارتين — فبيانات كلها في اتجاه واحد تُخفي نصف الميزة. وبعد إصلاح
+   * أساس الدفع أعلاه لم يعد أحد يقع في المديونية **بالخطأ**، وهذا هو الصواب:
+   * المديونية حالةٌ تُصنع بقرار مكتوب (`record_partner_payout_advance` التي ترفع
+   * `tours.allow_partner_advance`) لا أثرٌ جانبي لحساب خاطئ.
+   */
+  const advanceTo = approvedPartners[approvedPartners.length - 1];
+  if (advanceTo) {
+    const due = await one(
+      `select net_due from public.v_partner_settlements where subcontractor_id = $1::uuid`,
+      [advanceTo.id]
+    );
+    // مبلغ يتجاوز ما بقي له فيقلب رصيده — وهذا هو المقصود من «مقدَّم»
+    const amount = Math.round(Math.max(1500, Number(due?.net_due ?? 0) + rFloat(3000, 9000)));
+    try {
+      await q(
+        `select public.record_partner_payout_advance($1::uuid, $2::uuid, $3::numeric, $4::timestamptz, $5::text)`,
+        [
+          advanceTo.id,
+          cashAccount.id,
+          amount,
+          iso(new Date(Date.UTC(2026, 7, 11, 13, 0))),
+          `${TAG} — مقدَّم عن رحلات قادمة مع «${advanceTo.name}»`,
+        ]
+      );
+      line(`   ✔ مقدَّم صريح واحد بـ${money(amount)} لـ«${advanceTo.name}» — فيظهر الاتجاهان في المقاصة`);
+    } catch (e) {
+      line(`   ⚠ تعذّر تسجيل المقدَّم الصريح: ${e.message.split("\n")[0]}`);
+    }
+  }
 
   // ── (٧-٧) أحداث القمع ────────────────────────────────────────────────────
   head("٦) أحداث القمع");
@@ -1937,8 +2218,189 @@ async function seed() {
       `طلب سعر ${num(quoteRefs.length)}`
   );
 
-  // ── (٧-٨) لمسات أخيرة ────────────────────────────────────────────────────
-  head("٧) لمسات أخيرة");
+  // ── (٧-٨) طاقم الرحلات — المركبة والسائق بعد الإسناد (الدفعة ٥) ──────────
+  //
+  // 🔒 بالدالة الحقيقية `set_trip_crew` **وبهوية الشريك نفسه**، لا بكتابة
+  //    عمودين خامين على `dispatches`. والفرق ليس شكلياً: الدالة `definer` تشتق
+  //    الهوية من `current_subcontractor_id()` وترفض ما ليس من أسطول المنادي ولا
+  //    سجلّه (‏`0040`)، وترفض دورةً ليست `assigned` (‏`0043` عيب ٢). فالمرور بها
+  //    يعني أن البيانات المزروعة **لا يمكن** أن تخالف ما يفرضه النظام على
+  //    الشريك الحقيقي — وأي خرق في الزرع يظهر خطأً هنا لا سطراً فاسداً في القاعدة.
+  //    (وهي نفس المناورة المستعملة مع `accept_offer`: `actAs(p.profileId)`.)
+  head("٧) طاقم الرحلات — المركبة والسائق");
+  await actAs(admin.id);
+
+  const crewStats = { staffed: 0, vehicleOnly: 0, future: 0, skipped: 0, failed: 0 };
+  {
+    // (أ) السجلّان كما هما في القاعدة الآن — يُقرآن ولا يُبنيان من الذاكرة
+    //     (الدرس ١٤: اقرأ من الكتالوج لا من افتراضك عمّا كتبتَه قبل قليل).
+    const roster = {};
+    const bucket = (id) => (roster[id] ??= { vehicles: [], drivers: [] });
+    for (const v of (
+      await q(
+        `select v.id, v.subcontractor_id, v.class_slug
+           from public.subcontractor_vehicles v
+           join public.subcontractors s on s.id = v.subcontractor_id
+          where s.notes like $1 and v.active
+          order by v.created_at`,
+        [`${TAG}%`]
+      )
+    ).rows) {
+      bucket(v.subcontractor_id).vehicles.push(v);
+    }
+    for (const d of (
+      await q(
+        `select dr.id, dr.subcontractor_id, dr.active, dr.created_at
+           from public.subcontractor_drivers dr
+           join public.subcontractors s on s.id = dr.subcontractor_id
+          where s.notes like $1
+          order by dr.created_at`,
+        [`${TAG}%`]
+      )
+    ).rows) {
+      bucket(d.subcontractor_id).drivers.push({ ...d, since: new Date(d.created_at).getTime() });
+    }
+
+    // (ب) الرحلات المؤهَّلة: دورة `assigned` لمتعهد ديمو. الشرط ليس ترفاً —
+    //     `set_trip_crew` ترفض غيرها، وقائمةٌ أوسع تعني عشرات الاستثناءات
+    //     المبتلعة وعدّاداً كاذباً.
+    const trips = (
+      await q(
+        `select d.booking_id, d.assigned_subcontractor_id as sub, d.assigned_at,
+                b.class_slug, b.status as booking_status,
+                nullif(btrim(coalesce(b.trip ->> 'pickupAt', '')), '')::timestamptz as pickup_at
+           from public.dispatches d
+           join public.bookings b on b.id = d.booking_id
+          where b.trip ->> 'notes' like $1
+            and d.status = 'assigned'
+            and d.assigned_subcontractor_id is not null
+          order by pickup_at`,
+        [`${TAG}%`]
+      )
+    ).rows;
+
+    const HOUR = 3600000;
+    const now = Date.now();
+    const backdates = [];
+    let stoppedUsed = false;
+
+    for (const t of trips) {
+      const p = partnerById[t.sub];
+      const kit = roster[t.sub];
+      // متعهد بلا حساب دخول لا يُنادي `set_trip_crew` أصلاً (الهوية مشتقّة لا
+      // ممرَّرة)، ولا يُصطنع له مسارٌ ثانٍ — الإدارة تسجّل عنه بـ
+      // `admin_set_trip_crew`، وذاك مسار عرضٍ آخر لا يخصّ هذا الزرع.
+      if (!p?.profileId || !kit?.vehicles.length || !t.pickup_at) {
+        crewStats.skipped++;
+        continue;
+      }
+
+      const pickup = new Date(t.pickup_at).getTime();
+      const ahead = pickup - now;
+
+      /**
+       * من يسجّل طاقمه؟ **انضباط الشريك نفسه**، مشتقّاً من `acceptRate` لا من
+       * مقبض جديد: من يردّ على العروض سريعاً هو من يملأ خانة السائق، والبطيء
+       * الذي يرفض نصف ما يصله هو الذي ينساها. اشتقاقٌ لا حقل، كي تبقى شخصية كل
+       * متعهد **واحدة** في كل شاشة تعرضه.
+       * والزمن يقرر الباقي: رحلةٌ نُفّذت لها طاقمها بالضرورة أو لم يُسجَّل قط،
+       * ورحلةٌ بعد أسبوع لم يقرر الشريك سيارتها بعد. فتبقى حالتا «مسجَّل» و«لم
+       * يُسجَّل» ظاهرتين معاً في البورتال — وهو الغرض.
+       */
+      const diligence = 0.35 + p.acceptRate * 0.6;
+      const willStaff = ahead <= 5 * 24 * HOUR ? cChance(diligence) : cChance(0.25);
+      if (!willStaff) continue;
+
+      // المركبة من فئة الحجز حين تتوفر: `set_trip_crew` لا تشترط التطابق (ولها
+      // حق — الشريك قد يُرقّي العميل بسيارة أكبر)، لكن «ميني باص» على حجز سيدان
+      // في عرضٍ تجريبي يُقرأ خطأَ بيانات لا ترقية.
+      const sameClass = kit.vehicles.filter((v) => v.class_slug === t.class_slug);
+      const veh = cPick(sameClass.length ? sameClass : kit.vehicles);
+
+      // 🔒 من كان في السجل **يوم الرحلة** وحده: سائقٌ سُجِّل في يونيو لا يقود
+      //    رحلة فبراير. الشرط لا تفرضه القاعدة (المخزَّن معرِّفٌ لا لقطة، وهو
+      //    قرار 0040 المقصود)، لكنه يفرضه المعنى — ولو سقط لظهر في `/admin/logs`
+      //    سطرُ طاقمٍ سابقٌ لميلاد صاحبه. والأولان مسجَّلان يوم انضمام المتعهد
+      //    فلا تخلو أي رحلةٍ له من مرشَّح.
+      const onDuty = kit.drivers.filter((d) => d.since <= pickup);
+      const activeDrivers = onDuty.filter((d) => d.active);
+      const stoppedDrivers = onDuty.filter((d) => !d.active);
+
+      // الحالة الوحيدة المقصودة للسائق المتوقف: رحلة **نُفّذت** لمتعهده — أي
+      // سائقٌ قاد ثم ترك الشركة. بها يُغطّى طرفا شرط `crew-panel.tsx`
+      // (`row.active || row.id === selectedId`): يختفي من قائمة رحلة جديدة،
+      // ويبقى مقروءاً بوسم «متوقف» على رحلته هو.
+      const useStopped =
+        !stoppedUsed && stoppedDrivers.length > 0 && ahead < 0 && t.booking_status === "completed";
+
+      let drv = useStopped ? stoppedDrivers[0] : activeDrivers.length ? cPick(activeDrivers) : null;
+      // ~٨٪ مركبة بلا سائق: الشريك حجز السيارة ولم يقرر من يقودها. حالةٌ
+      // مشروعة في العقد (`driverName` تخرج `null` والحمولة تبقى غير فارغة)
+      // ولا وجود لها في القاعدة اليوم، فلا يُرى شكلها إلا هنا.
+      if (!useStopped && cChance(0.08)) drv = null;
+
+      /**
+       * 🔒 `set_trip_crew` تكتب `crew_at = now()` نصّاً — أي «اليوم» على رحلة
+       * نُفّذت في مارس. والعمود يخرج في `portal_trips` ويُقرأ في السجل، فيصير كل
+       * سطر طاقم كذبةً صغيرة متّسقة. ولا دالة تقبل تاريخاً (ولا يجب أن تقبل:
+       * الإنتاج يكتب اللحظة الحقيقية)، فيُزاح بتمريرة واحدة بعد الحلقة — وهو
+       * حرفياً منطق `backdate` نفسه ومبرره نفسه.
+       * والحدّان: بعد الإسناد بساعة على الأقل، وقبل الالتقاء (ولا يتجاوز الآن).
+       */
+      const upper = Math.min(now, pickup);
+      const lower = Math.min((t.assigned_at ? new Date(t.assigned_at).getTime() : pickup) + HOUR, upper);
+      const crewAt = new Date(Math.min(Math.max(lower, pickup - cInt(2, 72) * HOUR), upper));
+
+      try {
+        await actAs(p.profileId);
+        await q(`select public.set_trip_crew($1::uuid, $2::uuid, $3::uuid)`, [
+          t.booking_id,
+          veh.id,
+          drv?.id ?? null,
+        ]);
+        crewStats.staffed++;
+        if (!drv) crewStats.vehicleOnly++;
+        if (ahead > 0) crewStats.future++;
+        if (useStopped) stoppedUsed = true;
+        backdates.push([t.booking_id, iso(crewAt)]);
+      } catch (e) {
+        crewStats.failed++;
+        if (crewStats.failed <= 3) line(`\n   ⚠ تعذّر تسجيل طاقم (${e.message.split("\n")[0]})`);
+      } finally {
+        await actAs(admin.id);
+      }
+    }
+
+    // (ج) إزاحة `crew_at` — تمريرة واحدة بمصفوفتين متوازيتين.
+    //     ⚠ لا تمسّ `assigned_subcontractor_id` فلا يُطلق
+    //       `dispatches_clear_crew_on_reassign` (مُشغّل `update of` عمودٍ بعينه)
+    //       فيمحو ما سجّلناه للتوّ. ولا تمسّ `assigned_payout` فيخرج
+    //       `dispatches_guard_margin` من أول سطر. و`updated_at` محميّ لأن
+    //       مُشغّله معطَّل في هذه اللحظة (انظر ترويسة الملف).
+    if (backdates.length) {
+      await q(
+        `update public.dispatches d
+            set crew_at = x.at
+           from (select unnest($1::uuid[]) as booking_id, unnest($2::timestamptz[]) as at) x
+          where d.booking_id = x.booking_id`,
+        [backdates.map((r) => r[0]), backdates.map((r) => r[1])]
+      );
+    }
+
+    line(
+      `   ✔ ${num(crewStats.staffed)} رحلة من ${num(trips.length)} مُسنَدة سُجِّل طاقمها ` +
+        `(${num(trips.length - crewStats.staffed - crewStats.skipped)} بلا طاقم بعد — والحالتان مقصودتان)`
+    );
+    line(
+      `   ✔ منها ${num(crewStats.future)} رحلة قادمة يراها العميل الآن · ` +
+        `${num(crewStats.vehicleOnly)} بمركبة بلا سائق · ` +
+        `${stoppedUsed ? "وسائق متوقف على رحلةٍ نفّذها" : "ولا سائق متوقف مُسنَد"}` +
+        (crewStats.failed ? ` · تعذّر ${num(crewStats.failed)}` : "")
+    );
+  }
+
+  // ── (٧-٩) لمسات أخيرة ────────────────────────────────────────────────────
+  head("٨) لمسات أخيرة");
 
   // العروض التي بقيت معلّقة بعد الإزاحة: مهلة منتهية في الماضي تلتقطها
   // dispatch_tick() لاحقاً فتفتح موجات على حجوزات «تاريخية». تُغلق صراحةً،
@@ -2014,11 +2476,20 @@ async function seed() {
        (select count(*) from public.partner_payouts where note like $1)                          as payouts,
        (select count(*) from public.ledger_entries e
           where e.booking_id in (select b.id from public.bookings b where b.trip ->> 'notes' like $1)
-             or e.subcontractor_id in (select s.id from public.subcontractors s where s.notes like $1)) as ledger`,
+             or e.subcontractor_id in (select s.id from public.subcontractors s where s.notes like $1)) as ledger,
+       (select count(*) from public.subcontractor_drivers dr
+          where dr.subcontractor_id in (select s.id from public.subcontractors s where s.notes like $1)) as drivers,
+       (select count(*) from public.subcontractor_vehicles v
+          where v.subcontractor_id in (select s.id from public.subcontractors s where s.notes like $1)
+            and v.color is not null) as colored,
+       (select count(*) from public.dispatches d
+          join public.bookings b on b.id = d.booking_id
+         where b.trip ->> 'notes' like $1 and d.assigned_vehicle_id is not null) as crewed`,
     [`${TAG}%`, TAG]
   );
   line(`   الحجوزات        ${num(kpi.bookings)}   بإجمالي ${money(kpi.gmv)}`);
-  line(`   المتعهدون       ${num(kpi.subs)}`);
+  line(`   المتعهدون       ${num(kpi.subs)}   ·  سائقون ${num(kpi.drivers)}  ·  مركبات ملوّنة ${num(kpi.colored)}`);
+  line(`   طاقم مسجَّل      ${num(kpi.crewed)}   رحلة بمركبة معلَنة للعميل`);
   line(`   قيود الدفتر     ${num(kpi.ledger)}`);
   line(`   المصروفات       ${num(kpi.expenses)}   ·  دفعات المقاصة ${num(kpi.payouts)}`);
   line(`   طلبات الأسعار   ${num(kpi.quotes)}`);
