@@ -5,6 +5,7 @@ import { mergeLocalized } from "@/lib/content";
 import { SERVICES, VEHICLE_CLASSES, type ServiceDef, type VehicleClassDef } from "@/lib/site-config";
 import { txFor, type Translator, type Tx } from "@/components/site/i18n";
 import { createFormatter, type LocaleFormatter } from "@/components/booking/format";
+import { rethrowControlFlow } from "@/lib/next-control-flow";
 
 /**
  * أدوات اللغة للصفحات العامة (المرحلة ٨) — الوجه الخادمي.
@@ -71,8 +72,13 @@ export async function resolveLocale(params?: unknown): Promise<string> {
   try {
     const { getActiveLocale } = await import("@/i18n/server");
     return normalizeLocale(await getActiveLocale());
-  } catch {
-    // لا ترويسة (تصيير ثابت وقت البناء) — نجرّب next-intl ثم العربية
+  } catch (error) {
+    // ⚠ الإشارة تمرّ والعطل يُبتلع. `getActiveLocale` تقرأ ترويسة الطلب، وقراءتها
+    //   داخل تصيير ثابت **إشارةُ تحكّم** من Next لا خطأ: «صنّف هذه الصفحة
+    //   ديناميكية». ابتلاعُها كان يجعل `/services/[slug]` و`/routes/[slug]`
+    //   تُصنَّفان ثابتتين ثم تسقطان بـ ٥٠٠ عند أول طلب إنتاجي حقيقي.
+    rethrowControlFlow(error);
+    // لا ترويسة أصلاً (تصيير ثابت مشروع) — نجرّب next-intl ثم العربية
   }
 
   try {
@@ -82,7 +88,8 @@ export async function resolveLocale(params?: unknown): Promise<string> {
     if (typeof mod.getLocale === "function") {
       return normalizeLocale(await mod.getLocale());
     }
-  } catch {
+  } catch (error) {
+    rethrowControlFlow(error);
     // لا إعداد next-intl بعد — العربية هي الجواب الصحيح
   }
 

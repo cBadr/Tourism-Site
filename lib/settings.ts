@@ -2,6 +2,7 @@ import { cache } from "react";
 import { DEFAULT_SETTINGS, type SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { mergeLocalized } from "@/lib/content";
+import { rethrowControlFlow } from "@/lib/next-control-flow";
 
 /**
  * مُحمّل إعدادات الموقع — يقرأ من جدول `site_settings` (صفوف key/value JSONB)
@@ -75,7 +76,9 @@ const loadBaseSettings = cache(async (): Promise<SiteSettings> => {
     const overrides: Record<string, unknown> = {};
     for (const row of data) overrides[row.key] = row.value;
     return deepMerge(DEFAULT_SETTINGS, overrides);
-  } catch {
+  } catch (error) {
+    // إشارة «هذه الصفحة ديناميكية» تمرّ؛ وعطلُ البيئة أو القاعدة يسقط للافتراضي
+    rethrowControlFlow(error);
     return DEFAULT_SETTINGS;
   }
 });
@@ -100,7 +103,8 @@ const loadSettings = cache(async (locale: string): Promise<SiteSettings> => {
 
     // الدمج بشكل العربية: النص المترجم غير الفارغ فقط هو ما يُستبدل
     return mergeLocalized(base, expandDotted(row));
-  } catch {
+  } catch (error) {
+    rethrowControlFlow(error);
     return base;
   }
 });
