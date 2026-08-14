@@ -212,7 +212,8 @@ Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOSTNAME=127.0.0.1
 Environment=NODE_OPTIONS=--max-http-header-size=65536
-ExecStart=/usr/bin/env pnpm start
+Environment=CI=true
+ExecStart=/usr/bin/node /srv/tours/app/node_modules/next/dist/bin/next start -H 127.0.0.1
 Restart=always
 RestartSec=3
 
@@ -229,7 +230,13 @@ WantedBy=multi-user.target
 
 ثلاثة أسطر تستحق الشرح:
 
-- **`HOSTNAME=127.0.0.1`** — التطبيق يستمع محلياً فقط. لا يصله شيء إلا عبر Nginx.
+- **`-H 127.0.0.1` في `ExecStart` لا `HOSTNAME`** — تحقق حي 2026-08-14: `next start`
+  في هذه النسخة **لا يقرأ `HOSTNAME`** من البيئة، فيستمع على كل الواجهات ويصير
+  المنفذ ٣٠٠٠ مكشوفاً بلا شهادة. الوسيط `-H` هو ما يقيّده فعلاً.
+- **`ExecStart` ينادي `next` مباشرةً لا `pnpm start`** — و`CI=true` معه. `pnpm`
+  يفحص حالة الاعتماديات عند كل تشغيل سكربت **ويطلب تأكيداً** حين يجدها مركَّبة
+  بهوية أخرى؛ وبلا طرفية يفشل بـ `runDepsStatusCheck` فتدور الخدمة في حلقة إعادة
+  تشغيل. وخدمةٌ لا ينبغي لها أن تعيد تركيب اعتمادياتها عند الإقلاع أصلاً.
 - **`NODE_OPTIONS=--max-http-header-size=65536`** — الترويسات الافتراضية أضيق من
   كوكيز الجلسة المتراكمة، والنتيجة خطأ **HTTP 431** يظهر فجأة بعد تصفح طويل. هذا
   السطر هو نفسه الموجود في سكربتَي `dev` و`start` في المشروع، ويُكرَّر هنا لأن
@@ -275,7 +282,7 @@ server {
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto http;
         proxy_set_header X-Forwarded-Host  $host;
 
         proxy_set_header Upgrade    $http_upgrade;
@@ -285,6 +292,14 @@ server {
     }
 }
 ```
+
+⚠ **و`X-Forwarded-Proto` قيمته `http` لا `$scheme` — وهذا عكس ما تتوقعه.**
+تحقق حي 2026-08-14: `proxy.ts` يعيد كتابة `/en/...` داخلياً، وNext يبني وجهة
+إعادة الكتابة من البروتوكول المُعلَن في هذه الترويسة بينما يبقى المضيف هو المستمع
+الداخلي — فيصير الهدف `https://localhost:3000` والمستمع نصّي، ويموت الطلب بـ
+`EPROTO: wrong version number` (‏TLS يكلّم مقبساً بلا TLS). النتيجة: **كل مسار
+`/en/...` يرد ٥٠٠** بينما العربية سليمة. وإعلانُ `http` داخلياً لا يضرّ الروابط
+القانونية: `getBaseUrl()` يقرأ `SITE_URL` لا الطلب.
 
 **`X-Forwarded-Host` ليس تزييناً:** Server Actions في هذه النسخة من Next تقارن
 ترويسة `Origin` بـ `Host` وتُجهض الطلب عند الاختلاف (حماية CSRF مقصودة). وكل
