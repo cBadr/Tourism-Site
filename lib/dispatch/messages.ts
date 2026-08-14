@@ -193,21 +193,71 @@ export function partnerContacts(payload: Payload): { telegramChatId: string | nu
   };
 }
 
+/** حالة القنوات وقت التسليم — المطلوبة في صف الإشعار والمفعَّلة في الإعدادات */
+export type ChannelState = {
+  /** ما طُلب فعلاً لهذا الصف (`notification_channels()` وقت الإدراج) */
+  requested: readonly string[];
+  telegramEnabled: boolean;
+  emailEnabled: boolean;
+};
+
 /**
  * إلى أين تذهب الرسالة؟
  *
- * `trip_offered` وحده موجَّه للمتعهد — إن عرفنا له وسيلة تواصل واحدة على الأقل.
- * وإن لم نعرف له أي وسيلة فالرسالة تسقط على فريق التشغيل ليبلّغه هاتفياً، لا
- * تُبتلع بصمت. أما الأحداث الثلاثة الأخرى فتشغيلية بحتة ووجهتها اللوحة دائماً.
+ * `trip_offered` وحده موجَّه للمتعهد — **إن كان بالغاً على قناةٍ تعمل الآن**.
+ * وإلا سقطت على فريق التشغيل ليبلّغه هاتفياً، لا تُبتلع بصمت. أما الأحداث
+ * الثلاثة الأخرى فتشغيلية بحتة ووجهتها اللوحة دائماً.
+ *
+ * ── ⚠ ولماذا صار الشرط «بالغ» بدل «له عنوان» ──────────────────────────────
+ *
+ * كان الشرط `partner.telegramChatId || partner.emailTo` — أي **مجرّد وجود
+ * عنوان**، أياً كانت قناته. والقياس على القاعدة الحيّة كشف أن هذا يُسقط الرسالة
+ * كلها في الحالة **الشائعة لا النادرة**:
+ *
+ * | الحلقة | الواقع المقيس |
+ * |---|---|
+ * | القنوات المطلوبة | `{dashboard, telegram}` — البريد مستبعَد لأن `emailTo` التشغيلي فارغ |
+ * | حمولة العرض | تحمل `partnerEmail` **فقط**؛ ولا متعهد يسجّل معرّف تليجرام |
+ * | فالقرار | `audience = "partner"` لأنه «يملك عنواناً» |
+ * | فالتسليم على تليجرام | بلا وجهة ⇒ يُوسم «تجاوز» |
+ * | والاحتياطي إلى التشغيل | **لا يعمل** — فالجمهور صار «متعهد» |
+ *
+ * أي أن **الاحتياطي المبنيّ تحديداً لمنع الابتلاع الصامت يتخطّاه الشرط الذي وُجد
+ * ليمسكه**. وطبقة التسليم كانت تعرف الحالة وتسمّيها «لا معرّف تليجرام لهذا
+ * المتعهد» — لكنها عاملتها **تجاوزَ قناة** لا **تعذّرَ بلوغ**، والفرق بينهما هو
+ * كل شيء: الأول يعني «جرّب غيرها»، والثاني يعني «أبلغ إنساناً».
+ *
+ * وعرضُ الرحلة ليس إشعاراً كمالياً: دورة البث تنتهي بمهلة (`dispatch_round_expired`)،
+ * فعرضٌ لا يصل صاحبه ينتهي غير مقروء وتُعاد الرحلة إلى الطابور.
+ *
+ * 🔒 **والقناة `dashboard` لا تجعل المتعهد بالغاً**: صفُّ الإشعار سطحُ الإدارة لا
+ * البورتال — والمتعهد يقرأ عروضه من `portal_offers()` — فاعتبارها بلوغاً يعني
+ * «أُرسل إليه» عن شيءٍ لن يراه ما لم يفتح الشاشة من تلقائه.
  */
 export function dispatchRecipients(
   event: string,
   payload: Payload,
-  ops: { telegramChatId: string | null; emailTo: string | null }
+  ops: { telegramChatId: string | null; emailTo: string | null },
+  channels?: ChannelState
 ): DispatchRecipients {
   if (event === "trip_offered") {
     const partner = partnerContacts(payload);
-    if (partner.telegramChatId || partner.emailTo) {
+
+    /**
+     * بلا وصفٍ للقنوات نعود إلى السلوك القديم (وجود عنوان يكفي) — لأن الوسيط
+     * اختياري كي لا ينكسر أي منادٍ لم يُحدَّث بعد. والمنادي الحقيقي الوحيد
+     * (`lib/notifications/dispatch.ts`) يمرّره، فالمسار العامل محروس.
+     */
+    const reachable = channels
+      ? (channels.requested.includes("telegram") &&
+          channels.telegramEnabled &&
+          Boolean(partner.telegramChatId)) ||
+        (channels.requested.includes("email") &&
+          channels.emailEnabled &&
+          Boolean(partner.emailTo))
+      : Boolean(partner.telegramChatId || partner.emailTo);
+
+    if (reachable) {
       return { audience: "partner", ...partner };
     }
   }

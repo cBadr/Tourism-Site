@@ -181,23 +181,38 @@ async function deliverOne(
   const event = String(record.event);
 
   /**
-   * وجهة الرسالة (المرحلة ٦): أحداث البث الأربعة لها صياغتها ووجهتها.
-   * `trip_offered` يذهب إلى قناة المتعهد نفسه إن عرفتها الحمولة، وإلا يسقط على
-   * فريق التشغيل. وما عداه تشغيلي بحت فوجهته إعدادات اللوحة كالمعتاد.
+   * ⚠ **القنوات تُحسب قبل الوجهة** — وهذا الترتيب هو الإصلاح نفسه لا تنظيماً.
+   * كانت الوجهة تُقرَّر أولاً من «هل للمتعهد عنوان؟» ثم تُحسب القنوات، فيصير
+   * المتعهد جمهوراً بعنوان بريدٍ على قناةٍ غير مطلوبة، ويسقط الاحتياطي إلى فريق
+   * التشغيل بلا أن يُنادى. الشرح الكامل عند `dispatchRecipients`.
    */
-  const to = dispatchRecipients(event, record.payload ?? null, {
-    telegramChatId: settings.notifications.telegramChatId,
-    emailTo: settings.notifications.emailTo,
-  });
-
-  const message = isDispatchEvent(event)
-    ? renderDispatchNotification(event, record.payload ?? null, ctx, to.audience)
-    : renderNotification(event, record.payload ?? null, ctx);
-
   const requested =
     Array.isArray(record.channels) && record.channels.length > 0
       ? record.channels.map((c) => String(c))
       : DEFAULT_CHANNELS;
+
+  /**
+   * وجهة الرسالة (المرحلة ٦): أحداث البث الأربعة لها صياغتها ووجهتها.
+   * `trip_offered` يذهب إلى قناة المتعهد نفسه **إن كان بالغاً عليها فعلاً**،
+   * وإلا يسقط على فريق التشغيل. وما عداه تشغيلي بحت فوجهته إعدادات اللوحة.
+   */
+  const to = dispatchRecipients(
+    event,
+    record.payload ?? null,
+    {
+      telegramChatId: settings.notifications.telegramChatId,
+      emailTo: settings.notifications.emailTo,
+    },
+    {
+      requested,
+      telegramEnabled: settings.notifications.telegramEnabled,
+      emailEnabled: settings.notifications.emailEnabled,
+    }
+  );
+
+  const message = isDispatchEvent(event)
+    ? renderDispatchNotification(event, record.payload ?? null, ctx, to.audience)
+    : renderNotification(event, record.payload ?? null, ctx);
 
   const outcomes: ChannelOutcome[] = [];
 
