@@ -1,23 +1,66 @@
 import { getSettings } from "@/lib/settings";
-import { getBaseUrl } from "@/lib/seo";
-import { getLocalizedServices, resolveLocale } from "@/lib/i18n/content";
+import { socialHrefs } from "@/lib/site-config";
+import { absoluteImageUrl, getBaseUrl, localeUrl } from "@/lib/seo";
+import { getLocalizedServices, getT, resolveLocale } from "@/lib/i18n/content";
 import { localeDef } from "@/i18n/config";
+import type { PublicPage } from "@/lib/content-types";
+import { pagePublicPath } from "@/lib/seo/site-paths";
+import {
+  breadcrumbNode,
+  jsonLdGraph,
+  jsonLdText,
+  localBusinessNode,
+  logoNode,
+  organizationNode,
+  serviceNode,
+  servicesItemListNode,
+  siteNodeIds,
+  webSiteNode,
+} from "@/lib/seo/jsonld";
 
 /**
- * البيانات المنظمة (JSON-LD) — مكوّن خادمي يُدرج وسم <script> واحداً
- * يحوي @graph فيه: نشاط تجاري محلي (LocalBusiness) وقائمة الخدمات الست (ItemList).
- * لا يُدرج أي حقل تواصل أو رابط اجتماعي إلا إذا كانت قيمته موجودة فعلاً.
+ * البيانات المنظمة (JSON-LD) — الطبقة الخادمية التي تصل بين الإعدادات والرسم.
  *
- * ── اللغة (إصلاح المرحلة ١٠) ────────────────────────────────────────────────
- * كان الملف ينادي `getSettings()` بلا وسيط ويستورد `SERVICES` من
- * `lib/site-config.ts` مباشرة، فيصل جوجل **اسم النشاط ووصفه وأسماء الخدمات
- * الست بالعربية على الصفحة الإنجليزية** مهما نُشرت ترجمات — والملف لم يكن يظهر
- * في أي طابور ترجمة فيُكتشف العطب. الآن اللغة تُحسم أولاً وتمر إلى الإعدادات
- * وإلى `getLocalizedServices` (نفس المصدر الذي تقرأ منه شبكة الخدمات وصفحة
- * طلب عرض السعر) — فالبيانات المهيكلة تطابق ما يراه الزائر على الصفحة نفسها.
+ * هذا الملف **لا يبني عقدةً واحدة بنفسه**: كل أشكال schema.org في
+ * `lib/seo/jsonld.ts` وحدها (دوالّ نقية بلا تبعية)، وهنا تُقرأ الإعدادات واللغة
+ * ويُركَّب الرسم ويُطبَع. والفصل مقصود: شاشة الفحص في اللوحة تستورد **نفس**
+ * الدوالّ فتقول للمالك ما يخرج فعلاً بدل أن تعيد تخمينه (النمط ٢ في
+ * `LESSONS.md`: الواجهة تَعِد بما لا تنفّذه الطبقة تحتها).
  *
- * الوسيط `locale` اختياري: الصفحة التي حسمت لغتها أصلاً تمرّرها فتوفّر قراءة،
- * ومن يكتب `<JsonLd />` يحصل على لغة الطلب من الترويسة نفسها.
+ * ── اللغة (إصلاح المرحلة ١٠، ويبقى قائماً) ──────────────────────────────────
+ * كان الملف ينادي `getSettings()` بلا وسيط ويستورد `SERVICES` مباشرة، فيصل جوجل
+ * **اسم النشاط ووصفه وأسماء الخدمات الست بالعربية على الصفحة الإنجليزية** مهما
+ * نُشرت ترجمات. اللغة تُحسم أولاً وتمر إلى الإعدادات وإلى `getLocalizedServices`
+ * — نفس المصدر الذي تقرأ منه شبكة الخدمات — فالبيانات المهيكلة تطابق ما يراه
+ * الزائر على الصفحة نفسها.
+ */
+
+/**
+ * المُسلسِل الوحيد في المستودع — كل من يُخرج JSON-LD يمرّ من هنا.
+ *
+ * وليس تجميلاً: نسخةٌ ثانية من هذا السطر تعني نسخةً ثانية من ترميز `<`، وأول
+ * موضع يُنسى فيه الترميز يفتح حقن نصّ في الصفحة عبر حقلٍ يملؤه المحرِّر.
+ */
+export function JsonLdScript({ data }: { data: unknown }) {
+  return (
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(data) }} />
+  );
+}
+
+/**
+ * رسم الموقع — يُصيَّر في الصفحة الرئيسية وحدها.
+ *
+ * أربع عقد مترابطة بـ`@id` لا أربع نسخ من البيانات نفسها:
+ *   • `Organization` — الكيان الناشر: الاسم والاسم القانوني والشعار.
+ *   • `WebSite`      — هذا الموقع، وناشره المؤسسة أعلاه.
+ *   • `LocalBusiness`— بطاقة النشاط المكانية: العنوان والإحداثيات والساعات
+ *     ونطاق السعر والمناطق المخدومة، وأبوها المؤسسة.
+ *   • `ImageObject`  — الشعار **مرة واحدة**، تشير إليه المؤسسة والنشاط معاً.
+ * ثم `ItemList` بالخدمات الست، كلٌّ منها يشير إلى مقدّمه بالمعرّف لا بنسخة.
+ *
+ * وكل حقل من بطاقة النشاط يخرج **حين يُضبط فقط**: الموقع الذي لم يفتح مالكه
+ * الشاشة الجديدة يُصدِّر ما كان يُصدّره تماماً، عدا `areaServed` المشروح في
+ * `localBusinessNode`.
  */
 export default async function JsonLd({ locale }: { locale?: string } = {}) {
   const activeLocale = locale ?? (await resolveLocale());
@@ -27,50 +70,109 @@ export default async function JsonLd({ locale }: { locale?: string } = {}) {
   ]);
 
   const baseUrl = getBaseUrl();
-  const businessId = `${baseUrl}/#business`;
+  const ids = siteNodeIds(baseUrl);
+  const inLanguage = localeDef(activeLocale).htmlLang;
 
-  const sameAs = Object.values(settings.socials).filter(
-    (value): value is string => value !== null && value !== "",
-  );
+  // الشعار يمرّ بنفس شرط صور المشاركة: الرابط النسبي لا يجلبه زاحف ولا منصة
+  const logo = logoNode(ids, absoluteImageUrl(settings.brand.logoUrl));
 
-  const localBusiness: Record<string, unknown> = {
-    "@type": "LocalBusiness",
-    "@id": businessId,
-    name: settings.brand.name,
-    url: baseUrl,
-    description: settings.seo.defaultDescription,
-    areaServed: "EG",
-    // لغة هذه النسخة من البطاقة — يفصل النسخة الإنجليزية عن العربية في نظر جوجل
-    inLanguage: localeDef(activeLocale).htmlLang,
-    ...(settings.contact.phone !== null && settings.contact.phone !== ""
-      ? { telephone: settings.contact.phone }
-      : {}),
-    ...(sameAs.length > 0 ? { sameAs } : {}),
-  };
-
-  const servicesList = {
-    "@type": "ItemList",
-    itemListElement: services.map((service, index) => ({
-      "@type": "ListItem",
-      position: index + 1,
-      item: {
-        "@type": "Service",
-        name: service.title,
-        description: service.short,
-        provider: { "@id": businessId },
-      },
-    })),
-  };
-
-  const graph = {
-    "@context": "https://schema.org",
-    "@graph": [localBusiness, servicesList],
-  };
-
-  // استبدال "<" يمنع كسر وسم <script> لو تسللت القيمة من قاعدة البيانات
-  const json = JSON.stringify(graph).replace(/</g, "\\u003c");
+  /**
+   * ⚠ **مطبَّعة لا خام.** كانت هنا `Object.values(...)` بمرشّح «غير فارغ»، فتصل
+   * `sameAs` معرّفاتُ حسابات لا روابط — و`sameAsList` ترفض غير المطلق فيخرج
+   * الحقل فارغاً دائماً. فكان الموقع يعلن **صفر حساب** لجوجل بينما التذييل يعرض
+   * خمسة، وشاشة فحص السيو تقول للمالك «لا حسابات» وهو يراها أمامه: رقمٌ واحد
+   * بثلاثة مصادر. والآن مصدرٌ واحد (`socialHrefs`)، و`sameAsList` تبقى الحارس
+   * الأخير — لا الحارس الوحيد.
+   */
+  const sameAs = socialHrefs(settings.socials);
 
   return (
-    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
+    <JsonLdScript
+      data={jsonLdGraph([
+        organizationNode({
+          ids,
+          baseUrl,
+          name: settings.brand.name,
+          legalName: settings.company.legalName,
+          hasLogo: logo !== null,
+        }),
+        webSiteNode({ ids, baseUrl, name: settings.brand.name, inLanguage }),
+        localBusinessNode({
+          ids,
+          baseUrl,
+          name: settings.brand.name,
+          description: settings.seo.defaultDescription,
+          inLanguage,
+          telephone: settings.contact.phone,
+          sameAs,
+          business: settings.business,
+          hasLogo: logo !== null,
+        }),
+        logo,
+        servicesItemListNode({ providerId: ids.business, services }),
+      ])}
+    />
+  );
+}
+
+/**
+ * رسم صفحة محتوى — لصفحتَي الخدمة والمسار، وهما الصفحتان المبنيّتان للفوز في
+ * البحث ولم تكن عليهما بيانات مهيكلة **إطلاقاً** قبل هذه الملاحظة.
+ *
+ *   • صفحة خدمة  ⇒ `Service` + `BreadcrumbList`
+ *   • صفحة مسار  ⇒ `BreadcrumbList`
+ *
+ * ولماذا لا `Service` لصفحة المسار؟ لأن «القاهرة–الإسكندرية» ليست خدمةً معروضة
+ * بذاتها بل صفحة استهداف لعبارة بحث؛ ووسمها خدمةً يجعل ستّ خدمات حقيقية تنافس
+ * عشرات المسارات على التصنيف نفسه. أما مسار التنقّل فصحيح للاثنين.
+ *
+ * وأي نوع صفحة آخر يُرجع `null` — الصفحة الرئيسية لها رسمها أعلاه، والصفحة
+ * الثابتة لا يوصف محتواها الحرّ بنوع schema.org بلا اختراع.
+ */
+export async function PageJsonLd({
+  page,
+  locale,
+}: {
+  page: PublicPage;
+  locale?: string;
+}) {
+  if (page.kind !== "service" && page.kind !== "corridor") return null;
+
+  const activeLocale = locale ?? (await resolveLocale());
+  const [settings, t] = await Promise.all([
+    getSettings(activeLocale),
+    getT("site.nav", activeLocale),
+  ]);
+
+  const ids = siteNodeIds(getBaseUrl());
+  /**
+   * المسار العام يُشتق من `pagePublicPath` لا يُكتب هنا — هي نفس الدالة التي
+   * تبني بها خريطة الموقع وقائمة اللوحة مساراتها، فلا يوجد مسارٌ في البيانات
+   * المهيكلة يخالف المسار في الخريطة.
+   */
+  const path = pagePublicPath(page.kind, page.slug);
+  const url = localeUrl(activeLocale, path);
+
+  return (
+    <JsonLdScript
+      data={jsonLdGraph([
+        page.kind === "service"
+          ? serviceNode({
+              url,
+              name: page.title,
+              description: page.meta.description,
+              providerId: ids.business,
+              areaServed: settings.business.areaServed,
+            })
+          : null,
+        breadcrumbNode({
+          id: `${url}#breadcrumb`,
+          entries: [
+            { name: t("home", "الرئيسية"), url: localeUrl(activeLocale, "/") },
+            { name: page.title, url },
+          ],
+        }),
+      ])}
+    />
   );
 }

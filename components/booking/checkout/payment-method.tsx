@@ -5,6 +5,7 @@ import { CreditCard, FlaskConical, LoaderCircle, ShieldCheck, TriangleAlert, Wal
 
 import { useT } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
+import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -207,48 +208,81 @@ export function PaymentMethodChoice({
       {method === MANUAL ? (
         children
       ) : (
-        <div className="flex flex-col gap-3 border-t border-border pt-4">
-          <button
-            type="button"
-            onClick={() => selectedGateway && startPayment(selectedGateway.provider)}
-            disabled={busy || selectedGateway === null}
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-base font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60"
+        <>
+          {/*
+            🖨 **الاختيار يبدّل ما يُعرض على الشاشة وحدها — لا ما يُطبع.**
+
+            `children` هي لوحة التحويل اليدوي بأرقام الحسابات، وكانت عند اختيار
+            بوابةٍ لا تُصيَّر إطلاقاً. وعقد `lib/export-types.ts` §٤ ينصّ على أن
+            أرقام الحسابات **تُطبع عمداً**: من يطبع ورقته وهو بانتظار الدفع
+            يحتاجها في يده، وهي نصّ لا أداة تفاعل. فمن اختار بوابةً ثم طبع كان
+            يخرج بورقة عنوانها «ادفع … لتأكيد الحجز» وتحتها «اختر الوسيلة الأنسب
+            لك» **وبلا وسيلة واحدة**: `fieldset` يذهب بقاعدة `PRINT_CSS` في
+            صفحة الرحلة، وزرُّ البوابة بقاعدة `.print-sheet button` في الكتلة
+            المشتركة — فلا يبقى على الورق شيء يُدفع به.
+
+            فالفرع الآن وجهان لحالة واحدة: طاقم البوابة يلبس `no-print` فيذهب مع
+            الورق، ولوحة التحويل تُصيَّر في حاوية `print-only hidden` — مخفيّة
+            على الشاشة بـ`hidden` فلا يتغيّر من سلوك الاختيار بكسل واحد، ويكشفها
+            `!important` داخل `@media print` وحدها. ولا نسخة مكررة في الشجرة:
+            الفرعان متبادلان، فنسخةُ `children` واحدة في كل حال.
+
+            ⚠ والبوابات صفرٌ اليوم فلا يقع هذا الفرع أصلاً — ويوم تُفعَّل أولاها
+            يقع في يد عميل لا في اختبار.
+          */}
+          <div
+            className={cn(PRINT_HIDDEN_CLASS, "flex flex-col gap-3 border-t border-border pt-4")}
           >
-            {busy ? (
-              <>
-                <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
-                {t("gateway.starting", "جارٍ فتح صفحة الدفع…")}
-              </>
-            ) : (
-              <>
-                <CreditCard className="size-5" aria-hidden="true" />
-                {t("gateway.pay", "المتابعة إلى الدفع")}
-              </>
-            )}
-          </button>
-
-          <p className="flex items-start gap-2 text-xs leading-6 text-muted-foreground">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-            {t(
-              "gateway.security",
-              "بيانات بطاقتك تُدخل في صفحة المزوّد وحدها ولا تمر بموقعنا ولا تُخزَّن عندنا."
-            )}
-          </p>
-
-          {error ? (
-            <p
-              role="alert"
-              className="flex items-start gap-2 rounded-2xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm leading-6 text-destructive"
+            <button
+              type="button"
+              onClick={() => selectedGateway && startPayment(selectedGateway.provider)}
+              disabled={busy || selectedGateway === null}
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-base font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60"
             >
-              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              {error}
-            </p>
-          ) : null}
+              {busy ? (
+                <>
+                  <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+                  {t("gateway.starting", "جارٍ فتح صفحة الدفع…")}
+                </>
+              ) : (
+                <>
+                  <CreditCard className="size-5" aria-hidden="true" />
+                  {t("gateway.pay", "المتابعة إلى الدفع")}
+                </>
+              )}
+            </button>
 
-          <span className="sr-only" role="status" aria-live="polite">
-            {busy ? t("gateway.startingStatus", "جارٍ فتح صفحة الدفع") : (error ?? "")}
-          </span>
-        </div>
+            <p className="flex items-start gap-2 text-xs leading-6 text-muted-foreground">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+              {t(
+                "gateway.security",
+                "بيانات بطاقتك تُدخل في صفحة المزوّد وحدها ولا تمر بموقعنا ولا تُخزَّن عندنا."
+              )}
+            </p>
+
+            {error ? (
+              <p
+                role="alert"
+                className="flex items-start gap-2 rounded-2xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm leading-6 text-destructive"
+              >
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                {error}
+              </p>
+            ) : null}
+
+            <span className="sr-only" role="status" aria-live="polite">
+              {busy ? t("gateway.startingStatus", "جارٍ فتح صفحة الدفع") : (error ?? "")}
+            </span>
+          </div>
+
+          {/* لوحة التحويل للورق وحده — انظر التعليق أعلاه. والتباعد يعيش على
+              غلافٍ داخلي لأن `.print-only` تفرض `display:block` بـ`!important`،
+              فأي `gap` على الحاوية نفسها يسقط ملغياً وتخرج التعليماتُ ملتصقةً
+              بالبطاقات؛ وبالغلاف تخرج الورقة بإيقاع مسار «بلا بوابات» نفسه */}
+          <div className="print-only hidden">
+            <div className="flex flex-col gap-4">{children}</div>
+          </div>
+        </>
       )}
     </div>
   );

@@ -2,18 +2,33 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CarFront, LayoutDashboard, ReceiptText, UserRound, type LucideIcon } from "lucide-react";
+import {
+  CarFront,
+  IdCard,
+  LayoutDashboard,
+  ReceiptText,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 /**
- * تنقل البورتال — أربعة بنود فقط، بلا شريط جانبي وبلا بنود «قريباً».
+ * تنقل البورتال — بنود الإعداد الذي يُنجَز مرة، بلا شريط جانبي وبلا بنود «قريباً».
  * المتعهد شريك يفتح أداته لينجز مهمة بعينها، لا مدير يستعرض نظاماً كاملاً؛
  * لذلك التنقل صف أفقي هادئ يعمل بنفس الشكل على الهاتف (تمرير أفقي عند الضيق).
+ *
+ * و«سائقيّ» يقع بعد «أسطولي» مباشرةً لأنهما وجها سجلٍّ واحد: المركبة ومن يقودها،
+ * وهما معاً ما يُسنَد للرحلة وما يقرؤه العميل بعد الإسناد.
  */
 
 type PortalNavItem = {
-  href: "/portal" | "/portal/profile" | "/portal/fleet" | "/portal/prices";
+  href:
+    | "/portal"
+    | "/portal/profile"
+    | "/portal/fleet"
+    | "/portal/drivers"
+    | "/portal/prices";
   label: string;
   icon: LucideIcon;
 };
@@ -22,6 +37,7 @@ const ITEMS: PortalNavItem[] = [
   { href: "/portal", label: "لوحة المتعهد", icon: LayoutDashboard },
   { href: "/portal/profile", label: "ملفي", icon: UserRound },
   { href: "/portal/fleet", label: "أسطولي", icon: CarFront },
+  { href: "/portal/drivers", label: "سائقيّ", icon: IdCard },
   { href: "/portal/prices", label: "قوائم أسعاري", icon: ReceiptText },
 ];
 

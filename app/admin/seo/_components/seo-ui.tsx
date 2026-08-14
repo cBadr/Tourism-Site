@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import type { IssueSeverity } from "@/lib/seo/audit";
 
@@ -16,7 +17,18 @@ import type { IssueSeverity } from "@/lib/seo/audit";
 /* التبويبات — روابط لا حالة عميل، فيبقى الرابط قابلاً للمشاركة         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * التبويبات الخمسة.
+ *
+ * الترتيب يتبع نطاق الأثر من الأعم إلى الأخص: **الموقع كله** (الإعدادات العامة
+ * وبطاقة النشاط) ثم **الصفحة الواحدة** (الميتاداتا) ثم **الروابط القديمة**
+ * (التحويلات) ثم **تقرير القراءة** (البيانات المهيكلة). ومع ذلك يبقى مدخل القسم
+ * من الشريط الجانبي على `/admin/seo` — الميتاداتا — لأنها الشاشة التي تُفتح
+ * أسبوعياً بينما الإعدادات العامة تُضبط مرة وتُنسى.
+ */
 export const SEO_TABS = [
+  { href: "/admin/seo/settings", label: "الإعدادات العامة" },
+  { href: "/admin/seo/business", label: "بطاقة النشاط" },
   { href: "/admin/seo", label: "الميتاداتا" },
   { href: "/admin/seo/redirects", label: "التحويلات" },
   { href: "/admin/seo/audit", label: "البيانات المهيكلة" },
@@ -65,6 +77,46 @@ export function PathCode({ children, className }: { children: string; className?
     >
       {children}
     </code>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* مفتاح تشغيل بعنوان وشرح — بنفس شكل مفاتيح شاشة الإعدادات              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * مربع اختيار في بطاقة بعنوان وسطر شرح.
+ *
+ * ⚠ **مربع الاختيار غير المؤشَّر لا يُرسل مع النموذج أصلاً** — فالغياب يعني
+ * «مطفأ» في كل إجراء يقرؤه، وهذا هو سبب وجود `name` واحد بلا حقل مرافق.
+ */
+export function SeoSwitch({
+  name,
+  title,
+  hint,
+  defaultChecked,
+  disabled,
+}: {
+  name: string;
+  title: string;
+  hint: React.ReactNode;
+  defaultChecked: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <Label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-input p-3 text-sm font-normal">
+      <span className="leading-relaxed">
+        <span className="font-medium">{title}</span>
+        <span className="block text-muted-foreground">{hint}</span>
+      </span>
+      <input
+        type="checkbox"
+        name={name}
+        defaultChecked={defaultChecked}
+        disabled={disabled}
+        className="size-5 shrink-0 accent-primary"
+      />
+    </Label>
   );
 }
 

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ArrowLeft, Layers, Paperclip, Plus, Receipt } from "lucide-react";
 
+import { ExportLink } from "@/components/admin/export-link";
+import { PrintButton } from "@/components/admin/print-button";
+import { PrintHeader } from "@/components/admin/print-header";
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +40,7 @@ import {
   type DateRange,
   rangeInstants,
   rangeParams,
+  rangeSentence,
   resolveRange,
 } from "../_components/range";
 import { recordExpense } from "./actions";
@@ -297,8 +301,8 @@ export default async function ExpensesPage({
   ].filter((entry) => entry.row !== null || entry.id !== "none");
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="print-sheet mx-auto max-w-5xl space-y-6">
+      <div className="no-print flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 font-heading text-lg font-bold">
           <Receipt className="size-5 text-primary" />
           المصروفات
@@ -308,14 +312,65 @@ export default async function ExpensesPage({
           مستحقات المتعهدين ليست مصروفاً بل تكلفة بيع، ومكانها شاشة المقاصة — والفصل
           بينهما هو ما يجعل «صافي الربح» رقماً ذا معنى.
         </HelpTip>
-        <Link
-          href={hrefWith("/admin/finance", rangeParams(range))}
-          className="ms-auto inline-flex items-center gap-1 text-sm text-primary hover:underline"
-        >
-          نظرة المالية العامة
-          <ArrowLeft className="size-3.5" />
-        </Link>
+        <div className="ms-auto flex flex-wrap items-center gap-3">
+          <PrintButton label="طباعة التقرير" />
+          {/*
+            الترشيح يسافر مع الملف كما يسافر مع الورقة: `categoryFilter` هو نفسه
+            الذي يُرشِّح القائمة أدناه ويُكتب بنداً في `PrintHeader`. وتمريرُ
+            «كل الفئات» بينما الشاشة مرشَّحة — أو العكس — يُخرج ملفاً يخالف ما
+            طُبع بجواره، وهو خلافٌ لا يظهر إلا حين يُجمع العمودان فيختلفان.
+          */}
+          {expensesReady && (
+            <ExportLink
+              target={{
+                kind: "expenses",
+                from: range.from,
+                to: range.to,
+                category: categoryFilter,
+              }}
+              label="تصدير المصروفات (CSV)"
+              help={
+                <>
+                  ملف جدولي بمصروفات الفترة بنفس ترشيح الفئة الجاري — لا بجدول «المجاميع
+                  لكل فئة» فوقه، فهو تفصيل الفترة كلها. ومستحقات المتعهدين ليست فيه لأنها
+                  تكلفة بيع لا مصروف، ومسار المرفق لا يُصدَّر بنصّ عقد التصدير. وسقف
+                  صفوفه معلَن في آخر سطر من الملف.
+                </>
+              }
+            />
+          )}
+          <Link
+            href={hrefWith("/admin/finance", rangeParams(range))}
+            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+          >
+            نظرة المالية العامة
+            <ArrowLeft className="size-3.5" />
+          </Link>
+        </div>
       </div>
+
+      {/*
+        الفئة المرشَّحة بند في الترويسة لا زينة: القائمة أدناه مرشَّحة بها بينما
+        جدول المجاميع فوقها شاملٌ للفترة كلها — وورقةٌ لا تقول ذلك تُقرأ على أنها
+        كل مصروفات الفترة، فيبدو مجموعُها مخالفاً لصفوفها بلا سبب ظاهر.
+      */}
+      <PrintHeader
+        title="تقرير المصروفات"
+        meta={[
+          { label: "الفترة", value: rangeSentence(range) },
+          { label: "العملة", value: currency },
+          categoryFilter
+            ? {
+                label: "القائمة مرشَّحة بفئة",
+                value:
+                  categoryFilter === "none"
+                    ? "بلا فئة"
+                    : (categoryName.get(categoryFilter) ?? "—"),
+              }
+            : null,
+        ]}
+        note="جدول «المجاميع لكل فئة» يشمل الفترة كلها مهما كان الترشيح؛ والقائمة تحته سقفها معلَن في ذيلها."
+      />
 
       {(!wired || missing !== null) && (
         <FinanceNotReady wired={wired} missing={missing ?? "جداول المصروفات"} />
@@ -394,7 +449,8 @@ export default async function ExpensesPage({
                   <th className="p-2 text-start font-medium">الفئة</th>
                   <th className="p-2 text-start font-medium">عدد المصروفات</th>
                   <th className="p-2 text-start font-medium">المجموع</th>
-                  <th className="p-2 text-start font-medium" />
+                  {/* عمود الروابط يُخفى برأسه وخانته معاً — خانةٌ بلا رأس تزيح الصف */}
+                  <th className="no-print p-2 text-start font-medium" />
                 </tr>
               </thead>
               <tbody>
@@ -409,7 +465,7 @@ export default async function ExpensesPage({
                     <td className="p-2">
                       <Money value={entry.row?.total ?? 0} currency={currency} />
                     </td>
-                    <td className="p-2">
+                    <td className="no-print p-2">
                       <Link
                         href={hrefWith(PATH, { ...rangeParams(range), category: entry.id })}
                         className="inline-flex items-center gap-1 text-xs text-primary hover:underline"

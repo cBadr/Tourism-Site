@@ -49,6 +49,8 @@ const HINT_CODES: Record<string, string> = {
   "invalid-input": "input",
   "receipt-pending": "pending",
   "receipt-missing": "filemissing",
+  // 0040: لا طاقم رحلة قبل الإسناد — رفضٌ عن **حالة** لا عن صلاحية
+  "not-assigned": "notassigned",
 };
 
 /**
@@ -66,7 +68,7 @@ function hintCode(
   return overrides?.[hint] ?? HINT_CODES[hint] ?? fallback;
 }
 
-/** الدالة غير موجودة على هذه القاعدة ⇒ هجرة 0027 لم تُنفَّذ بعد */
+/** الدالة غير موجودة على هذه القاعدة ⇒ الهجرة التي تعرّفها لم تُنفَّذ بعد */
 const isMissingFunction = (code: string | undefined | null): boolean =>
   code === "42883" || code === "PGRST202";
 
@@ -341,4 +343,68 @@ export async function setReceiptVisibility(
 
   revalidatePath("/", "layout");
   redirect(url(bookingId, visible ? "saved=shown" : "saved=hidden"));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * تسجيل طاقم الرحلة نيابةً عن المتعهد (الدفعة ٥ — الملاحظة ٥، هجرة 0040)
+ *
+ * الواقع التشغيلي الذي يبرّر وجود هذا المسار أصلاً: المتعهد يملي المركبة
+ * والسائق **هاتفياً** ولا يفتح بورتاله. وبلا هذا الزر تبقى صفحة العميل خالية
+ * من الجواب الذي بُنيت الملاحظة كلها لأجله — لا لأن البيانات مجهولة، بل لأن
+ * من يعرفها لم يكتبها في نموذج.
+ *
+ * والمسار **منفصل ومحروس ويترك أثره**، على سابقة `admin_attach_receipt`: دالة
+ * `admin_set_trip_crew` تفحص `is_admin()` بنفسها، وتفحص أن المركبة والسائق من
+ * سجلّ **المتعهد المُسنَد إليه** لا من سجلّ أي شريك، ثم تسم الصف بـ
+ * `crew_by_admin` — فالتجاوز موسومٌ لا التفافٌ صامت على الحارس.
+ *
+ * ⚠ **ولا شاشة إدارة سائقين هنا ولا تُبنى**: القرار محسوم (‏2026-08-11) أن
+ * المنصة لا تدير سائقين، والسجلّ ملك المتعهد. هذا النموذج **يختار من سجلّه هو**
+ * ولا يُنشئ فيه صفاً واحداً — والقاعدة ترفض أي معرّف من خارجه بـ`invalid-input`.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * تسجيل مركبة الرحلة وسائقها بوسم «إدخال إداري».
+ *
+ * الحقل الفارغ يعني **مسحاً صريحاً** لا سهواً: خيار «— بلا —» موجود في القائمة
+ * لأن اللوحة التي كُتبت خطأً يجب أن تُرفع عن صفحة العميل فوراً، لا أن تبقى
+ * لأن الشاشة لا تعرف كيف تفرّغ حقلاً. والقائمتان تُبنيان من قيم الطاقم الحالية
+ * فالحفظ بلا تغيير يعيد كتابة القيم نفسها — وهو ما يفسّر تجديد `crew_at` كل
+ * مرة: الطابع يقول «متى أُقرّت هذه البيانات آخر مرة» لا «متى تغيّرت».
+ *
+ * ولا فحص «صفر صفوف» هنا لأن لا كتابة مباشرة: النداء دالة `security definer`
+ * ترفع استثناءً عند الرفض، والفحص المكافئ فحصُ `error` — كما في رأس هذا الملف.
+ */
+export async function setTripCrewByAdmin(bookingId: string, formData: FormData) {
+  if (!UUID.test(bookingId)) redirect("/admin/orders");
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url(bookingId, "error=env"));
+
+  const vehicleId = text(formData, "crew_vehicle_id");
+  const driverId = text(formData, "crew_driver_id");
+
+  // تحقق شكلي وحده — **والملكية تفحصها القاعدة**: أن تكون المركبة من أسطول
+  // المتعهد المُسنَد إليه شرطٌ لا يُفحص في الواجهة لأن الواجهة لا تُحتكم إليها.
+  if (vehicleId !== null && !UUID.test(vehicleId)) redirect(url(bookingId, "error=input"));
+  if (driverId !== null && !UUID.test(driverId)) redirect(url(bookingId, "error=input"));
+
+  const { error } = await supabase.rpc("admin_set_trip_crew", {
+    p_booking_id: bookingId,
+    p_vehicle_id: vehicleId,
+    p_driver_id: driverId,
+  });
+
+  if (error) {
+    // `invalid-input` من هذه الدالة معناه واحدٌ بعينه — «ليس من سجلّ المنفّذ» —
+    // ورسالةُ «بيانات ناقصة» العامة كانت سترسل المشغّل يراجع حقولاً سليمة.
+    const code = isMissingFunction(error.code)
+      ? "crewnotready"
+      : hintCode(error, "save", { "invalid-input": "crewowner" });
+    redirect(url(bookingId, `error=${code}`));
+  }
+
+  // صفحة متابعة العميل تعرض الطاقم نفسه — فتُبطَل ذاكرة المسارات كلها كالمعتاد
+  revalidatePath("/", "layout");
+  redirect(url(bookingId, "saved=crew"));
 }

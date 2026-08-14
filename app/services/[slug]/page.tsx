@@ -8,6 +8,8 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { RenderSections } from "@/components/sections/render";
+import { ShareBar } from "@/components/site/share-bar";
+import { PageJsonLd } from "@/components/seo/JsonLd";
 
 /**
  * صفحة خدمة واحدة (/services/[slug]) — المحتوى من نظام الأقسام،
@@ -50,6 +52,8 @@ export async function generateMetadata({ params }: PageParams): Promise<Metadata
     description: page.meta.description ?? undefined,
     path: `/services/${slug}`,
     locale,
+    // خيارات سيو الصفحة الواحدة (منع الفهرسة، صورة المشاركة، المسار القانوني)
+    meta: page.meta,
   });
 }
 
@@ -65,9 +69,20 @@ export default async function ServicePage({ params }: PageParams) {
 
   return (
     <>
+      {/* Service + BreadcrumbList — لم تكن على هذه الصفحة بيانات مهيكلة إطلاقاً */}
+      <PageJsonLd page={page} locale={locale} />
       <SiteHeader settings={settings} locale={locale} />
       <main id="main" className="flex-1">
         <RenderSections sections={page.sections} settings={settings} locale={locale} />
+        {/* المشاركة العامة — صفحة خدمة: رابط عام مفهرَس بُني ليُشارَك ويجلب
+            زواراً، ولا سرّ فيه (بخلاف `/booking/[token]`؛ الشرح في رأس
+            `share-bar.tsx`). */}
+        <ShareBar
+          title={page.meta.title ?? page.title}
+          description={page.meta.description}
+          path={`/services/${slug}`}
+          locale={locale}
+        />
       </main>
       <SiteFooter settings={settings} locale={locale} />
       <WhatsAppFab settings={settings} locale={locale} />

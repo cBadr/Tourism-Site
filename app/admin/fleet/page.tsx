@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Plus, Power, PowerOff, XCircle } from "lucide-react";
 
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { VEHICLE_CLASSES } from "@/lib/site-config";
+import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { createClass, saveClass, toggleActive } from "./actions";
@@ -80,11 +82,13 @@ async function loadFleet(): Promise<{
   classes: FleetClass[];
   ready: boolean;
   luggageReady: boolean;
+  /** نبض الشاشة — يُقرأ بنفس عميل الجلسة، و`null` تعني «لا شريط» */
+  pulse: PagePulseData | null;
 }> {
   const supabase = await createServerSupabase();
-  if (!supabase) return { classes: [], ready: false, luggageReady: false };
+  if (!supabase) return { classes: [], ready: false, luggageReady: false, pulse: null };
 
-  const [classesRes, tariffsRes] = await Promise.all([
+  const [classesRes, tariffsRes, pulse] = await Promise.all([
     supabase
       .from("vehicle_classes")
       .select("*")
@@ -93,10 +97,11 @@ async function loadFleet(): Promise<{
     supabase
       .from("tariffs")
       .select("class_id, per_km, base_fee, min_price, waiting_hour_price, round_trip_factor"),
+    readPagePulse(supabase, "/admin/fleet"),
   ]);
 
   if (classesRes.error || tariffsRes.error)
-    return { classes: [], ready: false, luggageReady: false };
+    return { classes: [], ready: false, luggageReady: false, pulse };
 
   const tariffs = new Map<string, Tariff>();
   for (const row of (tariffsRes.data ?? []) as TariffRow[]) {
@@ -124,7 +129,7 @@ async function loadFleet(): Promise<{
     tariff: tariffs.get(asText(row.id) ?? "") ?? null,
   }));
 
-  return { classes, ready: true, luggageReady };
+  return { classes, ready: true, luggageReady, pulse };
 }
 
 /** معاينة شكل الشاشة قبل ربط قاعدة البيانات — بلا أي أرقام (الأسعار من القاعدة حصراً) */
@@ -444,7 +449,7 @@ function ClassCard({
 }
 
 export default async function FleetPage({ searchParams }: PageProps<"/admin/fleet">) {
-  const [params, { classes, ready, luggageReady }] = await Promise.all([
+  const [params, { classes, ready, luggageReady, pulse }] = await Promise.all([
     searchParams,
     loadFleet(),
   ]);
@@ -505,6 +510,9 @@ export default async function FleetPage({ searchParams }: PageProps<"/admin/flee
           <p className="text-sm font-medium">{ERROR_MESSAGES[error] ?? "حدث خطأ غير متوقع."}</p>
         </Card>
       )}
+
+      {/* نبض الشاشة — حصة كل فئة من الحجوزات في آخر ٣٠ يوماً، محسوبة في Postgres */}
+      <PagePulse data={pulse} />
 
       {ready && classes.length === 0 && (
         <Card className="p-5 text-sm text-muted-foreground">

@@ -33,6 +33,7 @@ export function KpiCard({
   variant = "default",
   href,
   valueDir,
+  dense,
   className,
   valueClassName,
   subClassName,
@@ -51,6 +52,15 @@ export function KpiCard({
   href?: string;
   /** `ltr` للأرقام اللاتينية والمبالغ حتى لا تنقلب علاماتها في سياق RTL */
   valueDir?: "ltr" | "rtl";
+  /**
+   * نمط مضغوط لشريط «نبض الصفحة» (الدفعة ٤ — الملاحظة ١٢).
+   *
+   * سببه أن هذه البطاقة تعلو **شاشة عمل** لا شاشة تحليل: بالمقاس الكامل يدفع
+   * شريطُ خمس بطاقات جدولَ الطلبات خارج الشاشة الأولى، فيُشترى «الإدراك بمجرد
+   * النظر» بثمن إخفاء العمل نفسه. والفرق حشوٌ وحجم خطٍّ فقط — لا شكل ثانٍ
+   * للبطاقة ولا مكوّن سادس ينحرف عن الخمسة التي وُحِّدت هنا.
+   */
+  dense?: boolean;
   className?: string;
   valueClassName?: string;
   subClassName?: string;
@@ -59,7 +69,8 @@ export function KpiCard({
     <Card
       variant={variant}
       className={cn(
-        "card-enter h-full gap-1 p-4",
+        "card-enter h-full gap-1",
+        dense ? "gap-0.5 p-3" : "p-4",
         href && "transition-colors hover:bg-muted",
         className
       )}
@@ -73,7 +84,11 @@ export function KpiCard({
       </div>
       <span
         dir={valueDir}
-        className={cn("block text-start text-xl font-bold sm:text-2xl", valueClassName)}
+        className={cn(
+          "block text-start font-bold",
+          dense ? "text-lg" : "text-xl sm:text-2xl",
+          valueClassName
+        )}
       >
         {value}
       </span>

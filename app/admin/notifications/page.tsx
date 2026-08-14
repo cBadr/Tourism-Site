@@ -12,6 +12,7 @@ import {
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,6 +28,7 @@ import {
   statusLabel,
 } from "@/lib/notifications/render";
 import { getSettings } from "@/lib/settings";
+import { readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { retryNotification, runDispatch } from "./actions";
 
@@ -140,10 +142,13 @@ export default async function NotificationsPage({
   const status = typeof params.status === "string" ? params.status : "all";
   const filter = FILTERS.some((f) => f.key === status) ? status : "all";
 
-  const [settings, { rows, ready }, counts] = await Promise.all([
+  const [settings, { rows, ready }, counts, pulse] = await Promise.all([
     getSettings(),
     loadRows(filter),
     loadCounts(),
+    // نبض الشاشة (الملاحظة ١٢): نافذة ثابتة ٣٠ يوماً لا تُبدّل عدّادات المرشّح
+    // أدناه — تلك تعدّ الطابور كله الآن، وهذه تقيس آخر شهر. وكل رقم من Postgres.
+    createServerSupabase().then((client) => readPagePulse(client, "/admin/notifications")),
   ]);
 
   const readiness = channelReadiness(settings.notifications);
@@ -175,6 +180,8 @@ export default async function NotificationsPage({
           </Button>
         </form>
       </div>
+
+      <PagePulse data={pulse} />
 
       {ran && (
         <Card className="flex flex-row items-start gap-3 border-emerald-300 bg-emerald-50 p-4 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100">

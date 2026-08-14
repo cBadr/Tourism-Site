@@ -253,14 +253,23 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
         <Card className="space-y-4 p-5">
           <div>
             <h2 className="font-heading text-base font-bold">حسابات التواصل الاجتماعي</h2>
-            <p className="text-sm text-muted-foreground">روابط كاملة — الفارغ لا يظهر في الموقع.</p>
+            {/*
+              كان النص «روابط كاملة» — وصفٌ لا يفرض شيئاً، والقاعدة الحية أثبتت
+              أنه لم يُتَّبع: الحقول الخمسة كلها اسم حساب مجرّد. فصار الاسم
+              المجرّد مقبولاً ويُبنى عنوانه، والنص يقول ما يحدث فعلاً.
+            */}
+            <p className="text-sm text-muted-foreground">
+              اكتب اسم الحساب وحده أو الصق العنوان الكامل — الاسم يتحوّل إلى عنوانه تلقائياً.
+              والفارغ لا يظهر في الموقع.
+            </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="فيسبوك" name="socials.facebook" defaultValue={settings.socials.facebook} dir="ltr" disabled={!wired} />
-            <Field label="إكس (تويتر)" name="socials.x" defaultValue={settings.socials.x} dir="ltr" disabled={!wired} />
-            <Field label="لينكد إن" name="socials.linkedin" defaultValue={settings.socials.linkedin} dir="ltr" disabled={!wired} />
-            <Field label="إنستجرام" name="socials.instagram" defaultValue={settings.socials.instagram} dir="ltr" disabled={!wired} />
-            <Field label="GitHub" name="socials.github" defaultValue={settings.socials.github} dir="ltr" disabled={!wired} />
+            <Field label="فيسبوك" name="socials.facebook" defaultValue={settings.socials.facebook} placeholder="اسم الحساب أو facebook.com/…" dir="ltr" disabled={!wired} />
+            <Field label="إكس (تويتر)" name="socials.x" defaultValue={settings.socials.x} placeholder="اسم الحساب بلا @" dir="ltr" disabled={!wired} />
+            {/* لينكد إن وحدها: المجرّد يُحمل على صفحة شركة — والحساب الشخصي يلزمه العنوان الكامل */}
+            <Field label="لينكد إن" name="socials.linkedin" defaultValue={settings.socials.linkedin} placeholder="اسم صفحة الشركة، أو العنوان الكامل للحساب الشخصي" dir="ltr" disabled={!wired} />
+            <Field label="إنستجرام" name="socials.instagram" defaultValue={settings.socials.instagram} placeholder="اسم الحساب بلا @" dir="ltr" disabled={!wired} />
+            <Field label="GitHub" name="socials.github" defaultValue={settings.socials.github} placeholder="اسم الحساب أو المنظمة" dir="ltr" disabled={!wired} />
           </div>
         </Card>
 
@@ -353,30 +362,28 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
           </Card>
         </Card>
 
-        <Card className="space-y-4 p-5">
-          <div>
-            <h2 className="flex items-center gap-1.5 font-heading text-base font-bold">
-              السيو الافتراضي
-              <HelpTip>
-                قالب العنوان يستخدم %s مكان اسم الصفحة (مثال: ‎%s | اسم علامتك). الوصف الافتراضي
-                يظهر في نتائج البحث للصفحات التي لا وصف مخصصاً لها. تحكم أدق لكل صفحة يأتي في
-                المرحلة ٢.
-              </HelpTip>
-            </h2>
-          </div>
-          <Field
-            label="قالب العنوان"
-            name="seo.titleTemplate"
-            defaultValue={settings.seo.titleTemplate}
-            dir="ltr"
-            disabled={!wired}
-          />
-          <Field
-            label="الوصف الافتراضي"
-            name="seo.defaultDescription"
-            defaultValue={settings.seo.defaultDescription}
-            disabled={!wired}
-          />
+        {/*
+          ⚠ **بطاقة «السيو الافتراضي» حُذفت من هنا بقرار، لا سهواً.**
+
+          كانت تحرّر `seo.titleTemplate` و`seo.defaultDescription` — وهما حقلان من
+          ستة في مفتاح `seo`. ولأن `site_settings.value` عمود `jsonb` **يُستبدل
+          كاملاً لا يُدمج**، فحفظ هذه الشاشة كان سيمحو صورة المشاركة وحساب إكس ونوع
+          البطاقة وكتلة `robots` كلها عند أول ضغطة على «حفظ الإعدادات» — بنجاحٍ
+          ظاهر وبلا رسالة واحدة. ولذلك حُذف مفتاح `seo` من `saveSettings` أيضاً:
+          شاشة واحدة تملك المفتاح لا شاشتان.
+
+          والرابط يبقى: شاشةٌ اختفت بلا مدخل إليها هي بالضبط ما يجعل المالك يظن أن
+          الإعداد اختفى (النمط ٣ في `handover/LESSONS.md`).
+        */}
+        <Card className="gap-2 bg-muted/40 p-4 text-sm leading-relaxed ring-0">
+          <p className="font-medium">إعدادات السيو انتقلت إلى مركز السيو</p>
+          <p className="text-muted-foreground">
+            قالب العنوان والوصف الافتراضي وصورة المشاركة وبطاقة إكس وأذونات الزحف كلها في{" "}
+            <Link href="/admin/seo/settings" className="text-primary hover:underline">
+              مركز السيو ← الإعدادات العامة
+            </Link>{" "}
+            — في مكان واحد بدل حقلين هنا وبقيةٍ محفورة في الكود.
+          </p>
         </Card>
 
         <Separator />

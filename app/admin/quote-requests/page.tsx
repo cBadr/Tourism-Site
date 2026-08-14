@@ -3,11 +3,13 @@ import { MessageCircle, MessageSquareQuote, Phone } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { QuoteRequestRow } from "@/lib/booking-types";
 import { SERVICES } from "@/lib/site-config";
+import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
@@ -81,8 +83,9 @@ async function loadRequests(status: QuoteStatus | null): Promise<{
   requests: QuoteRow[];
   counts: Record<string, number | null>;
   ready: boolean;
+  pulse: PagePulseData | null;
 }> {
-  const blank = { requests: [] as QuoteRow[], counts: {}, ready: false };
+  const blank = { requests: [] as QuoteRow[], counts: {}, ready: false, pulse: null };
 
   const supabase = await createServerSupabase();
   if (!supabase) return blank;
@@ -102,9 +105,11 @@ async function loadRequests(status: QuoteStatus | null): Promise<{
     .limit(MAX_ROWS);
   if (status) listQuery = listQuery.eq("status", status);
 
-  const [listRes, countsRes] = await Promise.all([
+  // نبض الشاشة يُقرأ مع الجدول والأعداد في نفس الجولة — لا انتظار متتابعاً
+  const [listRes, countsRes, pulse] = await Promise.all([
     listQuery,
     Promise.all(TABS.map((tab) => countOf(tab.status))),
+    readPagePulse(supabase, "/admin/quote-requests"),
   ]);
 
   if (listRes.error) return blank;
@@ -125,7 +130,7 @@ async function loadRequests(status: QuoteStatus | null): Promise<{
     createdAt: asText(row.created_at),
   }));
 
-  return { requests, counts, ready: true };
+  return { requests, counts, ready: true, pulse };
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -244,7 +249,7 @@ export default async function QuoteRequestsPage({
   const rawTab = typeof params.status === "string" ? params.status : "all";
   const tab = TABS.find((t) => t.key === rawTab) ?? TABS[0];
 
-  const { requests, counts, ready } = await loadRequests(tab.status);
+  const { requests, counts, ready, pulse } = await loadRequests(tab.status);
 
   const wired = hasSupabaseEnv();
   const saved = params.saved === "1";
@@ -281,6 +286,8 @@ export default async function QuoteRequestsPage({
           </p>
         }
       />
+
+      <PagePulse data={pulse} />
 
       <nav
         aria-label="ترشيح طلبات الأسعار بالحالة"

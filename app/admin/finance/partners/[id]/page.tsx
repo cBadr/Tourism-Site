@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ArrowLeft, Ban, ScrollText } from "lucide-react";
 
+import { ExportLink } from "@/components/admin/export-link";
+import { PrintButton } from "@/components/admin/print-button";
+import { PrintHeader } from "@/components/admin/print-header";
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +30,6 @@ import {
   type Supabase,
   textOf,
 } from "../../_components/finance-ui";
-import { PrintButton } from "../../_components/print-button";
 import { type DateRange, rangeSentence, resolveRange } from "../../_components/range";
 
 /**
@@ -42,9 +44,13 @@ import { type DateRange, rangeSentence, resolveRange } from "../../_components/r
  *     `partner_statement`؛ جمعه في الواجهة كان سيعطي رقماً يختلف عن رقم شاشة
  *     المقاصة أول ما يتجاوز الكشف سقف الصفوف أو يتغيّر ترتيب سطرين بنفس اللحظة.
  *
- * (٣) **يُطبع أبيض على أسود بلا شريط جانبي.** قواعد `@media print` أدناه تخفي
- *     تنقّل اللوحة والفلاتر وتفكّ ألوان البطاقات، فتخرج ورقة تُسلَّم لطرف ثانٍ
- *     لا لقطة شاشة من لوحة تحكم.
+ * (٣) **يُطبع أبيض على أسود بلا شريط جانبي.** قواعد `@media print` تخفي تنقّل
+ *     اللوحة والفلاتر وتفكّ ألوان البطاقات، فتخرج ورقة تُسلَّم لطرف ثانٍ لا لقطة
+ *     شاشة من لوحة تحكم. وكانت هذه القواعد كتلة `<style>` **داخل هذا الملف**؛
+ *     ومع أربع شاشات أخرى صارت تُطبع (الطلب والمالية والمصروفات والخزينة)
+ *     انتقلت إلى `app/globals.css` بصنف واحد `print-sheet` — والصنف
+ *     `statement-sheet` الذي كان هنا لم يعد له وجود: خمس نسخ من قاعدة واحدة
+ *     تنحرف، ونسخةٌ منها تنسى `min-width` فتقصّ عمودين من الكشف.
  *
  * ── هجرة 0029: الحدّ الرابع في ورقة تُسلَّم بيد صاحبها ────────────────────────
  * صارت المعادلة `earned − collected − paid + received`، ولهذه الصفحة تحديداً أثرٌ
@@ -250,37 +256,6 @@ async function loadStatement(id: string, range: DateRange): Promise<Loaded> {
   };
 }
 
-/**
- * قواعد الطباعة — تُحقن مع هذه الصفحة وحدها.
- *
- * الشريط الجانبي والشريط العلوي عنصرا `aside` و`header` في هيكل اللوحة، وهذه
- * الصفحة لا تستعمل الوسمين، فإخفاؤهما هنا آمن. وما عداهما: خلفيات شفافة وخط
- * أسود وحدود رمادية — حبر أقل وورقة تُقرأ.
- */
-const PRINT_CSS = `
-@media print {
-  aside, header, .no-print { display: none !important; }
-  main { padding: 0 !important; }
-  html, body { background: #fff !important; color: #000 !important; }
-  .statement-sheet, .statement-sheet * {
-    background: transparent !important;
-    color: #000 !important;
-    box-shadow: none !important;
-    --tw-ring-shadow: 0 0 #0000 !important;
-  }
-  .statement-sheet { max-width: none !important; }
-  .statement-sheet table { border-collapse: collapse !important; width: 100% !important; }
-  .statement-sheet th, .statement-sheet td {
-    border-bottom: 1px solid #999 !important;
-    padding: 4px 6px !important;
-  }
-  .statement-sheet thead { display: table-header-group; }
-  .statement-sheet tr { break-inside: avoid; }
-  .statement-sheet .print-box { border: 1px solid #999 !important; }
-  @page { margin: 14mm; }
-}
-`;
-
 export default async function PartnerStatementPage({
   params,
   searchParams,
@@ -322,9 +297,7 @@ export default async function PartnerStatementPage({
   );
 
   return (
-    <div className="statement-sheet mx-auto max-w-5xl space-y-5">
-      <style>{PRINT_CSS}</style>
-
+    <div className="print-sheet mx-auto max-w-5xl space-y-5">
       <div className="flex flex-wrap items-center gap-2 no-print">
         <h2 className="flex items-center gap-2 font-heading text-lg font-bold">
           <ScrollText className="size-5 text-primary" />
@@ -336,7 +309,31 @@ export default async function PartnerStatementPage({
           فيه هو الرقم الذي تُبنى عليه التسوية.
         </HelpTip>
         <div className="ms-auto flex flex-wrap items-center gap-2">
-          <PrintButton />
+          <PrintButton label="طباعة الكشف" />
+          {/*
+            التصدير مشروط بـ`linesReady` وحدها: هي الحالة الوحيدة التي قُرئت فيها
+            `partner_statement` فعلاً (والمعرّف غير الصالح وقاعدةٌ غير مربوطة
+            كلاهما يُنزلها إلى `false`). ورابطٌ يقود المالك إلى جسم JSON فيه رمز
+            خطأ أسوأ من رابط غائب — لأنه يبدو ميزةً معطوبة لا ميزةً لم تُهيَّأ.
+          */}
+          {linesReady && (
+            <ExportLink
+              target={{
+                kind: "partner-statement",
+                subcontractor: id,
+                from: range.from,
+                to: range.to,
+              }}
+              label="تصدير الكشف (CSV)"
+              help={
+                <>
+                  ملف جدولي بسطور الكشف أدناه وفترتها نفسها — لا ببطاقات الترويسة، فهي
+                  الحساب كاملاً لا الفترة. الرصيد فيه محسوب في قاعدة البيانات كما هو هنا،
+                  وسقف صفوفه معلَن في آخر سطر من الملف نفسه. ولا يخرج إلا بجلسة مدير.
+                </>
+              }
+            />
+          )}
           {/* لوح التسوية يعيش في شاشة المقاصات؛ بدون هذا الرابط كان الكشف طريقاً
               مسدوداً: يقول «سجّل الدفعة» ولا سبيل إليها من هنا. والاسم «تسوية» لا
               «دفعة» منذ 0029: اللوح يقرأ `net_due` ويفتح فرع الدفع أو فرع التحصيل
@@ -357,19 +354,41 @@ export default async function PartnerStatementPage({
         </div>
       </div>
 
+      {/*
+        ترويسة الورقة المشتركة — وهذه الشاشة كانت آخر من بقي بترويسة محلية.
+        وثمنُ بقائها لم يكن ازدواجاً في الكود بل **نقصاً في المستند**: الترويسة
+        المحلية أدناه تحمل العلامة والمتعهد والفترة والعملة ولا تحمل «صدرت في»،
+        وهي أكثر أوراق المشروع تسليماً لطرف ثانٍ في نزاع تسوية — ورقةٌ بلا تاريخ
+        إصدار لا يُعرف أيُّ نسختين منها أحدث حين يختلف الرقمان.
+        والمحلية تبقى على الشاشة بـ`no-print` لأن فيها ما لا يُغني عنه شيء هناك
+        (اسم المتعهد ليس في عنوان الصفحة)، فتُقرأ عيناً واحدة على الورق.
+      */}
+      <PrintHeader
+        title="كشف حساب متعهد"
+        meta={[
+          { label: "المتعهد", value: partnerName },
+          { label: "الفترة", value: rangeSentence(range) },
+          { label: "العملة", value: currency },
+          summary?.tripsCount !== null && summary?.tripsCount !== undefined
+            ? { label: "رحلات منفَّذة", value: toArabicDigits(summary.tripsCount) }
+            : null,
+        ]}
+        note="الفترة أعلاه تخصّ سطور الحركة وحدها؛ وبطاقات الأرقام تحتها تعرض الحساب كاملاً منذ أول رحلة."
+      />
+
       {(!wired || missing !== null) && (
         <div className="no-print">
           <FinanceNotReady wired={wired} missing={missing ?? "دالة كشف الحساب"} />
         </div>
       )}
 
-      {/* ترويسة الكشف — هي وحدها ما يظهر أعلى الورقة المطبوعة */}
+      {/* بطاقات الحساب — وسطراها الأولان شاشيّان بعد أن صارت الورقة تأخذ ترويستها من `PrintHeader` */}
       <Card className="print-box gap-3 p-5">
-        <div className="flex flex-wrap items-baseline gap-2">
+        <div className="no-print flex flex-wrap items-baseline gap-2">
           <span className="font-heading text-base font-bold">{settings.brand.name}</span>
           <span className="text-sm text-muted-foreground">— كشف حساب متعهد</span>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <div className="no-print flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
             <span className="text-muted-foreground">المتعهد: </span>
             <span className="font-semibold">{partnerName}</span>

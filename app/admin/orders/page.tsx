@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { ArrowLeft, Search } from "lucide-react";
 
+import { ExportLink } from "@/components/admin/export-link";
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { BookingStatus, TripSnapshot } from "@/lib/booking-types";
+import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
@@ -92,8 +95,13 @@ const numberOf = (v: unknown): number => {
 async function loadOrders(
   status: BookingStatus | null,
   query: string
-): Promise<{ orders: OrderRow[]; counts: Record<string, number | null>; ready: boolean }> {
-  const empty = { orders: [] as OrderRow[], counts: {}, ready: false };
+): Promise<{
+  orders: OrderRow[];
+  counts: Record<string, number | null>;
+  ready: boolean;
+  pulse: PagePulseData | null;
+}> {
+  const empty = { orders: [] as OrderRow[], counts: {}, ready: false, pulse: null };
 
   const supabase = await createServerSupabase();
   if (!supabase) return empty;
@@ -115,9 +123,11 @@ async function loadOrders(
   if (status) listQuery = listQuery.eq("status", status);
   if (query) listQuery = listQuery.or(searchFilter(query));
 
-  const [listRes, countsRes] = await Promise.all([
+  // نبض الشاشة يُقرأ مع الجدول والأعداد في نفس الجولة — لا انتظار متتابعاً
+  const [listRes, countsRes, pulse] = await Promise.all([
     listQuery,
     Promise.all(TABS.map((tab) => countOf(tab.status))),
+    readPagePulse(supabase, "/admin/orders"),
   ]);
 
   // خطأ الاستعلام الرئيسي = جدول الحجوزات غير جاهز (هجرة المرحلة ٤ لم تُنفَّذ بعد)
@@ -145,7 +155,7 @@ async function loadOrders(
     trip: asTrip(row.trip),
   }));
 
-  return { orders, counts, ready: true };
+  return { orders, counts, ready: true, pulse };
 }
 
 /** ملخص المسار في سطر واحد — من لقطة الرحلة المخزّنة مع الحجز */
@@ -263,7 +273,7 @@ export default async function OrdersPage({ searchParams }: PageProps<"/admin/ord
   const tab = TABS.find((t) => t.key === rawTab) ?? TABS[0];
   const query = cleanQuery(params.q);
 
-  const { orders, counts, ready } = await loadOrders(tab.status, query);
+  const { orders, counts, ready, pulse } = await loadOrders(tab.status, query);
   const saved = params.saved === "1";
   const error = typeof params.error === "string" ? params.error : null;
 
@@ -283,6 +293,37 @@ export default async function OrdersPage({ searchParams }: PageProps<"/admin/ord
           طابور تشغيل الحجوزات: كل حجز يصل من الموقع يظهر هنا بحالته الحالية. ابدأ يومك من
           تبويب «قيد المراجعة» — هذه الحجوزات رفع أصحابها إيصالات تحويل تنتظر اعتمادك.
         </HelpTip>
+        {/*
+          ⚠ **بلا فترة عمداً، ولا يتبع صندوق البحث** — والسببان مختلفان:
+
+          الفترة: هذه الشاشة **لا تملك منتقي فترة أصلاً** (بعكس شاشات المالية).
+          فاختراع فترة هنا يخلق مصدراً ثانياً للفترة لا يراه المالك على شاشته،
+          والملف يخرج بمدى لم يطلبه أحد. وغيابها يعني «كامل السجل» ويكتبها الملف
+          في ذيله بهذا النصّ حرفياً.
+
+          والبحث: شرطه يطابق `customer_phone` و`customer_whatsapp` — العمودين
+          اللذين يمنع عقد التصدير خروجهما — وترشيحُ ملفٍ بعمود ممنوع يجعل الملف
+          يشهد بوجود صاحب رقم بعينه ولو لم يطبعه. والفرق مكتوب في التلميح لأن
+          ملفاً يخالف الشاشة بصمت أسوأ من ملف لا يوجد.
+        */}
+        {/* ولا يظهر قبل أن يُقرأ الجدول: رابطٌ يقود إلى خطأ JSON يبدو ميزةً معطوبة */}
+        {ready && (
+          <div className="ms-auto">
+            <ExportLink
+              target={{ kind: "bookings", status: tab.status }}
+              label="تصدير الحجوزات (CSV)"
+              help={
+                <>
+                  ملف جدولي بحجوزات تبويب «{tab.label}» — بلا فترة لأن هذه الشاشة لا تملك
+                  منتقي فترة، وبلا حدٍّ بالمئة المعروضة (سقفه معلَن في آخر سطر منه).
+                  <span className="font-semibold"> ولا يتبع صندوق البحث</span>: شرطه يطابق
+                  هاتف العميل، والهاتف ورابط المتابعة لا يخرجان في أي تصدير. والملف يحمل
+                  تكلفة المتعهد وهامشنا — للمالك وحده، ولا يُرسَل إلى متعهد.
+                </>
+              }
+            />
+          </div>
+        )}
       </div>
 
       <Banners
@@ -300,6 +341,8 @@ export default async function OrdersPage({ searchParams }: PageProps<"/admin/ord
           </p>
         }
       />
+
+      <PagePulse data={pulse} />
 
       {/* التبويبات وبطاقات الأعداد شيء واحد: كل بطاقة تعرض عدد حالتها من Postgres وتُرشِّح عند الضغط */}
       <nav

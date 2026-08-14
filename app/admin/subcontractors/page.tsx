@@ -3,12 +3,14 @@ import { ArrowLeft, ClipboardCheck, Handshake, Layers, Search, UserPlus } from "
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Label } from "@/components/ui/label";
+import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import type { SubcontractorStatus } from "@/lib/subcontractor-types";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
@@ -89,6 +91,8 @@ type Loaded = {
   lists: Map<string, Counts>;
   listsReady: boolean;
   kpis: Kpis;
+  /** نبض الشاشة — يُقرأ بنفس عميل الجلسة، و`null` تعني «لا شريط» */
+  pulse: PagePulseData | null;
   ready: boolean;
 };
 
@@ -200,6 +204,7 @@ async function loadSubcontractors(
     lists: new Map(),
     listsReady: false,
     kpis: { total: null, pendingLists: null, coveredClasses: null, totalClasses: null },
+    pulse: null,
     ready: false,
   };
 
@@ -225,16 +230,17 @@ async function loadSubcontractors(
   if (status) listQuery = listQuery.eq("status", status);
   if (query) listQuery = listQuery.or(searchFilter(query));
 
-  const [listRes, countsRes, totalRes, pendingListsRes, coverage] = await Promise.all([
+  const [listRes, countsRes, totalRes, pendingListsRes, coverage, pulse] = await Promise.all([
     listQuery,
     Promise.all(TABS.map((tab) => countOf(tab.status))),
     supabase.from("subcontractors").select("id", { count: "exact", head: true }),
     supabase.from("price_lists").select("id", { count: "exact", head: true }).eq("status", "pending"),
     loadCoverage(supabase),
+    readPagePulse(supabase, "/admin/subcontractors"),
   ]);
 
   // خطأ الاستعلام الرئيسي = جداول المرحلة ٥ غير منفَّذة بعد
-  if (listRes.error) return empty;
+  if (listRes.error) return { ...empty, pulse };
 
   const counts: Record<string, number | null> = {};
   TABS.forEach((tab, i) => {
@@ -258,6 +264,7 @@ async function loadSubcontractors(
       coveredClasses: coverage.covered,
       totalClasses: coverage.totalClasses,
     },
+    pulse,
     ready: true,
   };
 }
@@ -394,7 +401,7 @@ export default async function SubcontractorsPage({
   const tab = TABS.find((t) => t.key === rawTab) ?? TABS[0];
   const query = cleanQuery(params.q);
 
-  const { rows, counts, lists, listsReady, kpis, ready } = await loadSubcontractors(
+  const { rows, counts, lists, listsReady, kpis, pulse, ready } = await loadSubcontractors(
     tab.status,
     query
   );
@@ -446,6 +453,9 @@ export default async function SubcontractorsPage({
           </p>
         }
       />
+
+      {/* نبض الشاشة — بطاقات شبكة المتعهدين في آخر ٣٠ يوماً، محسوبة في Postgres */}
+      <PagePulse data={pulse} />
 
       {/* بطاقات المؤشرات — كل رقم فيها محسوب داخل Postgres */}
       <div className="grid gap-3 sm:grid-cols-3">

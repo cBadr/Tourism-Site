@@ -4,11 +4,13 @@ import { ConciergeBell, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { asNumber, asText, Banners, pick } from "../orders/_components/booking-ui";
@@ -61,25 +63,33 @@ async function loadExtras(): Promise<{
   extras: ExtraService[];
   currency: string;
   ready: boolean;
+  /** نبض الشاشة — يُقرأ بنفس عميل الجلسة، و`null` تعني «لا شريط» */
+  pulse: PagePulseData | null;
 }> {
-  const blank = { extras: [] as ExtraService[], currency: "EGP", ready: false };
+  const blank = {
+    extras: [] as ExtraService[],
+    currency: "EGP",
+    ready: false,
+    pulse: null as PagePulseData | null,
+  };
 
   const supabase = await createServerSupabase();
   if (!supabase) return blank;
 
-  const [extrasRes, currencyRes] = await Promise.all([
+  const [extrasRes, currencyRes, pulse] = await Promise.all([
     supabase
       .from("extra_services")
       .select("*")
       .order("sort", { ascending: true })
       .order("title", { ascending: true }),
     supabase.from("pricing_settings").select("currency").limit(1).maybeSingle(),
+    readPagePulse(supabase, "/admin/extras"),
   ]);
 
   const currency =
     (!currencyRes.error && asText(currencyRes.data?.currency)) || blank.currency;
 
-  if (extrasRes.error) return { ...blank, currency };
+  if (extrasRes.error) return { ...blank, currency, pulse };
 
   const extras = ((extrasRes.data ?? []) as Record<string, unknown>[]).map((row, index) => ({
     id: asText(row.id) ?? `extra-${index}`,
@@ -92,7 +102,7 @@ async function loadExtras(): Promise<{
     sort: asNumber(pick(row, ["sort"])) ?? 0,
   }));
 
-  return { extras, currency, ready: true };
+  return { extras, currency, ready: true, pulse };
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -515,7 +525,10 @@ function EmptyState({ currency }: { currency: string }) {
 }
 
 export default async function ExtrasPage({ searchParams }: PageProps<"/admin/extras">) {
-  const [params, { extras, currency, ready }] = await Promise.all([searchParams, loadExtras()]);
+  const [params, { extras, currency, ready, pulse }] = await Promise.all([
+    searchParams,
+    loadExtras(),
+  ]);
 
   const wired = hasSupabaseEnv();
   const savedCode = typeof params.saved === "string" ? params.saved : null;
@@ -565,6 +578,9 @@ export default async function ExtrasPage({ searchParams }: PageProps<"/admin/ext
           </p>
         }
       />
+
+      {/* نبض الشاشة — إيراد الخدمات الإضافية في آخر ٣٠ يوماً، محسوباً في Postgres */}
+      <PagePulse data={pulse} />
 
       {ready && extras.length === 0 && <EmptyState currency={currency} />}
 

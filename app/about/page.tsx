@@ -25,6 +25,8 @@ export async function generateMetadata(): Promise<Metadata> {
     description: page.meta.description ?? undefined,
     path: "/about",
     locale,
+    // خيارات سيو الصفحة الواحدة (منع الفهرسة، صورة المشاركة، المسار القانوني)
+    meta: page.meta,
   });
 }
 

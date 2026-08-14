@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { StatSeries } from "@/lib/analytics-types";
+import type { PulseSectionKey, PulseSeriesKey } from "@/lib/pulse-types";
 import { isMissingFunction, isMissingTable } from "@/lib/dispatch/settings";
 import type { FunnelSummaryRow, LoadedStatCard } from "@/lib/stats/cards";
 import type { StatSectionKey } from "@/lib/stats/sections";
@@ -162,8 +163,16 @@ export async function readSectionCards(
   });
 
   if (result.error) return failed([], "section_stats", result.error);
+  return ok(readCardRows(result.data));
+}
 
-  const cards: LoadedStatCard[] = rowsOf(result.data)
+/**
+ * صفوف بطاقات ← `LoadedStatCard[]` — محوّل واحد تستعمله `section_stats`
+ * و`pulse_stats` معاً، لأن نوع إرجاعهما **واحد بالعقد** (هجرة 0034 تفوّض
+ * السبعة إلى الأولى). محوّلان لشكل واحد ينحرفان، وهو النمط ٤ في `LESSONS.md`.
+ */
+function readCardRows(data: unknown): LoadedStatCard[] {
+  const cards: LoadedStatCard[] = rowsOf(data)
     .map((row) => {
       const format = textOf(row, ["format", "value_format", "fmt"]) ?? "number";
       return {
@@ -182,8 +191,73 @@ export async function readSectionCards(
   // 0022 تُرجع البطاقات بترتيبها المقصود ولا عمود `sort` لها. الترتيب أدناه
   // ثابت (stable) فيُبقي هذا الترتيب كما هو، ويحترم `sort` لو أُضيف لاحقاً.
   cards.sort((a, b) => (a.sort ?? Number.MAX_SAFE_INTEGER) - (b.sort ?? Number.MAX_SAFE_INTEGER));
+  return cards;
+}
 
-  return ok(cards);
+// ---------------------------------------------------------------------------
+// (١-ب) نبض الشاشة — بطاقات ورسم مصغّر لأي شاشة إدارية (الدفعة ٤ — الملاحظة ١٢)
+// ---------------------------------------------------------------------------
+
+/**
+ * `pulse_stats(p_section, p_from, p_to)` — بطاقات نبض شاشة واحدة.
+ *
+ * نوع الإرجاع **نفس نوع `section_stats` حرفياً**، والدالة تفوّض إليها في
+ * الأقسام السبعة القائمة (هجرة 0034) — فالقراءة واحدة والشكل واحد، ولا يوجد
+ * قارئان لشيء واحد. لذلك يعيد هذا القارئ استعمال محوّل `readSectionCards`
+ * نفسه بدل نسخه: نسختان تنحرفان، والنمط ٤ في `LESSONS.md` كلّف هجرة كاملة.
+ *
+ * ⚠ **عدد البطاقات ليس ثابتاً لقسم واحد**، وهذا عقدٌ لا عطب: الهجرة **تحذف**
+ * بطاقة النسبة التي مقامها صفر بدل أن تُرجعها صفراً («معدل قبول ٠٪» في فترة بلا
+ * عرض واحد كذبة). فمن يبني شبكة بعدد أعمدة ثابت يجب أن يحتمل بطاقتين كما
+ * يحتمل خمساً.
+ */
+export async function readPulseCards(
+  supabase: Supabase,
+  section: PulseSectionKey,
+  from: string,
+  to: string
+): Promise<StatsRead<LoadedStatCard[]>> {
+  const result = await supabase.rpc("pulse_stats", {
+    p_section: section,
+    p_from: from,
+    p_to: to,
+  });
+
+  if (result.error) return failed([], "pulse_stats", result.error);
+  return ok(readCardRows(result.data));
+}
+
+/**
+ * `pulse_series(p_section, p_from, p_to)` — سلسلة يومية واحدة للرسم المصغّر.
+ *
+ * نفس عقد `funnel_daily`: `(key, label, points jsonb)` **بنقطة لكل يوم في المدى
+ * ولو كانت صفراً**. الدالة تقبل ثمانية أقسام فقط — وما لا سلسلة صادقة له لا
+ * تُرجع له الهجرة صفراً بل ترمي `invalid-input`، فلا يُرسم خطٌّ مسطّح يوحي
+ * بأن الشيء قِيس ووُجد معدوماً.
+ */
+export async function readPulseSeries(
+  supabase: Supabase,
+  section: PulseSeriesKey,
+  from: string,
+  to: string
+): Promise<StatsRead<StatSeries[]>> {
+  const result = await supabase.rpc("pulse_series", {
+    p_section: section,
+    p_from: from,
+    p_to: to,
+  });
+
+  if (result.error) return failed<StatSeries[]>([], "pulse_series", result.error);
+
+  const series: StatSeries[] = rowsOf(result.data)
+    .map((row) => ({
+      key: textOf(row, ["key", "series_key"]) ?? "",
+      label: textOf(row, ["label", "title"]) ?? "",
+      points: readPoints(row.points ?? row.data),
+    }))
+    .filter((one) => one.key !== "");
+
+  return ok(series);
 }
 
 // ---------------------------------------------------------------------------

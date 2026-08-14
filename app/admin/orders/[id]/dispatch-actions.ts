@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { recordRejectedAttempt } from "@/lib/audit/attempt";
 import { startDispatchFor } from "@/lib/dispatch/start";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -190,7 +191,16 @@ export async function manualAssign(bookingId: string, formData: FormData) {
     p_payout: payout,
     p_note: note,
   });
-  if (error) redirect(back(`error=${rpcCode(error, "save")}`));
+  if (error) {
+    // 🔒 الرفض هنا هو الحدث الجدير بالتسجيل لا نجاحه: `margin-floor` تعني
+    // محاولة إسناد تحت أرضية الهامش، و`debt-limit` محاولة إسناد لمتعهد بلغ
+    // سقف دينه. وكلاهما يرتدّ بمعاملته فلا يسجّله مُشغّل أبداً (D-48).
+    await recordRejectedAttempt(supabase, "manual_assign", error, {
+      entity: "bookings",
+      entityId: bookingId,
+    });
+    redirect(back(`error=${rpcCode(error, "save")}`));
+  }
 
   revalidatePath("/", "layout");
   redirect(url(bookingId, "saved=manual"));
@@ -234,6 +244,10 @@ export async function manualAssignOverLimit(bookingId: string, formData: FormDat
   });
 
   if (error) {
+    await recordRejectedAttempt(supabase, "manual_assign_over_limit", error, {
+      entity: "bookings",
+      entityId: bookingId,
+    });
     // الدالة غير موجودة ⇒ هجرة **0027** لم تُنفَّذ. ورسالة `notready` العامة تحيل
     // إلى هجرة المرحلة ٦، فتُرسل المشغّل إلى الملف الخطأ — ولذلك رمز مستقل.
     const code =

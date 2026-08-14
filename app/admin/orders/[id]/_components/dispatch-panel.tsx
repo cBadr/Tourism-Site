@@ -47,6 +47,12 @@ import { ManualAssignForm, type PartnerOption } from "./manual-assign-form";
  * (٣) الهامش الحقيقي مرئي دائماً. سعر العميل حُسب على **أرخص** متعهد مغطٍّ، وأي
  *     قبول من متعهد أغلى يأكل الهامش — فإخفاء الرقم هنا يعني اكتشاف الخسارة في
  *     تقارير المرحلة ٧ بعد شهر.
+ *
+ * (٤) **وعلى الورق يبقى منها سطران** (الدفعة ٤ — الملاحظة ٦): من ينفّذ الرحلة،
+ *     وبكم. أما دورة البث وسجل عروضها وأزرار التدخل فحوارٌ يجري على الشاشة
+ *     وينتهي فيها. والهامش تحديداً **لا يُطبع**: ورقةٌ تُحمل وتُنسى على مكتب لا
+ *     يُدسّ فيها رقمٌ لا يقرؤه إلا صاحب المنصة. والحدّ الفاصل مكتوب في ترويسة
+ *     الورقة نفسها — انظر تعليق `PrintHeader` في `app/admin/orders/[id]/page.tsx`.
  */
 
 /** سقوف عاقلة: سجل بث لطلب واحد لا أرشيف */
@@ -158,9 +164,25 @@ async function loadDispatch(bookingId: string): Promise<Loaded> {
 }
 
 /** سطر «تسمية ← قيمة» — نفس إيقاع بطاقات الشاشة */
-function Field({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
+function Field({
+  label,
+  help,
+  className,
+  children,
+}: {
+  label: string;
+  help?: string;
+  /** `no-print` للسطر الذي لا مكان له على الورق */
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 border-b border-border py-2 last:border-0">
+    <div
+      className={cn(
+        "flex flex-wrap items-start justify-between gap-x-4 gap-y-1 border-b border-border py-2 last:border-0",
+        className
+      )}
+    >
       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
         {label}
         {help ? <HelpTip>{help}</HelpTip> : null}
@@ -245,14 +267,14 @@ export async function DispatchPanel({
         </h3>
         <Link
           href="/admin/dispatch"
-          className="ms-auto text-xs text-muted-foreground transition-colors hover:text-primary hover:underline"
+          className="no-print ms-auto text-xs text-muted-foreground transition-colors hover:text-primary hover:underline"
         >
           إعدادات الإسناد والطابور اليدوي
         </Link>
       </div>
 
       {!ready ? (
-        <p className="text-sm leading-relaxed text-muted-foreground">
+        <p className="no-print text-sm leading-relaxed text-muted-foreground">
           جداول البث (<code dir="ltr">dispatches</code> و<code dir="ltr">trip_offers</code>) غير
           موجودة في قاعدة البيانات بعد — نفِّذ هجرة المرحلة ٦ من{" "}
           <code dir="ltr">supabase/migrations</code> ثم أعد تحميل الصفحة. بقية الشاشة تعمل
@@ -262,7 +284,9 @@ export async function DispatchPanel({
         <>
           {/* حالة الدورة */}
           <div className="grid gap-x-6 md:grid-cols-2">
-            <div>
+            {/* عمود دورة البث للشاشة وحدها: موجةٌ سارية ومهلةٌ تنتهي حالةٌ حيّة
+                تتغيّر كل دقيقة، وطباعتها تجمّد لحظة وتوهم القارئ أنها الحاضر */}
+            <div className="no-print">
               <Field label="حالة البث" help={statusHint}>
                 {status === null ? (
                   <span className="text-muted-foreground">لم يبدأ بعد</span>
@@ -322,7 +346,9 @@ export async function DispatchPanel({
                     : formatMoney(dispatch.assignedPayout, currency)}
                 </span>
               </Field>
+              {/* لا يُطبع — انظر القرار (٤) في ترويسة هذا الملف */}
               <Field
+                className="no-print"
                 label="الهامش الحقيقي"
                 help={
                   (extrasTotal ?? 0) > 0
@@ -340,20 +366,25 @@ export async function DispatchPanel({
           </div>
 
           {assignedTone === "loss" && (
-            <p className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm leading-relaxed font-medium text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
+            <p className="no-print rounded-lg border border-red-300 bg-red-50 p-3 text-sm leading-relaxed font-medium text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
               هذه الرحلة خسارة: مستحق المتعهد يفوق ما دفعه العميل. راجع سبب الإسناد وقائمة أسعار
               الشريك — وإن تكرر الأمر فارفع الهامش أو أرضيته من شاشتي التسعير والإسناد.
             </p>
           )}
           {assignedTone === "thin" && (
-            <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+            <p className="no-print rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
               الهامش الحقيقي لهذه الرحلة دون الأرضية المضبوطة في إعدادات الإسناد — مقبول كقرار
               واعٍ، لكنه ليس الوضع الطبيعي.
             </p>
           )}
 
-          {/* سجل العروض — من أُشعر ومتى وبكم وبماذا ردّ */}
-          <div className="space-y-2">
+          {/*
+            سجل العروض — من أُشعر ومتى وبكم وبماذا ردّ.
+            `no-print` كاملاً: هو سجل تدقيق يُقرأ بحثاً عن سببٍ حين يُسأل «لماذا
+            هذا المتعهد؟»، وفيه مستحق **كل** مرشّح وهامشه — أي خريطة أسعار
+            الشركاء كلها في ورقة واحدة.
+          */}
+          <div className="no-print space-y-2">
             <p className="flex items-center gap-1.5 text-sm font-medium">
               سجل العروض
               <HelpTip>
@@ -457,22 +488,28 @@ export async function DispatchPanel({
             )}
           </div>
 
-          <Separator />
+          {/*
+            ذيل اللوحة كله للشاشة — فاصلٌ وأزرار تدخّل ونماذج إسناد وسطر إعدادات
+            سارية. لا شيء منه يفيد من يمسك الورقة. ويُوسم بنداً بنداً لا بغلافٍ
+            جامع: الغلاف كان سيضيف عنصراً وسيطاً يغيّر تباعد البطاقة على الشاشة
+            لأجل الورق، وهو ثمنٌ يدفعه من يعمل يومياً.
+          */}
+          <Separator className="no-print" />
 
           {/* الإجراءات */}
           {stopped ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="no-print text-sm text-muted-foreground">
               دورة البث متوقفة لأن الحجز ملغى — لا عروض قابلة للقبول ولا إسناد ممكن.
             </p>
           ) : isAssigned ? (
-            <p className="text-sm leading-relaxed text-muted-foreground">
+            <p className="no-print text-sm leading-relaxed text-muted-foreground">
               الطلب مُسند وأُغلق أمام بقية المتعهدين، فلا بث ولا إسناد بعده: قاعدة «أول قابل
               يفوز» تحرس وحدانية الإسناد داخل قاعدة البيانات نفسها. أي تغيير للمنفِّذ بعد هذه
               النقطة تنسيق تشغيلي مع الشريك خارج النظام.
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="no-print flex flex-wrap items-center gap-3">
             {canStart && (
               <form action={startBroadcast.bind(null, bookingId, false)}>
                 <Button type="submit">
@@ -548,7 +585,7 @@ export async function DispatchPanel({
           </div>
 
           {status === null && bookingStatus !== "confirmed" && bookingStatus !== "assigned" && (
-            <p className="text-sm leading-relaxed text-muted-foreground">
+            <p className="no-print text-sm leading-relaxed text-muted-foreground">
               لا دورة بث لهذا الحجز: البث لا يُفتح إلا على حجز «مؤكد». اعتمد التحويل أولاً من
               بطاقة الإجراءات، وسيبدأ البث تلقائياً إن كان{" "}
               <span className="font-medium">البدء التلقائي</span> مفعّلاً في{" "}
@@ -603,7 +640,7 @@ export async function DispatchPanel({
             </ManualAssignForm>
           )}
 
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="no-print text-xs leading-relaxed text-muted-foreground">
             {settingsLoaded ? "الإعدادات السارية" : "الإعدادات الافتراضية (لا صف إعدادات بعد)"}: مهلة
             الموجة {toArabicDigits(settings.windowMinutes)} دقيقة ·{" "}
             {toArabicDigits(settings.maxRounds)} موجة كحد أقصى · البدء التلقائي{" "}

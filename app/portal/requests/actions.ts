@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { clamp, text } from "../_lib/form";
 import { portalAccess } from "../_lib/session";
+import { loadTrips } from "./data";
 import { rejectReasonLabel } from "./reasons";
 
 /**
@@ -172,4 +173,99 @@ export async function rejectOffer(offerId: string, formData: FormData) {
   if (outcome === "done") redirect(requestsUrl("rejected=1"));
   if (outcome === "failed") redirect(requestsUrl("error=save"));
   redirect(requestsUrl(`outcome=${outcome}`));
+}
+
+/* ------------------------------------------------------------------ */
+/* طاقم الرحلة — المركبة والسائق بعد الإسناد                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * رموز `hint` التي ترفعها `set_trip_crew` → رموز أخطاء الرابط.
+ *
+ * ولا تُعرض رسالة Postgres الخام أبداً: نصّها عربيٌّ سليم في الهجرة، لكنه يكشف
+ * أسماء الجداول والدوال لمن يقرأه، ويتغيّر بتغيّر الهجرة فتتغير الشاشة بلا علمنا.
+ * الرمز عقدٌ ثابت بيننا وبين القاعدة، والجملة ملك الشاشة.
+ *
+ * و`forbidden` ترفعه الدالة — كما قرأناه من `pg_get_functiondef` لا من ملف
+ * الهجرة — في **أربع** حالات: حسابٌ ليس متعهداً، ورحلةٌ أُسندت لغيره، ودورةُ
+ * إسنادٍ خرجت من حالة `assigned` (حارس 0043)، ومركبةٌ أو سائقٌ ليسا من سجلّه.
+ */
+const CREW_HINTS: Record<string, string> = {
+  /** أساسٌ قد يُرقّى إلى `crew_stale` — انظر `crewRefusalCode` أدناه */
+  forbidden: "crew_forbidden",
+  "not-found": "crew_missing",
+  "not-assigned": "crew_stale",
+};
+
+/**
+ * أي الجملتين تُقال بعد رفضٍ بـ`forbidden`؟
+ *
+ * الحاجة: حارس الحالة الذي أضافته 0043 («لا تسجيل إلا على رحلة مُسنَدة جارية»)
+ * يرفع **نفس** `hint` الذي يرفعه رفضُ مركبةٍ ليست من الأسطول، فالرمز وحده لا
+ * يفرّق. والجملتان مختلفتان جوهرياً: الأولى «لا شيء مطلوب منك، الرحلة خرجت من
+ * يدك»، والثانية «أعد الاختيار من سجلّك».
+ *
+ * والتمييز يُشتق من **قائمة الشريك نفسها** لا من سبب الرفض: `portal_trips()` لا
+ * تُرجع إلا دورات `status = 'assigned'` المُسندة إليه هو، فغيابُ الحجز عنها هو
+ * بعينه معنى «لم تعد رحلتك» بشقّيه (أُعيد إسنادها، أو خرجت الدورة من الطابور).
+ *
+ * 🔒 **ولا يُنقض بهذا قرارُ «لا تفريق بين حدَّي المنع»**: نحن لا نقرأ من القاعدة
+ * أي الحدّين اصطدم به، بل نقرأ ما **يراه هو أصلاً على شاشته** — فلا معلومة تعبر
+ * حدّاً جديداً، ومن يجرّب لا يتعلّم من الجملة شيئاً ليس في قائمته.
+ *
+ * ⚠ وهذا ليس حارساً ثانياً في TypeScript: يجري **بعد** أن رفضت القاعدة وحدها،
+ * ولا يحوّل رفضاً إلى نجاح بحال. وحين تتعذّر القراءة نرجع إلى الجملة الجامعة —
+ * أي نفشل إلى الأعمّ لا إلى الأدقّ.
+ */
+async function crewRefusalCode(bookingId: string): Promise<string> {
+  const { trips, ready, failed } = await loadTrips();
+  if (!ready || failed) return "crew_forbidden";
+  return trips.some((trip) => trip.bookingId === bookingId) ? "crew_forbidden" : "crew_stale";
+}
+
+/**
+ * تسجيل مركبة الرحلة وسائقها — «العميل لا يعرف ما سيأتيه» (الملاحظة ٥).
+ *
+ * الهوية **تُشتق داخل الدالة** من `current_subcontractor_id()` ولا تُمرَّر، نمطَ
+ * `accept_offer`: فلا يُسند متعهدٌ طاقماً لرحلة غيره ولو زوّر معرّف الحجز في
+ * النموذج. ونحن هنا لا نتحقق من الملكية إطلاقاً **قبل النداء** — التحقق موضعه
+ * القاعدة وحدها، وتكراره في TypeScript يوهم بحارس ثانٍ ويسقط أولَ ما يتفرّع مسار.
+ * (وما تفعله `crewRefusalCode` **بعد** الرفض اختيارُ جملة لا إذنٌ بكتابة — الفرق
+ * مشروح فوقها.)
+ *
+ * ولا `.select()` بعد الكتابة هنا لأن الدالة `void`: ما يقوم مقام فحص الصفوف
+ * الصفرية هو أن الرفض يصل **استثناءً** لا صمتاً — وهو ما نقرؤه من `res.error`.
+ */
+export async function setTripCrew(bookingId: string, formData: FormData) {
+  const access = await portalAccess();
+  if (!access.ok) redirect(tripsUrl(`error=${access.code}`));
+  if (!UUID.test(bookingId)) redirect(tripsUrl("error=crew_missing"));
+
+  const vehicleId = text(formData, "vehicle_id");
+  const driverId = text(formData, "driver_id");
+
+  // نصف طاقم لا يطمئن عميلاً: مركبةٌ بلا سائق تترك سؤال «ومن سيأتي؟» قائماً،
+  // فيُطلب الحقلان معاً. والقائمة المنسدلة تفرضهما أصلاً — وهذا حارس من يعدّل النموذج.
+  if (!vehicleId || !driverId || !UUID.test(vehicleId) || !UUID.test(driverId)) {
+    redirect(tripsUrl("error=crew_input"));
+  }
+
+  const res = (await access.supabase.rpc("set_trip_crew", {
+    p_booking_id: bookingId,
+    p_vehicle_id: vehicleId,
+    p_driver_id: driverId,
+  })) as RpcResult;
+
+  if (isMissingFunction(res)) redirect(tripsUrl("error=schema"));
+
+  if (res.error) {
+    const hint = typeof res.error.hint === "string" ? res.error.hint.trim() : "";
+    const base = CREW_HINTS[hint] ?? "crew_save";
+    const code = base === "crew_forbidden" ? await crewRefusalCode(bookingId) : base;
+    redirect(tripsUrl(`error=${code}`));
+  }
+
+  // صفحة متابعة العميل تقرأ الطاقم من `get_booking_by_token` — فالتفريغ عام
+  revalidatePath("/", "layout");
+  redirect(tripsUrl("crew=1"));
 }

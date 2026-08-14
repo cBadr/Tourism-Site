@@ -3,6 +3,7 @@ import { SectionHeading } from "@/components/site/section-heading";
 import type { SectionContentMap } from "@/lib/content-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
+import { JsonLdScript } from "@/components/seo/JsonLd";
 
 /**
  * قسم الأسئلة الشائعة: أكورديون details/summary يعمل بلا JavaScript
@@ -21,6 +22,11 @@ export async function FaqSection({
 
   const t = await getT("sections.faq", locale);
 
+  /**
+   * `FAQPage` عقدة قائمة بذاتها لا عضو في رسم الموقع: القسم قد يتكرر في الصفحة
+   * الواحدة، وكل نسخة تصف أسئلتها هي. أما التسلسل وترميز `<` فمن `JsonLdScript`
+   * وحده — مُسلسِل واحد في المستودع كله، لا نسخة منه في كل مكوّن يُخرج JSON-LD.
+   */
   const faqJsonLd = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
@@ -30,8 +36,6 @@ export async function FaqSection({
       acceptedAnswer: { "@type": "Answer", text: item.a },
     })),
   };
-  // استبدال "<" يمنع كسر وسم <script> لو تسللت القيمة من قاعدة البيانات
-  const json = JSON.stringify(faqJsonLd).replace(/</g, "\\u003c");
 
   return (
     <section className="py-16 md:py-24">
@@ -61,7 +65,7 @@ export async function FaqSection({
           ))}
         </div>
 
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />
+        <JsonLdScript data={faqJsonLd} />
       </div>
     </section>
   );

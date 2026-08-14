@@ -24,6 +24,7 @@
     },
 
     "nav": {
+      "home": "Home",
       "services": "Services",
       "fleet": "Fleet",
       "why": "Why us",
@@ -132,6 +133,19 @@
       "menuLabel": "Choose site language",
       "current": "Current language: {language}",
       "switchTo": "View this site in {language}"
+    },
+
+    "share": {
+      "regionLabel": "Share this page",
+      "heading": "Share this page",
+      "copyLabel": "this page's link",
+      "channelAria": "Share on {name}",
+      "channel": {
+        "facebook": "Facebook",
+        "x": "X",
+        "whatsapp": "WhatsApp",
+        "telegram": "Telegram"
+      }
     }
   },
 
@@ -478,6 +492,13 @@
       "createdAt": "Created on {value}",
       "saveLink": "Save this link to follow your booking — it is your only key to this page.",
       "saveLinkCopyLabel": "the booking link",
+      "share": {
+        "print": "Print",
+        "whatsapp": "Send to WhatsApp",
+        "whatsappText": "My trip with {brand} — booking reference {reference}\n{url}",
+        "statusNow": "Current status: {value}",
+        "printContact": "About this trip, contact: {brand}"
+      },
       "stepsLabel": "Booking stages",
       "steps": {
         "pendingPayment": "Awaiting payment",
@@ -569,6 +590,19 @@
         "waitingHours": "Waiting hours",
         "pickupAt": "Pickup time",
         "notes": "Your notes"
+      },
+      "crew": {
+        "sectionLabel": "Your car and driver",
+        "heading": "Your car and driver",
+        "lead": "This is the car coming for you, and who will be driving it.",
+        "plate": "Plate number",
+        "vehicle": "Car",
+        "color": "Colour",
+        "driver": "Driver",
+        "driverPhone": "Driver's phone",
+        "phoneWindowClosed": "The driver's number is no longer shown now that this trip's pickup time has passed, and it will not appear again. For anything about this trip, contact us directly and quote your booking number.",
+        "phoneLaterAt": "The driver's number appears on this page shortly before your pickup — at {value}. Nothing is needed from you: open the page then and it will be here.",
+        "phoneLater": "The driver's number appears on this page shortly before your pickup — open it then and you will find it."
       },
       "footerNote": "Your booking number is {reference} — quote it in any correspondence about this trip."
     },

@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   Ban,
   CalendarClock,
+  CarFront,
   CircleCheck,
   Clock,
   ConciergeBell,
@@ -18,6 +19,7 @@ import {
   Route as RouteIcon,
   ShieldCheck,
   TriangleAlert,
+  UserRound,
   Wallet,
 } from "lucide-react";
 import { getSettings } from "@/lib/settings";
@@ -27,12 +29,14 @@ import { createServiceSupabase } from "@/lib/supabase/admin";
 import { localePath } from "@/lib/i18n-types";
 import { createFormatter, getT, resolveLocale, type Tx } from "@/lib/i18n/content";
 import type { LocaleFormatter } from "@/components/booking/format";
-import { telHref, waHref } from "@/components/site/links";
+import { telHref, waHref, waShareHref } from "@/components/site/links";
 import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { readPaymentSettings } from "@/components/booking/checkout/payment";
 import { CopyButton } from "@/components/booking/checkout/copy-button";
+import { PrintButton } from "@/components/booking/print-button";
+import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
 import { readEnabledGateways } from "@/components/booking/checkout/gateways";
 import {
   PaymentMethodChoice,
@@ -42,7 +46,7 @@ import {
   ReceiptUpload,
   type ReceiptAccountOption,
 } from "@/components/booking/checkout/receipt-upload";
-import type { BookingStatus, ReceiptStatus } from "@/lib/booking-types";
+import type { BookingStatus, BookingTokenCrew, ReceiptStatus } from "@/lib/booking-types";
 
 /**
  * صفحة متابعة الحجز /booking/[token] — الصفحة الوحيدة التي يملكها العميل الضيف.
@@ -202,6 +206,78 @@ function readReceipts(row: UnknownRow): ReceiptView[] {
     });
   }
   return receipts;
+}
+
+/**
+ * طاقم الرحلة — عمود `crew` في حمولة `get_booking_by_token`
+ * (هجرة `0040`، مصلَّحةً بـ`0043`).
+ *
+ * القراءة دفاعية كبقية الصفحة: حجزٌ سبق الهجرة، أو قاعدةٌ لم تُنفَّذ عليها، لا
+ * يحمل المفتاح أصلاً فتغيب البطاقة بلا خطأ ولا فراغ.
+ *
+ * 🔒 **ولا قرار حجب هنا.** `driverPhone` يصل `null` خارج نافذته لأن القاعدة
+ * حجبته داخل الدالة نفسها — والدالة ممنوحة لـ`anon` وتُنادى مباشرةً من
+ * PostgREST، فحاجبٌ في هذا الملف كان يُتخطّى بنداء واحد (نفس درس إيصالات
+ * الأدمن في الدفعة ٢). هذه الدالة **تقرأ ما وصل** ولا تقرر من يستحق رؤيته.
+ *
+ * 🔒 **وسبعة مفاتيح لا ثامن:** أسقطت 0043 `byAdmin` و`assignedAt` من
+ * `jsonb_build_object` نفسها، فلا قراءة لهما هنا ولا حاجة. وكانت الصفحة تقرؤهما
+ * ولا تعرضهما — أي حجبٌ في العرض، وهو ما يرفضه عقد المجال: ما لا يجب أن يصل لا
+ * يخرج من الدالة أصلاً. ومن أعادهما إلى القراءة أعاد المسار الذي يصل الشاشة.
+ *
+ * والكائن كله `null` في ثلاث حالات تُقرأ واحدة هنا — **بلا بطاقة**: لا مركبة
+ * ولا سائق مسجَّلان، أو عادت الدورة إلى الطابور، أو أُلغي الحجز (حارس الحالة في
+ * 0043: `dispatches.status = 'assigned'` و`bookings.status in
+ * ('assigned','completed')`). القاعدة لا تُخرج غلافاً فارغاً في أيٍّ منها.
+ * والشرط الأخير أدناه احتياطٌ لنفس المعنى — بطاقةٌ بترويسة فوق ثلاثة شُرَط أسوأ
+ * من غياب البطاقة.
+ */
+function readCrew(row: UnknownRow): BookingTokenCrew | null {
+  const raw = row["crew"];
+  if (!isRecord(raw)) return null;
+
+  const crew: BookingTokenCrew = {
+    vehicleLabel: readText(raw, "vehicleLabel", "vehicle_label"),
+    vehicleColor: readText(raw, "vehicleColor", "vehicle_color"),
+    vehiclePlate: readText(raw, "vehiclePlate", "vehicle_plate"),
+    vehicleYear: readNumber(raw, "vehicleYear", "vehicle_year"),
+    driverName: readText(raw, "driverName", "driver_name"),
+    driverPhone: readText(raw, "driverPhone", "driver_phone"),
+    phoneVisibleAt: readText(raw, "phoneVisibleAt", "phone_visible_at"),
+  };
+
+  const hasSubstance =
+    crew.vehicleLabel !== null || crew.vehiclePlate !== null || crew.driverName !== null;
+  return hasSubstance ? crew : null;
+}
+
+/**
+ * هل **انقضت** نافذة هاتف السائق؟
+ *
+ * صارت النافذة بطرفين في 0043: تُفتح قبل الالتقاء بمهلة اللوحة و**تُغلق بعده
+ * باثنتي عشرة ساعة**. فغياب الرقم صار له سببان متعاكسان، ولا تصلح لهما جملة:
+ *
+ *   • `phoneVisibleAt` في **المستقبل** ⇒ الموعد لم يحن بعد، والرقم **سيظهر**.
+ *   • `phoneVisibleAt` في **الماضي** والرقم `null` ⇒ النافذة فُتحت ثم أُغلقت،
+ *     فلن يعود. ولا حالة ثالثة بينهما: داخل النافذة يصل الرقم نفسه غير محجوب،
+ *     فوجودُ الطابع في الماضي مع رقم فارغ لا يعني إلا الانقضاء.
+ *
+ * والاستنتاج سليم لأن القاعدة تُخرج `phoneVisibleAt` فارغاً حين لا نافذة أصلاً
+ * (‏لقطة رحلة بلا `pickupAt`، أو سائق بلا هاتف) — فالطابع الموجود يعني نافذةً
+ * محسوبة لا أكثر، وغيابه يردّنا إلى الجملة العامة لا إلى ادّعاء انقضاء.
+ *
+ * 🔒 وهذا **إخبارٌ بما فعلته القاعدة لا قرارُ حجبٍ يُتخذ هنا**: الرقم محجوب في
+ * `get_booking_by_token` نفسها، وكل ما تفعله هذه المقارنة أن تختار الجملة
+ * الصادقة بدل جملةٍ تَعِد بعودةٍ لن تقع.
+ *
+ * ودالةٌ في جذر الملف لا سطرٌ داخل الصفحة: قراءة الساعة أثر جانبي لا يُكتب في
+ * جسم مكوّن (‏`react-hooks/purity`)، وهنا تُقرأ مرة واحدة عند التصيير — والصفحة
+ * ديناميكية بالضرورة (توكن + كوكيز) فلا لقطة محفوظة تتجمّد عليها.
+ */
+function phoneWindowClosed(crew: BookingTokenCrew | null): boolean {
+  if (crew === null || crew.driverPhone !== null || crew.phoneVisibleAt === null) return false;
+  const opensAt = Date.parse(crew.phoneVisibleAt);
+  return Number.isFinite(opensAt) && opensAt <= new Date().getTime();
 }
 
 /**
@@ -532,6 +608,58 @@ function ReceiptCard({
 }
 
 /* ------------------------------------------------------------------ */
+/* ورقة الرحلة المطبوعة                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ورقة الرحلة — **إضافةٌ فوق نظام الطباعة المشترك لا نسخة ثانية منه.**
+ *
+ * الطباعة في هذا المشروع `window.print()` + `@media print` بلا مكتبة ولا PDF
+ * مولَّد في الخادم (عقد `lib/export-types.ts` §٤): المتصفح يرسم العربية من اليمين
+ * لليسار بدقة لا يبلغها خادم يرسم، ومجاناً.
+ *
+ * وجسمُ القواعد يعيش في كتلة الطباعة في `app/globals.css`، ومنها تصل هذه الصفحة
+ * مجاناً: إخفاء `header`، وفكّ الألوان إلى أسود على أبيض تحت `.print-sheet`،
+ * وإسقاط كل أداة تفاعل داخلها (`form` و`button` و`input` و`select` و`textarea`)،
+ * وصنف `.no-print` المتعاقد عليه، وهامش `@page`. فتلبس `<main>` هنا `print-sheet`
+ * كما تلبسها كل شاشة تُطبع، **ولا تُنسخ قاعدة واحدة منها إلى هنا**: خمس نسخ من
+ * كتلة واحدة تنحرف بصمت (النمط ٨ في `handover/LESSONS.md`)، والصفحة العامة سادسة.
+ *
+ * وما تحت هذا السطر هو ما لا تملكه الكتلة المشتركة وحدها:
+ *
+ *   • **`footer`** — تذييل الموقع العام. اللوحة لا تملك تذييلاً فليس في القواعد
+ *     العامة، وهو هنا صفحتان من روابط وشبكات اجتماعية على ورقة رحلة. (وقاعدته
+ *     مكانها الطبيعي تلك الكتلة يوم يلتقي البناءان.)
+ *   • **`fieldset`** — منتقي وسيلة الدفع جزيرة عميل (`PaymentMethodChoice`)
+ *     لا نملك تعليم داخلها بصنف من هنا، وإخفاء `input` وحده يترك تسمياته
+ *     نصّاً معلّقاً بلا خيار يُختار.
+ *   • **مقاسات هذه الورقة وحدها** — بطنُ الصفحة وبطاقاتها وترويستها.
+ *   • **تعويض ما يذهب مع اللون**: مؤشّر الحالة أربع دوائر يفرّق بينها اللون وحده،
+ *     فيُحاط الحالي بإطار، ويُكشف معه سطر `print-only` يقول الحالة بالكلمات.
+ *     ونفس المبدأ لاسم العلامة وهاتفها: يظهران على الورقة وحدها لأن الترويسة
+ *     وأزرار التواصل ذهبتا.
+ *
+ * وأرقام حسابات التحويل **تُطبع عمداً**: من يطبع ورقته وهو بانتظار الدفع يحتاجها
+ * في يده، وهي نصّ لا أداة تفاعل.
+ */
+const PRINT_CSS = `
+@media print {
+  footer { display: none !important; }
+  .print-sheet fieldset { display: none !important; }
+  .print-sheet .print-only { display: block !important; }
+  .print-sheet [aria-current="step"] { outline: 1px solid #000 !important; }
+  .print-sheet .sheet-hero { padding-top: 0 !important; padding-bottom: 8px !important; }
+  .print-sheet .sheet-body { gap: 10px !important; padding: 0 !important; }
+  .print-sheet .sheet-body > section {
+    border: 1px solid #999 !important;
+    padding: 10px 12px !important;
+    break-inside: avoid;
+  }
+  .print-sheet .sheet-body dl > div { padding: 2px 0 !important; }
+}
+`;
+
+/* ------------------------------------------------------------------ */
 /* الصفحة                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -632,6 +760,43 @@ export default async function BookingStatusPage({ params }: PageParams) {
   // الرابط الذي يحفظه العميل هو رابط لغته — العربية بلا بادئة والإنجليزية تحت /en
   const bookingUrl = `${getBaseUrl()}${localePath(locale, `/booking/${token}`)}`;
 
+  /**
+   * نصّ نيّة واتساب: سطر يعرّف الرحلة ثم الرابط في سطر مستقل — واتساب لا يجعل
+   * الرابط قابلاً للنقر إن التصق بنصّ بعده. ويمر بـ`t` كبقية نصوص الصفحة فيصل
+   * العميلَ الإنجليزيَّ بلغته.
+   */
+  const shareText = t(
+    "share.whatsappText",
+    "تفاصيل رحلتي مع {brand} — رقم الحجز {reference}\n{url}",
+    { brand: settings.brand.name, reference, url: bookingUrl }
+  );
+
+  /**
+   * الخطوة الحالية على المؤشر بالكلمات — للورقة المطبوعة وحدها. المصدر هو
+   * `STATUS_POSITION` و`STATUS_STEPS` نفساهما اللذان يرسمان المؤشر على الشاشة،
+   * فلا تنحرف الورقة عنه بجدول تسميات ثانٍ. و«ملغي» (‏موضعه -1) لا يدخل هنا
+   * لأن بطاقة الإلغاء تقول ذلك صراحةً بلا لون.
+   */
+  const currentStep = STATUS_STEPS[STATUS_POSITION[status]] ?? null;
+
+  /**
+   * طاقم الرحلة (هجرة `0040`، مصلَّحةً بـ`0043`) — جواب «العميل لا يعرف ما
+   * سيأتيه».
+   *
+   * سطر المركبة يجمع وصفها **وسنتها** بمسافة واحدة: «هيونداي إلنترا ٢٠٢٣». وهي
+   * نصف ما يميّز سيارةً عن أختها في عين من يقف على الرصيف، فمكانها سطر التعريف
+   * لا سطرٌ ثالث يزاحمه. والسنة تمرّ بـ`digits` لا بـ`number`: الأخيرة تفصل
+   * الألوف فتصير ٢٠٢٣ «٢٬٠٢٣» — سنةٌ لا تُقرأ سنةً.
+   */
+  const crew = readCrew(raw);
+  const crewVehicleLine = crew
+    ? [crew.vehicleLabel, crew.vehicleYear === null ? null : fmt.digits(crew.vehicleYear)]
+        .filter((part): part is string => part !== null && part.length > 0)
+        .join(" ")
+    : "";
+  const crewPhoneAtLabel = fmt.dateTime(crew?.phoneVisibleAt ?? null);
+  const crewPhoneWindowClosed = phoneWindowClosed(crew);
+
   // مصفوفة الإيصالات تُقرأ مرة واحدة ويقرأ منها المستهلكان معاً
   const receipts = readReceipts(raw);
 
@@ -725,8 +890,10 @@ export default async function BookingStatusPage({ params }: PageParams) {
           </p>
         )}
 
+        {/* رفع الإيصال لا يُطبع: عنوانه ونموذجه معاً سطحُ تفاعل لا يفعل شيئاً على
+            ورقة — والصنف على الحاوية كي يذهب العنوان مع النموذج لا وحده بعده */}
         {accounts.length > 0 ? (
-          <div className="flex flex-col gap-3 border-t border-border pt-5">
+          <div className={`${PRINT_HIDDEN_CLASS} flex flex-col gap-3 border-t border-border pt-5`}>
             <h3 className="text-sm font-bold">
               {t("pay.uploadHeading", "بعد التحويل: ارفع الإيصال")}
             </h3>
@@ -749,7 +916,12 @@ export default async function BookingStatusPage({ params }: PageParams) {
     <>
       <SiteHeader settings={settings} locale={locale} />
 
-      <main id="main" className="flex-1">
+      {/* `print-sheet` هو الصنف المتعاقد عليه لجذر كل شاشة تُطبع (كتلة الطباعة في
+          `app/globals.css`) — بلا أثر على الشاشة، وبه وحده تصل الصفحة كل القواعد
+          المشتركة قبل إضافات `PRINT_CSS` أعلاه */}
+      <main id="main" className="print-sheet flex-1">
+        <style>{PRINT_CSS}</style>
+
         {/* الترويسة: رقم الحجز بارزاً */}
         <section className="site-hero-bg relative overflow-hidden">
           <div aria-hidden="true" className="pointer-events-none absolute inset-0">
@@ -757,7 +929,12 @@ export default async function BookingStatusPage({ params }: PageParams) {
             <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-l from-transparent via-border to-transparent" />
           </div>
 
-          <div className="relative mx-auto flex w-full max-w-3xl flex-col items-center gap-4 px-4 pb-10 pt-10 text-center sm:px-6 md:pb-12 md:pt-14">
+          <div className="sheet-hero relative mx-auto flex w-full max-w-3xl flex-col items-center gap-4 px-4 pb-10 pt-10 text-center sm:px-6 md:pb-12 md:pt-14">
+            {/* ترويسة الورقة: اسم العلامة — تعويض ترويسة الموقع المخفيّة بالطباعة
+                (‏عقد التصدير §٤: «ترويسة تحمل اسم العلامة والتاريخ»، والتاريخ هو
+                سطر «أُنشئ في …» أسفل رقم الحجز) */}
+            <p className="print-only hidden text-sm font-bold">{settings.brand.name}</p>
+
             <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
               {status === "cancelled"
                 ? t("titleCancelled", "حجز ملغي")
@@ -787,19 +964,56 @@ export default async function BookingStatusPage({ params }: PageParams) {
           </div>
         </section>
 
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6 md:py-14">
-          {/* تنبيه حفظ الرابط */}
-          <div className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="sheet-body mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6 md:py-14">
+          {/*
+            تنبيه حفظ الرابط، ومعه أدوات المشاركة الثلاث.
+
+            🔒 **ولا زر فيسبوك هنا، ولا إكس، ولا تليجرام، ولا بطاقة Open Graph.**
+            من قرأ هذه الأزرار فرآها «ناقصة» فليقرأ هذا أولاً: **الرابط نفسه هو
+            بيانات الاعتماد**. `get_booking_by_token` دالة `security definer`
+            تأذن بحيازة نصّ التوكن وحده — لا كلمة سر ولا جلسة — ومن فتحه قرأ اسم
+            العميل وهاتفه وواتسابه وإحداثيات التقاطه ووصوله وملاحظاته وسجل
+            إيصالاته. ونشرُ هذا الرابط على سطح عام لا «يشارك صفحة»، بل **ينشر
+            مفتاحاً حيّاً**: فاحصة المعاينة تجلبه فتخزّنه، وترويسة `referer`
+            تحمله إلى الموقع التالي، وسجلّ مختصر الروابط يحفظه. والسطر الذي فوق
+            هذه الأزرار مباشرةً يقول للعميل إنه «مفتاحك الوحيد لهذه الصفحة» —
+            فزرُّ نشرٍ بجواره يناقض الصفحة نفسها.
+
+            ولذلك: النشر العام لصفحات التسويق وحدها (المسارات والخدمات
+            والرئيسية) — عامة مفهرَسة بلا سرّ وبُنيت لتُشارَك. وهنا **ثلاث نيّات
+            خاصة**: طباعة، ونسخ الرابط، وإرسال إلى واتساب **بلا رقم مستقبِل**
+            فيختار العميل وجهته بنفسه (نفسه غالباً). ولنفس السبب لا تُغيَّر
+            `generateMetadata` أعلاه: `index:false` و`follow:false` و`nocache:true`،
+            ولا تمرّ بـ`buildPageMetadata` عمداً فلا تُبنى لهذه الصفحة بطاقة
+            مشاركة إطلاقاً. القرار محسوم مع المالك في `lib/export-types.ts` §٥.
+          */}
+          <div
+            className={`${PRINT_HIDDEN_CLASS} flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between`}
+          >
             <p className="flex items-start gap-2 text-sm leading-6">
               <Link2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
               {t("saveLink", "احفظ هذا الرابط لمتابعة حجزك — هو مفتاحك الوحيد لهذه الصفحة.")}
             </p>
-            <CopyButton
-              value={bookingUrl}
-              label={t("saveLinkCopyLabel", "رابط متابعة الحجز")}
-              variant="inline"
-              className="self-start sm:self-auto"
-            />
+            {/* `shrink-0` كي تنكسر الجملة لا الأزرار: بلا هذا القيد يتقاسم النصّ
+                والأزرارُ العرضَ بالتساوي فتنزل «طباعة» سطراً وحدها على الشاشات
+                المتوسطة — والجملة نثرٌ يُعاد لفّه بلا ثمن */}
+            <div className="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
+              <CopyButton
+                value={bookingUrl}
+                label={t("saveLinkCopyLabel", "رابط متابعة الحجز")}
+                variant="inline"
+              />
+              <a
+                href={waShareHref(shareText)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <MessageCircle className="size-4 shrink-0" aria-hidden="true" />
+                {t("share.whatsapp", "إرسال إلى واتساب")}
+              </a>
+              <PrintButton label={t("share.print", "طباعة")} />
+            </div>
           </div>
 
           {/* مؤشر الحالة */}
@@ -822,8 +1036,162 @@ export default async function BookingStatusPage({ params }: PageParams) {
               className="rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
             >
               <StatusStepper status={status} t={t} />
+              {/* الحالة بالكلمات — على الورقة وحدها: الطباعة تفكّ ألوان المؤشر
+                  فتصير خطواته الأربع متشابهة، والإطار حول الخطوة الحالية وحده
+                  إشارة لا تُقرأ بصوت عالٍ */}
+              {currentStep ? (
+                <p className="print-only mt-4 hidden text-sm font-semibold">
+                  {t("share.statusNow", "الحالة الآن: {value}", {
+                    value: t(`steps.${currentStep.key}`, currentStep.label),
+                  })}
+                </p>
+              ) : null}
             </section>
           )}
+
+          {/*
+            مركبتك وسائقك — جواب الملاحظة ٥ في ملحق الرؤية ٢: «العميل لا يعرف ما
+            سيأتيه — لا نوع السيارة ولا شكلها ولا رقمها ولا لونها، ولا السائق».
+
+            **موضعها فوق المبالغ لا تحتها**: من يفتح صفحته بعد الإسناد يفتحها
+            ليعرف ما يأتيه لا ليراجع حسابه — والحساب صار مغلقاً في هذه المرحلة.
+
+            **واللوحة أبرز عنصر فيها** لأنها وحدها ما يُبحث عنه فعلاً: الواقف
+            على الرصيف لا يقارن أسماء موديلات، بل يقرأ أرقام لوحات.
+
+            **وتُطبع كاملةً** — ولا صنف `no-print` عليها ولا زرّ ولا نموذج
+            داخلها يُسقطه محرّك الطباعة: ورقةُ الرحلة التي يحملها العميل معه هي
+            هذه البطاقة بعينها، وهي أكثر ما يستحق أن يكون على ورق.
+
+            🔒 **ولا صورة هنا ولا مكان لها:** عمودا `photo_path` موجودان في
+            القاعدة والرفعُ **مؤجَّل بقرار** (ترويسة الهجرة `0040`) — دلو `media`
+            عام، وصورةُ السائق بيانات شخصية لطرفٍ ثالث يقرؤها أي أحد بالمسار،
+            فمكانها دلو خاص برابط موقَّع كالإيصالات. ولا حقل صورة في الحمولة
+            أصلاً، فمن يضيف `<img>` هنا يضيف رابطاً مكسوراً لا ميزة.
+
+            🔒 **ولا `byAdmin` ولا `assignedAt` يصلان هذه الصفحة أصلاً** — أسقطتهما
+            0043 من حمولة الدالة. «من سجّل البيانات ومتى» شأنٌ تشغيلي مكانه شاشة
+            المالك `/admin/orders/[id]`، وكان يصل إلى هنا فلا يُعرض — أي حجباً في
+            العرض، وهو ما ترفضه قاعدة هذا المجال. فمن أراد إعادتهما فليعلم أنه
+            يبني السطر الذي أُغلق.
+          */}
+          {crew ? (
+            <section
+              aria-label={t("crew.sectionLabel", "مركبتك وسائقك")}
+              className="flex flex-col gap-4 rounded-3xl border border-primary/30 bg-card p-5 text-card-foreground sm:p-6"
+            >
+              <div className="flex flex-col gap-1.5">
+                <h2 className="flex items-center gap-2 text-base font-bold">
+                  <CarFront className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                  {t("crew.heading", "مركبتك وسائقك")}
+                </h2>
+                <p className="text-sm leading-7 text-muted-foreground">
+                  {t("crew.lead", "هذه هي السيارة التي ستصلك ومن يقودها.")}
+                </p>
+              </div>
+
+              {/* اللوحة: العنصر الذي يُبحث عنه بالعين، فيأخذ حجم ما يُبحث عنه */}
+              {crew.vehiclePlate ? (
+                <div className="flex flex-col items-center gap-1.5 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-4 text-center">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t("crew.plate", "رقم اللوحة")}
+                  </p>
+                  <p
+                    dir="ltr"
+                    className="font-mono text-2xl font-extrabold tracking-widest sm:text-3xl"
+                  >
+                    {crew.vehiclePlate}
+                  </p>
+                </div>
+              ) : null}
+
+              <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                {crewVehicleLine.length > 0 ? (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+                    <dt className="flex items-center gap-1.5 text-muted-foreground">
+                      <CarFront className="size-3.5 shrink-0" aria-hidden="true" />
+                      {t("crew.vehicle", "المركبة")}
+                    </dt>
+                    <dd className="font-medium">{crewVehicleLine}</dd>
+                  </div>
+                ) : null}
+                {crew.vehicleColor ? (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+                    <dt className="text-muted-foreground">{t("crew.color", "اللون")}</dt>
+                    <dd className="font-medium">{crew.vehicleColor}</dd>
+                  </div>
+                ) : null}
+                {crew.driverName ? (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+                    <dt className="flex items-center gap-1.5 text-muted-foreground">
+                      <UserRound className="size-3.5 shrink-0" aria-hidden="true" />
+                      {t("crew.driver", "السائق")}
+                    </dt>
+                    <dd className="font-medium">{crew.driverName}</dd>
+                  </div>
+                ) : null}
+                {/* الرقم رابط اتصال على الموبايل، ونصٌّ مقروء على الورقة */}
+                {crew.driverPhone ? (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+                    <dt className="flex items-center gap-1.5 text-muted-foreground">
+                      <Phone className="size-3.5 shrink-0" aria-hidden="true" />
+                      {t("crew.driverPhone", "هاتف السائق")}
+                    </dt>
+                    <dd>
+                      <a
+                        href={telHref(crew.driverPhone)}
+                        dir="ltr"
+                        className="font-mono font-semibold text-primary hover:underline"
+                      >
+                        {crew.driverPhone}
+                      </a>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+
+              {/*
+                الرقم غائب — **والجملة إلزامية لا تحسينية**: رقمٌ غائب بلا تفسير
+                يُقرأ صفحةً معطوبة لا سياسةً. والحجب نفسه وقع في القاعدة، وهذا
+                إخبارٌ به لا تنفيذٌ له.
+
+                ⚠ **وللغياب سببان متعاكسان منذ 0043، ولا تصلح لهما جملة واحدة:**
+                قبل النافذة الرقم **سيظهر**، وبعدها **لن يعود** — والنافذة تُغلق
+                بعد الالتقاء باثنتي عشرة ساعة. فقولُ «سيظهر قبل موعد انطلاقك»
+                لعميلٍ انتهت رحلته أمسِ وعدٌ بما لا تفعله القاعدة، ويُبقيه يفتح
+                الصفحة انتظاراً لشيء لا يأتي. وبعد انقضائها يبقى بابٌ واحد وهو
+                الصحيح تجارياً وتشغيلياً معاً: التواصل عبر المنصة نفسها، فهي وحدها
+                تعرف من نفّذ الرحلة وتصل إليه (والعميل لا يعرفه — قاعدة
+                white-label).
+              */}
+              {crew.driverName && !crew.driverPhone ? (
+                <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm leading-7">
+                  {crewPhoneWindowClosed ? (
+                    <Info className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  ) : (
+                    <Clock className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  )}
+                  <span>
+                    {crewPhoneWindowClosed
+                      ? t(
+                          "crew.phoneWindowClosed",
+                          "انتهت مدة عرض رقم السائق مع انتهاء موعد هذه الرحلة، فلن يظهر مرة أخرى. لأي استفسار بشأنها تواصل معنا مباشرةً بذكر رقم حجزك."
+                        )
+                      : crewPhoneAtLabel
+                        ? t(
+                            "crew.phoneLaterAt",
+                            "رقم السائق يظهر لك في هذه الصفحة قبل موعد انطلاقك — في {value}. لا خطوة مطلوبة منك: افتحها حينها وستجده.",
+                            { value: crewPhoneAtLabel }
+                          )
+                        : t(
+                            "crew.phoneLater",
+                            "رقم السائق يظهر لك في هذه الصفحة قبل موعد انطلاقك — افتحها حينها وستجده."
+                          )}
+                  </span>
+                </p>
+              ) : null}
+            </section>
+          ) : null}
 
           {/* المبالغ */}
           <section
@@ -1093,8 +1461,10 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 </div>
               </div>
 
+              {/* زرّا التواصل أداتان لا معلومة — يذهبان بالطباعة، ويقوم مقامهما
+                  سطر التذييل المطبوع أسفل الورقة وفيه الهاتف مكتوباً */}
               {whatsapp || phone ? (
-                <div className="flex flex-wrap gap-2">
+                <div className={`${PRINT_HIDDEN_CLASS} flex flex-wrap gap-2`}>
                   {whatsapp ? (
                     <a
                       href={waHref(whatsapp)}
@@ -1265,11 +1635,29 @@ export default async function BookingStatusPage({ params }: PageParams) {
             </span>
             {footerAfter}
           </p>
+
+          {/* تذييل الورقة: باسم من صدرت وبأي رقم يُسأل عنها — تعويض تذييل الموقع
+              وأزرار التواصل المخفيَّين بالطباعة. وبلا هاتف مضبوط في الإعدادات
+              يبقى اسم العلامة وحده، فلا يُطبع سطر يَعِد برقم لا وجود له */}
+          <p className="print-only hidden text-center text-xs leading-6">
+            {t("share.printContact", "للاستفسار عن هذه الرحلة: {brand}", {
+              brand: settings.brand.name,
+            })}
+            {phone ? (
+              <span dir="ltr" className="ms-2 font-mono font-medium">
+                {phone}
+              </span>
+            ) : null}
+          </p>
         </div>
       </main>
 
       <SiteFooter settings={settings} locale={locale} />
-      <WhatsAppFab settings={settings} locale={locale} />
+      {/* الزر العائم أداة تفاعل ثابتة الموضع — بلا هذا الغلاف يطبع نفسه فوق
+          الورقة الأولى، ولا سبيل لتعليمه من هنا لأنه مشترك بين كل الصفحات */}
+      <div className={PRINT_HIDDEN_CLASS}>
+        <WhatsAppFab settings={settings} locale={locale} />
+      </div>
     </>
   );
 }

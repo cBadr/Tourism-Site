@@ -14,6 +14,7 @@ import {
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,6 +24,7 @@ import { Separator } from "@/components/ui/separator";
 import type { PaymentSettings } from "@/lib/booking-types";
 import type { TreasuryAccountKind } from "@/lib/finance-types";
 import { getSettings } from "@/lib/settings";
+import { readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
@@ -898,8 +900,19 @@ function AccountCard({
 export default async function PaymentAccountsPage({
   searchParams,
 }: PageProps<"/admin/payment-accounts">) {
-  const [params, { accounts, usage, usageReady, currency, ready, treasuryReady }, settings] =
-    await Promise.all([searchParams, loadAccounts(), getSettings()]);
+  const [
+    params,
+    { accounts, usage, usageReady, currency, ready, treasuryReady },
+    settings,
+    pulse,
+  ] = await Promise.all([
+    searchParams,
+    loadAccounts(),
+    getSettings(),
+    // نبض الشاشة (الملاحظة ١٢): قراءة موازية، وكل رقم فيها محسوب في Postgres.
+    // تعذّرها لا يُسقط الشاشة — `PagePulse` يقول السبب سطراً واحداً.
+    createServerSupabase().then((client) => readPagePulse(client, "/admin/payment-accounts")),
+  ]);
 
   const wired = hasSupabaseEnv();
   // نجاحان مختلفان في نفس الشاشة: حفظ حساب (saved=1) وحفظ إعدادات الدفع (saved=payment)
@@ -949,6 +962,8 @@ export default async function PaymentAccountsPage({
           </p>
         }
       />
+
+      <PagePulse data={pulse} />
 
       {/* القاعدة العامة أولاً (كم يدفع العميل الآن)، ثم الحسابات التي يحوّل إليها */}
       <PaymentSettingsCard

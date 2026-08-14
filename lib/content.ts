@@ -144,7 +144,16 @@ function mergePage(base: PublicPage, payload: unknown): PublicPage {
   return {
     ...base,
     title: mergeLocalized(base.title, row.title),
+    /**
+     * ⚠ النشر بـ`...base.meta` أولاً **شرط لا تجميل**: `meta` صارت تحمل قرارات
+     * سيو غير نصية (منع الفهرسة، الاستثناء من الخريطة، صورة المشاركة، المسار
+     * القانوني)، وهي قرارات تخصّ الصفحة لا لغتها — فلا `localized_page` تعيدها
+     * ولا يصح أن تسقط. وبناء كائن جديد بحقلين كان يمحوها على كل لغة غير العربية:
+     * صفحة ممنوعة من الفهرسة بالعربية تُفهرَس على `/en` وحدها.
+     * المترجَم هو النصّان وحدهما، ويُكتبان فوق النشر.
+     */
     meta: {
+      ...base.meta,
       title: mergeLocalized(base.meta.title, isPlainObject(row.meta) ? row.meta.title : undefined),
       description: mergeLocalized(
         base.meta.description,

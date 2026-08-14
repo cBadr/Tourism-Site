@@ -142,7 +142,25 @@ export async function savePage(pageId: string, formData: FormData) {
   const title = str(formData, "title");
   if (!title) redirect(editorUrl(pageId, "error=title"));
 
+  /**
+   * 🔒 القراءة قبل الكتابة — `pages.meta` عمود jsonb يُستبدل كاملاً.
+   *
+   * كانت هذه الدالة تبني `{title, description}` وتكتبه فوق العمود، فتمحو كل
+   * مفتاح لا تعرفه: `noindex` و`excludeFromSitemap` و`ogImageUrl` و
+   * `canonicalPath` التي يضبطها المالك من مركز السيو (الدفعة ٤ — الملاحظة ٤).
+   *
+   * والسيناريو الذي أمسكته المراجعة: يمنع المالك فهرسة «صفحة الشكر» من مركز
+   * السيو، ثم يصحّح فاصلة في نصّها من هذا المحرر — فتعود الصفحة إلى نتائج
+   * البحث وإلى `sitemap.xml` **صامتةً**. وهذه هي الشاشة التي تُحرَّر منها
+   * الصفحات فعلاً، فالعطب هنا أوقع منه في المحرر الجماعي.
+   *
+   * والنسخ صراحةً لا `select("*")`: نقرأ `meta` وحده لأنه ما نكتبه.
+   */
+  const existing = await supabase.from("pages").select("meta").eq("id", pageId).maybeSingle();
+  if (existing.error) redirect(editorUrl(pageId, "error=save"));
+
   const meta = {
+    ...((existing.data?.meta as Record<string, unknown> | null) ?? {}),
     title: str(formData, "meta.title") ?? null,
     description: str(formData, "meta.description") ?? null,
   };

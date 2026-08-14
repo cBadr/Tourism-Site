@@ -556,16 +556,22 @@ export function FinanceFeedback({
   savedMessage: string;
   error: string | null;
 }) {
+  /*
+    `no-print` على البطاقتين: نتيجةُ إجراءٍ وقع قبل لحظة واحدة رسالةٌ للشاشة لا
+    للورق — «سُجّل المصروف» على تقرير مطبوع يُقرأ بعد شهر لا يقول شيئاً، ويوهم
+    قارئه بأن الورقة أثرُ عمليةٍ بعينها لا صورة فترة. أما `FinanceNotReady` فيبقى
+    مطبوعاً عمداً: تقريرٌ فارغ بلا سببه أسوأ من تقرير يقول لماذا هو فارغ.
+  */
   return (
     <>
       {saved && (
-        <Card className="flex flex-row items-center gap-3 border-emerald-300 bg-emerald-50 p-4 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100">
+        <Card className="no-print flex flex-row items-center gap-3 border-emerald-300 bg-emerald-50 p-4 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100">
           <CheckCircle2 className="size-5 shrink-0" />
           <p className="text-sm font-medium">{savedMessage}</p>
         </Card>
       )}
       {error && (
-        <Card className="flex flex-row items-center gap-3 border-red-300 bg-red-50 p-4 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
+        <Card className="no-print flex flex-row items-center gap-3 border-red-300 bg-red-50 p-4 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
           <XCircle className="size-5 shrink-0" />
           <p className="text-sm font-medium">
             {FINANCE_ERRORS[error] ?? "حدث خطأ غير متوقع."}
@@ -627,8 +633,14 @@ export function RangeFilter({
     (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== ""
   );
 
+  /*
+    `no-print` صريح رغم أن قاعدة الورقة تخفي كل `form`: الفلتر يعيش على شاشات
+    قد لا تحمل `print-sheet` (وأي شاشة جديدة تستعمله)، والصنف يجعل الحكم صفةً
+    للمكوّن نفسه لا أثراً جانبياً لموضعه. والفترة المختارة **لا تضيع** بإخفائه:
+    ترويسة الورقة تكتبها بجملة كاملة.
+  */
   return (
-    <form action={basePath} method="get">
+    <form action={basePath} method="get" className="no-print">
       <Card className="gap-3 p-4">
         {kept.map(([name, value]) => (
           <input key={name} type="hidden" name={name} value={value} />
@@ -758,6 +770,70 @@ export type FlowBucket = {
 /** أقل ارتفاع مرئي لعمود قيمته أكبر من صفر — حتى لا يختفي مبلغ صغير تماماً */
 const MIN_BAR_PERCENT = 3;
 
+/**
+ * أرقام التدفق في جدول — **مصدرها واحد ومكانا عرضها اثنان**.
+ *
+ * على الشاشة تعيش داخل `<details>` مطوي لأن المخطط يكفي بطرف العين. وعلى الورق
+ * لا يمكن أن تعيش هناك: الطابعة لا تفتح `<details>` مطوياً، ولا يوجد مُحدِّد CSS
+ * يفتحه — فتقرير تدفق نقدي مطبوع كان سيخرج **بلا رقم وارد أو منصرف واحد**،
+ * وأعمدته المصمتة بيضاء فوق ذلك لأن الطابعات لا تطبع الخلفيات افتراضاً.
+ *
+ * فالمخطط يُخفى عند الطباعة والجدول يظهر مكانه. واستخراجه مكوّناً هو ما يمنع
+ * النسختين من الانحراف: نداءان لدالة واحدة، لا جدولان منسوخان في ملف واحد.
+ */
+function FlowTable({
+  rows,
+  currency,
+  granularity,
+}: {
+  rows: FlowBucket[];
+  currency: string;
+  granularity: Granularity;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[36rem] text-sm">
+        <thead>
+          <tr className="border-b border-border text-xs text-muted-foreground">
+            <th className="p-2 text-start font-medium">الفترة</th>
+            <th className="p-2 text-start font-medium">الوارد</th>
+            <th className="p-2 text-start font-medium">المنصرف</th>
+            <th className="p-2 text-start font-medium">الصافي</th>
+            <th className="p-2 text-start font-medium">الرصيد التراكمي</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.bucket} className="border-b border-border last:border-0">
+              <td className="p-2 whitespace-nowrap">{bucketLabel(row.bucket, granularity)}</td>
+              <td className="p-2">
+                <Money
+                  value={row.inflow}
+                  currency={currency}
+                  className="text-emerald-700 dark:text-emerald-300"
+                />
+              </td>
+              <td className="p-2">
+                <Money
+                  value={row.outflow}
+                  currency={currency}
+                  className="text-red-700 dark:text-red-300"
+                />
+              </td>
+              <td className="p-2 font-medium">
+                <Money value={row.net} currency={currency} />
+              </td>
+              <td className="p-2">
+                <Money value={row.runningBalance} currency={currency} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function CashFlowChart({
   rows,
   currency,
@@ -791,7 +867,8 @@ export function CashFlowChart({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+      {/* المخطط كله للشاشة: أعمدته خلفياتٌ ملوّنة، والورق يخرجها بيضاء */}
+      <div className="no-print flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="size-2.5 rounded-full bg-emerald-500" />
           الوارد
@@ -810,7 +887,7 @@ export function CashFlowChart({
         </span>
       </div>
 
-      <div className="overflow-x-auto pb-1">
+      <div className="no-print overflow-x-auto pb-1">
         <div className="flex min-w-max items-end gap-2">
           {rows.map((row) => {
             const inPercent = heightPercent(row.inflow);
@@ -849,43 +926,20 @@ export function CashFlowChart({
       </div>
 
       {/* الأرقام كاملة لمن يريد قراءتها لا رؤيتها — الرصيد التراكمي يظهر هنا فقط */}
-      <details className="text-sm">
+      <details className="no-print text-sm">
         <summary className="w-fit cursor-pointer text-xs text-primary hover:underline">
           عرض أرقام التدفق في جدول
         </summary>
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-sm">
-            <thead>
-              <tr className="border-b border-border text-xs text-muted-foreground">
-                <th className="p-2 text-start font-medium">الفترة</th>
-                <th className="p-2 text-start font-medium">الوارد</th>
-                <th className="p-2 text-start font-medium">المنصرف</th>
-                <th className="p-2 text-start font-medium">الصافي</th>
-                <th className="p-2 text-start font-medium">الرصيد التراكمي</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.bucket} className="border-b border-border last:border-0">
-                  <td className="p-2 whitespace-nowrap">{bucketLabel(row.bucket, granularity)}</td>
-                  <td className="p-2">
-                    <Money value={row.inflow} currency={currency} className="text-emerald-700 dark:text-emerald-300" />
-                  </td>
-                  <td className="p-2">
-                    <Money value={row.outflow} currency={currency} className="text-red-700 dark:text-red-300" />
-                  </td>
-                  <td className="p-2 font-medium">
-                    <Money value={row.net} currency={currency} />
-                  </td>
-                  <td className="p-2">
-                    <Money value={row.runningBalance} currency={currency} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-2">
+          <FlowTable rows={rows} currency={currency} granularity={granularity} />
         </div>
       </details>
+
+      {/* وعلى الورق: الجدول نفسه مفتوحاً بدل مخطط لا يُطبع */}
+      <div className="print-only hidden space-y-2">
+        <h4 className="font-heading text-sm font-bold">أرقام التدفق النقدي</h4>
+        <FlowTable rows={rows} currency={currency} granularity={granularity} />
+      </div>
     </div>
   );
 }

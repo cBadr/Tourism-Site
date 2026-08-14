@@ -5,13 +5,27 @@
  * والواجهة العامة ولوحة التحكم والـ Page Builder لاحقاً كلهم يلتزمون به.
  */
 
+import type { PageSeoExtras } from "@/lib/seo-types";
+
 export type PageKind = "home" | "service" | "corridor" | "static";
 
+/**
+ * ميتاداتا الصفحة — عمود `pages.meta` من نوع `jsonb`.
+ *
+ * الحقول الأربعة الجديدة تأتي من عقد `lib/seo-types.ts` بلا إعادة كتابة، وهي
+ * **`Partial` بقصد**: نصّ العقد يقول إن المفتاح الغائب في صفٍّ قديم ليس خطأً بل
+ * «غير مضبوط» يسقط إلى الافتراضي الآمن. فلو جُعلت مطلوبةً لصار كل صفٍّ مبذور
+ * وكل كائن `meta` في `lib/default-content.ts` خطأَ بناء، ولاحتاج الأمر ترحيل
+ * بيانات يكتب قيمةً في صفوف لم يلمسها المالك — وهو ما استبعده العقد صراحةً.
+ *
+ * ولذلك يقرأ كل مستهلك بمقارنة صريحة (`meta.noindex === true`) لا بصدق القيمة:
+ * `undefined` و`null` و`false` ثلاثتها تعني «لم يُطلَب المنع».
+ */
 export type PageMeta = {
   /** يدخل في قالب العنوان العام %s */
   title: string | null;
   description: string | null;
-};
+} & Partial<PageSeoExtras>;
 
 export type Page = {
   id: string;

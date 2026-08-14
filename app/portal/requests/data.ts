@@ -43,6 +43,19 @@ export type PortalOffer = {
   notes: string | null;
 };
 
+/**
+ * ما سجّله المتعهد من طاقم لرحلته — **معرِّفان لا لقطة**، والعقد يشرح لماذا
+ * (`lib/crew-types.ts`): السعر حقٌّ مالي يُجمَّد، أما لوحة المركبة واسم السائق
+ * فواقعٌ تشغيلي يُقرأ لحظة قراءته، فتصحيحُ لوحةٍ كُتبت خطأً يصل العميل فوراً.
+ */
+export type TripCrewRef = {
+  vehicleId: string | null;
+  driverId: string | null;
+  /** أدخلته الإدارة نيابةً عن الشريك — يُوسم ولا يُخفى */
+  byAdmin: boolean;
+  at: string | null;
+};
+
 /** ما يُضاف بعد الإسناد — بيانات التنفيذ (`AssignedTripDetails`) */
 export type PortalTrip = PortalOffer & {
   customerName: string | null;
@@ -51,6 +64,17 @@ export type PortalTrip = PortalOffer & {
   /** حالة الحجز كما تعيدها الدالة إن أعادتها — الغياب يعني «مُسندة» ضمناً */
   status: string | null;
   assignedAt: string | null;
+  /**
+   * معرّف الحجز — عنوان النداء في `set_trip_crew`. وهو **ليس مفتاح وصول** في أي
+   * مسار (الوصول بالتوكن وحده)، ولذلك اشتُقّ منه رمز المتعهد في 0028 أصلاً.
+   */
+  bookingId: string | null;
+  /**
+   * الطاقم المسجَّل — و`null` تعني **«لا نعرف»** لا «لم يُسجَّل».
+   * والفرق ليس تدقيقاً لغوياً: عليه تُبنى الجملة التي تُقال للمتعهد، فلا نقول له
+   * «لم تسجّل مركبة» ونحن لم نسأل أصلاً. (انظر `toCrew` أدناه.)
+   */
+  crew: TripCrewRef | null;
 };
 
 /**
@@ -144,6 +168,53 @@ function toTrip(row: Record<string, unknown>): PortalTrip | null {
   return withContact(base, row);
 }
 
+/**
+ * طاقم الرحلة من صف `portal_trips()` — والقراءة هنا **بوجود المفتاح لا بقيمته**.
+ *
+ * لماذا وجود المفتاح؟ لأن `null` وحدها لا تفرّق بين «الدالة لا تعرض هذه الأعمدة»
+ * و«الشريك لم يسجّل بعد» — فتقول الشاشة «لم تسجّل مركبة» لمن سجّلها البارحة، وهي
+ * أسوأ من الصمت. فمفتاحٌ غائب ⇒ `null` (لا نعرف)، ومفتاحٌ حاضر ولو فارغاً ⇒ كائن
+ * بمعرِّفين فارغين (نعرف أنه لم يسجّل). والتمييز يبقى نافعاً بعد 0042: خادمٌ عليه
+ * 0040 وحدها — أي الأعمدة في `dispatches` والدالة قبل توسيعها — يقع في الحالة
+ * الأولى بالضبط، و`dispatches` نفسها محجوبة عن المتعهد بـRLS منذ 0013.
+ *
+ * ⚠ **وأسماء الأعمدة مقروءة من الكتالوج الحيّ لا من ملف الهجرة** (القاعدة ١٤ في
+ * `INDEX.md`، و**D-58**): توقيع `portal_trips()` كما يعيده `pg_get_function_result`
+ * ينتهي بـ`crew_vehicle_id, crew_driver_id, crew_by_admin, crew_at` — أي أن الدالة
+ * تعيد **تسمية** عمودَي `dispatches` (`assigned_vehicle_id`/`assigned_driver_id`)
+ * ببادئة `crew_` كي لا يشتبها بـ`assigned_at` المجاور. وكان هذا المُحوِّل يستفهم
+ * عن الاسمين الأصليين، فلا يجدهما، فيعود `null` **دائماً** — كل حفظ يبدو ضائعاً.
+ * أي تغيير هنا يُقاس على التوقيع الحيّ قبل كتابته.
+ *
+ * ونقبل الشكلين معاً — أعمدة مسطّحة أو كائن `crew` متداخل — كبقية قراءات هذا الملف.
+ */
+function toCrew(row: Record<string, unknown>): TripCrewRef | null {
+  const nested =
+    typeof row.crew === "object" && row.crew !== null
+      ? (row.crew as Record<string, unknown>)
+      : null;
+
+  const flat =
+    "crew_vehicle_id" in row ||
+    "crewVehicleId" in row ||
+    "crew_driver_id" in row ||
+    "crewDriverId" in row;
+
+  if (!nested && !flat) return null;
+
+  const source = nested ?? row;
+  return {
+    vehicleId: asText(pick(source, ["crew_vehicle_id", "crewVehicleId", "vehicleId"])),
+    driverId: asText(pick(source, ["crew_driver_id", "crewDriverId", "driverId"])),
+    byAdmin: asBool(pick(source, ["crew_by_admin", "crewByAdmin", "byAdmin"])),
+    // ⚠ `assignedAt` تُقرأ من الكائن المتداخل وحده: على الصف المسطّح هي وقت
+    //    **الإسناد** لا وقت تسجيل الطاقم، والخلط بينهما يعرض تاريخاً كاذباً.
+    at: nested
+      ? asText(pick(nested, ["crew_at", "crewAt", "assignedAt"]))
+      : asText(pick(row, ["crew_at", "crewAt"])),
+  };
+}
+
 function withContact(base: PortalOffer, row: Record<string, unknown>): PortalTrip {
   return {
     ...base,
@@ -152,6 +223,8 @@ function withContact(base: PortalOffer, row: Record<string, unknown>): PortalTri
     customerWhatsapp: asText(pick(row, ["customer_whatsapp", "customerWhatsapp"])),
     status: asText(pick(row, ["status", "booking_status", "bookingStatus", "trip_status"])),
     assignedAt: asText(pick(row, ["assigned_at", "assignedAt"])),
+    bookingId: asText(pick(row, ["booking_id", "bookingId"])),
+    crew: toCrew(row),
   };
 }
 
@@ -257,3 +330,100 @@ export function splitTrips(trips: PortalTrip[], at: number) {
 
   return { upcoming, past };
 }
+
+/* ------------------------------------------------------------------ */
+/* سجلّ الشريك — مركباته وسائقوه (مصدر قائمتَي طاقم الرحلة)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * القراءة من الجدولين مباشرة لا من دالة: كلاهما **ملك الشريك** وسياساته الأربع
+ * (`*_own_or_admin`) تعزل صفوفه بنفسها، فلا سرّ في القائمة يستدعي دالة تحجب.
+ * ومع ذلك يبقى الشرط على `subcontractor_id` مكتوباً — حزامان لا حزام (نفس قاعدة
+ * `app/portal/_lib/data.ts`): الشرط يجعل النية مقروءة، وRLS تبقى ما لا يُتجاوَز.
+ *
+ * ولماذا سجلّ لا حقول تُكتب لكل رحلة؟ العقد يجيب: متعهد بعشر رحلات يومياً يعيد
+ * كتابة اسم السائق خمسين مرة أسبوعياً، ومن يفعل ذلك أسبوعاً يتوقف — فتبقى الميزة
+ * مبنيّة ولا تُستعمل. النقرتان هما الفرق بين ميزةٍ تعمل وميزةٍ تُتجاهَل.
+ */
+export type CrewVehicle = {
+  id: string;
+  label: string;
+  plate: string | null;
+  /** أضافته 0040 — «شكلها ولونها» في نصّ الملاحظة */
+  color: string | null;
+  modelYear: number | null;
+  active: boolean;
+};
+
+export type CrewDriver = {
+  id: string;
+  name: string;
+  active: boolean;
+};
+
+/**
+ * `*Ready = false` ⇒ الجدول أو العمود غير منشور بعد (هجرة 0040) — لا «سجل فارغ».
+ * الفرق هو الفرق بين «أضف سائقك الأول» و«الشاشة غير جاهزة»، وكلتاهما جملة تُقال
+ * في موضعها وحده.
+ */
+export type CrewRoster = {
+  vehicles: CrewVehicle[];
+  drivers: CrewDriver[];
+  vehiclesReady: boolean;
+  driversReady: boolean;
+};
+
+const EMPTY_ROSTER: CrewRoster = {
+  vehicles: [],
+  drivers: [],
+  vehiclesReady: false,
+  driversReady: false,
+};
+
+/**
+ * سجلّا المتعهد معاً في نداء واحد مُذاكَر: بطاقة كل رحلة تحتاج نفس القائمتين،
+ * فعشر بطاقات = استعلامان لا عشرون. والترتيب: العامل قبل المتوقف ثم أبجدياً —
+ * فأول ما تقع عليه العين هو ما يُختار فعلاً.
+ */
+export const loadCrewRoster = cache(async (): Promise<CrewRoster> => {
+  const access = await portalAccess();
+  if (!access.ok) return EMPTY_ROSTER;
+  const { supabase, sub } = access;
+
+  const [vehicleRes, driverRes] = await Promise.all([
+    supabase
+      .from("subcontractor_vehicles")
+      .select("id, label, plate, color, model_year, active")
+      .eq("subcontractor_id", sub.id)
+      .order("active", { ascending: false })
+      .order("label", { ascending: true }),
+    supabase
+      .from("subcontractor_drivers")
+      .select("id, name, active")
+      .eq("subcontractor_id", sub.id)
+      .order("active", { ascending: false })
+      .order("name", { ascending: true }),
+  ]);
+
+  const vehicles = rowsOf(vehicleRes.data).map((row) => ({
+    id: String(row.id),
+    label: asText(row.label) ?? "",
+    plate: asText(row.plate),
+    color: asText(row.color),
+    modelYear: typeof row.model_year === "number" ? row.model_year : null,
+    active: row.active === true,
+  }));
+
+  const drivers = rowsOf(driverRes.data).map((row) => ({
+    id: String(row.id),
+    name: asText(row.name) ?? "",
+    active: row.active === true,
+  }));
+
+  return {
+    vehicles,
+    drivers,
+    vehiclesReady: !isSchemaMissing(vehicleRes.error),
+    driversReady: !isSchemaMissing(driverRes.error),
+  };
+});

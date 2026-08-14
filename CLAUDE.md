@@ -25,9 +25,23 @@
 
 | الحقيقة | الأثر إن جُهلت |
 |---|---|
-| جذر git كان مجلد المنزل `C:/Users/Badr` قبل 2026-08-12 | `git add` من داخل المشروع بلا التحقق من `git rev-parse --show-toplevel` يرفع `.ssh` و`.claude.json` |
+| جذر git كان مجلد المنزل `C:/Users/Badr` قبل 2026-08-12، وأُصلح إلى جذر المشروع نفسه (تحقَّق `git rev-parse --show-toplevel` في 2026-08-14) | لا يزال التحقق عادة جيدة قبل أي `git add` من عمل يدوي خارج هذه الجلسة، لكن الخطر التاريخي (رفع `.ssh`) لم يعد قائماً على الحالة الراهنة |
 | `DATABASE_URL` **لازم** يكون Session pooler لا المضيف المباشر | المضيف المباشر IPv6 فقط ⇒ كل أوامر الهجرات والاختبارات تفشل بـ ENOTFOUND |
 | `NODE_OPTIONS=--max-http-header-size=65536` في سكربتَي dev وstart | حذفه يعيد خطأ HTTP 431 على localhost بسبب كوكيز متراكمة |
+
+## الأوامر الشائعة
+
+كل الأوامر تُنفَّذ من جذر المشروع. التفصيل الكامل والمصائد البيئية في `handover/ENVIRONMENT.md`.
+
+| الأمر | الغرض |
+|---|---|
+| `pnpm dev` | تطوير على `:3000` (بترويسة موسّعة — لا تحذفها) |
+| `pnpm build` | بناء إنتاجي |
+| `pnpm lint` | eslint (⚠ أحمر سلفاً في `app/admin/set-password/page.tsx:40` — عيب سابق، ليس أثر عملك) |
+| `pnpm db:migrate` | تطبيق الهجرات المعلّقة (`supabase/migrations/*.sql`) |
+| `pnpm db:test` | كل مجموعات اختبار SQL — النجاح = كل ملف يطبع `ALL PASSED` |
+| `pnpm db:test <filter>` | مجموعة واحدة بترشيح اسم الملف، مثل `pnpm db:test booking` |
+| `pnpm db:backup` / `pnpm db:restore` | نسخ/استعادة القاعدة (`docs/BACKUP.md`) |
 
 ## طريقة العمل المتفق عليها
 

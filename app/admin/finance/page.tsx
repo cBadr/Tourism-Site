@@ -12,6 +12,8 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { PrintButton } from "@/components/admin/print-button";
+import { PrintHeader } from "@/components/admin/print-header";
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
@@ -37,8 +39,10 @@ import {
   textOf,
 } from "./_components/finance-ui";
 import {
+  GRANULARITY_LABELS,
   type Granularity,
   rangeParams,
+  rangeSentence,
   resolveGranularity,
   resolveRange,
 } from "./_components/range";
@@ -207,8 +211,13 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
   const money = (value: number | null) => <Money value={value} currency={currency} />;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="print-sheet mx-auto max-w-6xl space-y-6">
+      {/*
+        ترويسة الشاشة كلها `no-print`: عنوانها وتلميحه وروابط أقسامها أدوات
+        تصفّح، وبديلها على الورق ترويسة الطباعة أسفلها — تحمل اسم العلامة
+        والفترة والعملة، وهي ما يعرّف الورقة حين تُقرأ بعد شهر بلا شاشة حولها.
+      */}
+      <div className="no-print flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 font-heading text-lg font-bold">
           <Wallet className="size-5 text-primary" />
           المالية
@@ -218,20 +227,33 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
           واحداً في دفتر واحد داخل قاعدة البيانات، ومنه تُشتق هذه الشاشة وكشوف الحساب
           والتدفق النقدي جميعاً. لا رقم هنا محسوب في المتصفح.
         </HelpTip>
-        <nav className="ms-auto flex flex-wrap items-center gap-2 text-sm">
-          <Link href="/admin/finance/treasury" className="text-primary hover:underline">
-            الخزينة
-          </Link>
-          <span className="text-muted-foreground">·</span>
-          <Link href="/admin/finance/expenses" className="text-primary hover:underline">
-            المصروفات
-          </Link>
-          <span className="text-muted-foreground">·</span>
-          <Link href="/admin/finance/partners" className="text-primary hover:underline">
-            مقاصة المتعهدين
-          </Link>
-        </nav>
+        <div className="ms-auto flex flex-wrap items-center gap-2">
+          <PrintButton label="طباعة التقرير" />
+          <nav className="flex flex-wrap items-center gap-2 text-sm">
+            <Link href="/admin/finance/treasury" className="text-primary hover:underline">
+              الخزينة
+            </Link>
+            <span className="text-muted-foreground">·</span>
+            <Link href="/admin/finance/expenses" className="text-primary hover:underline">
+              المصروفات
+            </Link>
+            <span className="text-muted-foreground">·</span>
+            <Link href="/admin/finance/partners" className="text-primary hover:underline">
+              مقاصة المتعهدين
+            </Link>
+          </nav>
+        </div>
       </div>
+
+      <PrintHeader
+        title="تقرير المالية — نتيجة الفترة والتدفق النقدي"
+        meta={[
+          { label: "الفترة", value: rangeSentence(range) },
+          { label: "العملة", value: currency },
+          { label: "تجميع التدفق", value: GRANULARITY_LABELS[granularity] },
+        ]}
+        note="بطاقات «صورة الآن» — النقدية بالخزائن والتحصيلات المعلقة وصافي مستحقات المتعهدين وأرصدة الحسابات — لحظية لا تخص الفترة أعلاه: هي صورة لحظة إصدار الورقة."
+      />
 
       {(!wired || loaded.missing !== null) && (
         <FinanceNotReady wired={wired} missing={loaded.missing ?? "دوال المالية"} />
@@ -419,7 +441,7 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
           </h3>
           <Link
             href="/admin/payment-accounts"
-            className="ms-auto inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            className="no-print ms-auto inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
             إدارة الحسابات والحدود
             <ArrowLeft className="size-3" />
@@ -447,7 +469,8 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
                   <th className="p-2 text-start font-medium">الوارد</th>
                   <th className="p-2 text-start font-medium">المنصرف</th>
                   <th className="p-2 text-start font-medium">الرصيد الحالي</th>
-                  <th className="p-2 text-start font-medium" />
+                  {/* عمود الروابط يُخفى برأسه وخانته معاً — خانةٌ بلا رأس تزيح الصف */}
+                  <th className="no-print p-2 text-start font-medium" />
                 </tr>
               </thead>
               <tbody>
@@ -465,7 +488,7 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
                       {money(row.totalOut)}
                     </td>
                     <td className="p-2 font-bold">{money(row.balance)}</td>
-                    <td className="p-2">
+                    <td className="no-print p-2">
                       <Link
                         href={hrefWith("/admin/finance/treasury", {
                           account: row.accountId,

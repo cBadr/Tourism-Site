@@ -21,6 +21,11 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { portalAccess } from "../_lib/session";
+import {
+  CREW_ERROR_MESSAGES,
+  CREW_SAVED_MESSAGE,
+  TripCrewPanel,
+} from "../requests/crew-panel";
 import { loadTrips, splitTrips, type PortalTrip } from "../requests/data";
 
 /**
@@ -38,10 +43,24 @@ import { loadTrips, splitTrips, type PortalTrip } from "../requests/data";
 
 export const metadata = { title: "رحلاتي" };
 
+/**
+ * رموز هذه الشاشة كلها في مكان واحد: رموز القبول (`acceptOffer`) ورموز تسجيل
+ * الطاقم (`setTripCrew`) معاً — والأخيرة تُستورد ولا تُنسخ، فالجملة تعيش بجوار
+ * اللبنة التي تصنع رمزها.
+ *
+ * ⚠ ورمزٌ بلا جملة **صمتٌ لا خطأ**: `Banners` يقع على الجملة الجامعة «حدث خطأ
+ * غير متوقع»، فيقرأ الشريك رفضاً مفهوماً في القاعدة كعطل مجهول عندنا. فكل رمز
+ * تُنتجه `actions.ts` لهذه الوجهة يجب أن يكون له مفتاح هنا.
+ */
 const ERROR_MESSAGES: Record<string, string> = {
   save: "تعذر تنفيذ العملية — أعد المحاولة.",
   schema: "خدمة بث الطلبات غير مُركَّبة على الخادم بعد — لا إجراء مطلوب منك.",
+  ...CREW_ERROR_MESSAGES,
 };
+
+/** نجاح القبول — الجملة التي تشرح لماذا ظهرت بيانات العميل فجأة */
+const ACCEPTED_MESSAGE =
+  "قبلت الرحلة وأصبحت مُسندة إليك وحدك — بيانات تواصل العميل ظاهرة لك الآن في بطاقتها.";
 
 function TripCard({ trip, past }: { trip: PortalTrip; past?: boolean }) {
   return (
@@ -84,6 +103,18 @@ function TripCard({ trip, past }: { trip: PortalTrip; past?: boolean }) {
       <TripFacts trip={trip} />
       <TripNotes notes={trip.notes} />
 
+      {/*
+        موضع تركيب «مركبة الرحلة وسائقها» — وهو **داخل بطاقة الرحلة** لا في شاشة
+        مستقلة: الشريك يعلن من سيأتي وهو ينظر إلى موعد الرحلة ومسارها واسم عميلها،
+        فالقرار والسياق في مكان واحد. وعلى بطاقة «رحلاتي» وحدها لا على بطاقة العرض،
+        لأن العرض المبثوث على عدة متعهدين لا طاقم له بعد (القيد الأول في اللبنة).
+
+        و`past` تمرّ كما هي: اللبنة تقلب نفسها إلى سطر قراءة للرحلة التي مضت —
+        تصحيحُ لوحةٍ بعد التنفيذ لا يفيد أحداً — وتعود `null` للملغاة ولمن لا
+        معرّف حجز لها. فالنموذج لا يظهر إلا على رحلة مُسنَدة جارية.
+      */}
+      <TripCrewPanel trip={trip} past={past} />
+
       {trip.assignedAt ? (
         <p className="text-xs text-muted-foreground">أُسندت إليك في {dateTimeLabel(trip.assignedAt)}.</p>
       ) : null}
@@ -100,7 +131,11 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
   const { trips, ready, failed, now } = await loadTrips();
   const { upcoming, past } = splitTrips(trips, now);
 
+  // وجهةٌ واحدة لإجراءين، فعَلَما النجاح منفصلان ولا يجتمعان: كل إعادة توجيه
+  // تحمل واحداً منهما. والجملة تتبع العلم لأن «قبلت الرحلة» و«سجّلنا الطاقم»
+  // خبران مختلفان، وشريطُ نجاحٍ يقول الخبر الخطأ أسوأ من غيابه.
   const accepted = params.accepted === "1";
+  const crewSaved = params.crew === "1";
   const error = typeof params.error === "string" ? params.error : null;
 
   return (
@@ -114,10 +149,10 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
       </PageHeading>
 
       <Banners
-        saved={accepted}
+        saved={accepted || crewSaved}
         error={error}
         errorMessages={ERROR_MESSAGES}
-        savedMessage="قبلت الرحلة وأصبحت مُسندة إليك وحدك — بيانات تواصل العميل ظاهرة لك الآن في بطاقتها."
+        savedMessage={crewSaved ? CREW_SAVED_MESSAGE : ACCEPTED_MESSAGE}
       />
 
       {!ready ? <NotReadyNotice what="الرحلات المُسندة" /> : null}

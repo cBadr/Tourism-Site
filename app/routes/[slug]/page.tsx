@@ -8,6 +8,8 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { RenderSections } from "@/components/sections/render";
+import { ShareBar } from "@/components/site/share-bar";
+import { PageJsonLd } from "@/components/seo/JsonLd";
 
 /**
  * صفحة مسار سيو واحدة (/routes/[slug]) — مثل «القاهرة–الإسكندرية»،
@@ -47,6 +49,8 @@ export async function generateMetadata({ params }: PageParams): Promise<Metadata
     description: page.meta.description ?? undefined,
     path: `/routes/${slug}`,
     locale,
+    // خيارات سيو الصفحة الواحدة (منع الفهرسة، صورة المشاركة، المسار القانوني)
+    meta: page.meta,
   });
 }
 
@@ -62,9 +66,20 @@ export default async function CorridorPage({ params }: PageParams) {
 
   return (
     <>
+      {/* BreadcrumbList — ولا `Service`: صفحة المسار استهداف عبارة بحث لا خدمة */}
+      <PageJsonLd page={page} locale={locale} />
       <SiteHeader settings={settings} locale={locale} />
       <main id="main" className="flex-1">
         <RenderSections sections={page.sections} settings={settings} locale={locale} />
+        {/* المشاركة العامة — صفحة المسار رأس حربة السيو، وهي أولى صفحات
+            الموقع بالنشر. آمنة لأن رابطها عام مفهرَس بلا سرّ فيه، بخلاف
+            `/booking/[token]` (الشرح كاملاً في رأس `share-bar.tsx`). */}
+        <ShareBar
+          title={page.meta.title ?? page.title}
+          description={page.meta.description}
+          path={`/routes/${slug}`}
+          locale={locale}
+        />
       </main>
       <SiteFooter settings={settings} locale={locale} />
       <WhatsAppFab settings={settings} locale={locale} />

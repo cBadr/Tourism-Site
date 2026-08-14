@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CheckCircle2, ExternalLink, Eye, Pencil, ShieldAlert } from "lucide-react";
+import { CheckCircle2, ExternalLink, Eye, Info, Pencil, ShieldAlert } from "lucide-react";
 
 import { HelpTip } from "@/components/shared/HelpTip";
 import { toArabicDigits } from "@/components/booking/format";
@@ -9,11 +9,15 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getSettings } from "@/lib/settings";
 import {
+  BUSINESS_GROUP_LABELS,
   SCHEMA_LABELS,
   auditBusiness,
   auditPages,
+  businessFieldsByGroup,
   sortByUrgency,
   worstSeverity,
+  type BusinessField,
+  type BusinessFieldGroup,
   type PageAudit,
 } from "@/lib/seo/audit";
 
@@ -119,6 +123,36 @@ function PageAuditCard({ row }: { row: PageAudit }) {
   );
 }
 
+/**
+ * سطر حقل واحد في بطاقة النشاط.
+ *
+ * ثلاث حالات بثلاثة ألوان، ولا أحمر بينها: أخضر مضبوط، كهرماني ناقصٌ له أثر في
+ * الترتيب المحلي، وسماوي ناقصٌ دونه. والحقل الاختياري غير المملوء ليس عطباً —
+ * تلوينه أحمر يعلّم المالك تجاهل الأحمر فيمرّ عليه يوماً عطبٌ حقيقي بلا انتباه.
+ */
+function BusinessFieldRow({ field }: { field: BusinessField }) {
+  const Icon = field.present ? CheckCircle2 : field.severity === "warn" ? ShieldAlert : Info;
+  const tone = field.present
+    ? "text-emerald-600 dark:text-emerald-400"
+    : field.severity === "warn"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-sky-600 dark:text-sky-400";
+
+  return (
+    <li className="flex items-start gap-2">
+      <Icon className={cn("mt-0.5 size-4 shrink-0", tone)} aria-hidden="true" />
+      <span className="leading-relaxed">
+        <span className="font-medium">{field.label}</span>
+        {field.present ? (
+          <span className="text-muted-foreground"> — مضبوط، ويخرج في البطاقة.</span>
+        ) : (
+          <span className="text-muted-foreground"> — لا يخرج اليوم. {field.note}</span>
+        )}
+      </span>
+    </li>
+  );
+}
+
 export default async function SeoAuditPage({ searchParams }: PageProps<"/admin/seo/audit">) {
   const [params, { pages, readOnly }, settings] = await Promise.all([
     searchParams,
@@ -134,11 +168,8 @@ export default async function SeoAuditPage({ searchParams }: PageProps<"/admin/s
   const noJsonLd = rows.filter((row) => row.jsonLd.length === 0);
   const visible = filter === "issues" ? withIssues : rows;
 
-  const business = auditBusiness({
-    phone: settings.contact.phone,
-    description: settings.seo.defaultDescription,
-    socials: Object.values(settings.socials),
-  });
+  const business = auditBusiness(settings);
+  const businessMissing = business.filter((field) => !field.present);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -202,46 +233,49 @@ export default async function SeoAuditPage({ searchParams }: PageProps<"/admin/s
       </div>
 
       {/* بطاقة النشاط التجاري — تُصدَّر من الصفحة الرئيسية وحدها */}
-      <Card className="space-y-3 p-5">
+      <Card className="space-y-4 p-5">
         <div>
           <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
             بطاقة النشاط التجاري
             <HelpTip>
-              تُصدَّر من الصفحة الرئيسية وحدها، وتصف الموقع كله لمحركات البحث: الاسم
-              والوصف والهاتف وحسابات التواصل. الحقل الفارغ لا يُدرَج أصلاً — لا يُرسَل فارغاً.
+              تُصدَّر من الصفحة الرئيسية وحدها، وتصف الموقع كله لمحركات البحث. الحقل
+              الفارغ لا يُدرَج أصلاً ولا يُرسَل فارغاً: بطاقة تعلن عنواناً غير صحيح أسوأ
+              من بطاقة بلا عنوان. ولذلك الناقص هنا تنبيهٌ لا عطب.
             </HelpTip>
           </h3>
-          <p className="text-sm text-muted-foreground">
-            نوعاها <code dir="ltr">LocalBusiness</code> و<code dir="ltr">ItemList</code>{" "}
-            مصدرهما إعدادات الموقع لا محتوى الصفحة.
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            أربع عقد مترابطة بالمعرّف لا أربع نسخ من البيانات:{" "}
+            <code dir="ltr">Organization</code> و<code dir="ltr">WebSite</code> و
+            <code dir="ltr">LocalBusiness</code> و<code dir="ltr">ItemList</code> —
+            مصدرها كلها إعدادات الموقع لا محتوى الصفحة.
+            {businessMissing.length > 0 && (
+              <>
+                {" "}
+                <span className="font-medium text-foreground">
+                  ({toArabicDigits(businessMissing.length)} حقلاً لا يخرج اليوم لأنه غير
+                  مضبوط.)
+                </span>
+              </>
+            )}
           </p>
         </div>
 
-        <ul className="space-y-2 text-sm">
-          {business.map((field) => (
-            <li key={field.key} className="flex items-start gap-2">
-              {field.present ? (
-                <CheckCircle2
-                  className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
-                  aria-hidden="true"
-                />
-              ) : (
-                <ShieldAlert
-                  className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
-                  aria-hidden="true"
-                />
-              )}
-              <span className="leading-relaxed">
-                <span className="font-medium">{field.label}</span>
-                {field.present ? (
-                  <span className="text-muted-foreground"> — مضبوط.</span>
-                ) : (
-                  <span className="text-muted-foreground"> — غير مضبوط. {field.note}</span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {(Object.keys(BUSINESS_GROUP_LABELS) as BusinessFieldGroup[]).map((group) => {
+          const fields = businessFieldsByGroup(business, group);
+          if (fields.length === 0) return null;
+          return (
+            <div key={group} className="space-y-2">
+              <h4 className="text-xs font-semibold text-muted-foreground">
+                {BUSINESS_GROUP_LABELS[group]}
+              </h4>
+              <ul className="space-y-2 text-sm">
+                {fields.map((field) => (
+                  <BusinessFieldRow key={field.key} field={field} />
+                ))}
+              </ul>
+            </div>
+          );
+        })}
 
         <Link
           href="/admin/settings"

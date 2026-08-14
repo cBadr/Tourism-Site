@@ -1,6 +1,8 @@
-import { ArrowLeft, Info, Plus, Power, PowerOff, Save, ShieldAlert } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Info, Plus, Power, PowerOff, Save, ShieldAlert, Trash2 } from "lucide-react";
 
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { toArabicDigits } from "@/components/booking/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { REDIRECTS_CACHE_TTL_MS, REDIRECT_STATUS_CODES } from "@/lib/seo/redirects";
 import {
@@ -18,7 +21,7 @@ import {
 
 import { fieldControlClass } from "../../content/_components/fields";
 import { MissingTableNotice, PathCode, SeoTabs } from "../_components/seo-ui";
-import { createRedirect, toggleRedirect, updateRedirect } from "./actions";
+import { createRedirect, deleteRedirect, toggleRedirect, updateRedirect } from "./actions";
 import { loadPagePaths, loadRedirects } from "./loader";
 
 export const metadata = { title: "تحويلات الروابط" };
@@ -46,6 +49,7 @@ const SAVED_MESSAGES: Record<string, string> = {
   updated: "حُفظ التعديل.",
   enabled: "فُعِّل التحويل.",
   disabled: "عُطِّل التحويل — الرابط القديم عاد يعمل كما كان.",
+  deleted: "حُذف التحويل نهائياً — الرابط القديم عاد يعمل كما كان.",
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -92,12 +96,15 @@ function RedirectRow({
   disabled,
   highlighted,
   shadowsLivePage,
+  confirmingDelete,
 }: {
   rule: RedirectRecord;
   disabled: boolean;
   highlighted: boolean;
   /** القاعدة تُغطّي مساراً صار صفحة حيّة بعد إنشائها */
   shadowsLivePage: boolean;
+  /** المالك ضغط «حذف» على هذا الصف — تُعرض بطاقة التأكيد بدل التنفيذ الفوري */
+  confirmingDelete: boolean;
 }) {
   return (
     <Card
@@ -202,12 +209,59 @@ function RedirectRow({
             />
             مفعّل
           </Label>
-          <Button type="submit" variant="outline" size="sm" disabled={disabled}>
-            <Save />
-            حفظ التعديل
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* رابط لا زر: خطوة التأكيد تسافر في العنوان، فلا حالة عميل ولا
+                جافاسكربت — نفس نمط الحذف في `/admin/extras`. */}
+            {confirmingDelete ? null : (
+              <Link
+                href={`/admin/seo/redirects?remove=${rule.id}`}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 transition-colors hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950",
+                  disabled && "pointer-events-none opacity-50"
+                )}
+              >
+                <Trash2 className="size-4" />
+                حذف
+              </Link>
+            )}
+            <Button type="submit" variant="outline" size="sm" disabled={disabled}>
+              <Save />
+              حفظ التعديل
+            </Button>
+          </div>
         </div>
       </form>
+
+      {/* نموذج مستقل بعد نموذج التعديل لا داخله — نموذج داخل نموذج غير صالح */}
+      {confirmingDelete && (
+        <form
+          action={disabled ? undefined : deleteRedirect.bind(null, rule.id)}
+          className="space-y-3 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-950"
+        >
+          <p className="text-sm font-semibold text-red-900 dark:text-red-100">
+            تأكيد حذف التحويل <span dir="ltr">{rule.fromPath}</span>
+          </p>
+          <p className="text-sm leading-relaxed text-red-900/90 dark:text-red-100/90">
+            الحذف نهائي ولا رجعة فيه، وتذهب معه الملاحظة التي تشرح سبب إنشائه. وإن كانت
+            هذه قاعدة عملت فعلاً على رابط منشور فـ
+            <span className="font-semibold"> التعطيل هو الخيار الصحيح</span>: يفعل للزائر
+            ما يفعله الحذف ويُبقي السجل. أما الحذف فللقاعدة التي كُتبت بمسار خاطئ ولم
+            توجّه أحداً قط.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" variant="destructive" size="sm" disabled={disabled}>
+              <Trash2 />
+              تأكيد الحذف
+            </Button>
+            <Link
+              href="/admin/seo/redirects"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
+            >
+              تراجع
+            </Link>
+          </div>
+        </form>
+      )}
     </Card>
   );
 }
@@ -218,14 +272,26 @@ export default async function RedirectsPage({
   const [params, supabase] = await Promise.all([searchParams, createServerSupabase()]);
 
   const wired = hasSupabaseEnv();
-  const [load, pagePaths] = supabase
-    ? await Promise.all([loadRedirects(supabase), loadPagePaths(supabase)])
-    : [{ rows: [], missingTable: false, failed: false }, [] as string[]];
+  // النبض يُقرأ مع قراءتَي الشاشة لا بعدهما، وبلا عميل يصل بحالته الفارغة فيشرح
+  // نفسه سطراً واحداً — الشاشة تعمل في الحالتين.
+  const [load, pagePaths, pulse] = supabase
+    ? await Promise.all([
+        loadRedirects(supabase),
+        loadPagePaths(supabase),
+        readPagePulse(supabase, "/admin/seo/redirects"),
+      ])
+    : [
+        { rows: [], missingTable: false, failed: false },
+        [] as string[],
+        await readPagePulse(null, "/admin/seo/redirects"),
+      ];
 
   const disabled = !wired || load.missingTable || load.failed;
   const saved = typeof params.saved === "string" ? params.saved : null;
   const error = typeof params.error === "string" ? params.error : null;
   const errorRow = typeof params.row === "string" ? params.row : null;
+  // خطوة تأكيد الحذف تسافر في العنوان — فالصفحة تبقى خادمية بلا حالة عميل
+  const removing = typeof params.remove === "string" ? params.remove : null;
 
   const active = load.rows.filter((row) => row.enabled);
 
@@ -253,6 +319,8 @@ export default async function RedirectsPage({
       </div>
 
       <SeoTabs active="/admin/seo/redirects" />
+
+      <PagePulse data={pulse} />
 
       {!wired && (
         <Card className="flex flex-row items-start gap-3 border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
@@ -421,14 +489,16 @@ export default async function RedirectsPage({
               disabled={disabled}
               highlighted={errorRow === rule.id}
               shadowsLivePage={shadowing.has(rule.id)}
+              confirmingDelete={removing === rule.id}
             />
           ))}
         </div>
       )}
 
       <p className="pb-8 text-xs leading-relaxed text-muted-foreground">
-        لا يوجد حذف هنا عمداً: التعطيل يفعل للزائر ما يفعله الحذف، ويُبقي سجلاً يشرح لماذا
-        كان ذلك الرابط يذهب إلى تلك الوجهة.
+        ابدأ بالتعطيل لا بالحذف: التعطيل يفعل للزائر ما يفعله الحذف، ويُبقي سجلاً يشرح
+        لماذا كان ذلك الرابط يذهب إلى تلك الوجهة. والحذف لحالة واحدة — قاعدة كُتبت بمسار
+        خاطئ ولم توجّه زائراً قط، فلا تاريخ لها يُحفظ.
       </p>
     </div>
   );

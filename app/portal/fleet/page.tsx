@@ -1,4 +1,5 @@
 import { CarFront, Plus, Power, PowerOff, Trash2 } from "lucide-react";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   Banners,
@@ -23,11 +24,47 @@ import { createVehicle, deleteVehicle, saveVehicle, toggleVehicle } from "./acti
  * أسطول المتعهد — المركبات التي ينفّذ بها الرحلات.
  *
  * الفئة هي الحقل الوحيد الذي يهم المحرك: هي ما يربط المركبة بأسعار المتعهد وبقاعدة
- * ترشيح السيارات حسب عدد الركاب. أما اللوحة والموديل فسجل تشغيلي داخلي لا يظهر
- * للعميل أبداً (انضباط الـ Whitelabel: العميل يرى فئة لا ماركة).
+ * ترشيح السيارات حسب عدد الركاب.
+ *
+ * ⚠ **وبعد الهجرة 0040 لم يعد باقي الصف سجلاً داخلياً محضاً**: `get_booking_by_token`
+ * صارت تُخرج للعميل — بعد الإسناد وحده — اسم المركبة ولونها ولوحتها وسنتها، لأن
+ * الملاحظة ٥ نصّها «العميل لا يعرف ما سيأتيه… ولا رقمها ولا لونها». وانضباط
+ * الـ Whitelabel باقٍ حيث كان: **وقت البحث والتسعير** يرى العميل فئة لا ماركة؛
+ * وبعد أن يصير للرحلة منفّذٌ بعينه يرى سيارتها هي. ولذلك تشرح حقول هذه الشاشة
+ * الآن ما الذي يُقرأ ومتى — فمن يظن الاسم داخلياً يكتب فيه ما لا يُقرأ على العميل.
  */
 
 export const metadata = { title: "أسطولي" };
+
+/**
+ * ألوان الأسطول — استعلامٌ ثانٍ صغير، عن قصد لا سهواً.
+ *
+ * `VEHICLE_COLUMNS` في `app/portal/_lib/data.ts` عقدٌ تتشاركه أكثر من شاشة ولا
+ * تملكه هذه الصفحة، واللون لا يحتاجه إلا محرّر الأسطول. والبديل الوحيد الخطر هو
+ * حقلٌ بلا قيمة ابتدائية: `saveVehicle` تكتب حقول المركبة كلها في كل حفظ، فنموذج
+ * لا يحمل اللون الحالي **يمحوه** مع أول تعديل لأي حقل آخر — عطبُ بيانات صامت لا
+ * نقصُ عرض. وحين يضمّ العقد المشترك اللون يُحذف هذا كله بسطرين.
+ */
+async function loadVehicleColors(
+  supabase: SupabaseClient,
+  subcontractorId: string
+): Promise<Map<string, string>> {
+  const colors = new Map<string, string>();
+  const res = await supabase
+    .from("subcontractor_vehicles")
+    .select("id, color")
+    .eq("subcontractor_id", subcontractorId);
+
+  // العمود ناقص (هجرة 0040 غير منفَّذة) ⇒ خريطة فارغة وحقلٌ فارغ، لا شاشة خطأ
+  if (res.error) return colors;
+
+  for (const row of res.data ?? []) {
+    const r = row as Record<string, unknown>;
+    const color = typeof r.color === "string" ? r.color.trim() : "";
+    if (color !== "") colors.set(String(r.id), color);
+  }
+  return colors;
+}
 
 const ERROR_MESSAGES: Record<string, string> = {
   class: "اختر فئة مركبة صالحة من القائمة.",
@@ -38,9 +75,12 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 function VehicleCard({
   vehicle,
+  color,
   options,
 }: {
   vehicle: PortalVehicle;
+  /** يصل منفصلاً عن `PortalVehicle` — انظر `loadVehicleColors` أعلاه */
+  color: string | null;
   options: { value: string; label: string }[];
 }) {
   const f = (field: string) => `${vehicle.id}-${field}`;
@@ -88,7 +128,7 @@ function VehicleCard({
             defaultValue={vehicle.label}
             required
             maxLength={120}
-            help="للتمييز الداخلي بينك وبين الإدارة — لا يظهر للعميل إطلاقاً."
+            help="اكتبه ماركةً وموديلاً كما يقرؤهما راكب واقف في الشارع: يظهر للعميل بعد إسناد رحلته إليك ليعرف السيارة القادمة، ولا يظهر قبل ذلك ولا يدل عليك."
           />
           <NumberField
             id={f("year")}
@@ -106,7 +146,16 @@ function VehicleCard({
             dir="ltr"
             defaultValue={vehicle.plate}
             maxLength={32}
-            help="سجل داخلي يساعد التشغيل على المطابقة عند التنفيذ."
+            help="يقرؤه العميل بعد الإسناد ليتحقق أن السيارة الواقفة أمامه هي سيارته — فاكتبه كما هو على اللوحة حرفاً برقم."
+          />
+          <TextField
+            id={f("color")}
+            label="اللون"
+            name="color"
+            defaultValue={color}
+            maxLength={40}
+            help="بلا قائمة مغلقة: «فضي» و«رمادي فاتح» وصفان مشروعان، والأدق هو الأنفع."
+            hint="أول ما يميّز به العميل سيارتك من بعيد — اكتبه كما تصفه لمن ينتظرك."
           />
           <NumberField
             id={f("seats")}
@@ -160,9 +209,10 @@ export default async function PortalFleetPage({ searchParams }: PageProps<"/port
   if (!access.ok) return null;
 
   const { supabase, sub } = access;
-  const [{ classes, ready: classesReady }, { vehicles, ready }] = await Promise.all([
+  const [{ classes, ready: classesReady }, { vehicles, ready }, colors] = await Promise.all([
     loadVehicleClasses(supabase),
     loadVehicles(supabase, sub.id),
+    loadVehicleColors(supabase, sub.id),
   ]);
 
   const saved = params.saved === "1";
@@ -188,8 +238,9 @@ export default async function PortalFleetPage({ searchParams }: PageProps<"/port
         title="أسطولي"
         help="فئات مركباتك هي ما يربطك بمحرك التسعير: الفئة التي لا تملك فيها مركبة لا يُطلب منك تسعيرها."
       >
-        سجّل هنا المركبات التي تنفّذ بها الرحلات. البيانات تشغيلية داخلية — العميل يرى فئة
-        السيارة وحدها ولا يرى ماركتها ولا لوحتها.
+        سجّل هنا المركبات التي تنفّذ بها الرحلات. العميل يرى فئة السيارة وحدها وقت الحجز؛
+        فإذا أُسندت الرحلة إليك وأسندتَ لها مركبة قرأ اسمها ولونها ولوحتها ليعرف ما سيأتيه —
+        ولا يقرأ اسم شركتك ولا ما تتقاضاه.
       </PageHeading>
 
       <Banners
@@ -239,6 +290,7 @@ export default async function PortalFleetPage({ searchParams }: PageProps<"/port
         <VehicleCard
           key={vehicle.id}
           vehicle={vehicle}
+          color={colors.get(vehicle.id) ?? null}
           options={optionsFor(vehicle.classSlug)}
         />
       ))}
@@ -287,6 +339,14 @@ export default async function PortalFleetPage({ searchParams }: PageProps<"/port
               name="new.plate"
               dir="ltr"
               maxLength={32}
+              disabled={!ready || classes.length === 0}
+            />
+            <TextField
+              id="new-color"
+              label="اللون"
+              name="new.color"
+              placeholder="مثال: أبيض لؤلؤي"
+              maxLength={40}
               disabled={!ready || classes.length === 0}
             />
             <NumberField

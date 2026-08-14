@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 import { languageAlternates, localeUrl } from "@/lib/seo";
 import { getEnabledLocales } from "@/i18n/locales";
 import { getPublishedPages } from "@/lib/content";
+import { getSettings } from "@/lib/settings";
 import { APP_OWNED_PATHS, pagePublicPath } from "@/lib/seo/site-paths";
 import type { PageKind } from "@/lib/content-types";
 
@@ -59,25 +60,67 @@ type Listing = {
 };
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [pages, locales] = await Promise.all([getPublishedPages(), getEnabledLocales()]);
+  const [pages, locales, settings] = await Promise.all([
+    getPublishedPages(),
+    getEnabledLocales(),
+    getSettings(),
+  ]);
+
+  /**
+   * 🔒 مفتاح «امنع فهرسة الموقع كله» يُفرَغ الخريطة كذلك — الطبقة الثالثة.
+   *
+   * كان المفتاح يُنتج `Disallow: /` في `robots.txt` وحده، بينما تبقى الخريطة
+   * تعلن أربعين رابطاً وسطرُ `Sitemap:` قائمٌ داخل ملف المنع نفسه. والنتيجة
+   * **عكس الوعد حرفياً**: الزحف يتوقف فلا يرى الزاحف توجيه المنع، وتبقى
+   * الروابط المفهرَسة سلفاً في النتائج بلا وصف — وسحبُها أبطأ ما يكون لأن
+   * الزاحف ممنوع من رؤية ما يسحبها. أمسكته المراجعتان معاً، وهو النمط ٧ في
+   * `LESSONS.md` الذي استشهد به العقد نفسه.
+   *
+   * فالمنع الآن بثلاث طبقات متسقة: `robots.txt` يمنع الزحف، وكل صفحة تحمل وسم
+   * `noindex` (‏`lib/seo.ts`)، والخريطة تخرج فارغة فلا تدعو إلى ما مُنع.
+   */
+  if (settings.seo.robots.indexable === false) return [];
 
   // مسارات فريدة — تحمي من صفحتين بنفس الـ slug في نظام المحتوى
   const paths = new Map<string, Listing>();
+  /**
+   * المسارات التي استبعدها المالك — تُجمع صراحةً ولا يكفي **عدم** إضافتها.
+   *
+   * لأن ما بعد هذه الحلقة يعيد ملء ما ينقص: ضمانة الرئيسية أدناه، وحلقة
+   * `APP_OWNED_PATHS` التي تضيف كل مسار غائب. فصفحة `/about` مستبعدة تُحذف من
+   * هنا ثم تعود من هناك — أي أن الخيار يبدو مضبوطاً في اللوحة وبلا أثر في الملف،
+   * وهو أسوأ من غيابه لأنه يوهم المالك أنه ضبط شيئاً.
+   */
+  const excluded = new Set<string>();
   for (const page of pages) {
-    paths.set(pagePublicPath(page.kind, page.slug), {
+    const path = pagePublicPath(page.kind, page.slug);
+    /**
+     * شرطان يُخرجان الصفحة: استبعادٌ صريح من الخريطة، أو منعُ فهرسة.
+     *
+     * والثاني ليس تشدداً بل تصحيح تناقض: صفحة تحمل `noindex` ثم تُعلَن في خريطة
+     * الموقع تقول لجوجل «افهرسها» و«لا تفهرسها» معاً، وتظهر في Search Console
+     * خطأً صريحاً على النطاق. أما بقاؤهما خيارين منفصلين في الشاشة فبقصد: صفحة
+     * تُخفى من الخريطة وتبقى مفهرسة حالةٌ مشروعة (صفحة قديمة لها روابط واردة).
+     */
+    if (page.meta.excludeFromSitemap === true || page.meta.noindex === true) {
+      excluded.add(path);
+      continue;
+    }
+    paths.set(path, {
       priority: PRIORITY[page.kind],
       changeFrequency: page.kind === "home" ? "weekly" : "monthly",
       lastModified: page.updatedAt,
     });
   }
-  // ضمانة: الرئيسية حاضرة دائماً حتى لو غاب المحتوى كلياً
-  if (!paths.has("/")) {
+  // ضمانة: الرئيسية حاضرة دائماً حتى لو غاب المحتوى كلياً — إلا أن يكون المالك
+  // قد استبعدها بنفسه، فالضمانة ضد غياب المحتوى لا ضد قرار مكتوب
+  if (!paths.has("/") && !excluded.has("/")) {
     paths.set("/", { priority: PRIORITY.home, changeFrequency: "weekly", lastModified: null });
   }
 
   // صفحة محتوى بنفس المسار (لو وُجدت يوماً) أولى بوصفها — لا نطمس ما قاله المالك
   for (const path of APP_OWNED_PATHS) {
-    if (paths.has(path)) continue;
+    if (paths.has(path) || excluded.has(path)) continue;
     paths.set(path, {
       priority: APP_ROUTE_PRIORITY[path] ?? PRIORITY.static,
       changeFrequency: "monthly",

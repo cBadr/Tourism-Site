@@ -13,6 +13,7 @@ import {
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import type { PaymentIntentStatus, ProviderSettings } from "@/lib/payments-types";
 import { readProviderSettings } from "@/lib/payments/settings";
+import { readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
@@ -657,8 +659,14 @@ export default async function PaymentsPage({
     : null;
   const activeKey = activeStatus ?? "all";
 
-  const [{ providers, loaded, reason }, { intents, counts, ready: intentsReady }] =
-    await Promise.all([loadProviders(), loadIntents(activeStatus)]);
+  const [{ providers, loaded, reason }, { intents, counts, ready: intentsReady }, pulse] =
+    await Promise.all([
+      loadProviders(),
+      loadIntents(activeStatus),
+      // نبض الشاشة (الملاحظة ١٢): قراءة موازية لا تُبطئ الجدول، وكل رقم فيها
+      // محسوب في Postgres. تعذّرها لا يُسقط الشاشة — `PagePulse` يقول السبب سطراً.
+      createServerSupabase().then((client) => readPagePulse(client, "/admin/payments")),
+    ]);
 
   const wired = hasSupabaseEnv();
   const readOnly = !loaded;
@@ -703,6 +711,8 @@ export default async function PaymentsPage({
         readOnlyTitle="بوابات الدفع غير جاهزة بعد"
         readOnlyBody={notReadyBody(reason)}
       />
+
+      <PagePulse data={pulse} />
 
       {rows.length > 0 && (
         <p className="text-sm leading-relaxed text-muted-foreground">

@@ -21,6 +21,7 @@ import {
   MessageSquareQuote,
   Plug,
   Radio,
+  ScrollText,
   Search,
   Settings,
   TicketPercent,
@@ -56,6 +57,7 @@ type NavItem = {
     | "/admin/fleet"
     | "/admin/integrations"
     | "/admin/languages"
+    | "/admin/logs"
     | "/admin/maintenance"
     | "/admin/notifications"
     | "/admin/orders"
@@ -120,6 +122,11 @@ const NAV_ITEMS: NavItem[] = [
   // مخفية، لكن لا هذا ولا ذاك يُترك.
   { label: "الربط الخارجي", icon: Plug, href: "/admin/integrations" },
   { label: "مركز السيو", icon: Search, href: "/admin/seo" },
+  // «السجلات» مع بندَي النظام في ذيل المجموعة (وضع الصيانة والإعدادات) لا مع
+  // شاشات العمل: هذه شاشة **قراءة محضة** لتاريخ المنصة — من فعل وماذا ومتى —
+  // لا طابور عملٍ يُفتح كل صباح. وموضعها قبل «وضع الصيانة» مباشرةً لأنها أول ما
+  // يُفتح عند التحقيق في حادثة، وآخر ما يُفتح في يوم عادي.
+  { label: "السجلات", icon: ScrollText, href: "/admin/logs" },
   { label: "وضع الصيانة", icon: Wrench, href: "/admin/maintenance" },
   { label: "الإعدادات", icon: Settings, href: "/admin/settings" },
 ];
@@ -141,6 +148,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/fleet": "الأسطول والتعريفة",
   "/admin/integrations": "الربط الخارجي",
   "/admin/languages": "اللغات",
+  // بنفس نصّ `export const metadata` في الشاشة، وإلا قرأ المالك عنوانين مختلفين
+  // في الترويسة وتبويب المتصفح فظنّ أنه غادر القسم
+  "/admin/logs": "السجلات",
   "/admin/maintenance": "وضع الصيانة",
   "/admin/notifications": "الإشعارات",
   "/admin/orders": "الطلبات",
@@ -149,11 +159,14 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/pricing": "التسعير",
   "/admin/quote-requests": "طلبات الأسعار",
   "/admin/seo": "مركز السيو",
-  // تبويبا مركز السيو — بنفس نصّي `export const metadata` في الصفحتين، وإلا
-  // قرأ المالك «لوحة التحكم» في الترويسة و«تحويلات الروابط» في تبويب المتصفح
-  // فظنّ أنه غادر القسم.
+  // تبويبات مركز السيو الأربعة — بنفس نصّ `export const metadata` في كل شاشة،
+  // وإلا قرأ المالك «لوحة التحكم» في الترويسة و«تحويلات الروابط» في تبويب
+  // المتصفح فظنّ أنه غادر القسم. ⚠ **وكل تبويب جديد يُضاف إلى `SEO_TABS` يحتاج
+  // سطره هنا**: غيابه لا يكسر شيئاً — وهذا بالضبط ما يجعله يُنسى.
   "/admin/seo/audit": "فحص البيانات المهيكلة",
+  "/admin/seo/business": "بطاقة النشاط",
   "/admin/seo/redirects": "تحويلات الروابط",
+  "/admin/seo/settings": "إعدادات السيو العامة",
   "/admin/settings": "الإعدادات",
   // شاشات الإحصائيات الست + نظرتها العامة (المرحلة ١٠). مسارات ثابتة كلها،
   // فتُلتقط من هنا ولا يحتاج أيٌّ منها عنواناً ديناميكياً.

@@ -8,6 +8,7 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { RenderSections } from "@/components/sections/render";
+import { ShareBar } from "@/components/site/share-bar";
 
 /**
  * الصفحات الثابتة على الجذر (/terms و/refund-policy و/privacy وما يضيفه المدير
@@ -64,6 +65,8 @@ export async function generateMetadata({ params }: PageParams): Promise<Metadata
     description: page.meta.description ?? undefined,
     path: `/${slug}`,
     locale,
+    // خيارات سيو الصفحة الواحدة (منع الفهرسة، صورة المشاركة، المسار القانوني)
+    meta: page.meta,
   });
 }
 
@@ -84,6 +87,15 @@ export default async function StaticContentPage({ params }: PageParams) {
       <SiteHeader settings={settings} locale={locale} />
       <main id="main" className="flex-1">
         <RenderSections sections={page.sections} settings={settings} locale={locale} />
+        {/* المشاركة العامة — صفحة محتوى ثابتة على الجذر: عامة مفهرَسة بلا سرّ.
+            و`RESERVED_SLUGS` أعلاه تضمن ألا يلتقط هذا المقطع `booking` فيضع
+            الشريط فوق صفحة رحلة (الشرح في رأس `share-bar.tsx`). */}
+        <ShareBar
+          title={page.meta.title ?? page.title}
+          description={page.meta.description}
+          path={`/${slug}`}
+          locale={locale}
+        />
       </main>
       <SiteFooter settings={settings} locale={locale} />
       <WhatsAppFab settings={settings} locale={locale} />

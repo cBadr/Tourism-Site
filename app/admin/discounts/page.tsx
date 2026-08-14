@@ -12,11 +12,13 @@ import {
 
 import { formatAmount, formatDateLabel, formatMoney } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { DEFAULT_DISCOUNT_SETTINGS } from "@/lib/discount-types";
+import { readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
@@ -317,17 +319,23 @@ export default async function DiscountsPage({ searchParams }: PageProps<"/admin/
   const wired = hasSupabaseEnv();
   const supabase = await createServerSupabase();
 
-  const [currency, settingsRead, couponsRead] = supabase
-    ? await Promise.all([readCurrency(supabase), readDiscountSettings(supabase), readCoupons(supabase)])
-    : ([
-        "EGP",
-        // القيم من العقد لا مكتوبة هنا — رقمٌ منسوخ يوماً يصير مصدر حقيقة موازياً
-        blank<LoadedDiscountSettings>(
-          { ...DEFAULT_DISCOUNT_SETTINGS, id: null, exists: false },
-          "discount_settings"
-        ),
-        blank<LoadedCoupon[]>([], "coupons"),
-      ] as const);
+  // النبض يُقرأ مع بقية الشاشة لا بعدها، وبالعميل نفسه — و`readPagePulse` تقبل
+  // `null` فتردّ حالة «غير مربوطة» بدل أن ترمي
+  const [pulse, loaded] = await Promise.all([
+    readPagePulse(supabase, "/admin/discounts"),
+    supabase
+      ? Promise.all([readCurrency(supabase), readDiscountSettings(supabase), readCoupons(supabase)])
+      : Promise.resolve([
+          "EGP",
+          // القيم من العقد لا مكتوبة هنا — رقمٌ منسوخ يوماً يصير مصدر حقيقة موازياً
+          blank<LoadedDiscountSettings>(
+            { ...DEFAULT_DISCOUNT_SETTINGS, id: null, exists: false },
+            "discount_settings"
+          ),
+          blank<LoadedCoupon[]>([], "coupons"),
+        ] as const),
+  ]);
+  const [currency, settingsRead, couponsRead] = loaded;
 
   const readOnly = !couponsRead.ready;
   const saved = params.saved === "1";
@@ -370,6 +378,8 @@ export default async function DiscountsPage({ searchParams }: PageProps<"/admin/
           إحصائيات الخصومات
         </Link>
       </div>
+
+      <PagePulse data={pulse} />
 
       {(!couponsRead.ready || couponsRead.failure !== null) && (
         <NotReady

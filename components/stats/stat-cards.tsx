@@ -85,12 +85,15 @@ export function StatCardTile({
   currency,
   comparisonLabel,
   inverted,
+  dense,
 }: {
   card: LoadedStatCard;
   currency: string;
   /** وصف الفترة السابقة — «مقارنةً بـ ١ – ٧ أغسطس» */
   comparisonLabel?: string;
   inverted?: boolean;
+  /** نمط مضغوط — شريط نبض الصفحة فوق شاشة عمل (الدفعة ٤) */
+  dense?: boolean;
 }) {
   const unit = isDurationUnit(card.unit) ? card.unit : "minutes";
   const value = formatStatValue(card.value, card.format, currency, unit);
@@ -102,6 +105,7 @@ export function StatCardTile({
       value={value}
       valueDir="ltr"
       help={card.help}
+      dense={dense}
       /*
         بطاقة الإحصائيات **لا تأخذ نبرة**: الاتجاه معروض في شارة التغيّر أسفلها،
         وتلوين ست شاشات بالكامل يعيدنا إلى «كل البطاقات متشابهة» بألوان.

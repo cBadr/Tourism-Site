@@ -1,4 +1,4 @@
-import type { SiteSettings, SocialSettings } from "@/lib/site-config";
+import { socialHref, type SiteSettings, type SocialSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { Tx } from "./i18n";
 
@@ -56,6 +56,18 @@ export function waHref(whatsapp: string): string {
   return `https://wa.me/${whatsapp.replace(/\D/g, "")}`;
 }
 
+/**
+ * نيّة مشاركة على واتساب **بلا رقم مستقبِل** — `wa.me/?text=…`.
+ *
+ * والفرق عن `waHref` أعلاه ليس تجميلياً: ذاك يفتح محادثة مع رقمنا نحن، وهذا يفتح
+ * منتقي جهات الاتصال فيختار المُرسِل وجهته بنفسه (نفسه غالباً). ولهذا وحده يصلح
+ * لصفحة `/booking/[token]`: نيّة خاصة موجَّهة يملك العميل طرفيها، لا نشر عام
+ * يضع رابطاً هو مفتاح حجزه في فهرس (‏`lib/export-types.ts` §٥).
+ */
+export function waShareHref(text: string): string {
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
+}
+
 /** يبني رابط تليجرام من معرف أو رابط كامل */
 export function telegramHref(telegram: string): string {
   if (/^https?:\/\//.test(telegram)) return telegram;
@@ -110,10 +122,18 @@ export const SOCIAL_LABELS: Record<SocialKey, string> = {
 
 export type SocialEntry = { key: SocialKey; label: string; href: string };
 
-/** يُرجع حسابات التواصل الاجتماعي غير الفارغة فقط — بأسماء بلغة الزائر */
+/**
+ * حسابات التواصل التي **يُبنى منها رابط مطلق** — بأسماء بلغة الزائر.
+ *
+ * ⚠ الشرط ليس «غير فارغ» بل «‏`socialHref` أرجعت عنواناً»: القيمة المخزّنة معرّف
+ * حساب غالباً (`RentLimousine`)، ووضعُها في `href` كما هي يصنع رابطاً **نسبياً**
+ * يتغيّر مقصده بتغيّر الصفحة. الشرح الكامل ولماذا يُرفض ما لا يُطبَّع في
+ * `lib/site-config.ts` عند `socialHref` — وهي المصدر الوحيد الذي تناديه هذه
+ * الدالة و`sameAs` في البيانات المهيكلة وشاشة فحص السيو معاً.
+ */
 export function socialEntries(socials: SocialSettings, t?: Tx): SocialEntry[] {
   return (Object.keys(SOCIAL_LABELS) as SocialKey[]).flatMap((key) => {
-    const href = socials[key];
+    const href = socialHref(key, socials[key]);
     if (!href) return [];
     const label = t ? t(key, SOCIAL_LABELS[key]) : SOCIAL_LABELS[key];
     return [{ key, label, href }];

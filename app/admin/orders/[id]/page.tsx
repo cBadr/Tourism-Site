@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   Ban,
+  CarFront,
   CheckCircle2,
   Coins,
   ConciergeBell,
@@ -15,10 +16,13 @@ import {
   Phone,
   ReceiptText,
   Upload,
+  UserCheck,
   Wallet,
   XCircle,
 } from "lucide-react";
 
+import { PrintButton } from "@/components/admin/print-button";
+import { PrintHeader } from "@/components/admin/print-header";
 import {
   durationLabel,
   formatDistance,
@@ -63,6 +67,7 @@ import {
   cancelBooking,
   changeStatus,
   setReceiptVisibility,
+  setTripCrewByAdmin,
   uploadAdminReceipt,
   verifyTransfer,
 } from "./actions";
@@ -73,6 +78,21 @@ import {
  *
  * أمن الإيصالات (قاعدة المرحلة ٤): مخزن `receipts` خاص ولا يُقرأ إلا بالخدمة —
  * لا يظهر مسار الملف في الصفحة إطلاقاً، بل رابط مُوقَّع عمره ٥ دقائق يُنشأ هنا في الخادم.
+ *
+ * ── الدفعة ٤ — الملاحظة ٦: **ورقة تشغيل الرحلة** ─────────────────────────────
+ *
+ * نفس الشاشة تُطبع ورقةً واحدة تُحمل إلى الميدان، والسؤال الذي يفرز محتواها
+ * واحد: **هل يفيد من يمسك الورقة؟** فيبقى ما يُنفَّذ به: من العميل وكيف يُتصل به،
+ * ومن أين إلى أين ومتى، وبأي فئة، وكم يُحصَّل منه نقداً، وما الخدمات الإضافية
+ * الملتزم بها، ومن ينفّذ وبكم اتُّفق معه.
+ *
+ * ويسقط ما يُقرَّر به على الشاشة: كل نموذج وزر ولوح إجراءات، وسجل البث، وسجل
+ * الحجز، وبطاقتا الربحية — لأن الورقة لا تُنقر، ولأن **الهامش لا يُطبع**.
+ *
+ * 🔒 **وهي مع ذلك ورقة داخلية بحكم تكوينها:** تحمل هاتف العميل وسعره النهائي
+ * ومستحق المنفِّذ في صفحة واحدة، فمن يجمع الأخيرَين يعرف هامشنا بلا أن نطبعه.
+ * ولذلك تقول ترويستها ذلك نصّاً — والمتعهد يقرأ رحلته في بورتاله بسعره هو،
+ * وللعميل صفحة متابعته: لا أحد منهما يحتاج هذه الورقة أصلاً.
  */
 
 export const metadata = { title: "تفاصيل الطلب" };
@@ -212,6 +232,8 @@ const SAVED_MESSAGES: Record<string, string> = {
     "صار صف هذا الإيصال ضمن حمولة صفحة متابعة العميل — تعرضه الصفحة حيث تسرد إيصالات الحجز، ومنه تقرأ سبب الرفض إن كان مرفوضاً.",
   hidden:
     "أُسقط صف الإيصال من حمولة صفحة العميل نفسها لا من عرضها فقط، فلا يصل متصفحه إطلاقاً — ومعه يسقط سبب رفضه إن كان مرفوضاً. ويبقى هنا كاملاً ويبقى أثره المحاسبي كما هو.",
+  crew:
+    "سُجِّل طاقم الرحلة موسوماً «أدخلته الإدارة» — ويظهر للعميل في صفحة متابعته فوراً: المركبة ولونها ولوحتها واسم السائق. أما هاتف السائق فتكشفه له قاعدة البيانات وحدها قبل موعد الانطلاق بالمدة المضبوطة في «إعدادات الرحلات»، لا قبلها ولا بقرار من هذه الشاشة.",
 };
 
 /**
@@ -324,6 +346,177 @@ async function loadBookingProfit(
   };
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * طاقم الرحلة — المركبة والسائق بعد الإسناد (الدفعة ٥، هجرة `0040`)
+ *
+ * يكتبه **المتعهد المُسنَد إليه** من بورتاله عبر `set_trip_crew`، ويقرؤه العميل
+ * في صفحة متابعته. وما هنا شقّان: عرضُه للمالك، وتجاوزٌ إداري يسجّله عن الشريك
+ * الذي أملاه هاتفياً.
+ *
+ * ⚠ **والسجلّ ملك المتعهد لا المنصة** (قرار بدر 2026-08-11: لا إدارة سائقين
+ * مباشرين إطلاقاً). فهذه الشاشة **تقرأ سجلّه وتختار منه** ولا تنشئ فيه صفاً،
+ * ولا شاشة «سائقون» في `/admin` — الإدارة تعرض ما أعلنه الشريك ولا تدير من
+ * ينفّذ.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** سقف عاقل: أسطول شريك واحد وسجلّ سائقيه، لا أرشيف المنصة */
+const MAX_CREW_ROWS = 200;
+
+type CrewOption = { id: string; label: string };
+
+type CrewLoaded = {
+  /**
+   * صفُّ `dispatches` موجود ومقروء. **وهو غير `ready` تماماً**: «لا دورة إسناد
+   * لهذا الحجز» و«الهجرة غير منفَّذة» جوابان مختلفان، وخلطهما يجعل البطاقة تطالب
+   * بهجرةٍ منفَّذة أصلاً على كل حجزٍ لم يُبثّ بعد (الفرق بين «لا ينطبق» و«لا
+   * نعرف» — القاعدة ١٥ في `handover/INDEX.md`).
+   */
+  dispatchFound: boolean;
+  /** أعمدة `0040` مقروءة على `dispatches` — أي أن الهجرة منفَّذة */
+  ready: boolean;
+  /** المتعهد المُسنَد إليه — بدونه لا طاقم أصلاً، وترفض القاعدة أي تجاوز */
+  partnerId: string | null;
+  vehicleId: string | null;
+  driverId: string | null;
+  vehicleLabel: string | null;
+  vehicleColor: string | null;
+  vehiclePlate: string | null;
+  vehicleYear: number | null;
+  driverName: string | null;
+  driverPhone: string | null;
+  /** أدخلته الإدارة نيابةً عن الشريك — يُوسم ولا يُخفى */
+  byAdmin: boolean;
+  crewAt: string | null;
+  vehicleOptions: CrewOption[];
+  driverOptions: CrewOption[];
+};
+
+const EMPTY_CREW: CrewLoaded = {
+  dispatchFound: false,
+  ready: false,
+  partnerId: null,
+  vehicleId: null,
+  driverId: null,
+  vehicleLabel: null,
+  vehicleColor: null,
+  vehiclePlate: null,
+  vehicleYear: null,
+  driverName: null,
+  driverPhone: null,
+  byAdmin: false,
+  crewAt: null,
+  vehicleOptions: [],
+  driverOptions: [],
+};
+
+/** «كورولا · ٢٠٢٣ · فضي · أ ب ج ١٢٣» — وصفٌ يميّز صفاً عن صف في قائمة اختيار */
+function vehicleOptionLabel(row: Record<string, unknown>): string {
+  const parts = [
+    asText(pick(row, ["label"])),
+    asNumber(pick(row, ["model_year", "modelYear"]))?.toString() ?? null,
+    asText(pick(row, ["color"])),
+    asText(pick(row, ["plate"])),
+  ].filter((part): part is string => part !== null && part.length > 0);
+  const label = parts.length > 0 ? parts.join(" · ") : "مركبة بلا وصف";
+  // الصف المعطّل يبقى في القائمة **موسوماً**: الرحلة الجارية قد تكون عليه فعلاً،
+  // وإخفاؤه كان سيجعل حفظ الطاقم يمسحه بصمت.
+  return pick(row, ["active"]) === false ? `${label} — غير مفعّلة` : label;
+}
+
+function driverOptionLabel(row: Record<string, unknown>): string {
+  const name = asText(pick(row, ["name"])) ?? "سائق بلا اسم";
+  const phone = asText(pick(row, ["phone"]));
+  const label = phone ? `${name} · ${phone}` : name;
+  return pick(row, ["active"]) === false ? `${label} — غير مفعّل` : label;
+}
+
+/**
+ * قراءة الطاقم وسجلّ الشريك الذي يُختار منه.
+ *
+ * القراءة متسامحة كبقية الشاشة: قبل الهجرة يعود صف `dispatches` بلا أعمدة
+ * `0040` فتبقى `ready = false` وتقول البطاقة ذلك بدل أن تدّعي «لا طاقم». وحجزٌ
+ * بلا صف إسناد أصلاً يعود بالفراغ نفسه — وهو الصحيح: لا طاقم قبل الإسناد.
+ *
+ * والاستدلال على جاهزية الهجرة من **الصف المقروء نفسه** لا باستعلام مخطط ثانٍ
+ * (نفس نمط `receiptFlagsReady` أعلاه، وبنفس المقايضة المقبولة).
+ *
+ * والسجلّان يُقرآن بصلاحية المشرف المسجَّل دخوله: سياسة
+ * `*_select_own_or_admin` على الجدولين تفتحهما لـ`is_admin()`، فلا حاجة لمفتاح
+ * خدمة — وطلبُه هنا كان سيوسّع سطح التجاوز بلا مقابل.
+ */
+async function loadCrew(
+  supabase: NonNullable<Awaited<ReturnType<typeof createServerSupabase>>>,
+  bookingId: string
+): Promise<CrewLoaded> {
+  const res = await supabase
+    .from("dispatches")
+    .select("*")
+    .eq("booking_id", bookingId)
+    .maybeSingle();
+
+  if (res.error || !res.data) return EMPTY_CREW;
+
+  const row = res.data as Record<string, unknown>;
+  const ready = "crew_by_admin" in row;
+  const partnerId = asText(pick(row, ["assigned_subcontractor_id", "subcontractor_id"]));
+
+  if (!ready || !partnerId) {
+    return { ...EMPTY_CREW, dispatchFound: true, ready, partnerId };
+  }
+
+  const vehicleId = asText(pick(row, ["assigned_vehicle_id"]));
+  const driverId = asText(pick(row, ["assigned_driver_id"]));
+
+  const [vehiclesRes, driversRes] = await Promise.all([
+    supabase
+      .from("subcontractor_vehicles")
+      .select("*")
+      .eq("subcontractor_id", partnerId)
+      .order("label", { ascending: true })
+      .limit(MAX_CREW_ROWS),
+    supabase
+      .from("subcontractor_drivers")
+      .select("*")
+      .eq("subcontractor_id", partnerId)
+      .order("name", { ascending: true })
+      .limit(MAX_CREW_ROWS),
+  ]);
+
+  const vehicleRows = vehiclesRes.error
+    ? []
+    : ((vehiclesRes.data ?? []) as Record<string, unknown>[]);
+  const driverRows = driversRes.error
+    ? []
+    : ((driversRes.data ?? []) as Record<string, unknown>[]);
+
+  // الصف المُسنَد يُلتقط من القائمة نفسها لا باستعلامين إضافيين: القاعدة تضمن
+  // أنه من سجلّ هذا الشريك (حارس الملكية داخل `set_trip_crew`)، فهو فيها حتماً.
+  const vehicleRow = vehicleRows.find((v) => asText(v.id) === vehicleId) ?? null;
+  const driverRow = driverRows.find((d) => asText(d.id) === driverId) ?? null;
+
+  return {
+    dispatchFound: true,
+    ready: true,
+    partnerId,
+    vehicleId,
+    driverId,
+    vehicleLabel: vehicleRow ? asText(pick(vehicleRow, ["label"])) : null,
+    vehicleColor: vehicleRow ? asText(pick(vehicleRow, ["color"])) : null,
+    vehiclePlate: vehicleRow ? asText(pick(vehicleRow, ["plate"])) : null,
+    vehicleYear: vehicleRow ? asNumber(pick(vehicleRow, ["model_year", "modelYear"])) : null,
+    driverName: driverRow ? asText(pick(driverRow, ["name"])) : null,
+    driverPhone: driverRow ? asText(pick(driverRow, ["phone"])) : null,
+    byAdmin: pick(row, ["crew_by_admin"]) === true,
+    crewAt: asText(pick(row, ["crew_at"])),
+    vehicleOptions: vehicleRows
+      .map((v) => ({ id: asText(v.id) ?? "", label: vehicleOptionLabel(v) }))
+      .filter((option) => option.id !== ""),
+    driverOptions: driverRows
+      .map((d) => ({ id: asText(d.id) ?? "", label: driverOptionLabel(d) }))
+      .filter((option) => option.id !== ""),
+  };
+}
+
 async function loadOrder(id: string): Promise<{
   ready: boolean;
   booking: Booking | null;
@@ -343,6 +536,8 @@ async function loadOrder(id: string): Promise<{
   extras: BookingExtra[];
   /** جدول `booking_extras` مقروء — أي أن هجرة `0031` مطبَّقة */
   extrasReady: boolean;
+  /** المركبة والسائق بعد الإسناد (هجرة `0040`) */
+  crew: CrewLoaded;
 }> {
   const blank = {
     ready: false,
@@ -359,6 +554,7 @@ async function loadOrder(id: string): Promise<{
     partnerCode: null as string | null,
     extras: [] as BookingExtra[],
     extrasReady: false,
+    crew: EMPTY_CREW,
   };
 
   const supabase = await createServerSupabase();
@@ -404,6 +600,7 @@ async function loadOrder(id: string): Promise<{
     profitRes,
     partnerCodeRes,
     extrasRes,
+    crew,
   ] = await Promise.all([
     supabase.from("payments").select("*").eq("booking_id", id),
     supabase.from("booking_events").select("*").eq("booking_id", id),
@@ -417,6 +614,8 @@ async function loadOrder(id: string): Promise<{
     // لقطة الخدمات الإضافية (0031). القراءة متسامحة: قبل الهجرة يعود خطأ «لا
     // جدول» فتبقى القائمة فارغة ولا تسقط الشاشة، كما تفعل بقية جداول اللوحة.
     supabase.from("booking_extras").select("*").eq("booking_id", id),
+    // طاقم الرحلة وسجلّ الشريك (0040) — القارئ نفسه يتدهور بهدوء قبل الهجرة
+    loadCrew(supabase, id),
   ]);
 
   const accounts = new Map<string, Account>();
@@ -531,6 +730,7 @@ async function loadOrder(id: string): Promise<{
     partnerCode: partnerCodeRes.error ? null : (asText(partnerCodeRes.data) ?? null),
     extras,
     extrasReady: !extrasRes.error,
+    crew,
   };
 }
 
@@ -809,6 +1009,222 @@ function BookingExtrasCard({
   );
 }
 
+/**
+ * المركبة والسائق بعد الإسناد (الدفعة ٥ — الملاحظة ٥، هجرة `0040`).
+ *
+ * البطاقة **تُطبع**: من يمسك ورقة التشغيل يسأل أولاً «أي سيارة ومع من؟»،
+ * وسطرٌ واحد هنا يوفّر مكالمة. أما نموذج التجاوز فيسقط بالطباعة — الورقة
+ * تُنفَّذ ولا تُقرَّر بها.
+ *
+ * ⚠ **ولا يُبنى منها بابٌ خلفي لإدارة السائقين**: السجلّ ملك المتعهد (قرار بدر
+ * 2026-08-11 — لا إدارة سائقين مباشرين إطلاقاً)، والنموذج **يختار من سجلّه**
+ * ولا يُنشئ فيه صفاً ولا يعدّله. من احتاج إضافة سائق فمكانها بورتال الشريك.
+ *
+ * 🔒 ولا صورة: عمودا `photo_path` في القاعدة والرفعُ مؤجَّل بقرار مكتوب في
+ * ترويسة الهجرة — دلو `media` عام، وصورةُ سائق فيه بيانات شخصية لطرفٍ ثالث
+ * يقرؤها أي أحد بالمسار.
+ */
+function TripCrewCard({
+  bookingId,
+  crew,
+  vehicleLine,
+  hasCrew,
+}: {
+  bookingId: string;
+  crew: CrewLoaded;
+  /** وصف المركبة وسنتها مبنيّاً في الصفحة — عرضٌ لا حساب */
+  vehicleLine: string;
+  /** أُسنِد للرحلة مركبةٌ أو سائق فعلاً (بالمعرّف لا بالاسم) */
+  hasCrew: boolean;
+}) {
+  return (
+    <Card className="space-y-4 p-5" id="crew">
+      <div>
+        <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+          <CarFront className="size-4 text-primary" />
+          المركبة والسائق
+          <HelpTip>
+            يكتبها <span className="font-semibold">المتعهد المُسنَد إليه من بورتاله</span> —
+            المنصة لا تملك سائقاً ولا تديره، وهذا سجلّ الشريك تعرضه ولا تحلّ محله. والعميل
+            يرى الشيء نفسه في صفحة متابعته تحت «مركبتك وسائقك»:{" "}
+            <span className="font-semibold">المركبة ولونها ولوحتها واسم السائق فور التسجيل</span>،
+            أما <span className="font-semibold">هاتف السائق فتحجبه قاعدة البيانات عنه</span>{" "}
+            حتى تحلّ نافذته قبل موعد الانطلاق (المدة في «إعدادات الرحلات»). ولا صورة في هذه
+            الدفعة: الأعمدة موجودة والرفع مؤجَّل حتى يُنشأ دلو خاص، فصورة السائق بيانات شخصية
+            لا تُوضع في دلو عام.
+          </HelpTip>
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          جواب سؤال العميل «ما الذي سيأتيني؟» — ومنه يتعرّف على سيارته عند الموعد.
+        </p>
+      </div>
+
+      {!crew.ready ? (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          تسجيل المركبة والسائق يحتاج هجرة <code dir="ltr">0040</code> — نفِّذها من{" "}
+          <code dir="ltr">supabase/migrations</code> ثم أعد تحميل الصفحة. بقية الشاشة تعمل
+          طبيعياً، وصفحة العميل لا تعرض بطاقة «مركبتك وسائقك» قبلها.
+        </p>
+      ) : crew.partnerId === null ? (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          لا طاقم قبل الإسناد — تُسجَّل المركبة والسائق بعد أن يُعرف المنفِّذ فعلاً. أسنِد
+          الطلب من لوحة الإسناد أعلاه، ثم يسجّلهما المتعهد من بورتاله أو تسجّلهما أنت عنه.
+        </p>
+      ) : (
+        <>
+          {!hasCrew ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              أُسند الطلب ولم يسجّل المتعهد مركبةً ولا سائقاً بعد — وصفحة العميل لا تعرض
+              بطاقة «مركبتك وسائقك» حتى يفعل. إن أملاهما عليك هاتفياً فسجّلهما من النموذج
+              أدناه.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              <Row
+                label="المركبة"
+                help="وصف المركبة وسنتها كما أعلنهما المتعهد في أسطوله. القيمة تُقرأ من سجلّه لحظة فتح الصفحة لا لقطةً مجمَّدة — فتصحيحه في بورتاله يصل العميل فوراً."
+              >
+                {vehicleLine.length > 0
+                  ? vehicleLine
+                  : crew.vehicleId
+                    ? "مركبة لم تعد في سجلّ المتعهد"
+                    : "—"}
+              </Row>
+              <Row label="اللون">{crew.vehicleColor ?? "—"}</Row>
+              <Row
+                label="رقم اللوحة"
+                help="أبرز ما يعرضه العميل على صفحته — هو ما يبحث عنه بعينه عند الموعد. لوحةٌ خاطئة تعني عميلاً يقف بجوار سيارته ولا يركبها."
+              >
+                {crew.vehiclePlate ? (
+                  <span dir="ltr" className="font-mono font-bold">
+                    {crew.vehiclePlate}
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </Row>
+              <Row label="السائق">
+                {crew.driverName ??
+                  (crew.driverId ? "سائق لم يعد في سجلّ المتعهد" : "—")}
+              </Row>
+              {/*
+                🔒 هاتف السائق يظهر هنا **بلا قيد زمني، وهذا مقصود**: الحجب
+                الزمني داخل `get_booking_by_token` يحرس سطح **العميل** وحده —
+                عميلٌ يملك الرقم مبكراً يستطيع الاتفاق مع السائق مباشرةً في
+                المرة القادمة، أي أن كل رقم يُسلَّم مبكراً نافذة تخطٍّ للمنصة.
+                أما من يدير الرحلة فيحتاج الرقم لحظة سؤاله عنه. فلا «يُصلَح»
+                هذا السطر بإضافة نافذة زمنية: إضافتها تعطّل التشغيل ولا تحمي
+                شيئاً.
+              */}
+              <Row
+                label="هاتف السائق"
+                help="يظهر لك كاملاً في كل وقت — النافذة الزمنية تحرس صفحة العميل وحدها (كي لا يتفق معه مباشرةً في رحلة قادمة) لا شاشة التشغيل. لا تضف قيداً زمنياً هنا."
+              >
+                <ContactLinks phone={crew.driverPhone} whatsapp={null} />
+              </Row>
+              <Row
+                label="سُجِّل في"
+                help="متى أُقرّت هذه البيانات آخر مرة — لا متى تغيّرت: إعادة الحفظ بالقيم نفسها تجدّد الطابع، وهو المطلوب («راجعناها اليوم»)."
+              >
+                <span className="flex flex-wrap items-center gap-2">
+                  <span>
+                    {crew.crewAt ? dateTimeLabel(crew.crewAt) : "—"}
+                    {crew.crewAt ? ` · ${relativeTime(crew.crewAt)}` : ""}
+                  </span>
+                  {/* الوسم على سابقة «رفعه التشغيل»: التجاوز يُعلن ولا يُخفى */}
+                  {crew.byAdmin && (
+                    <Badge
+                      variant="outline"
+                      className="border-violet-300 bg-violet-100 text-violet-900 dark:border-violet-700 dark:bg-violet-950 dark:text-violet-100"
+                    >
+                      أدخلته الإدارة
+                    </Badge>
+                  )}
+                </span>
+              </Row>
+            </div>
+          )}
+
+          {/*
+            التجاوز الإداري — سطحُ قرار لا يُطبع (وكتلة الطباعة تُسقط النماذج
+            أصلاً، والصنف الصريح هنا كي يذهب عنوانه معه لا يبقى معلّقاً).
+
+            ووجوده ليس رفاهية: المتعهد يملي المركبة والسائق **هاتفياً** ولا
+            يفتح بورتاله، فبلا هذا النموذج تبقى صفحة العميل خالية من الجواب
+            الذي بُنيت الملاحظة كلها لأجله — لا لأن البيانات مجهولة، بل لأن من
+            يعرفها لم يكتبها في نموذج.
+          */}
+          <div className="no-print space-y-3 border-t border-border pt-4">
+            <h4 className="flex items-center gap-1.5 text-sm font-bold">
+              <UserCheck className="size-4 text-primary" />
+              سجّل الطاقم نيابةً عن المتعهد
+              <HelpTip>
+                القائمتان من <span className="font-semibold">سجلّ هذا المتعهد وحده</span>، وقاعدة
+                البيانات ترفض أي مركبة أو سائق من خارجه — فلا تُعلَن على صفحة العميل مركبةُ
+                شريك آخر. والحفظ يسم الصف «أدخلته الإدارة» ويبقى الوسم ظاهراً هنا: تجاوزٌ
+                معلن لا التفاف صامت. وخيار «— بلا —» يمسح الحقل عن صفحة العميل فوراً، وهو
+                المخرج حين تُملى عليك لوحة خاطئة.
+              </HelpTip>
+            </h4>
+
+            {crew.vehicleOptions.length === 0 && crew.driverOptions.length === 0 ? (
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                سجلّ هذا المتعهد فارغ — لا مركبات ولا سائقين مسجَّلين له. يضيفهم هو من
+                بورتاله (المنصة لا تدير سائقين ولا تُنشئ لهم صفوفاً)، ثم تختار منهما هنا.
+              </p>
+            ) : (
+              <form action={setTripCrewByAdmin.bind(null, bookingId)} className="space-y-3">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="crew_vehicle_id">المركبة</Label>
+                    <select
+                      id="crew_vehicle_id"
+                      name="crew_vehicle_id"
+                      defaultValue={crew.vehicleId ?? ""}
+                      className={controlClass}
+                    >
+                      <option value="">— بلا مركبة —</option>
+                      {crew.vehicleOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="crew_driver_id">السائق</Label>
+                    <select
+                      id="crew_driver_id"
+                      name="crew_driver_id"
+                      defaultValue={crew.driverId ?? ""}
+                      className={controlClass}
+                    >
+                      <option value="">— بلا سائق —</option>
+                      {crew.driverOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="submit" variant="outline">
+                    <UserCheck />
+                    حفظ الطاقم بوسم «أدخلته الإدارة»
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 /** رقم موبايل بصيغة رابط اتصال — الأرقام تُعرض ltr دائماً */
 function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: string | null }) {
   const digits = (v: string) => v.replace(/[^\d+]/g, "");
@@ -862,6 +1278,7 @@ export default async function OrderDetailPage({
     partnerCode,
     extras,
     extrasReady,
+    crew,
   } = await loadOrder(id);
   if (ready && !booking) notFound();
 
@@ -911,6 +1328,13 @@ export default async function OrderDetailPage({
       "هذا المتعهد بلغ سقف الدين المسموح، وقاعدة البيانات ترفض إسناد أي رحلة إليه — والرفض عن دَين لا عن صلاحية. حصّل منه المبلغ وسجّله تسويةً، أو ارفع السقف من بطاقة سقف الديون في شاشة المقاصة، أو أسنِد هذه الرحلة وحدها من زر «إسناد فوق سقف الدين» في لوحة الإسناد بسبب مكتوب.",
     nolimitfn:
       "الإسناد فوق سقف الدين يحتاج دالة manual_assign_over_limit من هجرة 0027 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب.",
+    // ── طاقم الرحلة (0040) — ثلاثة رموز، ولا واحد منها نقصُ صلاحية
+    notassigned:
+      "هذا الحجز غير مُسنَد لمتعهد بعد، ولا طاقم رحلة قبل الإسناد — القاعدة ترفض تسجيل مركبة أو سائق على رحلة بلا منفِّذ. أسنِد الطلب أولاً من لوحة الإسناد أعلاه ثم سجّل الطاقم.",
+    crewowner:
+      "المركبة أو السائق المختار ليس من سجلّ المتعهد المُسنَد إليه هذه الرحلة، والقاعدة ترفض إعلان مركبة شريكٍ آخر على صفحة العميل. أعد تحميل الصفحة لترى سجلّ المنفِّذ الحالي — غالباً تغيّر الإسناد بعد فتحك الصفحة، أو حُذف الصف من بورتال الشريك.",
+    crewnotready:
+      "تسجيل طاقم الرحلة يحتاج هجرة 0040 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب ولا في صفحة العميل.",
   };
 
   if (!booking) {
@@ -951,6 +1375,20 @@ export default async function OrderDetailPage({
   const extrasTotal = asNumber(pick(tripRaw, ["extrasTotal", "extras_total"]));
   const hasExtras = extras.length > 0 || (extrasTotal ?? 0) > 0;
 
+  /**
+   * سطر المركبة: وصفها وسنتها معاً — والسنة تمرّ بـ`toArabicDigits` وحدها لا
+   * بمنسّق أرقام، وإلا فصل الألوفَ فصارت ٢٠٢٣ تُقرأ «٢٬٠٢٣».
+   */
+  const crewVehicleLine = [
+    crew.vehicleLabel,
+    crew.vehicleYear === null ? null : toArabicDigits(crew.vehicleYear),
+  ]
+    .filter((part): part is string => part !== null && part.length > 0)
+    .join(" ");
+  // المعرّفان لا الأسماء: صفٌّ حُذف من سجلّ الشريك يترك المعرّف معلَّقاً بلا اسم،
+  // وهي حالةٌ تستحق أن تُقال («مركبة لم تعد في السجلّ») لا أن تُقرأ «بلا طاقم».
+  const hasCrew = crew.vehicleId !== null || crew.driverId !== null;
+
   const cancelled = booking.status === "cancelled";
   // `verify_payment` ترفض أي حالة غير «قيد المراجعة» وترفض غياب إيصال pending —
   // فإظهار الزرين في «بانتظار الدفع» كان وعداً كاذباً ينتهي برسالة خطأ.
@@ -963,9 +1401,13 @@ export default async function OrderDetailPage({
   const hasPendingReceipt = payments.some((payment) => payment.status === "pending");
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      {/* الترويسة: الرقم المرجعي والحالة ورابط صفحة المتابعة التي يراها العميل */}
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="print-sheet mx-auto max-w-4xl space-y-6">
+      {/*
+        الترويسة: الرقم المرجعي والحالة ورابط صفحة المتابعة التي يراها العميل.
+        `no-print` كاملة — كل ما فيها إما تلميح أو رابط، وما يعرّف الحجز منها
+        (المرجع ورمز المتعهد والحالة) يعيده `PrintHeader` أدناه بلا زخرفة.
+      */}
+      <div className="no-print flex flex-wrap items-center gap-2">
         <h2 className="font-heading text-lg font-bold" dir="ltr">
           {booking.reference}
         </h2>
@@ -1001,6 +1443,14 @@ export default async function OrderDetailPage({
           أُنشئ {relativeTime(booking.createdAt)} · {dateTimeLabel(booking.createdAt)}
         </span>
         <span className="ms-auto flex flex-wrap items-center gap-3">
+          <PrintButton label="طباعة ورقة الرحلة" />
+          <HelpTip>
+            تطبع ورقة تشغيل واحدة: الرحلة والعميل والسعر والخدمات والمنفِّذ ومستحقه.
+            وتسقط منها لوحات الإجراءات وسجل البث وسجل الحجز وبطاقتا الربحية — الورقة
+            تُنفَّذ ولا تُقرَّر بها. <span className="font-semibold">وهي داخلية</span>:
+            فيها هاتف العميل وسعره ومستحق المنفِّذ معاً، فلا تُسلَّم للمتعهد — له بورتاله
+            بسعره هو.
+          </HelpTip>
           {booking.publicToken && (
             <Link
               href={`/booking/${booking.publicToken}`}
@@ -1020,16 +1470,38 @@ export default async function OrderDetailPage({
         </span>
       </div>
 
-      <Banners
-        wired={wired}
-        readOnly={false}
-        saved={savedCode !== null}
-        error={error}
-        errorMessages={errorMessages}
-        savedMessage={SAVED_MESSAGES[savedCode ?? "1"] ?? SAVED_MESSAGES["1"]}
-        readOnlyTitle=""
-        readOnlyBody={null}
+      {/*
+        ترويسة الورقة. الحالة فيها ليست زينة: «بانتظار الدفع» على ورقة تشغيل تعني
+        أن السائق لا ينطلق بعد، و«مؤكد» تعني أن المتبقي وحده يُحصَّل في الطريق.
+      */}
+      <PrintHeader
+        title="ورقة تشغيل رحلة"
+        meta={[
+          { label: "المرجع", value: booking.reference, dir: "ltr" },
+          partnerCode ? { label: "رمز المتعهد", value: partnerCode, dir: "ltr" } : null,
+          {
+            label: "الحالة",
+            value: isBookingStatus(booking.status)
+              ? STATUS_LABELS[booking.status]
+              : booking.status,
+          },
+          { label: "أُنشئ", value: dateTimeLabel(booking.createdAt) },
+        ]}
+        note="ورقة داخلية: تحمل هاتف العميل وسعره النهائي ومستحق المنفِّذ معاً — لا تُسلَّم للمتعهد ولا للعميل."
       />
+
+      <div className="no-print">
+        <Banners
+          wired={wired}
+          readOnly={false}
+          saved={savedCode !== null}
+          error={error}
+          errorMessages={errorMessages}
+          savedMessage={SAVED_MESSAGES[savedCode ?? "1"] ?? SAVED_MESSAGES["1"]}
+          readOnlyTitle=""
+          readOnlyBody={null}
+        />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* لقطة الرحلة — مخزّنة مع الحجز فلا تتغير بتغير التعريفات لاحقاً */}
@@ -1172,8 +1644,10 @@ export default async function OrderDetailPage({
           {/*
             ربحية الرحلة — لقطة داخلية بحتة، أول عائد ملموس لتسجيل مصدر السعر.
             لا يراها العميل في أي شاشة: صفحة المتابعة العامة تعرض الإجمالي وحده.
+            ولا تُطبع: هامشُ لقطةِ التسعير رقمٌ لا ينفّذ به أحدٌ شيئاً في الميدان،
+            وطباعته تضع سعرَ شرائنا وسعرَ بيعنا على ورقة تُترك على مكتب.
           */}
-          <Card className="space-y-1 p-5">
+          <Card className="no-print space-y-1 p-5">
             <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
               <Wallet className="size-4 text-primary" />
               ربحية الرحلة
@@ -1259,16 +1733,26 @@ export default async function OrderDetailPage({
       {/*
         الحساب الفعلي — بعد بطاقة السعر مباشرة لأنه جوابها الواقعي: تلك تقول
         «كم طُلب»، وهذه تقول «كم دخل ومن يمسك الباقي».
+        ولا يُطبع: مراجعةٌ محاسبية تُقرأ على الشاشة بجوار الدفتر، وفيها الربح
+        الإجمالي صريحاً. وما يحتاجه الميدان منها — «المتبقي مع السائق» — مكتوب
+        في بطاقة السعر المطبوعة أعلاه.
       */}
-      <BookingAccountingCard
-        profit={profit}
-        profitReady={profitReady}
-        currency={booking.currency}
-        subcontractorId={booking.subcontractorId}
-      />
+      <div className="no-print">
+        <BookingAccountingCard
+          profit={profit}
+          profitReady={profitReady}
+          currency={booking.currency}
+          subcontractorId={booking.subcontractorId}
+        />
+      </div>
 
-      {/* المدفوعات والإيصالات */}
-      <Card className="space-y-4 p-5" id="receipts">
+      {/*
+        المدفوعات والإيصالات — لا تُطبع كاملةً: نموذج الرفع وأزرار تبديل الرؤية
+        أدوات قرار، وصور الإيصالات تلتهم الحبر وتحمل روابط موقّعة تنتهي بعد خمس
+        دقائق فتصير على الورق سطوراً ميتة. والسؤال الوحيد الذي يعني الميدان — «هل
+        دُفع؟» — تجيبه الحالة في ترويسة الورقة و«المتبقي مع السائق» في بطاقة السعر.
+      */}
+      <Card className="no-print space-y-4 p-5" id="receipts">
         <div>
           <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
             <FileText className="size-4 text-primary" />
@@ -1573,8 +2057,25 @@ export default async function OrderDetailPage({
         confirmingOverride={confirmingOverride}
       />
 
-      {/* الإجراءات */}
-      <Card className="space-y-4 p-5" id="actions">
+      {/*
+        المركبة والسائق — تحت لوحة الإسناد مباشرةً لأنها تكملتها: تلك تجيب
+        «من ينفّذ؟» وهذه «بأي سيارة ومع من؟».
+
+        ولا تُصيَّر أصلاً لحجزٍ **بلا دورة إسناد** (وهو حال كل حجز قبل التأكيد):
+        لوحةُ الإسناد فوقها تقول ذلك بنفسها، وبطاقةٌ ثانية تكرّره تُثقل شاشة
+        التشغيل ببطاقة فارغة على كل طلب — نفس حكم بطاقة الخدمات أعلاه.
+      */}
+      {crew.dispatchFound && (
+        <TripCrewCard
+          bookingId={booking.id}
+          crew={crew}
+          vehicleLine={crewVehicleLine}
+          hasCrew={hasCrew}
+        />
+      )}
+
+      {/* الإجراءات — لوح قرار بحت، لا يُطبع منه شيء */}
+      <Card className="no-print space-y-4 p-5" id="actions">
         <div>
           <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
             الإجراءات
@@ -1728,8 +2229,11 @@ export default async function OrderDetailPage({
         )}
       </Card>
 
-      {/* سجل الحالة */}
-      <Card className="space-y-4 p-5">
+      {/*
+        سجل الحالة — تاريخ الحجز على الشاشة لا على الورق: من يمسك ورقة التشغيل
+        يريد ما ينفّذه الآن، ومن يحقق في حادثة يفتح الشاشة أو `/admin/logs`.
+      */}
+      <Card className="no-print space-y-4 p-5">
         <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
           سجل الحجز
           <HelpTip>

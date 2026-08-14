@@ -1,19 +1,17 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  BadgeCheck,
   Bot,
-  Globe,
   Languages,
   ListChecks,
   Plus,
   RefreshCw,
-  ShieldAlert,
   ToggleLeft,
 } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,13 +23,13 @@ import { isMissingFunction, isMissingTable } from "@/lib/dispatch/settings";
 import type { LocaleProgress } from "@/lib/i18n-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { describeMtProvider } from "@/lib/i18n/mt";
+import { type PagePulseData, readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { controlClass } from "../orders/_components/booking-ui";
 import {
   type AdminLocale,
   hasSupabaseEnv,
-  KpiCard,
   LanguagesFeedback,
   LanguagesNotReady,
   numberText,
@@ -66,6 +64,8 @@ type Loaded = {
   progressReady: boolean;
   /** أول ما تعذّرت قراءته بالاسم — يظهر في بطاقة «غير جاهزة» */
   missing: string | null;
+  /** نبض الشاشة — كل رقم فيه محسوب في Postgres (`lib/pulse-types.ts`) */
+  pulse: PagePulseData | null;
 };
 
 const BLANK: Loaded = {
@@ -74,15 +74,19 @@ const BLANK: Loaded = {
   progress: new Map(),
   progressReady: false,
   missing: "قاعدة البيانات",
+  // بلا عميل قاعدة = بلا شريط: سبب الغياب مكتوب أصلاً في `LanguagesNotReady`،
+  // وسطرٌ ثانٍ يقول الشيء نفسه ضجيج لا معلومة
+  pulse: null,
 };
 
 async function loadScreen(): Promise<Loaded> {
   const supabase = await createServerSupabase();
   if (!supabase) return BLANK;
 
-  const [localesResult, progressResult] = await Promise.all([
+  const [localesResult, progressResult, pulse] = await Promise.all([
     readLocales(supabase),
     readProgress(supabase),
+    readPagePulse(supabase, "/admin/languages"),
   ]);
 
   const missing =
@@ -100,6 +104,7 @@ async function loadScreen(): Promise<Loaded> {
     progress: progressResult.progress,
     progressReady: !progressResult.error,
     missing,
+    pulse,
   };
 }
 
@@ -135,7 +140,7 @@ function savedSentence(params: Record<string, string | string[] | undefined>): s
 
 export default async function LanguagesPage({ searchParams }: PageProps<"/admin/languages">) {
   const [params, loaded] = await Promise.all([searchParams, loadScreen()]);
-  const { locales, localesReady, progress, progressReady, missing } = loaded;
+  const { locales, localesReady, progress, progressReady, missing, pulse } = loaded;
 
   const wired = hasSupabaseEnv();
   const readOnly = !wired || !localesReady;
@@ -144,8 +149,6 @@ export default async function LanguagesPage({ searchParams }: PageProps<"/admin/
   const provider = describeMtProvider();
 
   const foreign = locales.filter((locale) => !locale.isDefault);
-  const enabledCount = foreign.filter((locale) => locale.enabled).length;
-  const autoCount = foreign.filter((locale) => locale.autoPublish).length;
   const nextSort = foreign.length + 1;
 
   return (
@@ -185,41 +188,40 @@ export default async function LanguagesPage({ searchParams }: PageProps<"/admin/
         error={error}
       />
 
-      {/* المؤشرات */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard
-          title="لغات مسجَّلة"
-          value={numberText(locales.length)}
-          sub="العربية أصلاً + لغات الترجمة"
-          icon={Globe}
-          help="كل صف في جدول اللغات، مفعَّلاً كان أو معطَّلاً. تسجيل لغة لا يعني ظهورها للزوار."
+      {/* المؤشرات — كل رقم يصل محسوباً من `pulse_stats` (القاعدة ٢ في
+          `lib/pulse-types.ts`). البطاقات الثلاث التي كانت تُعدّ هنا بـ
+          `locales.length` وترشيح مصفوفة كانت تصف **الصفوف التي حُمِّلت للعرض**
+          لا ما في القاعدة، وهو رقم يكذب لحظة دخول أي سقف صفوف. */}
+      <PagePulse data={pulse} />
+
+      {/* مزوّد الترجمة الآلية يبقى هنا وحده: مصدره متغيّر بيئة لا جدول، فلا
+          مكان له في شريط يقرأ كل قيمه من Postgres — وغيابه يترك المالك يضغط
+          «ترجم» فلا يحدث شيء بلا سبب مفهوم. */}
+      <Card className="flex flex-row flex-wrap items-center gap-x-2 gap-y-1 p-3">
+        <Bot
+          aria-hidden
+          className={cn(
+            "size-4 shrink-0",
+            provider.ready ? "text-primary" : "text-amber-600 dark:text-amber-400"
+          )}
         />
-        <KpiCard
-          title="ظاهرة للزوار"
-          value={numberText(enabledCount)}
-          sub="لغات مفعَّلة في مبدّل اللغة"
-          icon={BadgeCheck}
-          help="اللغات المفعَّلة وحدها تظهر في مبدّل اللغة وفي خريطة الموقع وفي وسوم hreflang. عطّل أي لغة لم تكتمل مراجعتها."
-        />
-        <KpiCard
-          title="مزوّد الترجمة الآلية"
-          value={<span className="text-base sm:text-lg">{provider.label}</span>}
-          sub={provider.keyless ? "يعمل بلا مفتاح مدفوع" : "يعمل بمفتاح من متغيرات البيئة"}
-          icon={Bot}
-          help={provider.note}
-          /* مزوّد غير جاهز = زر «ترجم» لن يعمل؛ تنبيه لا خطر */
-          variant={provider.ready ? "default" : "warning"}
-        />
-        <KpiCard
-          title="نشر تلقائي مفعَّل"
-          value={numberText(autoCount)}
-          sub="لغات تنشر المسودة الآلية بلا مراجعة"
-          icon={ShieldAlert}
-          help="الوضع الصحي هنا صفر. النشر التلقائي مخصص للغات الذيل الطويل التي لا تجد من يراجعها، وثمنه مخاطرة سيو حقيقية."
-          /* الوضع الصحي صفر — أي رقم فوقه ترجمة خام تصل للزوار (اعتبار ٨) */
-          variant={autoCount > 0 ? "warning" : "default"}
-        />
-      </div>
+        <span className="text-sm font-medium">مزوّد الترجمة الآلية</span>
+        <Badge
+          variant="outline"
+          className={cn(
+            "font-normal",
+            provider.ready
+              ? "border-border"
+              : "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+          )}
+        >
+          {provider.label}
+        </Badge>
+        <span className="text-xs text-muted-foreground">
+          {provider.keyless ? "يعمل بلا مفتاح مدفوع" : "يعمل بمفتاح من متغيرات البيئة"}
+        </span>
+        <HelpTip>{provider.note}</HelpTip>
+      </Card>
 
       {/* جدول اللغات */}
       <Card className="space-y-4 p-5">

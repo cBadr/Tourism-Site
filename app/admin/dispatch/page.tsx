@@ -12,6 +12,7 @@ import {
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +23,7 @@ import { Separator } from "@/components/ui/separator";
 import type { TripSnapshot } from "@/lib/booking-types";
 import { readDispatchSettings } from "@/lib/dispatch/settings";
 import { DEFAULT_DISPATCH, type DispatchSettings } from "@/lib/dispatch-types";
+import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { asNumber, asText, dateTimeLabel, relativeTime } from "../orders/_components/booking-ui";
 import {
@@ -90,6 +92,8 @@ type Loaded = {
   counts: Counts;
   queue: QueueRow[];
   queueFailed: boolean;
+  /** نبض الشاشة — `null` حين لا عميل جلسة */
+  pulse: PagePulseData | null;
 };
 
 const EMPTY: Loaded = {
@@ -100,6 +104,7 @@ const EMPTY: Loaded = {
   counts: { broadcasting: null, assigned: null, manual: null },
   queue: [],
   queueFailed: false,
+  pulse: null,
 };
 
 async function loadScreen(): Promise<Loaded> {
@@ -121,7 +126,7 @@ async function loadScreen(): Promise<Loaded> {
     return error ? null : count;
   };
 
-  const [settingsResult, queueRes, broadcasting, assigned, manual] = await Promise.all([
+  const [settingsResult, queueRes, broadcasting, assigned, manual, pulse] = await Promise.all([
     readDispatchSettings(supabase),
     supabase
       .from("dispatches")
@@ -132,6 +137,7 @@ async function loadScreen(): Promise<Loaded> {
     countOf("broadcasting"),
     countOf("assigned"),
     countOf("manual"),
+    readPagePulse(supabase, "/admin/dispatch"),
   ]);
 
   // خطأ استعلام الطابور = جدول `dispatches` غير منفَّذ (هجرة المرحلة ٦)
@@ -187,6 +193,7 @@ async function loadScreen(): Promise<Loaded> {
     counts: { broadcasting, assigned, manual },
     queue,
     queueFailed: Boolean(queueRes.error),
+    pulse,
   };
 }
 
@@ -213,7 +220,8 @@ const TICK_REASONS: Record<string, string> = {
 
 export default async function DispatchPage({ searchParams }: PageProps<"/admin/dispatch">) {
   const [params, loaded] = await Promise.all([searchParams, loadScreen()]);
-  const { ready, settings, settingsReady, settingsEmpty, counts, queue, queueFailed } = loaded;
+  const { ready, settings, settingsReady, settingsEmpty, counts, queue, queueFailed, pulse } =
+    loaded;
 
   const wired = hasSupabaseEnv();
   const saved = params.saved === "1";
@@ -304,6 +312,8 @@ export default async function DispatchPage({ searchParams }: PageProps<"/admin/d
           </p>
         </Card>
       )}
+
+      <PagePulse data={pulse} />
 
       {/* المؤشرات — كل رقم COUNT من قاعدة البيانات */}
       <div className="grid gap-3 sm:grid-cols-3">

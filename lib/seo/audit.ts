@@ -6,30 +6,48 @@
  * يقول «الصفحة صالحة» وهو لا يعرف ما يُصدَّر فعلاً أسوأ من غياب الفحص، لأنه
  * يُسكت المالك عن عطب حقيقي.
  *
- * لذلك هذا الملف لا يخمّن: هو يعكس **ما يفعله الكود اليوم حرفاً بحرف**، وهذان
- * هما موضعا JSON-LD الوحيدان في المستودع كله:
+ * لذلك هذا الملف لا يخمّن: هو يعكس **ما يفعله الكود اليوم حرفاً بحرف**، وهذه
+ * مواضع JSON-LD الثلاثة في المستودع كله (وأشكالها كلها من `lib/seo/jsonld.ts`
+ * الذي يستورده هذا الملف أيضاً — فالفحص يستدعي **الباني نفسه** لا نسخة عنه):
  *
- *   ١) `components/seo/JsonLd.tsx` — `LocalBusiness` + `ItemList` للخدمات،
- *      مستعمَل في `app/page.tsx` **وحدها** ⇒ الصفحة الرئيسية فقط.
- *   ٢) `components/sections/faq.tsx` — `FAQPage`، لكل قسم `faq`.
+ *   ١) `components/seo/JsonLd.tsx` ← `<JsonLd />` في `app/page.tsx` **وحدها**:
+ *      `Organization` + `WebSite` + `LocalBusiness` + `ItemList` ⇒ الرئيسية فقط.
+ *   ٢) `components/seo/JsonLd.tsx` ← `<PageJsonLd />` في `app/services/[slug]`
+ *      و`app/routes/[slug]`: `Service` + `BreadcrumbList` لصفحة الخدمة،
+ *      و`BreadcrumbList` وحده لصفحة المسار (المسار استهداف عبارة بحث لا خدمة
+ *      معروضة، ووسمه خدمةً يجعله ينافس الخدمات الست على التصنيف نفسه).
+ *   ٣) `components/sections/faq.tsx` — `FAQPage`، لكل قسم `faq`.
  *      وقيده الحرفي: `items.filter((i) => i.q && i.a)` ثم
  *      `if (items.length === 0) return null` ⇒ قسم أسئلة بلا عنصر مكتمل
  *      **لا يُصدِّر شيئاً**، والقسم المخفي لا يُصيَّر أصلاً.
  *
- * وما دون ذلك فالصفحة بلا بيانات مهيكلة. هذه هي الفجوة الحقيقية التي يكشفها
- * التقرير — لا «نسبة اكتمال» مطمئنة.
+ * وما دون ذلك — أي الصفحة الثابتة بلا قسم أسئلة — فبلا بيانات مهيكلة. هذه هي
+ * الفجوة الحقيقية التي يكشفها التقرير، لا «نسبة اكتمال» مطمئنة.
  */
 
 import type { PageKind, PageWithSections } from "@/lib/content-types";
 import { metaFieldState, type MetaFieldState } from "@/lib/seo/meta";
 import { pagePublicPath } from "@/lib/seo/site-paths";
+import { geoNode, postalAddressNode, sameAsList } from "@/lib/seo/jsonld";
+import { socialHrefs, type SiteSettings } from "@/lib/site-config";
 
 /** أنواع البيانات المهيكلة التي يُصدّرها هذا المستودع فعلاً */
-export type SchemaType = "LocalBusiness" | "ItemList" | "FAQPage";
+export type SchemaType =
+  | "Organization"
+  | "WebSite"
+  | "LocalBusiness"
+  | "ItemList"
+  | "Service"
+  | "BreadcrumbList"
+  | "FAQPage";
 
 export const SCHEMA_LABELS: Record<SchemaType, string> = {
+  Organization: "المؤسسة",
+  WebSite: "الموقع الإلكتروني",
   LocalBusiness: "نشاط تجاري محلي",
   ItemList: "قائمة الخدمات",
+  Service: "خدمة",
+  BreadcrumbList: "مسار التنقّل",
   FAQPage: "أسئلة شائعة",
 };
 
@@ -154,9 +172,19 @@ export function auditPage(page: PageWithSections): PageAudit {
     exportsFaq = true;
   }
 
+  /**
+   * ما تُصدّره هذه الصفحة **فعلاً** عند فتحها — مشتقّ من نوعها لا من أمنية.
+   * كل سطر هنا يقابل موضع تصيير حقيقياً مذكوراً في رأس الملف، ونقضه يبدأ بحذف
+   * `<PageJsonLd />` من صفحةٍ ما فيصير التقرير كاذباً في الاتجاه الأخطر:
+   * يطمئن المالك إلى بيانات لا تخرج.
+   */
   const jsonLd: SchemaType[] = [];
-  // الرئيسية وحدها تُصيّر <JsonLd /> — تحقّق: app/page.tsx السطر ٤١
-  if (page.kind === "home") jsonLd.push("LocalBusiness", "ItemList");
+  if (page.kind === "home") {
+    jsonLd.push("Organization", "WebSite", "LocalBusiness", "ItemList");
+  }
+  // الخدمة تُعرّف نفسها ومسارها؛ والمسار مسارَه وحده
+  if (page.kind === "service") jsonLd.push("Service", "BreadcrumbList");
+  if (page.kind === "corridor") jsonLd.push("BreadcrumbList");
   if (exportsFaq) jsonLd.push("FAQPage");
 
   const titleState = metaFieldState(page.meta.title, "title");
@@ -222,42 +250,179 @@ export function sortByUrgency(rows: PageAudit[]): PageAudit[] {
 /* فحص البيانات المهيكلة على مستوى الموقع (LocalBusiness في الرئيسية)   */
 /* ------------------------------------------------------------------ */
 
+/** ثلاث مجموعات تُقرأ سطراً واحداً: من نحن · أين نحن · كيف نعمل */
+export type BusinessFieldGroup = "identity" | "location" | "operation";
+
+export const BUSINESS_GROUP_LABELS: Record<BusinessFieldGroup, string> = {
+  identity: "الهوية والاتصال",
+  location: "الموقع الجغرافي",
+  operation: "التشغيل ونطاق الخدمة",
+};
+
 export type BusinessField = {
   key: string;
   label: string;
+  group: BusinessFieldGroup;
+  /**
+   * 🔒 **`warn` أو `info` — ولا `error` هنا أبداً.**
+   *
+   * الحقل الاختياري غير المملوء ليس عطباً: `jsonld.ts` لا يُدرجه أصلاً فتخرج
+   * البطاقة صحيحة ناقصةً لا كاذبة. وتلوينه أحمر يعلّم المالك تجاهل الأحمر، فيمرّ
+   * عليه يوماً عطبٌ حقيقي بلا انتباه — وهو ثمن أغلى من الحقل الناقص نفسه.
+   *
+   * والقسمة: `warn` لما له أثر مباشر في الترتيب المحلي، و`info` لما دونه.
+   */
+  severity: Exclude<IssueSeverity, "error">;
   present: boolean;
   /** ما أثر غيابه فعلاً */
   note: string;
 };
 
 /**
- * الحقول الاختيارية في `LocalBusiness` — `JsonLd.tsx` **لا يُدرجها إن كانت
- * فارغة**، فغيابها ليس خطأ برمجياً بل بيانات ناقصة يملأها المالك من الإعدادات.
+ * حقول بطاقة النشاط — وكل سطر هنا يعكس شرط الإدراج في `lib/seo/jsonld.ts`.
+ *
+ * ⚠ وحقلا العنوان والإحداثيات لا يُفحصان بنصّ مكتوب هنا بل **بمناداة الباني
+ * نفسه** (`postalAddressNode` و`geoNode`): لو تشدّد الباني يوماً (رفض إحداثي
+ * خارج مداه مثلاً) تشدّد الفحص معه في السطر نفسه. ونسخةُ شرطٍ ثانية هنا تعني
+ * شاشةً تقول «مضبوط» عن قيمة يرفضها التصيير صامتاً — وهو بالضبط النمط ٢ الذي
+ * يوجد هذا الملف لمنعه.
  */
-export function auditBusiness(input: {
-  phone: string | null;
-  description: string | null;
-  socials: (string | null)[];
-}): BusinessField[] {
-  const socials = input.socials.filter((s) => s !== null && s.trim() !== "");
+export function auditBusiness(settings: SiteSettings): BusinessField[] {
+  const business = settings.business;
+  /**
+   * نفس مسار التصيير حرفاً بحرف — لا نسخة عنه (انظر تعليق الدالة أعلاه):
+   * `socialHrefs` تطبّع المعرّف المجرّد إلى عنوان مطلق، ثم `sameAsList` تحرس
+   * الناتج كما تفعل في `JsonLd`. وقبل هذا كانت الشاشة تقرأ الخام فتقول «لا
+   * حسابات» عن حساباتٍ يعرضها التذييل — وهو عين ما وُجد هذا الملف ليمنعه.
+   */
+  const socials = sameAsList(socialHrefs(settings.socials));
+  const set = (value: string | null): boolean => (value ?? "").trim() !== "";
+
   return [
     {
       key: "telephone",
       label: "رقم الهاتف",
-      present: (input.phone ?? "").trim() !== "",
+      group: "identity",
+      severity: "warn",
+      present: set(settings.contact.phone),
       note: "بلا رقم لا تعرض جوجل زر الاتصال بجوار نتيجة الموقع.",
     },
     {
       key: "description",
       label: "الوصف الافتراضي",
-      present: (input.description ?? "").trim() !== "",
+      group: "identity",
+      severity: "warn",
+      present: set(settings.seo.defaultDescription),
       note: "الوصف نفسه يُستعمل في بطاقة النشاط وفي كل صفحة بلا وصف خاص.",
+    },
+    {
+      key: "logo",
+      label: "شعار العلامة",
+      group: "identity",
+      severity: "info",
+      present: set(settings.brand.logoUrl),
+      note: "الشعار عقدة صورة واحدة تشير إليها المؤسسة وبطاقة النشاط معاً — وبدونه تخرج النتيجة بلا أيقونة.",
+    },
+    {
+      key: "legalName",
+      label: "الاسم القانوني",
+      group: "identity",
+      severity: "info",
+      present: set(settings.company.legalName),
+      note: "يفصل الكيان المسجَّل عن الاسم التجاري في عقدة المؤسسة، ولا يُشتق من الاسم التجاري لأنه ادّعاء عن كيان مسجَّل.",
     },
     {
       key: "sameAs",
       label: "حسابات التواصل",
+      group: "identity",
+      severity: "info",
       present: socials.length > 0,
-      note: "روابط التواصل تربط الموقع بحساباته الرسمية في نظر محركات البحث.",
+      note: "اكتب اسم الحساب وحده (RentLimousine) فيُبنى عنوانه تلقائياً، أو الصق العنوان الكامل. وما لا يُبنى منه عنوان — قيمة فيها مسافات مثلاً — لا يُعلَن ولا يُعرض.",
+    },
+    {
+      key: "address",
+      label: "العنوان البريدي",
+      group: "location",
+      severity: "warn",
+      present: postalAddressNode(business) !== null,
+      note: "بلا جزء واحد من العنوان لا تُدرَج PostalAddress إطلاقاً، ولا يظهر النشاط في نتائج الخرائط المحلية.",
+    },
+    {
+      key: "addressLocality",
+      label: "المدينة",
+      group: "location",
+      severity: "warn",
+      present: set(business.addressLocality),
+      note: "المدينة أقوى إشارة ترتيب محلي — بحثٌ بنيّة محلية لا يصلك بدونها.",
+    },
+    {
+      key: "addressCountry",
+      label: "رمز الدولة",
+      group: "location",
+      severity: "warn",
+      present: set(business.addressCountry),
+      note: "بحرفين مثل EG — بدونه يبقى العنوان معلّقاً بلا بلد يُنسب إليه.",
+    },
+    {
+      key: "addressRegion",
+      label: "المحافظة",
+      group: "location",
+      severity: "info",
+      present: set(business.addressRegion),
+      note: "تدقّق موضع النشاط داخل الدولة ولا يشترطها جوجل.",
+    },
+    {
+      key: "postalCode",
+      label: "الرمز البريدي",
+      group: "location",
+      severity: "info",
+      present: set(business.postalCode),
+      note: "يرفع ثقة مطابقة العنوان، وغيابه لا يُبطل العنوان.",
+    },
+    {
+      key: "geo",
+      label: "الإحداثيات",
+      group: "location",
+      severity: "warn",
+      present: geoNode(business) !== null,
+      note: "خط العرض وخط الطول يخرجان معاً أو لا يخرجان — وواحدٌ منهما بلا الآخر (أو خارج مداه) لا يُدرَج إطلاقاً.",
+    },
+    {
+      key: "openingHours",
+      label: "ساعات العمل",
+      group: "operation",
+      severity: "info",
+      present: set(business.openingHours),
+      note: "بصيغة schema.org مثل Mo-Su 00:00-23:59 — تُظهر حالة «مفتوح الآن» بجوار النتيجة.",
+    },
+    {
+      key: "priceRange",
+      label: "نطاق السعر",
+      group: "operation",
+      severity: "info",
+      present: set(business.priceRange),
+      note: "إشارة مقارنة يعرضها جوجل بجوار النشاط، ولا علاقة لها بأي سعر محسوب.",
+    },
+    {
+      /**
+       * ⚠ الحقل الوحيد الذي **نقص** بهذه التوسعة لا زاد، والتصريح به هنا مقصود:
+       * كان `"EG"` مثبَّتاً في `JsonLd.tsx` يخرج لكل نسخة whitelabel مهما كان
+       * بلدها (نقض D-04)، فصار من الإعدادات — والقائمة الفارغة لا تُخرج شيئاً.
+       */
+      key: "areaServed",
+      label: "المناطق المخدومة",
+      group: "operation",
+      severity: "warn",
+      present: business.areaServed.length > 0,
+      note: "كانت مثبَّتة «EG» في الكود لكل نسخة من المنتج، وصارت من الإعدادات: الفارغة لا تُخرج الحقل أصلاً بدل أن تعلن بلداً لم تقله.",
     },
   ];
+}
+
+/** حقول مجموعة واحدة — لعرضها تحت عنوانها في الشاشة */
+export function businessFieldsByGroup(
+  fields: BusinessField[],
+  group: BusinessFieldGroup
+): BusinessField[] {
+  return fields.filter((field) => field.group === group);
 }

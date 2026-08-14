@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { recordRejectedAttempt } from "@/lib/audit/attempt";
 import { isMissingFunction, isMissingTable } from "@/lib/dispatch/settings";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
@@ -135,6 +136,14 @@ export async function recordPartnerPayout(formData: FormData) {
   });
 
   if (error) {
+    // 🔒 المحاولة المرفوضة تُسجَّل **هنا لا داخل الدالة**: استثناء الدالة أرجع
+    // معاملتها كاملة، فسطرٌ كُتب فيها لا وجود له (D-48). وهذه رحلة ثانية بعد
+    // الارتداد فتثبت وحدها. والمنعُ نفسه هو الحدث الجدير بالتسجيل: من حاول
+    // الدفع لشريك مدين لنا، ومتى.
+    await recordRejectedAttempt(supabase, "record_partner_payout", error, {
+      entity: "subcontractors",
+      entityId: subcontractor,
+    });
     const hint = (error.hint ?? "").trim();
     redirect(back(hint === "partner-owing" ? "owing" : rpcErrorCode(error), kept));
   }
@@ -289,6 +298,10 @@ export async function recordPartnerPayoutAdvance(formData: FormData) {
   });
 
   if (error) {
+    await recordRejectedAttempt(supabase, "record_partner_payout_advance", error, {
+      entity: "subcontractors",
+      entityId: subcontractor,
+    });
     const hint = (error.hint ?? "").trim();
     redirect(back(hint === "note-required" ? "advnote" : rpcErrorCode(error), kept));
   }

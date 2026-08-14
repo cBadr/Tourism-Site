@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { RenderSections } from "@/components/sections/render";
+import { ShareBar } from "@/components/site/share-bar";
 import { PromoBanners } from "@/components/booking/promo-banner";
 import { getPromoBanners } from "@/lib/discounts/banners";
 import JsonLd from "@/components/seo/JsonLd";
@@ -28,6 +29,8 @@ export async function generateMetadata(): Promise<Metadata> {
     description: page?.meta.description ?? undefined,
     path: "/",
     locale,
+    // خيارات سيو الصفحة الواحدة (منع الفهرسة، صورة المشاركة، المسار القانوني)
+    meta: page?.meta,
   });
 }
 
@@ -58,6 +61,25 @@ export default async function Home() {
         <RenderSections
           sections={page?.sections ?? []}
           settings={settings}
+          locale={locale}
+        />
+
+        {/* المشاركة العامة — والرئيسية إحدى صفحات التسويق الثلاث في عقد
+            `lib/export-types.ts` §٥ («المسارات والخدمات والرئيسية»): رابطها `/`
+            عام مفهرَس بلا سرّ فيه، بخلاف `/booking/[token]` الذي رابطه بيانات
+            الاعتماد نفسها (الشرح كاملاً في رأس `share-bar.tsx`). وهي أكثر
+            الثلاث قصداً لمن أراد أن يمرّر **الموقع كله** لا صفحةً منه.
+
+            والعنوان المُمرَّر هو عنوان سيو الصفحة لا نصّاً مكتوباً هنا (D-04).
+            و`generateMetadata` أعلاه تُسقط `title` عمداً كي يأخذ التبويب اسم
+            العلامة من قالب الجذر — وذاك اسم نافذة، أما نصّ المنشور فوصفُ صفحةٍ،
+            ومصدره `meta.title` كما في الصفحات الثلاث الأخرى حرفياً. وسقوطه
+            ينتهي إلى اسم العلامة من الإعدادات (لا إلى حرفٍ مكتوب) فلا يُنشر
+            رابطٌ بلا عنوان يوم تغيب قاعدة المحتوى. */}
+        <ShareBar
+          title={page?.meta.title ?? page?.title ?? settings.brand.name}
+          description={page?.meta.description}
+          path="/"
           locale={locale}
         />
       </main>

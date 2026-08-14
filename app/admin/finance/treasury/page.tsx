@@ -8,6 +8,9 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { ExportLink } from "@/components/admin/export-link";
+import { PrintButton } from "@/components/admin/print-button";
+import { PrintHeader } from "@/components/admin/print-header";
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +43,13 @@ import {
   SourceBadge,
   textOf,
 } from "../_components/finance-ui";
-import { cairoToday, rangeInstants, rangeParams, resolveRange } from "../_components/range";
+import {
+  cairoToday,
+  rangeInstants,
+  rangeParams,
+  rangeSentence,
+  resolveRange,
+} from "../_components/range";
 import { recordAdjustment } from "./actions";
 
 /**
@@ -230,8 +239,8 @@ export default async function TreasuryPage({
   }));
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="print-sheet mx-auto max-w-5xl space-y-6">
+      <div className="no-print flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 font-heading text-lg font-bold">
           <Landmark className="size-5 text-primary" />
           الخزينة
@@ -241,14 +250,58 @@ export default async function TreasuryPage({
           اعتماد إيصال، تسجيل مصروف، دفعة لمتعهد، أو تسوية يدوية بسبب مكتوب. الأرصدة
           مشتقة من هذه القيود وحدها.
         </HelpTip>
-        <Link
-          href={hrefWith("/admin/finance", rangeParams(range))}
-          className="ms-auto inline-flex items-center gap-1 text-sm text-primary hover:underline"
-        >
-          نظرة المالية العامة
-          <ArrowLeft className="size-3.5" />
-        </Link>
+        <div className="ms-auto flex flex-wrap items-center gap-3">
+          <PrintButton label="طباعة كشف الحساب" />
+          {/*
+            ⚠ **الملف يحمل الحساب المعروض لا كل الحسابات.** المسار يقبل غياب
+            `account` بمعنى «كل الحسابات» وهو ما تحتاجه مطابقة بنكية شاملة —
+            لكن هذه الشاشة كشفُ حسابٍ واحد بعينه، وزرٌّ فوقها يُخرج دفتر كل
+            الخزائن يعطي ملفاً لا يطابق ما تحته بلا أن يبدو أيٌّ منهما مخطئاً.
+            ومن أراد الكل يبدّل الحساب أو يحذف الوسيط من الرابط بيده.
+          */}
+          {entriesReady && (
+            <ExportLink
+              target={{
+                kind: "ledger",
+                from: range.from,
+                to: range.to,
+                account: accountId,
+              }}
+              label="تصدير الحركة (CSV)"
+              help={
+                <>
+                  ملف جدولي بقيود الفترة على هذا الحساب وحده — لا بطاقات الرصيد فوقه، فهي
+                  لحظية لا تخصّ فترة. والمبلغ فيه موجب دائماً وإشارته في عمود «الاتجاه»
+                  كما في الجدول، فلا يُجمع العمود بلا ترشيح. وسقف صفوفه معلَن في آخر سطر
+                  من الملف.
+                </>
+              }
+            />
+          )}
+          <Link
+            href={hrefWith("/admin/finance", rangeParams(range))}
+            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+          >
+            نظرة المالية العامة
+            <ArrowLeft className="size-3.5" />
+          </Link>
+        </div>
       </div>
+
+      {/*
+        اسم الحساب في الترويسة **شرط لا تحسين**: منتقي الحساب نموذجٌ لا يُطبع،
+        فورقةٌ بلا اسمه هي كشف حساب لا يقول أي حساب — وهي وحدة الشاشة كلها.
+      */}
+      <PrintHeader
+        title="كشف حساب خزينة"
+        meta={[
+          account ? { label: "الحساب", value: account.label } : null,
+          account ? { label: "النوع", value: accountKindLabel(account.kind) } : null,
+          { label: "فترة الحركات", value: rangeSentence(range) },
+          { label: "العملة", value: currency },
+        ]}
+        note="بطاقات الرصيد الأربع لحظية لا تخص فترة الحركات: هي صورة الحساب لحظة إصدار الورقة."
+      />
 
       {(!wired || missing !== null) && (
         <FinanceNotReady wired={wired} missing={missing ?? "دفتر الخزينة"} />
@@ -387,7 +440,8 @@ export default async function TreasuryPage({
                         <th className="p-2 text-start font-medium">الاتجاه</th>
                         <th className="p-2 text-start font-medium">المبلغ</th>
                         <th className="p-2 text-start font-medium">الملاحظة</th>
-                        <th className="p-2 text-start font-medium">السجل الأصلي</th>
+                        {/* عمود الروابط يُخفى برأسه وخانته معاً — خانةٌ بلا رأس تزيح الصف */}
+                        <th className="no-print p-2 text-start font-medium">السجل الأصلي</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -432,7 +486,7 @@ export default async function TreasuryPage({
                             <td className="max-w-[16rem] p-2 text-xs leading-relaxed">
                               {row.note ?? <span className="text-muted-foreground">—</span>}
                             </td>
-                            <td className="p-2 text-xs whitespace-nowrap">
+                            <td className="no-print p-2 text-xs whitespace-nowrap">
                               {origin ? (
                                 <Link
                                   href={origin.href}

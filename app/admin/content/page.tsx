@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Eye, EyeOff, Plus } from "lucide-react";
 
 import { HelpTip } from "@/components/shared/HelpTip";
+import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -12,6 +13,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { readPagePulse } from "@/lib/stats/pulse";
+import { createServerSupabase } from "@/lib/supabase/server";
 import type { PageWithSections } from "@/lib/content-types";
 import {
   COMMON_ERROR_MESSAGES,
@@ -85,7 +88,14 @@ function PageRow({ page, readOnly }: { page: PageWithSections; readOnly: boolean
 }
 
 export default async function ContentListPage({ searchParams }: PageProps<"/admin/content">) {
-  const [params, { pages, readOnly }] = await Promise.all([searchParams, getAdminContent()]);
+  // العميل يُنشأ أولاً لأن `readPagePulse` يحتاجه، وإنشاؤه لا يلمس الشبكة —
+  // فتبقى قراءة النبض متوازية مع قراءة الصفحات لا بعدها.
+  const supabase = await createServerSupabase();
+  const [params, { pages, readOnly }, pulse] = await Promise.all([
+    searchParams,
+    getAdminContent(),
+    readPagePulse(supabase, "/admin/content"),
+  ]);
   const wired = hasSupabaseEnv();
   const saved = params.saved === "1";
   const error = typeof params.error === "string" ? params.error : null;
@@ -118,6 +128,8 @@ export default async function ContentListPage({ searchParams }: PageProps<"/admi
         error={error}
         errorMessages={COMMON_ERROR_MESSAGES}
       />
+
+      <PagePulse data={pulse} />
 
       {KIND_ORDER.map((kind) => {
         const group = pages

@@ -28,12 +28,15 @@ const url = (qs: string) => `/portal/fleet?${qs}`;
 
 const MAX_LABEL = 120;
 const MAX_PLATE = 32;
+/** اللون وصفٌ لا معرّف — سقفٌ يمنع الفقرة، ولا قائمة مغلقة تُجبر «فضي» على «رمادي» */
+const MAX_COLOR = 40;
 
 type VehicleFields = {
   class_slug: string;
   label: string;
   model_year: number | null;
   plate: string | null;
+  color: string | null;
   seats: number | null;
   active: boolean;
 };
@@ -63,6 +66,7 @@ function readVehicle(formData: FormData, prefix = ""): VehicleFields | string {
     label,
     model_year: modelYear,
     plate: clamp(text(formData, p("plate")), MAX_PLATE),
+    color: clamp(text(formData, p("color")), MAX_COLOR),
     seats,
     active: formData.get(p("active")) != null,
   };
