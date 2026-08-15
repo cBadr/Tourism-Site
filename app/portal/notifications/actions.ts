@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { scanForPairing, sendPairingProof } from "@/lib/notifications/telegram-pairing";
+import { readTelegramBindCode } from "@/lib/partner-alerts-types";
 import { getSettings } from "@/lib/settings";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { portalSetupAccess } from "../_lib/session";
@@ -66,10 +67,19 @@ export async function saveAlertPrefs(formData: FormData) {
  * يعود ويضغط «تحققتُ» ⇒ هذا الإجراء يمسح آخر تحديثات البوت بحثاً عن رمزه هو.
  * التفصيل ومقاييس البوت في `lib/notifications/telegram-pairing.ts`.
  *
- * 🔒 **حارس الازدواج**: محادثةٌ واحدة لا تُربط بمتعهدين. لولاه لتلقّى الأول عروض
- * الثاني بتكاليفها — وهو نصّ ما يمنعه **D-19** (لا يعرف متعهدٌ تكلفة متعهدٍ آخر).
- * والفحص بمفتاح الخدمة لأن RLS تحجب عن الشريك صفوف غيره بحق، فلا يستطيع أن يرى
- * التصادم بنفسه. ولا يخرج منه إلى الواجهة إلا **رمزٌ** (`taken`) — لا اسم ولا صف.
+ * 🔒 **حارس الازدواج صار في القاعدة** (0057) — على **الجدول** لا هنا.
+ *
+ * كان الفحص استعلاماً بمفتاح الخدمة في هذا الملف، وأسقطناه لسببين:
+ *   ١. **مصدرا حقيقة**: القاعدة الآن تحمل القيد (فهرسٌ فريد + مُشغِّل)، ونسخةٌ
+ *      ثانية منه في TypeScript تفترق عنه عند أول تعديل — والفرق يظهر بتسريب.
+ *   ٢. وذاك الفحص كان يحرس **نصف الباب**: يسأل «هل لمتعهدٍ آخر هذه المحادثة؟»
+ *      ولا يسأل «هل هي وجهةُ فريق التشغيل؟» — وهو الشقّ **الأخطر**، لأن رسائل
+ *      التشغيل تحمل اسم العميل وهاتفه وسعره وهامشنا. وهو التصادم الذي وقع
+ *      فعلاً في قاعدة بدر (مقيسٌ 2026-08-15) ومرّ من هنا بلا اعتراض.
+ *
+ * والرفض يصل **رمزاً في `hint`** لا جملةً، فتترجمه الشاشة (`ERROR_MESSAGES`).
+ * ولا يخرج منه اسمُ الجهة المتصادمة أبداً: «مربوطة بحسابٍ آخر» يكفي الشريك
+ * ليصلح، ومعرفةُ **مَن** هي بعينها ما يمنعه D-20.
  */
 export async function linkTelegram() {
   const access = await portalSetupAccess();
@@ -79,20 +89,8 @@ export async function linkTelegram() {
   const scan = await scanForPairing(sub.id);
   if (!scan.ok) redirect(url(`error=${scan.issue}`));
 
-  const service = createServiceSupabase();
-  if (service) {
-    const clash = await service
-      .from("subcontractors")
-      .select("id")
-      .eq("telegram_chat_id", scan.chatId)
-      .neq("id", sub.id)
-      .limit(1);
-    if (clash.error) redirect(url("error=save"));
-    if ((clash.data?.length ?? 0) > 0) redirect(url("error=taken"));
-  }
-
   const res = await supabase.rpc("portal_set_telegram_chat_id", { p_chat_id: scan.chatId });
-  if (res.error) redirect(url("error=save"));
+  if (res.error) redirect(url(`error=${readTelegramBindCode(res.error) ?? "save"}`));
 
   // الإثبات لا الادّعاء: رسالةٌ تمرّ بالمسار نفسه الذي ستمرّ به العروض. وفشلُها
   // لا يُلغي ربطاً وقع — يُعلَن بعلامته الخاصة كي يبحث المتعهد عن السبب.

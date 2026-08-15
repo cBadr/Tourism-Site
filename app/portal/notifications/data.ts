@@ -61,6 +61,13 @@ export type PartnerAlertsView = {
   providerOk: Record<PartnerChannel, boolean>;
   /** هل سُجّل معرّف محادثة تليجرام؟ (لا يُرجع المعرّف نفسه — اتفاقية ٧) */
   hasTelegramId: boolean;
+  /**
+   * 🔴 ارتباطٌ خاطئ قائم: محادثته هي **نفسها** وجهة إشعارات فريق التشغيل
+   * (0057). ولا يُنشأ هذا الارتباط بعد اليوم — لكن ما سبق الحارس باقٍ، ويجب
+   * أن يُرى ويُفصل بنقرة لا أن يظلّ صامتاً. ولا يسرّب شيئاً: من يقرأ `true`
+   * هو **صاحب المحادثة** يفتحها في تطبيقه الآن.
+   */
+  telegramIsOps: boolean;
   pushDevices: number;
   hasEmail: boolean;
   /** مفتاح «راغب» — العامل الثاني في الإتاحة */
@@ -114,7 +121,20 @@ export const loadPartnerAlerts = cache(async (): Promise<AlertsResult> => {
   const access = await portalSetupAccess();
   if (!access.ok) return { state: "failed" };
 
-  const res = await access.supabase.rpc("portal_alert_prefs");
+  /**
+   * نداءان لا واحد — ونداءٌ ثانٍ **أرخص من عمودٍ ثانٍ عشر** في نوع إرجاع
+   * `portal_alert_prefs()`: تغييرُ نوع إرجاع دالةٍ حيّة يستلزم `drop` ثم إعادة
+   * كتابة جسمها كاملاً، وهو الطريق الذي وُلد منه انحدارُ `0031` (D-58).
+   *
+   * ⚠ وفشلُ الثاني **لا يُسقط الشاشة**: غيابُ الدالة يعني قاعدةً قبل `0057`،
+   * والحالة عندها «لا نعرف» لا «لا تصادم» — لكنها لا تمنع الشريك من قراءة
+   * قنواته. فتُقرأ `false` ولا يُعرض تحذيرٌ لا سند له (القاعدة ١٥).
+   */
+  const [res, opsRes] = await Promise.all([
+    access.supabase.rpc("portal_alert_prefs"),
+    access.supabase.rpc("portal_telegram_is_ops"),
+  ]);
+
   if (res.error) {
     return isSchemaMissing(res.error) ? { state: "hidden" } : { state: "failed" };
   }
@@ -184,6 +204,7 @@ export const loadPartnerAlerts = cache(async (): Promise<AlertsResult> => {
       hasAddress,
       providerOk,
       hasTelegramId,
+      telegramIsOps: hasTelegramId && !opsRes.error && opsRes.data === true,
       pushDevices,
       hasEmail,
       accepting: bool(row.accepting_offers, true),

@@ -867,6 +867,178 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ل) 🔴 محادثةُ تليجرام واحدة = **مستقبِلٌ واحد** (0057)
+--
+-- ما الذي أوجد هذا القسم؟ حالةٌ **مقيسة** على قاعدة بدر (2026-08-15): متعهدٌ
+-- واحد له `telegram_chat_id`، وقيمتُه **هي نفسها** وجهة إشعارات فريق التشغيل
+-- في `site_settings.notifications.telegramChatId` — والعمود كان بلا فهرسٍ فريد
+-- ولا مُشغِّل، مقروءاً من `pg_indexes` و`pg_constraint` لا من ملف هجرة (D-58).
+--
+-- ولماذا هو أخطر من تقاسم متعهدَين لمحادثة؟ لأن رسالة المتعهد **مُنقّاةٌ
+-- بالبناء** (لا عميل ولا سعرَ عميل ولا مرجع)، ورسالة **التشغيل** تحمل ذلك كله:
+-- `trip_assigned` فيها «سعر العميل» و«الهامش المحقق». فاجتماعُهما في محادثةٍ
+-- واحدة يسلّم المتعهدَ هامشَنا — نقضُ **D-19** و**D-20** معاً.
+--
+-- وكل تأكيدٍ هنا **ينفّذ كتابةً فعلاً** ويقرأ `hint` — لا يقرأ نصّ رسالة ولا
+-- يطابق نمطاً (النمط ١٩). والطفرة في آخره تثبت أن الفحص حيٌّ لا يزيّن التقرير.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_a    constant uuid := 'a5700000-0000-4000-8000-00000000001a';
+  v_b    constant uuid := 'a5700000-0000-4000-8000-00000000002b';
+  -- معرّفات لا يمكن أن تكون حقيقية (سالبة وطويلة)، ولا تبدأ بـ'10' فلا تلتبس
+  -- بفحص التنظيف في (ي)
+  v_chat constant text := '-9007199254740991';
+  v_ops  constant text := '-9007199254740992';
+  v_ok   boolean;
+  v_hint text;
+begin
+  begin
+    insert into public.subcontractors (id, company_name, phone, status)
+    values (v_a, 'TG_BIND أ', '01000005711', 'approved'),
+           (v_b, 'TG_BIND ب', '01000005712', 'approved');
+
+    -- (ل-١) الارتباط الأول يمرّ — وإلا كان ما بعده يقيس عطلاً لا حارساً
+    update public.subcontractors set telegram_chat_id = v_chat where id = v_a;
+    if not exists (select 1 from public.subcontractors
+                   where id = v_a and telegram_chat_id = v_chat) then
+      raise exception '(ل-١) الارتباط الأول لم يُكتب — كل ما بعده يقيس عطلاً';
+    end if;
+
+    -- (ل-٢) والثاني **يُرفض** — لا يُنقل. ونقلُه كان سيُسكت عروضَ الأول بلا أثر
+    v_ok := false; v_hint := null;
+    begin
+      update public.subcontractors set telegram_chat_id = v_chat where id = v_b;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ل-٢) محادثةٌ واحدة قُبلت لمتعهدَين — كلٌّ يقرأ مستحق الآخر (D-20)';
+    end if;
+    if v_hint is distinct from 'telegram-taken' then
+      raise exception '(ل-٢) الرفض خرج بـ[%] لا بـtelegram-taken — الواجهة كانت ستعرض نصّ Postgres خاماً على شريك',
+        coalesce(v_hint, '∅');
+    end if;
+    -- ولم يُنقل شيء: الأول ما زال صاحب المحادثة
+    if not exists (select 1 from public.subcontractors
+                   where id = v_a and telegram_chat_id = v_chat) then
+      raise exception '(ل-٢) الارتباط سُرق من الأول — وهو ما رُفض صراحةً في 0057';
+    end if;
+
+    /*
+     * (ل-٣) 🔴 الشقّ الأخطر: محادثةٌ = وجهةُ فريق التشغيل.
+     *
+     * ⚠ ولا يُقاس على الوجهة الحقيقية: هي في قاعدة بدر اليوم **مرتبطةٌ أصلاً
+     * بمتعهد**، فيسبق فرعُ `telegram-taken` الفرعَ المقصود ويمرّ الفحص على
+     * السبب الخطأ. فحصٌ ناتجُه يتغيّر بتغيّر بيانات المالك ليس فحصاً — فتُضبط
+     * الوجهة هنا على قيمةٍ صناعية لا يملكها أحد، داخل المعاملة الفرعية نفسها.
+     */
+    update public.site_settings
+       set value = jsonb_set(value, '{telegramChatId}', to_jsonb(v_ops))
+     where key = 'notifications';
+
+    v_ok := false; v_hint := null;
+    begin
+      update public.subcontractors set telegram_chat_id = v_ops where id = v_b;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ل-٣) وجهةُ التشغيل قُبلت لمتعهد — تصله رسائل فيها اسم العميل وسعره وهامشنا (D-19)';
+    end if;
+    if v_hint is distinct from 'telegram-is-ops' then
+      raise exception '(ل-٣) خرج بـ[%] لا بـtelegram-is-ops', coalesce(v_hint, '∅');
+    end if;
+
+    -- (ل-٤) والاتجاه المعاكس — نصفُ الباب الذي يُنسى: المالك يضبط وجهة التشغيل
+    -- على محادثةِ متعهدٍ مربوط، فيصله **كلُّ** إشعارٍ تشغيلي في المنصة
+    v_ok := false; v_hint := null;
+    begin
+      update public.site_settings
+         set value = jsonb_set(value, '{telegramChatId}', to_jsonb(v_chat))
+       where key = 'notifications';
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ل-٤) وجهةُ التشغيل قُبلت على محادثةِ متعهد — كلُّ عميلٍ في القاعدة كان سيُكشف لا حجزٌ واحد';
+    end if;
+    if v_hint is distinct from 'ops-telegram-taken' then
+      raise exception '(ل-٤) خرج بـ[%] لا بـops-telegram-taken', coalesce(v_hint, '∅');
+    end if;
+
+    -- (ل-٥) والفصل يبقى ممكناً دائماً — وإلا حُبس الشريك في ارتباطٍ خاطئ،
+    -- وسقط مخرجُ المالك من الشاشتين معاً
+    update public.subcontractors set telegram_chat_id = null where id = v_a;
+    update public.subcontractors set telegram_chat_id = ''   where id = v_b;
+    update public.subcontractors set telegram_chat_id = v_chat where id = v_a;
+
+    /*
+     * (ل-٦) 🔒 **أمانُ الصفِّ القائم** — وهو ما يجعل الهجرة قابلة للتطبيق على
+     * قاعدة بدر بلا لمس صفّ: تعديلٌ لا يمسّ الوجهة يمرّ على صفٍّ **مرتبطٍ
+     * ومتصادم**. ولولاه لصار كلُّ تعديلٍ إداري على ذلك المتعهد (اسم · هاتف ·
+     * حالة) يفشل بسبب عمودٍ لم يُلمس — أي لعجز المالك حتى عن إيقافه.
+     */
+    -- الصفُّ الموروث يُصنع بتعطيل المُشغِّل لحظةً — وهي الطريقة الوحيدة الصادقة
+    -- لمحاكاة حالةٍ كُتبت **قبل** وجود الحارس. والـDDL معاملاتيٌّ فيرجع معنا.
+    alter table public.subcontractors disable trigger subcontractors_telegram_guard;
+    update public.subcontractors set telegram_chat_id = v_ops where id = v_a;
+    alter table public.subcontractors enable trigger subcontractors_telegram_guard;
+
+    -- والآن: صفٌّ قيمتُه **مرفوضةٌ اليوم**، ومع ذلك يقبل كل تعديلٍ لا يمسّها
+    update public.subcontractors set status = 'suspended', company_name = 'TG_BIND أ٢'
+     where id = v_a;
+    -- وحتى ذكرُ العمود نفسه بقيمته الحالية يمرّ — وPostgREST يرسل الصفَّ كاملاً
+    -- من كل شاشةٍ إدارية، فلولا هذا لعجز المالك عن إيقاف ذلك المتعهد أصلاً
+    update public.subcontractors set telegram_chat_id = telegram_chat_id where id = v_a;
+    if not exists (select 1 from public.subcontractors
+                   where id = v_a and status = 'suspended') then
+      raise exception '(ل-٦) تعديلٌ لا يمسّ الوجهة رُفض على صفٍّ موروث — المالك لا يستطيع إيقاف متعهده';
+    end if;
+
+    -- ويبقى تغييرُها فعلاً مرفوضاً: الإرث لا يفتح الباب، يترك ما مضى وحده
+    update public.subcontractors set telegram_chat_id = null where id = v_a;
+
+    /*
+     * (ل-٧) 🔬 الطفرة — «ماذا يثبت (ل-٣) فعلاً؟»
+     *
+     * تُبنى نسخةٌ مشوّهة من `telegram_chat_conflict` لا ترى شيئاً أبداً، ويُثبَت
+     * أن الكتابة التي رفضها (ل-٣) **تنجح** حينئذ. لو مرّت الطفرة بلا فرق لكان
+     * (ل-٣) تأكيداً ميّتاً يزيّن التقرير. والـDDL معاملاتيٌّ في Postgres،
+     * فالإرجاع يعيد الدالة الأصلية بلا خطوة تنظيف.
+     */
+    create or replace function public.telegram_chat_conflict(p_chat_id text, p_subcontractor uuid)
+    returns text language sql immutable as $mut$ select null::text $mut$;
+
+    update public.site_settings
+       set value = jsonb_set(value, '{telegramChatId}', to_jsonb(v_ops))
+     where key = 'notifications';
+
+    v_ok := false;
+    begin
+      update public.subcontractors set telegram_chat_id = v_ops where id = v_b;
+      v_ok := true;
+    exception when others then
+      null;
+    end;
+    if not v_ok then
+      raise exception '(ل-٧) الطفرة لم تُسقط الفحص — أي أن (ل-٣) لا يقيس `telegram_chat_conflict` بل شيئاً آخر';
+    end if;
+
+    raise exception 'TG_BIND_TESTS_ROLLBACK';
+  exception
+    when others then
+      if sqlerrm <> 'TG_BIND_TESTS_ROLLBACK' then raise; end if;
+  end;
+
+  raise notice '✔ (ل) محادثةٌ واحدة = مستقبِلٌ واحد: الثاني يُرفض بـtelegram-taken ولا يُسرق الارتباط · ووجهةُ التشغيل تُرفض بـtelegram-is-ops · والاتجاه المعاكس بـops-telegram-taken · والفصل والتعديل غير الماسّ يمرّان · وطفرةٌ بُنيت فأسقطت الفحص — فهو حيّ';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ي) 🔒 لم يبقَ أثر — وهذه **قاعدة الإنتاج نفسها**
 -- ----------------------------------------------------------------------------
 do $$
@@ -925,6 +1097,6 @@ begin
   perform set_config('request.jwt.claim.sub', '', false);
   perform set_config('request.jwt.claims', '', false);
 
-  raise notice 'ALL PASSED — التوجيه صار لكل مستقبِل لا لإعدادات المالك: الثنائي يبقى ops بقنوات المالك والرباعي يكتب قنوات المتعهد نفسه · و«بالغ» لا يشمل الصندوق ولا مزوّداً مطفأً · والإتاحة عاملان مستقلان · والحوض مطابقٌ حين الكل متاح ويتخطّى الموقِفَ وحده ويعود بالجميع حين لا متاح · وتعذّرُ البلوغ مقروءٌ من الصف فيبقى الاحتياطي حيّاً · والصندوق بلا مفتاحٍ يخصّ العميل · وأربعُ طفراتٍ بُنيت وشُغّلت فمُسكت كلها · و🔴 مرجعُ العميل لا يبلغ سطحاً يراه المتعهد (لا في الحمولة العامة ولا في صفوف البث ولا في الصندوق ولا في ردّ القبول) والتشغيل يحتفظ بمرجعه · وصفر truncate/trigger/references لدورَي المتصفح — وصفر أثر';
+  raise notice 'ALL PASSED — التوجيه صار لكل مستقبِل لا لإعدادات المالك: الثنائي يبقى ops بقنوات المالك والرباعي يكتب قنوات المتعهد نفسه · و«بالغ» لا يشمل الصندوق ولا مزوّداً مطفأً · والإتاحة عاملان مستقلان · والحوض مطابقٌ حين الكل متاح ويتخطّى الموقِفَ وحده ويعود بالجميع حين لا متاح · وتعذّرُ البلوغ مقروءٌ من الصف فيبقى الاحتياطي حيّاً · والصندوق بلا مفتاحٍ يخصّ العميل · وأربعُ طفراتٍ بُنيت وشُغّلت فمُسكت كلها · و🔴 مرجعُ العميل لا يبلغ سطحاً يراه المتعهد (لا في الحمولة العامة ولا في صفوف البث ولا في الصندوق ولا في ردّ القبول) والتشغيل يحتفظ بمرجعه · وصفر truncate/trigger/references لدورَي المتصفح · و🔴 محادثةُ تليجرام واحدة = مستقبِلٌ واحد (الثاني يُرفض ولا يُسرق الارتباط · ووجهةُ التشغيل مرفوضة في الاتجاهين · والصفُّ الموروث يبقى قابلاً للتعديل) — وصفر أثر';
 end;
 $$;

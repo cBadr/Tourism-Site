@@ -102,6 +102,48 @@ export function urlBase64ToUint8Array(base64: string): Uint8Array {
 }
 
 /**
+ * عائلة المتصفح — لأجل خطوات **رفع الحظر** وحدها، لا لأي قرار تقني.
+ *
+ * ⚠ ولماذا لا يكفي `describeDevice()` أدناه؟ لأنه يصنع نصّاً للعرض («Chrome ·
+ * ويندوز»)، وهذا يصنع **فرعاً**: مسار الإعدادات يختلف بين Chrome وEdge حتى وهما
+ * على المحرّك نفسه، ويختلف على آيفون عنه على الحاسوب. وخلطُهما كان سيجعل تغيير
+ * نصٍّ يكسر فرعاً.
+ *
+ * 🔒 **و`other` ليست فشلاً بل تعهّد**: كل ما لم نتحقّق من مسار إعداداته يقع
+ * فيها، فيُوصف له المكان وصفاً عامّاً — لأن اختراع اسم قائمةٍ لا وجود لها يُنتج
+ * بالضبط ما جاءت هذه الشاشة لتمنعه: شريكٌ يبحث عمّا ليس هناك ثم يستنتج العطل.
+ */
+export type BrowserFamily =
+  | "chrome"
+  | "chrome-android"
+  | "edge"
+  | "firefox"
+  | "safari-mac"
+  | "ios"
+  | "other";
+
+export function detectBrowserFamily(): BrowserFamily {
+  const ua = window.navigator.userAgent;
+
+  // آيفون/آيباد أولاً: كل متصفحات iOS تعمل على WebKit، والإذن يُدار من إعدادات
+  // النظام لا من المتصفح — فالمنصة هي الفرع لا اسم المتصفح
+  if (isApplePlatform()) return "ios";
+
+  const android = /Android/.test(ua);
+
+  // ⚠ الترتيب مقصود: Edge وOpera وSamsung وBrave كلها تحمل `Chrome/` في نصّها،
+  //   ومسار إعداداتها مختلف. فمن لم نتحقّق من مساره يسقط في `other` عمداً —
+  //   وذلك أوفق من مسارٍ يبدو دقيقاً ولا وجود له على شاشته.
+  if (/Edg\/|EdgA\//.test(ua)) return android ? "other" : "edge";
+  if (/OPR\/|Opera|SamsungBrowser\/|YaBrowser|Vivaldi/.test(ua)) return "other";
+  // فايرفوكس أندرويد: لم نتمكّن من التحقق من مسار إعداداته ⇒ الوصف العام
+  if (/Firefox\/|FxiOS/.test(ua)) return android ? "other" : "firefox";
+  if (/Chrome\//.test(ua)) return android ? "chrome-android" : "chrome";
+  if (/Safari\//.test(ua)) return "safari-mac";
+  return "other";
+}
+
+/**
  * وصفٌ قصير للجهاز — «Chrome · أندرويد».
  *
  * ⚠ **ولماذا لا نرسل `User-Agent` كاملاً؟** لأن العمود يُعرض في قائمة الأجهزة

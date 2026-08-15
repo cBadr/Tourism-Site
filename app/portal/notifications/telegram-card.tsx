@@ -1,4 +1,4 @@
-import { ExternalLink, MessageCircle } from "lucide-react";
+import { ExternalLink, MessageCircle, ShieldAlert } from "lucide-react";
 
 import { Notice } from "@/components/portal/portal-ui";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -55,6 +55,45 @@ export async function TelegramCard({
   }
 
   const deepLink = pairingDeepLink(bot.username, code);
+
+  /**
+   * 🔴 ارتباطٌ خاطئ سبق الحارس (0057): هذه المحادثة هي **نفسها** وجهة إشعارات
+   * فريق التشغيل. ولا يمكن إنشاء مثله بعد اليوم — لكن ما وقع قبله لا يزول
+   * بحارسٍ يمنع الجديد، ولا يجوز أن يبقى صامتاً: رسائل التشغيل تحمل اسم العميل
+   * وهاتفه وسعره وهامشنا، ورسائل المتعهد لا تحملها — واجتماعُهما في محادثةٍ
+   * واحدة هو نقضُ D-19 بعينه.
+   *
+   * والبطاقة تسبق كل شيء في الشاشة وتقول **الفعل** لا الوصف: زرُّ الفصل هنا،
+   * لا في سطرٍ يليها.
+   */
+  if (view.telegramIsOps) {
+    return (
+      <Card className="gap-3 border border-red-300 bg-red-50 p-5 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
+        <div className="flex flex-wrap items-center gap-2">
+          <ShieldAlert className="size-5 shrink-0" aria-hidden="true" />
+          <span className="font-heading text-base font-bold">
+            هذه المحادثة مستعمَلة لغرضٍ آخر — افصلها
+          </span>
+        </div>
+        <p className="text-sm leading-relaxed">
+          حساب تليجرام المربوط هنا هو <b>نفسه</b> الحساب الذي تصل إليه إشعارات إدارة
+          المنصة. ورسائل الإدارة تحتوي بيانات لا تخصّك — أسماء عملاء وأرقامهم وأسعارهم —
+          فتصلك على المحادثة نفسها التي تنتظر فيها عروض رحلاتك، ويختلط الاثنان.
+        </p>
+        <p className="text-sm leading-relaxed">
+          افصل الربط من هنا، ثم أعِد الربط من <b>حساب تليجرام مستقل</b> خاص بهذه الشركة.
+          ولن تُقبل المحادثة نفسها مرة أخرى.
+        </p>
+        <div>
+          <form action={unlinkTelegram}>
+            <Button type="submit" variant="outline" size="sm">
+              فصل تليجرام الآن
+            </Button>
+          </form>
+        </div>
+      </Card>
+    );
+  }
 
   if (view.hasTelegramId) {
     return (

@@ -64,7 +64,7 @@ import {
   type SubcontractorView,
   type VehicleView,
 } from "../_components/subcontractor-ui";
-import { resendInvite, setSubcontractorStatus } from "../actions";
+import { resendInvite, setSubcontractorStatus, unlinkPartnerTelegram } from "../actions";
 
 /**
  * ملف المتعهد — كل ما يخص شريكاً واحداً في شاشة عمل واحدة:
@@ -137,6 +137,12 @@ type Loaded = {
    */
   blockDispatch: boolean | null;
   currency: string;
+  /**
+   * حالة ربط تليجرام كما تقولها القاعدة (`admin_partner_telegram`، 0057).
+   * `null` = لم تُقرأ (قاعدة قبل الهجرة) — و«لم يُقرأ» ليس «غير مربوط»،
+   * فلا يُعرض عندها سطرٌ يدّعي معرفةً (القاعدة ١٥).
+   */
+  telegram: { linked: boolean; conflict: string | null } | null;
 };
 
 /** قراءة مقاصة شريك واحد — كل رقم محسوب في Postgres، ولا جمع هنا */
@@ -186,6 +192,7 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     settlement: null,
     blockDispatch: null,
     currency: "EGP",
+    telegram: null,
   };
 
   const supabase = await createServerSupabase();
@@ -197,8 +204,16 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
 
   const sub = readSubcontractor(subRes.data as Record<string, unknown>);
 
-  const [vehiclesRes, listsRes, pricing, profileRes, settlementRes, creditRes, currencyRes] =
-    await Promise.all([
+  const [
+    vehiclesRes,
+    listsRes,
+    pricing,
+    profileRes,
+    settlementRes,
+    creditRes,
+    currencyRes,
+    telegramRes,
+  ] = await Promise.all([
       supabase.from("subcontractor_vehicles").select("*").eq("subcontractor_id", id),
       supabase
         .from("price_lists")
@@ -214,6 +229,14 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
       readPartnerCredit(supabase),
       // رمز العملة من قاعدة البيانات لا من الكود — نفس مصدر بقية أسعار الموقع
       supabase.from("pricing_settings").select("currency").limit(1).maybeSingle(),
+      /**
+       * حالة ربط تليجرام — **بدالة لا بقراءة العمود**. الصفّ مقروءٌ هنا أصلاً
+       * بـ`select("*")`، لكن الحكم «هل يتصادم؟» يعيش في القاعدة مرةً واحدة
+       * (`telegram_chat_conflict`) — ومقارنتُه ثانيةً في TypeScript تصنع مصدرَي
+       * حقيقة يفترقان، وأولُ افتراقٍ بينهما يظهر بتسريب لا بخطأ بناء.
+       * 🔒 ولا يخرج منها المعرّف نفسه: بوليان ورمزٌ فقط.
+       */
+      supabase.rpc("admin_partner_telegram", { p_subcontractor: id }),
     ]);
 
   const vehicles = vehiclesRes.error
@@ -262,7 +285,21 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     // `loaded: false` تعني «لم يُقرأ الصف» — وهي ليست «الحجب مطفأ»
     blockDispatch: creditRes.loaded ? creditRes.settings.blockDispatch : null,
     currency: (!currencyRes.error && asText(currencyRes.data?.currency)) || blank.currency,
+    telegram: readTelegramState(telegramRes),
   };
+}
+
+/** صفُّ `admin_partner_telegram` ⇒ الشكل الذي تعرضه الشاشة، أو `null` إن تعذّرت قراءته */
+function readTelegramState(
+  res: { data: unknown; error: unknown } | null
+): { linked: boolean; conflict: string | null } | null {
+  if (!res || res.error) return null;
+  const row = (Array.isArray(res.data) ? res.data[0] : res.data) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) return null;
+  const conflict = asText(row.conflict);
+  return { linked: row.linked === true, conflict };
 }
 
 /** سطر «تسمية ← قيمة» داخل بطاقة — نفس سطر شاشة تفاصيل الطلب */
@@ -592,6 +629,7 @@ export default async function SubcontractorProfilePage({
     settlement,
     blockDispatch,
     currency,
+    telegram,
   } = await loadSubcontractor(id);
   if (ready && !sub) notFound();
 
@@ -613,6 +651,8 @@ export default async function SubcontractorProfilePage({
     approvedlist:
       "اعتُمدت القائمة — أسعارها تدخل التسعير فوراً ما دام حساب المتعهد معتمداً.",
     rejectedlist: "رُفضت القائمة وعادت إلى المتعهد بملاحظتك.",
+    tgunlinked:
+      "فُصل ربط تليجرام عن هذا المتعهد — لن تصله عروض عليه حتى يربط حساباً مستقلاً من بوابته.",
   };
 
   if (!sub) {
@@ -801,6 +841,60 @@ export default async function SubcontractorProfilePage({
               "—"
             )}
           </Row>
+          {/*
+            ربط تليجرام — القناة **الوحيدة** التي تبلغ متعهداً اليوم، فحالتها
+            معلومةٌ تشغيلية لا تفصيلاً: متعهدٌ غير مربوط يتخطّاه التوزيع بصمت.
+
+            🔴 والتصادم يُعرض بحمرة ومعه مخرجُه: `telegram-is-ops` تعني أن هذه
+            المحادثة هي وجهةُ إشعارات الإدارة نفسها — فتصل المتعهدَ رسائلُ فيها
+            اسم العميل وهاتفه وسعره وهامشنا (نقض D-19). وحارسُ `0057` يمنع
+            إنشاء مثله بعد اليوم ولا يزيل ما سبقه، فالمخرج زرٌّ هنا.
+            و«لم يُقرأ» (‏`telegram === null`) لا يُعرض أصلاً — لا يُقال «غير
+            مربوط» عمّا لم نقرأه (القاعدة ١٥).
+          */}
+          {telegram ? (
+            <Row
+              label="تليجرام"
+              help="المتعهد يربط محادثته بنفسه من «قنوات التنبيه» في بوابته. المحادثة الواحدة تخصّ جهة واحدة — لا تُربط بمتعهدين ولا تكون وجهة إشعارات الإدارة في الوقت نفسه."
+            >
+              {telegram.conflict === "telegram-is-ops" ? (
+                <span className="inline-flex flex-wrap items-center gap-2 text-red-700 dark:text-red-300">
+                  <Ban className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="font-semibold">مربوط بمحادثة إشعارات الإدارة نفسها</span>
+                </span>
+              ) : telegram.conflict === "telegram-taken" ? (
+                <span className="inline-flex flex-wrap items-center gap-2 text-red-700 dark:text-red-300">
+                  <Ban className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="font-semibold">المحادثة نفسها مربوطة بمتعهد آخر</span>
+                </span>
+              ) : telegram.linked ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <BadgeCheck className="size-4 text-emerald-600" />
+                  مربوط — تصله عروض الرحلات
+                </span>
+              ) : (
+                <span className="text-amber-700 dark:text-amber-300">
+                  غير مربوط — لا تصله عروض على تليجرام
+                </span>
+              )}
+            </Row>
+          ) : null}
+
+          {telegram?.conflict ? (
+            <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm leading-relaxed text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
+              <p>
+                {telegram.conflict === "telegram-is-ops"
+                  ? "هذه المحادثة هي وجهة إشعارات الإدارة، ورسائلها تحمل اسم العميل ورقمه وسعره وهامشنا. فصلها من هنا، ثم اطلب من المتعهد الربط من حساب تليجرام مستقل."
+                  : "المحادثة نفسها مسجَّلة لمتعهد آخر، فيقرأ كلٌّ منهما مستحق الآخر. افصلها من هنا ثم اطلب منه الربط من حسابه هو."}
+              </p>
+              <form action={unlinkPartnerTelegram.bind(null, sub.id)} className="mt-2">
+                <Button type="submit" variant="outline" size="sm">
+                  فصل تليجرام عن هذا المتعهد
+                </Button>
+              </form>
+            </div>
+          ) : null}
+
           <div className="pt-2">
             <form action={resendInvite.bind(null, sub.id)}>
               <Button type="submit" variant="outline" size="sm" disabled={!sub.email}>

@@ -239,3 +239,60 @@ export type PartnerRoutingRow = {
   prefs: Omit<PartnerAlertPrefsRow, "subcontractor_id" | "updated_at">;
   pushEndpoints: number;
 };
+
+// ---------------------------------------------------------------------------
+// (٩) ارتباط المحادثة — محادثةٌ واحدة = مستقبِلٌ واحد (0057)
+// ---------------------------------------------------------------------------
+
+/**
+ * لماذا وُجد هذا القسم؟ لأن العمود `subcontractors.telegram_chat_id` وُلد في
+ * `0054` **بلا قيدٍ واحد** (مقيسٌ من `pg_indexes` و`pg_constraint`، لا من ملف
+ * الهجرة — D-58): لا فهرسَ فريداً ولا مُشغِّل. فكان تصادمان ممكنين، وهما ليسا
+ * سواءً:
+ *
+ * | التصادم | ما يتسرّب |
+ * |---|---|
+ * | متعهدان يتقاسمان محادثة | كلٌّ يقرأ **مستحق** الآخر ⇒ تكاليف منافسه (D-20) |
+ * | متعهدٌ = وجهةُ **فريق التشغيل** | 🔴 رسائل التشغيل فيها اسم العميل وهاتفه و**سعر العميل والهامش المحقق** ⇒ نقضٌ مباشر لـ**D-19** |
+ *
+ * ورسالةُ المتعهد مُنقّاةٌ بالبناء (ترويسة `lib/dispatch/messages.ts`)، ورسالةُ
+ * التشغيل ليست كذلك — وطبقةُ التسليم تقرأ لكلٍّ وجهتَه **ولا تقارنهما أبداً**.
+ * فالحارس يجب أن يكون في القاعدة على **الجدول**، لا في المسار الذي نتذكّره.
+ */
+
+/**
+ * رموز رفض الارتباط. 🔒 **رمزٌ لا جملة**: القاعدة ترفعها في `hint`، والواجهة
+ * وحدها تؤلّف العربية — وإلا وصل الشريكَ نصُّ Postgres الخام
+ * («duplicate key value violates unique constraint»).
+ */
+export const TELEGRAM_BIND_CODES = [
+  /** المحادثة مربوطة بمتعهدٍ آخر — والقرار **رفضٌ لا نقل** (انظر أدناه) */
+  "telegram-taken",
+  /** المحادثة هي وجهة إشعارات فريق التشغيل — أخطر الشقّين */
+  "telegram-is-ops",
+  /** الاتجاه المعاكس: المالك يضبط وجهة التشغيل على محادثةِ متعهدٍ مربوط */
+  "ops-telegram-taken",
+] as const;
+export type TelegramBindCode = (typeof TELEGRAM_BIND_CODES)[number];
+
+export function isTelegramBindCode(value: unknown): value is TelegramBindCode {
+  return typeof value === "string" && (TELEGRAM_BIND_CODES as readonly string[]).includes(value);
+}
+
+/**
+ * قراءة رمز الرفض من خطأ القاعدة.
+ *
+ * 🔒 **ولا تقرأ نصّ الرسالة أبداً** — النصّ عربيٌّ للسجل ومحرر SQL، ومطابقتُه
+ * تنكسر بأول تحسينٍ لصياغته (النمط ١٩ في `INDEX.md`: الكاشف الذي يقرأ النصّ
+ * يكذب في الاتجاهين). القناتان المقروءتان اثنتان لا ثالث لهما:
+ *   • `hint` — رمزُ المُشغِّل، وهو المسار العادي.
+ *   • `23505` — الفهرس الفريد، ولا يُرى إلا في **سباقٍ حقيقي**: نقرتان
+ *     متزامنتان تمرّان معاً من `exists` في المُشغِّل ولا تمرّان من الفهرس.
+ *     وسقوطُه على `telegram-taken` هو معناه بالضبط.
+ */
+export function readTelegramBindCode(error: unknown): TelegramBindCode | null {
+  if (typeof error !== "object" || error === null) return null;
+  const e = error as { hint?: unknown; code?: unknown };
+  if (isTelegramBindCode(e.hint)) return e.hint;
+  return e.code === "23505" ? "telegram-taken" : null;
+}

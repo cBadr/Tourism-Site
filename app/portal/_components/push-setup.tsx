@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BellOff,
   BellRing,
@@ -21,8 +21,10 @@ import type { PushDeviceView } from "@/lib/partner-alerts-types";
 import { cn } from "@/lib/utils";
 import {
   describeDevice,
+  detectBrowserFamily,
   readPushCapability,
   urlBase64ToUint8Array,
+  type BrowserFamily,
   type PushCapability,
 } from "./push-support";
 
@@ -136,6 +138,8 @@ function matchesKey(subscription: PushSubscription, desired: Uint8Array): boolea
 
 export function PushSetup({ className }: { className?: string }) {
   const [capability, setCapability] = useState<PushCapability | null>(null);
+  /** يُقرأ مع القدرة في التأثير نفسه — لا شيء يلمس `navigator` قبل التركيب */
+  const [browser, setBrowser] = useState<BrowserFamily>("other");
   const [permission, setPermission] = useState<NotificationPermission | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -175,6 +179,7 @@ export function PushSetup({ className }: { className?: string }) {
       const cap = readPushCapability();
       if (!mounted.current) return;
       setCapability(cap);
+      setBrowser(detectBrowserFamily());
       setPermission("Notification" in window ? Notification.permission : null);
 
       const key = await callApi<{ ready: boolean; publicKey: string | null }>("/api/push/key");
@@ -219,10 +224,17 @@ export function PushSetup({ className }: { className?: string }) {
       setPermission(decision);
 
       if (decision === "denied") {
-        setFeedback({
-          tone: "danger",
-          text: "مُنعت التنبيهات على هذا المتصفح. لن يسألك ثانيةً — أعد السماح من إعداداته كما هو موضّح أدناه.",
-        });
+        /**
+         * 🔒 **لا رسالةَ هنا — وهذا الغياب مقصود.** ‏`setPermission("denied")`
+         * أعلاه يقلب العرض إلى `<PermissionBlocked>`، وهي بطاقةٌ تقول الحالة
+         * نفسها **ومعها الخطوات**. فرسالةٌ عابرة فوقها تُنتج بطاقتين حمراوين
+         * متلاصقتين تقولان الشيء ذاته بصياغتين — فيُقرأ الحال جداراً لا حالةً
+         * قابلة للإصلاح، ويضيع سطرُ الخطوات بين ضجيجٍ يسبقه.
+         *
+         * والقاعدة المشتقّة لمن يوسّع الملف: **حين تغطّي البطاقةُ القائمة حالةً،
+         * تُمسح العابرة ولا تُضاف إليها.** ‏`setFeedback(null)` في أول المعالج
+         * يكفي، وهذا السطر يوثّق أنه اعتمادٌ لا سهو.
+         */
         return;
       }
       if (decision !== "granted") {
@@ -412,7 +424,7 @@ export function PushSetup({ className }: { className?: string }) {
         ) : !capability.ready ? (
           <BlockedDevice code={capability.code} />
         ) : permission === "denied" ? (
-          <PermissionBlocked />
+          <PermissionBlocked family={browser} />
         ) : subscribed ? (
           <div className="space-y-3">
             <Notice tone="success">
@@ -552,28 +564,258 @@ function BlockedDevice({ code }: { code: "insecure" | "ios-needs-install" | "ios
 }
 
 /**
- * الحظر — أهمّ حالةٍ في هذا الملف كله.
+ * الحظر — أهمّ حالةٍ في هذا الملف كله، وكانت خطواتها ناقصةً بنصفها.
  *
- * المتصفح **لا يسأل ثانية** بعد «حظر»، فزرُّ «فعّل» هنا يكون زرّاً لا يفعل شيئاً.
- * والمطلوب خطواتٌ يدوية يمشي عليها المتعهد — ولذلك تُكتب بما يراه على شاشته
- * (أيقونة القفل) لا بمصطلحات الإعدادات التي تختلف بين متصفح وآخر.
+ * المتصفح **لا يسأل ثانية** بعد «حظر»، فزرُّ «فعّل» هنا زرٌّ لا يفعل شيئاً،
+ * والمطلوب خطواتٌ يدوية يمشي عليها المتعهد.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  ⚠ التصحيح: **حظرانِ لا حظرٌ واحد، ومكانهما مختلف**
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * كانت البطاقة تعرض مسار **أيقونة القفل** وحده، وهو يرفع الحظر **لهذا الأصل**
+ * (origin) فقط. ولكروم وإيدج وفايرفوكس مفتاحٌ **عامٌّ** يمنع الإشعارات على كل
+ * المواقع دفعةً واحدة؛ وحين يكون مرفوعاً يُردّ الطلب `denied` **فوراً وبلا أن
+ * تظهر نافذة السؤال أصلاً** — وأيقونة القفل لا تصل إليه.
+ *
+ * 📌 وهذا ليس احتمالاً نظرياً: جرّبه المالك على الإنتاج **وعلى `localhost`**،
+ * وهما أصلان مختلفان تماماً، فحصل على `denied` في الاثنين. وحظرٌ يتبع المتصفح
+ * لا الموقعَ هو التفسير الوحيد لذلك. فمن يمشي على الخطوات الخطأ يدور بلا نتيجة
+ * ثم يستنتج أن الميزة معطوبة — وهو النمط الذي وُجدت هذه الشاشة كلها لمنعه.
+ *
+ * ولذلك تبدأ البطاقة **بالفارق لا بالخطوات**، والفحص الذي يفصلهما بيد المتعهد
+ * لا بيدنا: **يفشل على مواقع أخرى ⇒ المفتاح العام؛ على هذا الموقع وحده ⇒
+ * أيقونة القفل.**
+ *
+ * 🔒 **وتُعرض خطواتُ متصفحٍ واحد لا أربعة** — وهو نصّ القرار ١-ز نفسه («يُكشف
+ * نظام الجهاز فتُعرض تعليماته وحده»): أربعة مسارات فوق بعضها جدارٌ يُقرأ عبئاً
+ * فلا يُقرأ. ومن لم نتحقّق من مسار متصفحه (`other`) يأخذ **وصفاً عامّاً** —
+ * فاختراع اسم قائمةٍ لا وجود لها يصنع بالضبط الدورانَ الذي نعالجه.
  */
-function PermissionBlocked() {
+
+/**
+ * مسار رفع المنع **العامّ** في متصفحٍ واحد.
+ *
+ * 🔒 **مصدر كل نصٍّ هنا** (تحقُّق 2026-08-15): سلاسل الواجهة العربية من مستودع
+ * المتصفح نفسه لا من صفحة مساعدةٍ تصف بالمعنى — `settings_strings.grdp`
+ * و`generated_resources_ar.xtb` لكروم، و`permissions.ftl` وترجمتها العربية
+ * لفايرفوكس، ودليل Apple العربي لسفاري. وصفحات المساعدة لا تقتبس نصّ الخيار
+ * حرفياً («اختر ما تريد»)، فلا تصلح مصدراً لسطرٍ يبحث عنه إنسانٌ بعينه.
+ *
+ * ⚠ **وما لم يُتحقَّق منه لا يُكتب**: العربية في Edge لم تُتحقَّق (المتصفح مغلق
+ * المصدر وصفحتا Microsoft متناقضتان)، فيُعطى عنوانه الداخلي ويُسمّى الخيار
+ * بالإنجليزية كما هو — لا بترجمةٍ نخترعها. وفايرفوكس أندرويد لم يُتحقَّق أصلاً
+ * فيقع في `other` عند الكشف.
+ */
+type BrowserGuide = {
+  /** اسم المتصفح كما يعرفه صاحبه */
+  name: string;
+  /** عنوانٌ داخلي يُلصق في شريط العنوان — أقصر طريق وأقلّه عرضةً لتغيّر القوائم */
+  url: string | null;
+  /** مسار القوائم، بديلاً حين لا يُقبل اللصق (وعلى الهاتف هو الطريق الوحيد عملياً) */
+  path: string;
+  /** ما يفعله هناك بالضبط — بنصّ الخيار كما يقرؤه على شاشته */
+  action: ReactNode;
+  /** فحصٌ إضافي يخصّ هذه المنصة وحدها */
+  extra?: ReactNode;
+};
+
+const BROWSER_GUIDES: Record<
+  Exclude<BrowserFamily, "ios" | "other">,
+  BrowserGuide
+> = {
+  chrome: {
+    name: "Chrome",
+    url: "chrome://settings/content/notifications",
+    path: "الإعدادات ← الخصوصية والأمان ← إعدادات الموقع الإلكتروني ← الإشعارات",
+    action: (
+      <>
+        اختر <span className="font-semibold">«السماح للمواقع الإلكترونية بطلب إرسال إشعارات»</span>{" "}
+        بدل <span className="font-semibold">«عدم السماح للمواقع الإلكترونية بإرسال الإشعارات»</span>.
+      </>
+    ),
+  },
+  "chrome-android": {
+    name: "Chrome",
+    // لصقُ عنوانٍ داخلي على الهاتف أشقّ من ثلاث نقرات — فالمسار وحده
+    url: null,
+    path: "زر ⋮ ← الإعدادات ← إعدادات الموقع الإلكتروني ← الإشعارات",
+    action: (
+      <>
+        اختر <span className="font-semibold">«السماح للمواقع الإلكترونية بطلب إرسال إشعارات»</span>{" "}
+        بدل <span className="font-semibold">«عدم السماح للمواقع الإلكترونية بإرسال الإشعارات»</span>.
+      </>
+    ),
+    extra: (
+      <>
+        وإن بقي المنع بعدها فتأكّد أن إشعارات Chrome نفسه مسموحة في نظام أندرويد:{" "}
+        <span className="font-semibold">الإعدادات ← الإشعارات ← إشعارات التطبيقات ← Chrome</span>.
+      </>
+    ),
+  },
+  edge: {
+    name: "Edge",
+    url: "edge://settings/content/notifications",
+    // العربية غير مُتحقَّقة في Edge ⇒ الوصف بالعربية والاسم بالإنجليزية كما يظهر
+    path: "الإعدادات ← قسم أذونات المواقع (Cookies and site permissions) ← الإشعارات",
+    action: (
+      <>
+        شغّل مفتاح <span className="font-semibold">«الطلب قبل الإرسال»</span> (يظهر بالإنجليزية{" "}
+        <span dir="ltr">Ask before sending</span>) — إطفاؤه هو ما يمنع كل المواقع دفعةً واحدة.
+      </>
+    ),
+  },
+  firefox: {
+    name: "Firefox",
+    url: "about:preferences#privacy",
+    path: "الإعدادات ← الخصوصية والأمان ← الأذونات (وفي الإصدارات الحديثة: الأذونات والبيانات) ← الإشعارات ← «إعدادات…»",
+    action: (
+      <>
+        أزل علامة{" "}
+        <span className="font-semibold">«احجب الطلبات الجديدة التي تطلب السماح الإشعارات»</span>{" "}
+        (هكذا تظهر عبارتها في الواجهة)، ثم <span className="font-semibold">«احفظ التغييرات»</span>.
+      </>
+    ),
+  },
+  "safari-mac": {
+    name: "Safari",
+    url: null,
+    path: "قائمة Safari ← الإعدادات (وفي إصدارات macOS الأقدم: تفضيلات) ← مواقع الويب ← الإشعارات",
+    action: (
+      <>
+        ضع علامة{" "}
+        <span className="font-semibold">
+          «السماح لمواقع الويب بأن تطلب الإذن بإرسال الإشعارات»
+        </span>
+        .
+      </>
+    ),
+  },
+};
+
+/** اسم المتصفح في جملةٍ عربية — و«متصفحك» للمجهول، فلا نسمّي ما لم نتعرّف عليه */
+function browserName(family: Exclude<BrowserFamily, "ios">): string {
+  return family === "other" ? "متصفحك" : BROWSER_GUIDES[family].name;
+}
+
+/** خطوات المفتاح العامّ — والمتصفح غير المتحقَّق منه يأخذ وصفاً لا اسم قائمة */
+function GlobalBlockSteps({ family }: { family: Exclude<BrowserFamily, "ios"> }) {
+  if (family === "other") {
+    return (
+      <p>
+        افتح إعدادات متصفحك، ثم قسم <span className="font-semibold">أذونات المواقع</span> (أو
+        «إعدادات المواقع») ومنه <span className="font-semibold">الإشعارات</span>، واسمح للمواقع
+        بطلب إرسال الإشعارات. ثم عد إلى هنا وحدّث الصفحة.
+      </p>
+    );
+  }
+
+  const guide = BROWSER_GUIDES[family];
+  return (
+    <ol className="list-inside list-decimal space-y-1">
+      <li>
+        {guide.url ? (
+          <>
+            الصق هذا في شريط العنوان واضغط Enter:{" "}
+            <code dir="ltr" className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+              {guide.url}
+            </code>
+            <span className="block text-muted-foreground">
+              أو من القوائم: {guide.path}
+            </span>
+          </>
+        ) : (
+          <>افتح: {guide.path}</>
+        )}
+      </li>
+      <li>{guide.action}</li>
+      <li>عد إلى هذه الصفحة وحدّثها، ثم فعّل التنبيهات من الزر.</li>
+      {guide.extra ? <li className="list-none">{guide.extra}</li> : null}
+    </ol>
+  );
+}
+
+function PermissionBlocked({ family }: { family: BrowserFamily }) {
+  /**
+   * آيفون وآيباد فرعٌ وحده، وفرعٌ **مقلوب**: البوابة هنا مثبَّتة على الشاشة
+   * الرئيسية (وإلا لَما وصلنا هذه البطاقة — انظر `readPushCapability`)، فلا
+   * شريط عنوان ولا أيقونة قفل، ولا مفتاحَ عامّاً في متصفح.
+   *
+   * ⚠ **والأهمّ، وهو ما صحّحه التحقق:** WebKit يقول إن التطبيق يظهر في
+   * «الإعدادات ← الإشعارات» **بعد منح الإذن**؛ ومَن رفضه **لا مسار موثّقاً من
+   * Apple لإعادة تفعيله**. فالبدء بمسار الإعدادات كان سيرسله إلى قائمةٍ قد لا
+   * يجد نفسه فيها — وهو بعينه الدوران الذي تعالجه هذه البطاقة. لذلك يتقدّم
+   * **ما يعمل يقيناً** (حذف الأيقونة وإعادة تثبيتها ⇒ يسأل الجهاز من جديد)،
+   * ويأتي مسار الإعدادات بعده مشروطاً بـ«إن وجدتها».
+   */
+  if (family === "ios") {
+    return (
+      <Notice tone="danger" icon={<ShieldAlert className="size-5 shrink-0" />}>
+        <p className="mb-2 font-medium">التنبيهات محظورة لهذه البوابة على جهازك.</p>
+        <p className="mb-2">
+          لن يسألك الجهاز مرة أخرى. وعلى الآيفون والآيباد لا يُرفع هذا المنع من المتصفح، والطريق
+          المؤكَّد أن تعيد تثبيت البوابة فيسألك الجهاز من جديد:
+        </p>
+        <ol className="list-inside list-decimal space-y-1">
+          <li>اضغط مطوّلاً على أيقونة البوابة في شاشتك الرئيسية ثم احذفها.</li>
+          <li>
+            افتح البوابة في <span className="font-semibold">Safari</span>، ثم زر المشاركة{" "}
+            <Share className="inline size-4" /> ←{" "}
+            <span className="font-semibold">«إضافة إلى الشاشة الرئيسية»</span>.
+          </li>
+          <li>افتحها من الأيقونة الجديدة، وعد إلى هذه الصفحة، ثم فعّل التنبيهات من الزر.</li>
+        </ol>
+        <p className="mt-2">
+          وقبل ذلك جرّب الأسرع: افتح تطبيق <span className="font-semibold">الإعدادات</span> ثم{" "}
+          <span className="font-semibold">الإشعارات</span>، وابحث عن اسم البوابة في القائمة. إن
+          وجدته فَفعّل السماح بالإشعارات من هناك وتوفّر إعادة التثبيت — وإن لم تجده فامضِ في
+          الخطوات أعلاه.
+        </p>
+        <p className="mt-2 text-muted-foreground">
+          وإن كان جهازك آخر ما تملك، فلا شيء ضائع: العروض تبقى في البوابة، وتحتاج أن تفتحها.
+        </p>
+      </Notice>
+    );
+  }
+
   return (
     <Notice tone="danger" icon={<ShieldAlert className="size-5 shrink-0" />}>
-      <p className="mb-2 font-medium">التنبيهات محظورة لهذا الموقع على هذا المتصفح.</p>
-      <p className="mb-2">
-        لن يسألك المتصفح مرة أخرى — الحظر يُلغى يدوياً منه:
+      <p className="mb-2 font-medium">التنبيهات محظورة على هذا المتصفح.</p>
+      {/*
+        الفارق قبل أي خطوة — ومعه الفحصُ الذي يفصل الحالتين، لأن المتعهد وحده
+        يستطيع إجراءه: نحن لا نرى ما يفعله متصفحه مع المواقع الأخرى
+      */}
+      <p className="mb-3">
+        لن يسألك المتصفح مرة أخرى، والحظر يُرفع يدوياً منه. وقبل الخطوات افصل الحالتين، فلكلٍّ
+        منهما مكانٌ مختلف — ومن يمشي على الخطوات الخطأ يدور بلا نتيجة:
       </p>
-      <ol className="list-inside list-decimal space-y-1">
-        <li>انقر أيقونة القفل (أو «ⓘ») بجوار عنوان الموقع في شريط العنوان.</li>
-        <li>
-          افتح <span className="font-semibold">الإشعارات</span> واختر{" "}
-          <span className="font-semibold">«سماح»</span>.
-        </li>
-        <li>حدّث هذه الصفحة، ثم فعّل التنبيهات من الزر.</li>
-      </ol>
-      <p className="mt-2 text-muted-foreground">
+
+      <div className="mb-3 space-y-1.5">
+        <p className="font-semibold">
+          إن لم تظهر لك نافذة السؤال أصلاً، أو مُنعت الإشعارات على مواقع أخرى أيضاً…
+        </p>
+        <p>
+          فالمنع على مستوى <span className="font-semibold">{browserName(family)} كله</span> لا
+          على هذا الموقع — مفتاحٌ واحدٌ فيه يرفض عن كل المواقع فوراً، وأيقونة القفل لا تصل
+          إليه:
+        </p>
+        <GlobalBlockSteps family={family} />
+      </div>
+
+      <div className="space-y-1.5">
+        <p className="font-semibold">وإن كانت الإشعارات تعمل على مواقع أخرى…</p>
+        <p>فالمنع لهذا الموقع وحده، ويُرفع من مكانه:</p>
+        <ol className="list-inside list-decimal space-y-1">
+          <li>انقر أيقونة القفل (أو «ⓘ») بجوار عنوان الموقع في شريط العنوان.</li>
+          <li>
+            افتح <span className="font-semibold">الإشعارات</span> واختر{" "}
+            <span className="font-semibold">«سماح»</span>.
+          </li>
+          <li>حدّث هذه الصفحة، ثم فعّل التنبيهات من الزر.</li>
+        </ol>
+      </div>
+
+      <p className="mt-3 text-muted-foreground">
         وإن كان جهازك آخر ما تملك، فلا شيء ضائع: العروض تبقى في البوابة، وتحتاج أن تفتحها.
       </p>
     </Notice>
