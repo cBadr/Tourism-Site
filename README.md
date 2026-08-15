@@ -13,20 +13,30 @@
 ![Supabase](https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
-![Phases](https://img.shields.io/badge/phases-9%2F14-blue)
-![Deployment](https://img.shields.io/badge/deployment-none%20yet-critical)
+![Phases](https://img.shields.io/badge/phases-12%2F14-blue)
+![Migrations](https://img.shields.io/badge/migrations-49-informational)
+![Tests](https://img.shields.io/badge/SQL%20suites-21%20green-brightgreen)
+![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
 <div dir="rtl">
 
 ## ما هذا المشروع
 
-منصة تحجز رحلات النقل السياحي في مصر: العميل يحدد نقطة الانطلاق والوصول وعدد الركاب، فيحصل على **سعر نهائي واحد** لكل فئة سيارة مؤهلة، ثم يحجز كضيف بلا حساب ويدفع كاملاً أو عربوناً. المنصة **لا تملك سيارات ولا تدير سائقين**: الطلب المؤكد يُبَث على موجات إلى **المتعهدين** المغطّين للمسار، وأول من يقبل يفوز بالرحلة، والربح هو الفرق بين ما دفعه العميل وما يستحقه المتعهد. كل حساب مالي أو تسعيري يقع **داخل Postgres** لا في TypeScript، وكل قيمة تخص العلامة التجارية تعيش في قاعدة البيانات فتُطلق النسخة الواحدة باسم وهوية ودومين مختلفين بلا تعديل سطر كود. المنظومة مبنية ومختبَرة محلياً — **ولم يُنشر منها شيء بعد** بقرار صريح من المالك.
+منصة تحجز رحلات النقل السياحي في مصر: العميل يحدد نقطة الانطلاق والوصول وعدد الركاب، فيحصل على **سعر نهائي واحد** لكل فئة سيارة مؤهلة، ثم يحجز كضيف بلا حساب ويدفع كاملاً أو عربوناً. المنصة **لا تملك سيارات ولا تدير سائقين**: الطلب المؤكد يُبَث على موجات إلى **المتعهدين** المغطّين للمسار، وأول من يقبل يفوز بالرحلة، والربح هو الفرق بين ما دفعه العميل وما يستحقه المتعهد. كل حساب مالي أو تسعيري يقع **داخل Postgres** لا في TypeScript، وكل قيمة تخص العلامة التجارية تعيش في قاعدة البيانات فتُطلق النسخة الواحدة باسم وهوية ودومين مختلفين بلا تعديل سطر كود.
+
+**والمنظومة منشورة وتعمل** على [`rentlimousine.duckdns.org`](https://rentlimousine.duckdns.org) منذ 2026-08-15: خادم VPS خلف Nginx بشهادة، والخدمة تحت `systemd`، والنشر بأمرٍ واحد (`deploy.sh`) — والدليل الكامل في [`docs/VPS.md`](docs/VPS.md).
+
+⚠ **لكن البيانات المعروضة اليوم بيانات عرضٍ تجريبي** يزرعها `pnpm demo:seed` (٣٤١ حجزاً وثمانية متعهدين مُحاكين بستة أشهر تشغيل)، لا عملاء حقيقيين. وتُمسح بأمرٍ واحد: `pnpm demo:clean`.
 
 </div>
 
 ## English summary
 
-Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a single Next.js 16 application on top of one Supabase (Postgres) project. A customer picks two points and a passenger count, gets an instant final price per eligible vehicle class, books as a guest and pays in full or by deposit; the confirmed booking is then broadcast in timed waves to approved **subcontractors** who cover that route, and the first to accept wins the trip — atomically, enforced by a partial unique index in Postgres. Every money and pricing calculation lives in Postgres functions and views; TypeScript only formats and renders. The system is white-label by construction: no brand string is hardcoded, and a second brand means a separate Supabase project, Vercel project and domain — not a `tenant_id`. Phases 1–9 of 14 are built (21 migrations applied, 7 SQL test suites green), phases 10–14 are not started, and **nothing is deployed yet** — no domain, no live Vercel project.
+Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a single Next.js 16 application on top of one Supabase (Postgres) project. A customer picks two points and a passenger count, gets an instant final price per eligible vehicle class, books as a guest and pays in full or by deposit; the confirmed booking is then broadcast in timed waves to approved **subcontractors** who cover that route, and the first to accept wins the trip — atomically, enforced by a partial unique index in Postgres. Every money and pricing calculation lives in Postgres functions and views; TypeScript only formats and renders. The system is white-label by construction: no brand string is hardcoded, and a second brand means a separate Supabase project, host and domain — not a `tenant_id`.
+
+Phases 1–12 of 14 are built — **49 migrations applied and 21 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phases 13 (page builder) and 14 (white-label factory) have not started; phase 11 (AI agent) is designed but waits on API credit. The data currently on the live site is **seeded demonstration data**, not real customers.
+
+Two systems ship **switched off by design** and wait on an owner decision: coupons and loyalty. A loyalty programme that starts itself starts owing money.
 
 <div dir="rtl">
 
@@ -47,20 +57,25 @@ Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a sin
 
 | المجال | ماذا يعمل | المرحلة | الحالة |
 |---|---|---|---|
-| البنية والهوية والأدوار | `site_settings` + `profiles` بأربعة أدوار + RLS على كل جدول + ثيم وإعدادات تُقرأ من القاعدة + سباكة سيو (metadata · robots · sitemap · canonical · JSON-LD) | ١ | 🟨 الكود مكتمل — الباقي **شراء الدومين والنشر وتحقق GSC وتركيب GA4** |
-| الموقع العام ونظام الأقسام | ١٤ صفحة و٦٢ قسماً بمحتوى عربي حقيقي في القاعدة (٦ خدمات · مسارات سيو · من نحن · صفحات الثقة)، عشر عارضات أقسام، ومحرر محتوى كامل في اللوحة | ٢ | 🟨 الكود مكتمل — الباقي **Lighthouse سيو ≥ ٩٠ وتقرير فهرسة GSC**، ولا يُقاسان على `localhost` |
+| البنية والهوية والأدوار | `site_settings` + `profiles` بأربعة أدوار + RLS على كل جدول + ثيم وإعدادات تُقرأ من القاعدة + سباكة سيو (metadata · robots · sitemap · canonical · JSON-LD) | ١ | 🟨 منشور على الدومين — الباقي **تحقق GSC وتركيب GA4** |
+| الموقع العام ونظام الأقسام | ١٧ صفحة و٩٣ قسماً بمحتوى عربي حقيقي في القاعدة (٦ خدمات · مسارات سيو · من نحن · صفحات الثقة)، عشر عارضات أقسام، ومحرر محتوى كامل في اللوحة | ٢ | 🟨 الكود مكتمل — الباقي **Lighthouse سيو ≥ ٩٠ وتقرير فهرسة GSC**، ولا يُقاسان على `localhost` |
 | المسافات والتسعير | محرك مسافات بأربع طبقات (كاش Postgres ← Google Routes ← OSRM ← Haversine ×١٫٣ مُعلَّم تقديراً) + `quote_price` في Postgres: تعريفة كيلومتر · أرضية فئة · ذهاب وعودة · ساعات انتظار · ذروة | ٣ | ✅ |
-| الحجز والدفع المحلي والإشعارات | حجز كضيف بلا حساب + آلة حالات محروسة + محافظ وانستا باي بحدود يومية وشهرية تُفرض في SQL + رفع إيصال وطابور تحقق + أنبوب إشعارات بنمط Outbox | ٤ | ✅ جاهزة تقنياً؛ النشر مؤجَّل بقرار المالك |
+| الحجز والدفع المحلي والإشعارات | حجز كضيف بلا حساب + آلة حالات محروسة + محافظ وانستا باي بحدود يومية وشهرية تُفرض في SQL + رفع إيصال وطابور تحقق + أنبوب إشعارات بنمط Outbox | ٤ | ✅ منشورة — والتحصيل الحقيقي ينتظر حساب بوابة |
 | بورتال المتعهدين والتغطية | دعوة واعتماد + أسطول + قوائم أسعار ترسو على نقطتين بنطاق كيلومترات + **قاعدة الدمج**: أرخص متعهد مغطٍّ + الهامش، وإلا التعريفة | ٥ | ✅ |
 | البث والإسناد | موجات بسقف تكلفة يتسع + مهلة وحد أقصى من الإعدادات + **قبول ذرّي «أول قابل يفوز»** + طابور إسناد يدوي عند الاستنفاد | ٦ | ✅ |
 | المالية | دفتر واحد `ledger_entries` (append-only) + خزينة + مصروفات + كشوف حساب + تدفق نقدي + **مقاصة المتعهدين** بإشارتيها | ٧ | ✅ |
 | اللغات والترجمة | العربية بلا بادئة + `/en` إعادة كتابة + جداول ترجمة بمسار مسودة ← مراجعة ← نشر + `enabled_locales()` فلا تُعلن لغة بلا محتوى منشور | ٨ | ✅ |
 | بوابات الدفع | طبقة تجريد موحّدة + webhook مصدرَ حقيقة بتوقيع إلزامي وإحكام بمعرّف الحدث + ستة محوّلات حقيقية | ٩ | ✅ المحوّلات **خاملة** حتى تُفتح الحسابات وتُدخل مفاتيحها |
-| الربط الخارجي والإحصائيات | `/admin/integrations` بسبع خدمات قياس تُدار معرّفاتها من اللوحة + `funnel_events` **بلا أي عمود PII** + سبعة عروض `v_stats_*` + **ست** شاشات إحصائيات برسوم SVG مكتوبة يدوياً + مركز سيو مرقّى (ميتاداتا جماعي · مدير `redirects` · فحص بيانات مهيكلة) | ١٠ | 🟨 بُنيت واختُبرت محلياً — الباقي **فتح حسابات GA4/Clarity/Meta وإدخال معرّفاتها** وجلسة تحقق المالك، لا كود |
-| وكيل الذكاء الاصطناعي · الخصومات والولاء · Page Builder · مصنع الـ Whitelabel | — | ١١–١٤ | ⬜ لم تبدأ |
+| الربط الخارجي والإحصائيات | `/admin/integrations` بسبع خدمات قياس تُدار معرّفاتها من اللوحة + `funnel_events` **بلا أي عمود PII** + سبعة عروض `v_stats_*` + **ست** شاشات إحصائيات برسوم SVG مكتوبة يدوياً + مركز سيو مرقّى (ميتاداتا جماعي · مدير `redirects` · فحص بيانات مهيكلة) | ١٠ | 🟨 منشورة — الباقي **فتح حسابات GA4/Clarity/Meta وإدخال معرّفاتها** وجلسة تحقق المالك، لا كود |
+| الخصومات والتحفيز | كوبونات بنسبة أو مبلغ بصلاحية وسقف استخدام لكل عميل، **داخل دالة التسعير** لا فوقها، وبأرضية هامش لا يتخطاها أي مستدعٍ | ١٢أ | ✅ **تُشحن مطفأة** حتى يقرر المالك |
+| حسابات العملاء | تسجيل اختياري + «حجوزاتي» + ربط حجزٍ سابق **بمرجعه وهاتفه**. والحجز كضيف يبقى كما هو: الحساب طبقةُ راحة لا بوابة | ١٢ب | ✅ |
+| الولاء | نقاط على الرحلات المكتملة تُستبدل خصماً، بدفترٍ مُلحَق لا يُمحى منه سطر، **والرصيد يملكه الهاتف المُثبَت** لا الحساب — فعشرة حسابات على هاتفٍ واحد ترى رصيداً واحداً | ١٢ب | ✅ **تُشحن مطفأة** |
+| المركبة والسائق بعد الإسناد | المتعهد يسجّل مركبة الرحلة وسائقها من بورتاله، فيراهما العميل على صفحة متابعته — **وهاتف السائق بنافذةٍ ذات طرفين**: يظهر قبل الالتقاء بمهلة تُضبط من اللوحة، ويختفي بعده باثنتي عشرة ساعة | دفعة ٥ | ✅ |
+| السجلات والتدقيق | ٣٤ جدولاً مرصوداً بمُشغّل واحد، ودورة `insert/update/delete` بلقطةٍ عند الحذف، **والسجل append-only** لا يكتب فيه دورٌ ولا يُفرّغه | ملاحظة ١٥ | ✅ |
+| Page Builder · مصنع الـ Whitelabel | — | ١٣–١٤ | ⬜ لم تبدأ |
+| وكيل الذكاء الاصطناعي | مصمَّم بعقده (`lib/agent-types.ts`) | ١١ | ⬜ موقوف على **رصيد API** |
 
-> **المرحلتان ١ و٢ ما زالتا 🟨 لسبب واحد: ما تبقى فيهما نشرٌ ودومين وقياسٌ على الإنتاج، لا كود ناقص.**
-> **لا شيء منشور اليوم: لا دومين، ولا مشروع Vercel حي.**
+> **الحالة الحقيقية اليوم:** المنصة **منشورة وتعمل**، والمراحل ١–١٢ مبنيّة. وما يُبقي المراحل ١ و٢ و١٠ صفراء ليس كوداً ناقصاً بل **ما لا يُنجزه أحد غير المالك**: قياس Lighthouse وتقرير الفهرسة على الدومين الحيّ، ومعرّفات GA4 وClarity وMeta، وجولة نقر بجلسته على اللوحة والبورتال.
 
 ---
 
@@ -139,7 +154,7 @@ flowchart TD
 pnpm install
 cp .env.example .env.local     # ثم املأ القيم — الشرح الكامل: handover/ENVIRONMENT.md
 pnpm db:migrate                # تطبيق الترحيلات 0001 … 0023
-pnpm db:test                   # ٨ مجموعات — النجاح = ALL PASSED في كل واحدة
+pnpm db:test                   # ٢١ مجموعة — النجاح = ALL PASSED في كل واحدة
 pnpm dev                       # http://localhost:3000
 ```
 
@@ -207,7 +222,7 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ٢٣** في `supabase/migrations/` من `0001_core.sql` إلى `0023_analytics_funnel.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار الثماني** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
+**الترحيلات الـ ٤٩** في `supabase/migrations/` من `0001_core.sql` إلى `0049_token_phone_mask.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار الإحدى والعشرون** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 
 ---
 
@@ -249,6 +264,14 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 | `i18n_tests.sql` | ٨ | اللغات والترجمة وطابور النشر والصلاحيات — بلغة اختبار `zz` وصفحة اختبار خاصة بها **فلا تلمس محتوى الموقع الحقيقي** |
 | `payment_tests.sql` | ٩ | جلسات الدفع وأحداثها والإحكام: **نفس الحدث ثلاث مرات ⇒ صف تحصيل واحد وقيد واحد** |
 | `analytics_tests.sql` | ١٠ | سجل القمع بلا عمود PII أصلاً، و**القمع سلسلة رباعية من مصدر واحد** ومعدل التحصيل كوهورت والحدثان الجانبيان خارج السلسلة بلا نسبة، وقيود جدول التحويلات، و**العروض السبعة كلها `security_invoker`** — وحاجزان حيّان: زائر `anon` لا يقرأ السجل ولا يكتب فيه، ومتعهد مسجَّل **لا يرى رقماً واحداً** من الإحصائيات |
+| `discount_tests.sql` | ١٢أ | الكوبونات داخل معادلة السعر لا فوقها، و**أرضية الهامش حدٌّ لا يُقارَب**: خصمٌ لا تتسع له المساحة يُرفض بـ`floor-guard` ولا يُقصّ بصمت |
+| `customer_tests.sql` | ١٢ب | حسابات العملاء: **صفر سياسة `SELECT` جديدة على `bookings`**، والعميل يقرأ إسقاطاً آمناً بلا تكلفة ولا هامش ولا هوية متعهد، و`link_source` يفرّق الإثبات من الحيازة فلا تُنزَّل ترقيةٌ أبداً |
+| `loyalty_tests.sql` | ١٢ب | الولاء: الكوبون والنقاط **بسقفٍ واحد** لا يخترق الأرضية، ورحلةٌ واحدة تسكّ صفَّ كسبٍ واحداً مهما تعدّدت الحسابات الرابطة، والرصيد للهاتف المُثبَت لا للحساب |
+| `crew_tests.sql` | دفعة ٥ | مركبة الرحلة وسائقها: العزل بين المتعهدين، **ونافذة الهاتف بطرفيها** — تُفتح قبل الالتقاء بمهلة اللوحة وتُغلق بعده باثنتي عشرة ساعة |
+| `audit_tests.sql` | ملاحظة ١٥ | السجل append-only لا يُكتب فيه ولا يُفرَّغ لأي دور، والحجب عميق داخل `jsonb`، **وحارسٌ يمسح السجل كله** فلا هاتف عميل ولا بريد متعهد يتسرّب من مسارٍ لم يخطر ببال أحد |
+| `pulse_tests.sql` | ملاحظة ١٢ | مؤشرات الصفحات **مفوَّضة لا مستنسخة**، والنسبة ذات المقام الصفري تُحذف بينما العدّاد يخرج ولو صفراً |
+
+> والقائمة أعلاه منتقاة لا كاملة: المجموعات **إحدى وعشرون**، وبقيّتها تغطي التطبيع والإيصالات وحدود ديون المتعهدين والخدمات الإضافية والبحث بالمرجع.
 
 ---
 
@@ -266,12 +289,25 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 | ٨ | اللغات والترجمة | ٢ أسبوع | ✅ |
 | ٩ | بوابات الدفع الإلكترونية | ٢–٣ أسابيع | ✅ |
 | ١٠ | الربط الخارجي والإحصائيات الشاملة | ٢ أسبوع | 🟨 |
-| ١١ | وكيل الذكاء الاصطناعي | ٣ أسابيع | ⬜ |
-| ١٢ | الخصومات والولاء والتحفيز وحسابات العملاء | ١–٢ أسبوع | ⬜ |
-| ١٣ | الـ Page Builder الاحترافي والقوالب | ٣ أسابيع | ⬜ |
+| ١١ | وكيل الذكاء الاصطناعي | ٣ أسابيع | ⬜ موقوف على رصيد API |
+| ١٢أ | الخصومات والتحفيز | ١ أسبوع | ✅ |
+| ١٢ب | حسابات العملاء والولاء | ١ أسبوع | ✅ |
+| ١٣ | الـ Page Builder الاحترافي والقوالب | ٣ أسابيع | ⬜ **التالي** |
 | ١٤ | مصنع الـ Whitelabel وإطلاق النسخة الثانية | ١–٢ أسبوع | ⬜ |
 
 ⬜ لم تبدأ · 🟨 جارية · ✅ مكتملة — والمصدر الحي دائماً [`docs/ROADMAP.md`](docs/ROADMAP.md). وما ينتظر المالك من حسابات ومفاتيح وأرقام: [`handover/OPEN_TASKS.md`](handover/OPEN_TASKS.md).
+
+### وبعد المراحل: **خمس دفعات ملاحظات** من مراجعة المالك
+
+بعد المرحلة ١٠ راجع المالك المنتج ببيانات تحاكي ستة أشهر تشغيل، فأخرج **١٧ ملاحظة** رُتّبت بالتبعية والتكلفة لا بترتيب ورودها، ونُفّذت في خمس دفعات — كلها ✅:
+
+| الدفعة | المحتوى |
+|---|---|
+| ١ | تطبيع الهاتف · النسخ الاحتياطي · إصلاح JSON-LD وخريطة الموقع |
+| ٢ | مهلة إلغاء الطلبات · رفع الأدمن للإيصال · سقف ديون المتعهدين · زر متابعة الحجز |
+| ٣ | **جراحة التسعير الواحدة**: تاريخ العودة واشتقاق الانتظار · الحقائب · الخدمات الإضافية |
+| ٤ | نظام السجلات · مركز السيو المتكامل · مؤشرات في كل صفحة · الطباعة والتصدير |
+| ٥ | المركبة والسائق بعد الإسناد |
 
 ---
 
@@ -312,6 +348,28 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 | [`supabase/README.md`](supabase/README.md) | دليل ربط القاعدة خطوة بخطوة + **الفخّان الشائعان**: مصدرا صلاحيات `anon`، و«`UPDATE` ينجح بصفر صفوف» |
 | [`AGENTS.md`](AGENTS.md) · [`CLAUDE.md`](CLAUDE.md) | تحذير: هذه نسخة Next مختلفة عمّا تعرفه النماذج — المرجع `node_modules/next/dist/docs/` |
 | [`PLAN.md`](PLAN.md) | **مسودة ملغاة** كُتبت قبل استلام الرؤية — لا تُعتمد ولا يُستشهد بها |
+
+---
+
+## النشر
+
+المنصة تعمل على **خادم VPS** لا على منصة سحابية مُدارة، والدليل الكامل — من تثبيت النظام إلى الشهادة والمهام المجدولة والنسخ الاحتياطي — في [`docs/VPS.md`](docs/VPS.md).
+
+| الطبقة | ما هو |
+|---|---|
+| العنوان | [`rentlimousine.duckdns.org`](https://rentlimousine.duckdns.org) بشهادة Let's Encrypt تتجدد آلياً |
+| الخادم | Nginx وسيطاً عكسياً أمام Next.js على `127.0.0.1:3000` |
+| الخدمة | `systemd` — تبدأ مع الإقلاع وتُعيد التشغيل عند الانهيار وتكتب سجلها في `journald` |
+| المستخدم | `tours` بلا صلاحيات جذر، ويملك حقّ إعادة تشغيل خدمته وحدها (`/etc/sudoers.d/tours`) |
+| النشر | `‏/srv/tours/app/deploy.sh` |
+
+```bash
+ssh -i ~/.ssh/naql_deploy root@<الخادم> 'sudo -u tours /srv/tours/app/deploy.sh'
+```
+
+**وترتيب خطوات السكربت مقصود:** سحب ← اعتماديات ← **هجرات** ← بناء ← إعادة تشغيل. الهجرات **قبل** البناء لأن الكود الجديد يفترض مخططاً جديداً، والعكس يعني دقائق من الأخطاء على موقعٍ حيّ.
+
+> ⚠ **ولا قاعدة اختبار منفصلة.** القاعدة التي تُطبَّق عليها الهجرات أثناء التطوير **هي قاعدة الإنتاج نفسها**. فقد يجد `db:migrate` على الخادم «لا جديد» لأن الهجرة طُبِّقت من جهاز التطوير سلفاً — وهذا **متوقَّع لا عطل**، لكنه يعني أن المخطط يسبق الكود المنشور بين النشرتين. أبقِ الفجوة قصيرة.
 
 ---
 
