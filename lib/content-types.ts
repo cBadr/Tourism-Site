@@ -7,7 +7,18 @@
 
 import type { PageSeoExtras } from "@/lib/seo-types";
 
-export type PageKind = "home" | "service" | "corridor" | "static";
+/**
+ * أنواع الصفحات — والرابع `landing` من المرحلة ١٣ (‏`0058_page_builder.sql` §١).
+ *
+ * ولماذا نوعٌ مستقل لا إعادةُ استعمال `static`؟ لأن ثلاثة مستهلكين يفرّقون فعلاً
+ * بين «سياسة الخصوصية» و«صفحة هبوط تسويقية»: `PRIORITY` في `app/sitemap.ts`،
+ * و`pagePublicPath` في `lib/seo/site-paths.ts`، وقائمة `/admin/content`.
+ *
+ * ⚠ **وإضافته هنا خطأُ بناءٍ مقصود** في كل `switch` بلا `default` وكل
+ * `Record<PageKind, …>` — فنسيانُ التعامل معه يظهر في `tsc` لا صامتاً في الإنتاج
+ * (العقد `lib/page-builder-types.ts` §٨ يسمّي هذه «فائدة مجانية مقصودة»).
+ */
+export type PageKind = "home" | "service" | "corridor" | "static" | "landing";
 
 /**
  * ميتاداتا الصفحة — عمود `pages.meta` من نوع `jsonb`.
@@ -55,7 +66,10 @@ export type SectionType =
   | "rich-text" // فقرات نصية (سطر فارغ = فقرة جديدة)
   | "faq" // أسئلة شائعة — تُصدَّر أيضاً كـ JSON-LD
   | "cta-band" // شريط دعوة للحجز
-  | "contact"; // قنوات التواصل من الإعدادات
+  | "contact" // قنوات التواصل من الإعدادات
+  // ── كتلتا المرحلة ١٣ ────────────────────────────────────────────────────
+  | "columns" // كتلة تخطيط: لا نصَّ لها، وأبناؤها صفوفٌ في `sections` بـ`parent_id`
+  | "image"; // صورة من دلو `media` + نصٌّ بديل **قابل للترجمة**
 
 /** أشكال محتوى JSONB لكل نوع قسم — الحقول الاختيارية تُعرض فقط عند وجودها */
 export type SectionContentMap = {
@@ -73,6 +87,14 @@ export type SectionContentMap = {
   faq: { title?: string; items: { q: string; a: string }[] };
   "cta-band": { title?: string; note?: string };
   contact: { title?: string; sub?: string };
+  /**
+   * كتلة تخطيط بلا محتوى إطلاقاً — أبناؤها **صفوفٌ** في `sections` يربطها
+   * `parent_id`، لا مفاتيح داخل `jsonb` (العقد §٣: العمق في الصفوف لا في
+   * الحقول، وإلا اختفى النصّ من فهرس الترجمة بدل أن ينفجر).
+   */
+  columns: Record<string, never>;
+  /** `alt` نصٌّ قابل للترجمة لا سمةٌ تقنية — وإغفاله هو الخطأ المعتاد (العقد §١٠) */
+  image: { src: string; alt: string; caption?: string };
 };
 
 export type Section<T extends SectionType = SectionType> = {
@@ -82,6 +104,16 @@ export type Section<T extends SectionType = SectionType> = {
   content: SectionContentMap[T];
   sort: number;
   visible: boolean;
+  /**
+   * الكتلة الأمّ (`sections.parent_id` — هجرة `0058`). `null`/الغياب = كتلة جذر.
+   *
+   * **اختياري لا مطلوب، والسبب مقيس:** الأقسام الـ٩٣ القائمة كلها بلا أب، ولكل
+   * مُحمّل في المشروع مصدرُه (‏`lib/content.ts` للعامة و`app/admin/content/loader.ts`
+   * للوحة). جعلُه مطلوباً كان يحوّل كل مُحمّل لم يُحدَّث بعد إلى خطأ بناء بلا أن
+   * يكسبه ذلك شيئاً — والعارضة تقرؤه بـ`?? null` فتتصرّف مع الغياب تصرّفها مع
+   * الجذر حرفياً.
+   */
+  parentId?: string | null;
 };
 
 export type PageWithSections = Page & { sections: Section[] };
@@ -111,4 +143,9 @@ export const SECTION_TYPE_LABELS: Record<SectionType, { label: string; hint: str
   faq: { label: "أسئلة شائعة", hint: "أسئلة وأجوبة — تُغذّي نتائج البحث أيضاً" },
   "cta-band": { label: "شريط الحجز", hint: "دعوة للحجز بلون العلامة" },
   contact: { label: "التواصل", hint: "القنوات المفعّلة من الإعدادات" },
+  columns: {
+    label: "أعمدة",
+    hint: "كتلة تخطيط — تحمل حتى أربع كتل أبناء جنباً إلى جنب، ولا نصَّ لها",
+  },
+  image: { label: "صورة", hint: "صورة من مكتبة الوسائط — النص البديل مطلوب" },
 };

@@ -19,6 +19,22 @@ export function PageHeroSection({
   settings: SiteSettings;
   locale?: string;
 }) {
+  /**
+   * 🔴 **بلا عنوان لا تُصيَّر** — بندٌ في المرحلة ١٣ لا تحسينٌ اختياري
+   * (العقد `lib/page-builder-types.ts` §١٠، والموجز القرار ٥).
+   *
+   * وقبل هذا السطر كانت هذه الكتلة **الوحيدة** التي تخالف قاعدة «الحقل الناقص
+   * ⇒ تصيير `null`»: تُصيَّر `{content.title}` بلا شرط، والمحتوى الابتدائي لقسمٍ
+   * جديد `{ title: "" }`. فسحبُ ترويسة صفحة ونشرُها = **`<h1>` فارغ على صفحة
+   * عامة** — عيبُ سيو لا يراه أحد بالعين، وفي المنشئ يصير سحبةً واحدة.
+   *
+   * والحارس هنا **مكرَّرٌ بقصد** فوق بوابة `blockRenders` في `render.tsx`:
+   * العارضة تُستدعى من المعاينة ومن `lib/default-content.ts` أيضاً، وقاعدةٌ
+   * بهذا الوزن لا تُترك لمنادٍ واحد.
+   */
+  const title = typeof content.title === "string" ? content.title.trim() : "";
+  if (title === "") return null;
+
   const booking = bookingHref(settings, locale);
 
   return (

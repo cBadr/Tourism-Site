@@ -324,10 +324,18 @@ export function AdminShell({
     );
   }
 
+  // معاينة الصفحة في منشئ الصفحات: **الحارس بلا القشرة** (عقد المرحلة ١٣ §٧).
+  // تبقى تحت `/admin` فتحتفظ بحارس الدور وبحجب `robots` وبانعدام وسوم القياس،
+  // وتُصيَّر بعرضٍ كامل — فمعاينةٌ داخل عمودٍ أضيق ٢٤٠ بكسل تكذب على من ينظر إليها.
+  const isBarePreview = pathname.startsWith("/admin/content/") && pathname.endsWith("/preview");
+  if (isBarePreview) return <>{children}</>;
+
   // المسارات الديناميكية: محرر المحتوى وتفاصيل الطلب وملف المتعهد لها عنوان ثابت
   // مهما كان المعرّف. المسارات الثابتة تحت نفس البادئة (مثل «مراجعة الأسعار»)
   // تُلتقط قبل ذلك من PAGE_TITLES، فلا يبتلعها العنوان الديناميكي.
   const dynamicTitle = (path: string): string | null => {
+    // منشئ الصفحات مسارٌ فرعي تحت محرر المحتوى — يُلتقط **قبله** وإلا ابتلعه
+    if (path.startsWith("/admin/content/") && path.endsWith("/builder")) return "منشئ الصفحات";
     if (path.startsWith("/admin/content/")) return "محرر المحتوى";
     // /admin/discounts/<id> — شاشة كوبون واحد (البانرات مسار ثابت التُقط قبلها)
     if (path.startsWith("/admin/discounts/")) return "تعديل كوبون";

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Eye, EyeOff, Plus } from "lucide-react";
+import { Blocks, Eye, EyeOff, Plus } from "lucide-react";
 
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
@@ -20,10 +20,10 @@ import {
   COMMON_ERROR_MESSAGES,
   KIND_LABELS,
   KIND_ORDER,
-  publicPath,
   sectionCountLabel,
   StatusBanners,
 } from "./_components/fields";
+import { builderPublicPath } from "@/lib/page-builder/registry";
 import { togglePublished } from "./[id]/actions";
 import { getAdminContent } from "./loader";
 
@@ -32,11 +32,21 @@ export const metadata = { title: "المحتوى" };
 const hasSupabaseEnv = () =>
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
+/**
+ * مجموعات القائمة. `landing` **نصٌّ لا `PageKind`** بقصد: نوع صفحة الهبوط قائمٌ
+ * في قيد قاعدة البيانات منذ هجرة منشئ الصفحات، وقد يسبق تسجيلَه في
+ * `lib/content-types.ts` الذي يملكه عارض الصفحات — فصفحةٌ من هذا النوع يجب أن
+ * تظهر في القائمة **اليوم** لا أن تختفي بلا أثر (النمط ٣ في `LESSONS.md`).
+ */
+const GROUP_ORDER: string[] = Array.from(new Set<string>([...KIND_ORDER, "landing"]));
+const GROUP_LABELS: Record<string, string> = KIND_LABELS;
+
 const KIND_DESCRIPTIONS: Record<string, string> = {
   home: "صفحة الموقع الأولى — أقسامها تُرتّب وتُحرَّر من هنا.",
   service: "الخدمات الست — لكل خدمة صفحة كاملة ببنية بيع وأسئلة شائعة.",
   corridor: "صفحات سيو للنقل بين مدينتين — أقوى تكتيك لتصدر نتائج البحث.",
   static: "صفحات عامة مثل «من نحن» والشروط.",
+  landing: "صفحات تُبنى بالكتل من منشئ الصفحات — تظهر على رابط مباشر من الجذر.",
 };
 
 function PageRow({ page, readOnly }: { page: PageWithSections; readOnly: boolean }) {
@@ -50,7 +60,7 @@ function PageRow({ page, readOnly }: { page: PageWithSections; readOnly: boolean
           {page.title}
         </Link>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <code dir="ltr">{publicPath(page)}</code>
+          <code dir="ltr">{builderPublicPath(page.kind, page.slug) ?? "—"}</code>
           <span>·</span>
           <span>{sectionCountLabel(page.sections.length)}</span>
         </div>
@@ -82,6 +92,17 @@ function PageRow({ page, readOnly }: { page: PageWithSections; readOnly: boolean
         className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
       >
         تحرير
+      </Link>
+
+      {/* مدخل منشئ الصفحات — الشاشة بلا رابطٍ إليها شاشةٌ لم تُبنَ
+          (القاعدة الذهبية ١٧ في `handover/INDEX.md`) */}
+      <Link
+        href={`/admin/content/${page.id}/builder`}
+        title="فتح الصفحة في منشئ الكتل: ترتيب بالسحب، ومسودة، ومعاينة، ونشر"
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+      >
+        <Blocks />
+        المنشئ
       </Link>
     </div>
   );
@@ -131,16 +152,16 @@ export default async function ContentListPage({ searchParams }: PageProps<"/admi
 
       <PagePulse data={pulse} />
 
-      {KIND_ORDER.map((kind) => {
+      {GROUP_ORDER.map((kind) => {
         const group = pages
-          .filter((p) => p.kind === kind)
+          .filter((p) => (p.kind as string) === kind)
           .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title, "ar"));
         if (group.length === 0) return null;
         return (
           <Card key={kind}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                {KIND_LABELS[kind]}
+                {GROUP_LABELS[kind]}
                 <Badge variant="outline">{group.length}</Badge>
               </CardTitle>
               <CardDescription>{KIND_DESCRIPTIONS[kind]}</CardDescription>

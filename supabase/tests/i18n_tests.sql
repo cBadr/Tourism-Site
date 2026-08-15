@@ -65,6 +65,10 @@ begin
   delete from public.sections     s where s.page_id = 'e0000000-0000-4000-8000-000000000001'::uuid;
   delete from public.pages        p where p.slug   = 'i18n-tests-fixture';
 
+  -- بقايا فيكسترة (هـ-ك) — مفاتيح العناصر الثابتة
+  delete from public.sections s where s.page_id = 'e0000000-0000-4000-8000-000000000002'::uuid;
+  delete from public.pages    p where p.slug    = 'i18n-tests-itemkeys';
+
   delete from public.profiles p where p.id = 'e2000000-0000-4000-8000-0000000000ad'::uuid;
   begin
     delete from auth.users u where u.id = 'e2000000-0000-4000-8000-0000000000ad'::uuid;
@@ -445,6 +449,324 @@ begin
   end if;
 
   raise notice '✔ (هـ) استبدال عناصر items: العنصر المطلوب وحده، والترتيب محفوظ';
+end;
+$$;
+
+-- ============================================================================
+-- (هـ-ك) 🔴 المفتاح الثابت `_k` — الترجمة تتبع **العنصر** لا موضعه (هجرة 0059)
+--
+-- ── العطب الذي وُجدت هذه المجموعة لتمنع عودته ──────────────────────────────
+--
+-- عنوان الترجمة كان `<sectionId>.items.<ordinal>.<field>` — يصف الموضع لا
+-- العنصر. فتبديلُ عنصرين (وهو ما يفعله السحب والإفلات حرفياً، وهو **التفاعل
+-- نفسه** في منشئ الصفحات) كان ينقل ترجمة الأول إلى الثاني ويعرضها على الزائر
+-- ممزوجة: سؤال «ألف» المترجَم ملصوقاً بجواب «باء». والطابور يسمها `stale`،
+-- لكن `localized_page` ترشّح على `status='published'` وحده فتخدم الخطأ.
+--
+-- ── ولماذا لكل فحصٍ هنا شاهدٌ سالب بجواره ─────────────────────────────────
+--
+-- «الترجمة تبعت العنصر» جملةٌ **تمرّ من تلقاء نفسها** لو كان جهاز القياس
+-- أعمى — يكفي ألا تُطبَّق ترجمةٌ أصلاً لتبدو كأنها لم تنتقل. ولذلك يحمل هذا
+-- الملف قسمَين متلازمَين لا واحداً:
+--
+--   • قسمٌ **مفتاح** (`aaaaaa` · `bbbbbb`): بعد التبديل تتبع الترجمة العنصر.
+--   • قسمٌ **بلا مفاتيح**: بعد التبديل تتبع الترجمة **الموضع** — وهو العطب
+--     الأصلي، مُثبَّتاً هنا **بوصفه سلوكاً متوقَّعاً للصيغة القديمة**. فلو
+--     عمي جهاز القياس لسقط هذا الشاهد أولاً، ولانكشف أن الفحص الأول كان
+--     يمرّ فراغاً. (النمط ٩ في `LESSONS.md`: كل نفيٍ يسبقه شاهدٌ إيجابي من
+--     نفس الجدول ونفس المسار.)
+--
+-- وهو في الوقت نفسه الحارس على شرط «الصيغة الترتيبية تبقى تعمل»: ١٢٤ من
+-- مفاتيح الأقسام الحيّة مبنيةٌ عليها، وكسرُها غير مقبول.
+--
+-- ── والفحص (هـ-ك-٤) طفرةٌ حيّة داخل الملف ─────────────────────────────────
+--
+-- ينزع `_k` من العنصرين ثم يقيس. لو كان العنوان مبنياً على أي شيء غير `_k`
+-- لما تحرّك شيء. وهو أيضاً الفحص الذي يقفل **دلالة السقوط**: بعد النزع تسقط
+-- الترجمات الثابتة ولا تحلّ محلها ترتيبيةٌ من عنصرٍ آخر — لأن السقوط في 0059
+-- سقوطُ **عنونة لكل عنصر** لا سقوطُ **بحث لكل مفتاح**. ولو كان بحثاً لعاد
+-- العطب المقيس بعد أول سحبة، ولمرّ هذا الملف كله وهو يمرّ فوق جثة العطب.
+--
+-- فيكسترة مستقلة بصفحتها: القسمان لا يُضافان إلى صفحة (أ) كي لا يُزحزح فحصُ
+-- عدد أقسامها في (ج-٤).
+-- ============================================================================
+do $$
+declare
+  v_page constant uuid := 'e0000000-0000-4000-8000-000000000002';
+  v_k    constant uuid := 'e1000000-0000-4000-8000-000000000003';  -- عناصره مفتاحة
+  v_o    constant uuid := 'e1000000-0000-4000-8000-000000000004';  -- عناصره بلا مفاتيح
+  v_slug constant text := 'i18n-tests-itemkeys';
+  v_missing text;
+  v_extra   text;
+  v_doc     jsonb;
+  v_items   jsonb;
+  v_id      uuid;
+  v_n       integer;
+begin
+  -- ── الشرط المسبق: 0059 مطبَّقة. وبدونها الرسالة تقول ذلك صراحةً بدل أن
+  --    يسقط الملف على خطأ «دالة غير موجودة» يُقرأ عطباً في الاختبار.
+  if to_regprocedure('public.i18n_item_address(jsonb, bigint)') is null
+     or to_regprocedure('public.i18n_reserved_content_key(text)') is null then
+    raise exception
+      '(هـ-ك-٠) شرط مسبق: طبّق 0059_i18n_stable_item_keys.sql — بانيا العنوان غائبان';
+  end if;
+
+  -- ── الفيكسترة ──
+  insert into public.pages (id, slug, kind, title, meta, published, sort)
+  values (v_page, v_slug, 'static', 'صفحة اختبار مفاتيح العناصر',
+          '{"title":"مفاتيح العناصر","description":"فيكسترة اختبار _k."}'::jsonb, true, 998);
+
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values
+    (v_k, v_page, 'faq', jsonb_build_object(
+       'title',   'أسئلة المفتاح الثابت',
+       -- `style` مفتاحٌ محجوز (العقد §٥): تنسيقٌ لا نصّ، ولا يدخل الفهرس **بالاسم**
+       'style',   jsonb_build_object('background', 'muted', 'label', 'نصُّ تنسيقٍ لا يُترجَم'),
+       -- عمقٌ زائد داخل `jsonb` — لا يفهرسه أحد (المقيس في ٢-أ من الموجز)، وتثبيته
+       -- هنا يمنع أن ينزلق يوماً إلى الفهرس بلا أن ينتبه أحد
+       'columns', jsonb_build_array(jsonb_build_object('heading', 'عمقٌ زائد لا يفهرسه أحد')),
+       'items',   jsonb_build_array(
+         jsonb_build_object('_k', 'aaaaaa', 'q', 'سؤال ألف؟', 'a', 'جواب ألف.'),
+         jsonb_build_object('_k', 'bbbbbb', 'q', 'سؤال باء؟', 'a', 'جواب باء.'))),
+     0, true),
+    (v_o, v_page, 'faq', jsonb_build_object(
+       'items', jsonb_build_array(
+         jsonb_build_object('q', 'سؤال ترتيبي أول؟', 'a', 'جواب ترتيبي أول.'),
+         jsonb_build_object('q', 'سؤال ترتيبي ثانٍ؟', 'a', 'جواب ترتيبي ثانٍ.'))),
+     1, true);
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (هـ-ك-١) الفهرس: صيغةٌ ثابتة لمن يحمل مفتاحاً، وترتيبية لمن لا يحمل
+  -- ══════════════════════════════════════════════════════════════════════════
+  select string_agg(x.k, '، ')
+    into v_missing
+  from (values
+    (v_k::text || '.title'),
+    (v_k::text || '.items.aaaaaa.q'), (v_k::text || '.items.aaaaaa.a'),
+    (v_k::text || '.items.bbbbbb.q'), (v_k::text || '.items.bbbbbb.a'),
+    -- 🔒 الصيغة الترتيبية **تبقى تعمل** — عليها ١٢٤ مفتاحاً حيّاً في قاعدة بدر
+    (v_o::text || '.items.0.q'), (v_o::text || '.items.0.a'),
+    (v_o::text || '.items.1.q'), (v_o::text || '.items.1.a')
+  ) as x(k)
+  where not exists (
+    select 1 from public.translation_corpus() c where c.namespace = 'section' and c.key = x.k);
+  if v_missing is not null then
+    raise exception '(هـ-ك-١أ) مفاتيح غائبة عن الفهرس: %', v_missing;
+  end if;
+
+  select string_agg(x.k, '، ')
+    into v_extra
+  from (values
+    -- لا صيغة ترتيبية لعنصرٍ يحمل مفتاحاً — عنوانٌ واحد لكل عنصر لا عنوانان
+    (v_k::text || '.items.0.q'), (v_k::text || '.items.1.q'),
+    (v_k::text || '.items.0.a'), (v_k::text || '.items.1.a'),
+    -- ولا المعرّف نفسه نصاً في الطابور
+    (v_k::text || '.items.aaaaaa._k'), (v_k::text || '.items.0._k'), (v_k::text || '._k'),
+    -- ولا التنسيق، ولا العمق الزائد
+    (v_k::text || '.style'), (v_k::text || '.style.label'),
+    (v_k::text || '.columns'), (v_k::text || '.columns.0.heading')
+  ) as x(k)
+  where exists (
+    select 1 from public.translation_corpus() c where c.namespace = 'section' and c.key = x.k);
+  if v_extra is not null then
+    raise exception '(هـ-ك-١ب) مفاتيح **لا يجوز** أن يُخرجها الفهرس وقد أخرجها: %', v_extra;
+  end if;
+
+  -- والفحص الأمتن من فحص المفاتيح: لا **نصَّ** محجوز في الطابور مهما كان عنوانه.
+  -- المعرّف المفهرَس يُرسَل إلى مترجِمٍ آلي أو بشري، و«ترجمتُه» تكسر هوية العنصر.
+  select count(*) into v_n from public.translation_corpus() c
+   where c.source_text in ('aaaaaa', 'bbbbbb', 'نصُّ تنسيقٍ لا يُترجَم', 'عمقٌ زائد لا يفهرسه أحد');
+  if v_n <> 0 then
+    raise exception '(هـ-ك-١ج) % نصاً محجوزاً/غير مفهرَس ظهر في الطابور للترجمة', v_n;
+  end if;
+
+  -- والنمط مفروضٌ لا مفترَض: مفتاحٌ مشوَّه يسقط إلى الترتيب ولا يولّد عنواناً غريباً
+  if public.i18n_item_address(jsonb_build_object('_k', 'AB!'), 7) <> '7'
+     or public.i18n_item_address(jsonb_build_object('_k', 'abcdefg'), 3) <> '3'
+     or public.i18n_item_address(jsonb_build_object('_k', 'aaaaaa'), 9) <> 'aaaaaa' then
+    raise exception '(هـ-ك-١د) i18n_item_address لا تطبّق نمط ITEM_KEY_PATTERN';
+  end if;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (هـ-ك-٢) الحالة الابتدائية: كل عنصر يحمل ترجمته هو، قبل أي إعادة ترتيب
+  -- ══════════════════════════════════════════════════════════════════════════
+  perform public.upsert_translations(jsonb_build_array(
+    jsonb_build_object('locale','zz','namespace','section','key', v_k::text||'.items.aaaaaa.q',
+                       'sourceText','سؤال ألف؟','value','QUESTION-ALEF','provider','mymemory'),
+    jsonb_build_object('locale','zz','namespace','section','key', v_k::text||'.items.aaaaaa.a',
+                       'sourceText','جواب ألف.','value','ANSWER-ALEF','provider','mymemory'),
+    jsonb_build_object('locale','zz','namespace','section','key', v_k::text||'.items.bbbbbb.q',
+                       'sourceText','سؤال باء؟','value','QUESTION-BAA','provider','mymemory'),
+    jsonb_build_object('locale','zz','namespace','section','key', v_k::text||'.items.bbbbbb.a',
+                       'sourceText','جواب باء.','value','ANSWER-BAA','provider','mymemory'),
+    jsonb_build_object('locale','zz','namespace','section','key', v_o::text||'.items.0.q',
+                       'sourceText','سؤال ترتيبي أول؟','value','ORDINAL-ONE','provider','mymemory'),
+    jsonb_build_object('locale','zz','namespace','section','key', v_o::text||'.items.1.q',
+                       'sourceText','سؤال ترتيبي ثانٍ؟','value','ORDINAL-TWO','provider','mymemory')));
+
+  for v_id in
+    select t.id from public.translations t
+     where t.locale = 'zz' and t.namespace = 'section'
+       and (t.key like v_k::text || '.items.%' or t.key like v_o::text || '.items.%')
+  loop
+    perform public.review_translation(v_id, (select t.value from public.translations t where t.id = v_id), true);
+  end loop;
+
+  v_doc   := public.localized_page(v_slug, 'zz');
+  v_items := v_doc -> 'sections' -> 0 -> 'content' -> 'items';
+
+  if v_items -> 0 ->> 'q' is distinct from 'QUESTION-ALEF'
+     or v_items -> 0 ->> 'a' is distinct from 'ANSWER-ALEF'
+     or v_items -> 1 ->> 'q' is distinct from 'QUESTION-BAA'
+     or v_items -> 1 ->> 'a' is distinct from 'ANSWER-BAA' then
+    raise exception
+      '(هـ-ك-٢أ) الترجمة لم تُركَّب أصلاً قبل التبديل — جهاز القياس أعمى: %', v_items::text;
+  end if;
+  -- والمفتاح يبقى في المحتوى المخدوم كما هو، ولا تلمسه ترجمةٌ إطلاقاً
+  if v_items -> 0 ->> '_k' is distinct from 'aaaaaa'
+     or v_items -> 1 ->> '_k' is distinct from 'bbbbbb' then
+    raise exception '(هـ-ك-٢ب) المعرّف `_k` تغيّر في المحتوى المخدوم: %', v_items::text;
+  end if;
+
+  v_items := v_doc -> 'sections' -> 1 -> 'content' -> 'items';
+  if v_items -> 0 ->> 'q' is distinct from 'ORDINAL-ONE'
+     or v_items -> 1 ->> 'q' is distinct from 'ORDINAL-TWO' then
+    raise exception
+      '(هـ-ك-٢ج) الصيغة الترتيبية توقفت عن العمل — ١٢٤ مفتاحاً حيّاً تعتمد عليها: %',
+      v_items::text;
+  end if;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (هـ-ك-٣) 🔴 القبول: **إعادة الترتيب** — وهي بالضبط ما يفعله مقبض السحب
+  -- ══════════════════════════════════════════════════════════════════════════
+  update public.sections s
+     set content = jsonb_set(s.content, '{items}',
+                     jsonb_build_array(s.content -> 'items' -> 1, s.content -> 'items' -> 0))
+   where s.id in (v_k, v_o);
+
+  v_doc   := public.localized_page(v_slug, 'zz');
+  v_items := v_doc -> 'sections' -> 0 -> 'content' -> 'items';
+
+  -- العنصر `bbbbbb` صار أولاً — ويجب أن يحمل ترجمته **هو**
+  if v_items -> 0 ->> '_k' is distinct from 'bbbbbb' then
+    raise exception '(هـ-ك-٣أ) التبديل لم يقع أصلاً: %', v_items::text;
+  end if;
+  if v_items -> 0 ->> 'q' is distinct from 'QUESTION-BAA'
+     or v_items -> 0 ->> 'a' is distinct from 'ANSWER-BAA' then
+    raise exception
+      '🔴 (هـ-ك-٣ب) الترجمة تبعت **الموضع** لا العنصر: العنصر bbbbbb يحمل «%» / «%» — '
+      'هذا هو العطب الذي كُتبت 0059 لقتله، وسيراه الزائر على /en',
+      v_items -> 0 ->> 'q', v_items -> 0 ->> 'a';
+  end if;
+  if v_items -> 1 ->> '_k' is distinct from 'aaaaaa'
+     or v_items -> 1 ->> 'q' is distinct from 'QUESTION-ALEF'
+     or v_items -> 1 ->> 'a' is distinct from 'ANSWER-ALEF' then
+    raise exception '🔴 (هـ-ك-٣ج) العنصر aaaaaa فقد ترجمته بعد التبديل: %', v_items::text;
+  end if;
+  -- ولا سؤالٌ مترجَم ملصوقٌ بجواب عنصرٍ آخر — الصورة الحرفية للعطب المقيس
+  if exists (
+    select 1 from jsonb_array_elements(v_items) as x(item)
+     where (x.item ->> 'q' = 'QUESTION-ALEF' and x.item ->> 'a' <> 'ANSWER-ALEF')
+        or (x.item ->> 'q' = 'QUESTION-BAA'  and x.item ->> 'a' <> 'ANSWER-BAA')) then
+    raise exception '🔴 (هـ-ك-٣د) سؤالٌ مترجَم ملصوقٌ بجواب عنصرٍ آخر: %', v_items::text;
+  end if;
+
+  -- ── الشاهد السالب: القسم بلا مفاتيح تتبع ترجمتُه **الموضع**، وهو المتوقَّع
+  --    من الصيغة القديمة. سقوطُ هذا الفحص يعني أن (هـ-ك-٣ب) كان يمرّ فراغاً.
+  v_items := v_doc -> 'sections' -> 1 -> 'content' -> 'items';
+  if v_items -> 0 ->> 'a' is distinct from 'جواب ترتيبي ثانٍ.' then
+    raise exception '(هـ-ك-٣هـ) الشاهد السالب: التبديل لم يقع على القسم الترتيبي: %', v_items::text;
+  end if;
+  if v_items -> 0 ->> 'q' is distinct from 'ORDINAL-ONE' then
+    raise exception
+      '(هـ-ك-٣و) الشاهد السالب سقط: الصيغة الترتيبية لم تعد تتبع الموضع («%») — '
+      'فإما أن سلوكها تغيّر، وإما أن جهاز القياس في (هـ-ك-٣ب) لا يرى الحركة أصلاً',
+      v_items -> 0 ->> 'q';
+  end if;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (هـ-ك-٤) طفرةٌ حيّة: انزع `_k` — يجب أن ينهار كل ما بُني عليه، وألا
+  --          تحلّ محلّه ترجمةٌ ترتيبية من عنصرٍ آخر (السقوط عنونةٌ لا بحث)
+  -- ══════════════════════════════════════════════════════════════════════════
+  update public.sections s
+     set content = jsonb_set(s.content, '{items}', (
+           select jsonb_agg(el.item - '_k' order by el.ord)
+           from jsonb_array_elements(s.content -> 'items') with ordinality as el(item, ord)))
+   where s.id = v_k;
+
+  if exists (select 1 from public.translation_corpus() c
+              where c.namespace = 'section' and c.key = v_k::text || '.items.aaaaaa.q') then
+    raise exception
+      '(هـ-ك-٤أ) العنوان الثابت بقي في الفهرس بعد نزع `_k` — أي أنه ليس مشتقاً من `_k`';
+  end if;
+  if not exists (select 1 from public.translation_corpus() c
+                  where c.namespace = 'section' and c.key = v_k::text || '.items.0.q') then
+    raise exception '(هـ-ك-٤ب) بعد نزع `_k` لم تعد الصيغة الترتيبية تُخرَج';
+  end if;
+
+  v_items := public.localized_page(v_slug, 'zz') -> 'sections' -> 0 -> 'content' -> 'items';
+  if v_items -> 0 ->> 'q' in ('QUESTION-ALEF', 'QUESTION-BAA') then
+    raise exception
+      '🔴 (هـ-ك-٤ج) بعد نزع `_k` حلّت ترجمةٌ محلّ العربية («%») — أي أن `i18n_apply` '
+      'تسقط من `_k` إلى الترتيب **بحثاً**، وهو ما يعيد العطب بعد أول سحبة',
+      v_items -> 0 ->> 'q';
+  end if;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (هـ-ك-٥) 🔴 سكُّ المفاتيح على قائمةٍ **لها ترجمات ترتيبية منشورة** —
+  --          وهو حرفياً ما يفعله زرّ «ثبّت مفاتيح العناصر» في المنشئ
+  --
+  -- هنا يُحسم الفرق بين قراءتَي «ثم تسقط إلى الترتيب» في العقد §٤:
+  --
+  --   (أ) **سقوطٌ لكل عنصر** — المشحون: عنصرٌ بمفتاحٍ صالح عنوانه المفتاح
+  --       **وحده**؛ فبعد السكّ تعود نصوصه إلى الطابور نصاً جديداً، وتُخدَم
+  --       عربيتُه حتى تُراجَع. نقصٌ ظاهر، وهو المقبول.
+  --   (ب) **سقوطٌ لكل بحث** — المرفوض: جرّب المفتاح فإن لم تجد فجرّب الترتيب.
+  --       وحينها يكفي أن يضغط المالك الزرّ ثم يسحب عنصراً، فيجد البحثُ
+  --       الثانوي ترجمةَ **الموضع** ويلصقها بعنصرٍ آخر — أي العطب المقيس
+  --       نفسه، حرفياً، بعد الهجرة التي كُتبت لقتله.
+  --
+  -- والقائمة هنا **مبدَّلة سلفاً** من (هـ-ك-٣)، وترجماتها الترتيبية منشورة.
+  -- فلو كان السقوط بحثاً لظهر `ORDINAL-ONE` ملصوقاً بالسؤال العربي الثاني.
+  -- ══════════════════════════════════════════════════════════════════════════
+  update public.sections s
+     set content = jsonb_set(s.content, '{items}', jsonb_build_array(
+           (s.content -> 'items' -> 0) || '{"_k":"cccccc"}'::jsonb,
+           (s.content -> 'items' -> 1) || '{"_k":"dddddd"}'::jsonb))
+   where s.id = v_o;
+
+  v_items := public.localized_page(v_slug, 'zz') -> 'sections' -> 1 -> 'content' -> 'items';
+
+  if v_items -> 0 ->> '_k' is distinct from 'cccccc' then
+    raise exception '(هـ-ك-٥أ) السكّ لم يقع: %', v_items::text;
+  end if;
+  if exists (select 1 from jsonb_array_elements(v_items) as x(item)
+              where x.item ->> 'q' in ('ORDINAL-ONE', 'ORDINAL-TWO')) then
+    raise exception
+      '🔴 (هـ-ك-٥ب) بعد سكّ المفاتيح حلّت ترجمةٌ **ترتيبية** محلّ العربية: % — '
+      'أي أن i18n_apply تسقط من `_k` إلى الترتيب بحثاً لا عنونةً، فزرُّ «ثبّت '
+      'المفاتيح» يفتح العطب بدل أن يغلقه', v_items::text;
+  end if;
+  -- والشاهد الإيجابي بجواره: العربية هي التي ظهرت فعلاً، لا فراغٌ ولا مفتاح
+  if v_items -> 0 ->> 'q' is distinct from 'سؤال ترتيبي ثانٍ؟' then
+    raise exception '(هـ-ك-٥ج) بعد السكّ لم تُخدَم العربية الأصلية: «%»', v_items -> 0 ->> 'q';
+  end if;
+  -- والفهرس نقلها إلى الصيغة الثابتة، فتظهر في الطابور نصاً جديداً يُراجَع مرة
+  if not exists (select 1 from public.translation_corpus() c
+                  where c.namespace = 'section' and c.key = v_o::text || '.items.cccccc.q') then
+    raise exception '(هـ-ك-٥د) الفهرس لم ينقل العنصر المسكوك إلى الصيغة الثابتة';
+  end if;
+
+  -- ── التنظيف الموضعي ──
+  delete from public.translations t
+   where t.locale = 'zz' and t.namespace = 'section'
+     and (t.key like v_k::text || '%' or t.key like v_o::text || '%');
+  delete from public.sections s where s.page_id = v_page;
+  delete from public.pages    p where p.id      = v_page;
+
+  raise notice
+    '✔ (هـ-ك) `_k`: الترجمة تتبع العنصر بعد التبديل، والترتيبية تعمل لمن لا مفتاح له، '
+    'والمعرّف والتنسيق خارج الطابور';
 end;
 $$;
 
@@ -1307,6 +1629,10 @@ begin
   delete from public.locales      l where l.code   = 'zz';
   delete from public.sections     s where s.page_id = 'e0000000-0000-4000-8000-000000000001'::uuid;
   delete from public.pages        p where p.slug   = 'i18n-tests-fixture';
+
+  -- فيكسترة (هـ-ك) تُمسح في موضعها؛ وهذا احتياط تشغيلٍ انهار في منتصفه
+  delete from public.sections s where s.page_id = 'e0000000-0000-4000-8000-000000000002'::uuid;
+  delete from public.pages    p where p.slug    = 'i18n-tests-itemkeys';
 
   -- فيكسترة (ك-ن) تُمسح في موضعها؛ وهذا احتياط تشغيلٍ انهار في منتصفه
   delete from public.sections s

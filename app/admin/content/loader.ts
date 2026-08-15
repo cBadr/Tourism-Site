@@ -34,6 +34,8 @@ type PageRow = {
 type SectionRow = {
   id: string;
   page_id: string;
+  /** `sections.parent_id` — كتلة الأعمدة الأمّ، أو `null` لكتلة جذر (هجرة `0058`) */
+  parent_id: string | null;
   type: Section["type"];
   content: Record<string, unknown>;
   sort: number;
@@ -55,6 +57,10 @@ function mapPage(row: PageRow, sections: SectionRow[]): PageWithSections {
       .map((s) => ({
         id: s.id,
         pageId: s.page_id,
+        // يمرّ إلى الواجهة كي تميّز شاشةُ التحرير القديمة كتل الجذر من أبناء
+        // كتلة الأعمدة — وبدونه كانت تعرضها كلها في مستوىً واحد وترقّم `sort`
+        // فوق بعضها، فتخلط ترتيب الأعمدة بترتيب الصفحة.
+        parentId: s.parent_id ?? null,
         type: s.type,
         content: s.content as Section["content"],
         sort: s.sort,

@@ -34,7 +34,27 @@ const DEFAULT_SECTION_CONTENT: Record<SectionType, Record<string, unknown>> = {
   faq: { items: [] },
   "cta-band": {},
   contact: {},
+  // الكتلتان الجديدتان يديرهما منشئ الصفحات — تُنشأ هنا بشكلٍ صالح وتُحرَّر هناك
+  columns: {},
+  image: { src: "", alt: "" },
 };
+
+/**
+ * 🔴 مفاتيح **لا يملكها هذا المحرر ولا يجوز أن يمحوها**.
+ *
+ * هذه الدالة تعيد بناء `content` كاملاً من النموذج في كل حفظ (‏`switch` يُسقط كل
+ * مفتاح لا يعرفه)، وهو ما كان يعني أن قسماً كتب فيه منشئ الصفحات `style` أو
+ * `_k` **يفقدهما صامتاً** بمجرد أن يُحفظ من هنا (الثمن ٣ في موجز المرحلة ١٣).
+ * فإما كاتبٌ واحد وإما صيانةٌ صريحة للمفاتيح — وهذا هو الشقّ الثاني:
+ *
+ *   • `style` يُنقل كما هو (تنسيقٌ لا يعرضه هذا المحرر أصلاً).
+ *   • `_k` يُنقل داخل كل عنصر عبر `parseItems` (انظر `ITEM_PRESERVED_KEYS`).
+ *   • `columns` و`image` **لا يلمسهما هذا المحرر إطلاقاً** — يرجع `null` فتُترك.
+ */
+const PRESERVED_CONTENT_KEYS = ["style"] as const;
+
+/** مفاتيح تُنقل داخل عنصر `items` كما هي — `_k` عنوان ترجمة العنصر الثابت */
+const ITEM_PRESERVED_KEYS = ["_k"] as const;
 
 /** نص مُشذّب أو undefined — undefined تعني إسقاط المفتاح من الـ JSONB */
 function str(formData: FormData, name: string): string | undefined {
@@ -85,6 +105,12 @@ function parseItems(
         // المفاتيح الاختيارية الفارغة تُسقط، والإلزامي يبقى للفحص أدناه
         if (t !== "" || k === requiredKey) item[k] = t;
       }
+      // 🔒 `_k` يعبر كما هو: هو عنوان ترجمة العنصر، وإسقاطه يعيد العنونة إلى
+      //    الترتيب فتنتقل ترجمة العنصر إلى جاره بأول إعادة ترتيب.
+      for (const k of ITEM_PRESERVED_KEYS) {
+        const v = rec[k];
+        if (typeof v === "string" && v !== "") item[k] = v;
+      }
       if ((item[requiredKey] ?? "") !== "") items.push(item);
     }
     return items;
@@ -93,9 +119,12 @@ function parseItems(
   }
 }
 
-type SectionRow = { id: string; type: string; sort: number };
+type SectionRow = { id: string; type: string; sort: number; content: Record<string, unknown> | null };
 
-/** بناء JSONB القسم من حقول النموذج `section-<id>-<field>` بحسب نوعه */
+/**
+ * بناء JSONB القسم من حقول النموذج `section-<id>-<field>` بحسب نوعه.
+ * `null` = **لا تلمس هذا الصف** (نوعٌ خارج العقد، أو نوعٌ يملكه منشئ الصفحات).
+ */
 function sectionContentFromForm(
   formData: FormData,
   section: SectionRow
@@ -107,6 +136,11 @@ function sectionContentFromForm(
   if (!isSectionType(section.type)) return null; // نوع خارج العقد — لا نلمسه
 
   switch (section.type) {
+    // 🔒 كتلتا منشئ الصفحات: هذا المحرر لا يعرض حقولهما ولا يكتبهما — الكاتب
+    //    الوحيد لهما هو المنشئ، وأي كتابةٍ من هنا كانت ستمحو محتواهما بالكامل.
+    case "columns":
+    case "image":
+      return null;
     case "hero":
       return prune({ headline: f("headline"), sub: f("sub") });
     case "page-hero":
@@ -174,15 +208,24 @@ export async function savePage(pageId: string, formData: FormData) {
   if (pageRes.error || !pageRes.data || pageRes.data.length === 0)
     redirect(editorUrl(pageId, "error=save"));
 
+  // `content` يُقرأ مع الصف لا لأنه يُعرض، بل لأن مفاتيح لا يملكها هذا المحرر
+  // تعيش فيه (‏`style`) ويجب أن تعبر الحفظ سالمة — انظر `PRESERVED_CONTENT_KEYS`.
   const sectionsRes = await supabase
     .from("sections")
-    .select("id, type, sort")
+    .select("id, type, sort, content")
     .eq("page_id", pageId);
   if (sectionsRes.error) redirect(editorUrl(pageId, "error=save"));
 
   for (const section of (sectionsRes.data ?? []) as SectionRow[]) {
-    const content = sectionContentFromForm(formData, section);
-    if (content === null) continue;
+    const built = sectionContentFromForm(formData, section);
+    if (built === null) continue;
+
+    const existing = section.content ?? {};
+    const content: Record<string, unknown> = { ...built };
+    for (const key of PRESERVED_CONTENT_KEYS) {
+      if (existing[key] !== undefined) content[key] = existing[key];
+    }
+
     const visible = formData.get(`section-${section.id}-visible`) != null;
     const res = await supabase
       .from("sections")
@@ -251,10 +294,13 @@ export async function moveSection(pageId: string, sectionId: string, dir: "up" |
   const supabase = await createServerSupabase();
   if (!supabase) redirect(editorUrl(pageId, "error=env"));
 
+  // 🔒 كتل الجذر وحدها: هذا الترتيب يعيد ترقيم `sort` تسلسلياً لما يقرؤه، ولو
+  //    دخل أبناءُ كتلة الأعمدة في العدّ لخلط ترتيبَهم داخل أبيهم بترتيب الصفحة.
   const listRes = await supabase
     .from("sections")
     .select("id, sort")
     .eq("page_id", pageId)
+    .is("parent_id", null)
     .order("sort");
   if (listRes.error || !listRes.data?.length) redirect(editorUrl(pageId, "error=save"));
 

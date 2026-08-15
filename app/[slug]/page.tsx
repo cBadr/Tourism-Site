@@ -22,9 +22,33 @@ import { ShareBar } from "@/components/site/share-bar";
  * على المقطع الديناميكي دائماً، لكننا نحرس الأمر صراحةً بقائمة محجوزة حتى لا
  * تلتقط هذه الصفحة سطراً في `pages` سُمّي بخطأ باسم مسار قائم فتُظهر محتوى
  * مختلفاً على عنوان محجوز.
+ *
+ * ── المرحلة ١٣: **وصفحات الهبوط أيضاً، وبلا ملف مسار جديد** ─────────────────
+ *
+ * `landing` هو النوع الرابع في `pages_kind_check` (هجرة `0058` §١)، ويُصيَّر من
+ * **هذا الملف نفسه** على `/{slug}` — بلا بادئة لغة (**D-24**) وبلا مسار عام
+ * جديد (‏`PHASE_13_OUT_OF_SCOPE` البند ٧). فالمنشئ لا يوسّع سطح المسارات: يضيف
+ * صفوفاً إلى جدولٍ يقرؤه مقطعٌ قائم.
+ *
+ * 🔒 **والمحجوزات هنا ليست تحذيراً بل نصف الحارس:** الشقّ الآخر مُشغّل
+ * `pages_guard_slug` في القاعدة يرفض الحفظ برمز `SlugRejectCode`. ولماذا
+ * الشقّان؟ لأن هذا الملف لا يستطيع أن يمنع الكتابة، والمُشغّل لا يستطيع أن
+ * يمنع Next من تقديم المقطع الثابت. وقبل `0058` كان الشقّ الأول وحده موجوداً:
+ * يقبل المالك `slug='book'`، ويراها «منشورة» في اللوحة، وهي **٤٠٤ للأبد**.
  */
 
 type PageParams = { params: Promise<{ slug: string; locale?: string }> };
+
+/**
+ * الأنواع التي يقدّمها هذا المقطع. وشرطُ النوع ليس زينة: بدونه تلتقط
+ * `/{slug}` صفحةَ خدمةٍ اسمها `airport-transfer` على الجذر أيضاً، فيصير
+ * للمحتوى الواحد عنوانان — وهو محتوى مكرر يقسم وزن الصفحة في نتائج البحث.
+ */
+const ROOT_PAGE_KINDS = ["static", "landing"] as const;
+
+function servesAtRoot(kind: string): boolean {
+  return (ROOT_PAGE_KINDS as readonly string[]).includes(kind);
+}
 
 /** المسارات التي يملكها ملف/مجلد حقيقي في `app/` — لا يجوز أن يلتقطها هذا المقطع */
 const RESERVED_SLUGS: ReadonlySet<string> = new Set([
@@ -46,8 +70,9 @@ const RESERVED_SLUGS: ReadonlySet<string> = new Set([
  * القانونية الثلاث دائماً — والـ slug غير المذكور هنا يبقى متاحاً عند الطلب.
  */
 export async function generateStaticParams(): Promise<{ slug: string }[]> {
-  const pages = await getPagesByKind("static");
-  return pages
+  const groups = await Promise.all(ROOT_PAGE_KINDS.map((kind) => getPagesByKind(kind)));
+  return groups
+    .flat()
     .filter((page) => !RESERVED_SLUGS.has(page.slug))
     .map((page) => ({ slug: page.slug }));
 }
@@ -58,7 +83,13 @@ export async function generateMetadata({ params }: PageParams): Promise<Metadata
 
   const locale = await resolveLocale(params);
   const page = await getPageBySlug(slug, locale);
-  if (!page || page.kind !== "static") return {};
+  /**
+   * `getPageBySlug` تقرأ من `lib/content.ts` وهي **لا ترى إلا المنشور**
+   * (`.eq("published", true)`)، ومسودةُ المنشئ لا تلمس `sections` أصلاً — تعيش
+   * في `page_revisions`. فالصفحة غير المنشورة تخرج من هنا `{}` ومن الجسم أدناه
+   * ٤٠٤، ولا تدخل خريطة الموقع. **مقيسٌ لا مفترَض** — انظر تقرير المرحلة.
+   */
+  if (!page || !servesAtRoot(page.kind)) return {};
 
   return buildPageMetadata({
     title: page.meta.title ?? page.title,
@@ -80,7 +111,7 @@ export default async function StaticContentPage({ params }: PageParams) {
     getPageBySlug(slug, locale),
   ]);
 
-  if (!page || page.kind !== "static") notFound();
+  if (!page || !servesAtRoot(page.kind)) notFound();
 
   return (
     <>

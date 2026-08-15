@@ -42,6 +42,16 @@ type SectionRow = {
   content: Record<string, unknown>;
   sort: number;
   visible: boolean;
+  /**
+   * الكتلة الأمّ — يصل ضمن `select("*")` منذ هجرة `0058`.
+   *
+   * ⚠ **ولا تُرشَّح الأبناء هنا:** سياسة `sections_select_anon_visible` في
+   * القاعدة تُسقط ابنَ كتلةٍ مخفيّة أصلاً (`section_parent_visible`)، فما يصل
+   * إلى هنا معروضٌ بحكم القاعدة. وترتيبُ الشجرة عملُ العارضة وحدها
+   * (`components/sections/render.tsx`) — لأن الابن الذي يفقد أباه يجب أن
+   * **يختفي** لا أن يصعد جذراً.
+   */
+  parent_id: string | null;
 };
 
 function mapPage(row: PageRow, sections: SectionRow[]): PublicPage {
@@ -66,6 +76,9 @@ function mapPage(row: PageRow, sections: SectionRow[]): PublicPage {
         content: s.content as Section["content"],
         sort: s.sort,
         visible: s.visible,
+        // قاعدة لم تُطبَّق عليها `0058` بعد ⇒ العمود غائب ⇒ `null` أي «كتلة جذر»،
+        // وهو بالضبط سلوك الأقسام الـ٩٣ القائمة
+        parentId: typeof s.parent_id === "string" ? s.parent_id : null,
       })),
   };
 }

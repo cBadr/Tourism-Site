@@ -162,12 +162,13 @@ export const COMMON_ERROR_MESSAGES: Record<string, string> = {
 };
 
 /** تسميات أنواع الصفحات وترتيب عرضها في القائمة */
-export const KIND_ORDER: PageKind[] = ["home", "service", "corridor", "static"];
+export const KIND_ORDER: PageKind[] = ["home", "service", "corridor", "static", "landing"];
 export const KIND_LABELS: Record<PageKind, string> = {
   home: "الرئيسية",
   service: "الخدمات",
   corridor: "المسارات",
   static: "صفحات ثابتة",
+  landing: "صفحات الهبوط",
 };
 
 /** المسار العام للصفحة بحسب خطة التوجيه (المرحلة ٢) */
@@ -180,6 +181,8 @@ export function publicPath(page: Pick<Page, "kind" | "slug">): string {
     case "corridor":
       return `/routes/${page.slug}`;
     case "static":
+    // صفحة الهبوط تُصيَّر من `app/[slug]` نفسه على `/{slug}` بلا بادئة لغة (D-24)
+    case "landing":
       return `/${page.slug}`;
   }
 }

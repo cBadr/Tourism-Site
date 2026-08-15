@@ -31,6 +31,17 @@ export function pagePublicPath(kind: PageKind, slug: string): string {
       return `/routes/${slug}`;
     case "static":
       return `/${slug}`;
+    /**
+     * صفحة الهبوط (المرحلة ١٣) على الجذر تماماً كالثابتة — نفس المقطع
+     * `app/[slug]/page.tsx` يقدّمها، **بلا بادئة لغة** (D-24) وبلا ملف مسار
+     * جديد. والفرق بينها وبين `static` ليس في الشكل بل في الوزن: أولويتها في
+     * `app/sitemap.ts` أعلى، وقائمة اللوحة تفصلها.
+     *
+     * ⚠ ولا `default` في هذا الـ`switch` بقصد: النوع الخامس يوم يُضاف يظهر
+     * خطأَ بناءٍ هنا لا مساراً `undefined` يمرّ صامتاً إلى خريطة الموقع.
+     */
+    case "landing":
+      return `/${slug}`;
   }
 }
 

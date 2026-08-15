@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronDown, ChevronUp, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { Blocks, ChevronDown, ChevronUp, ExternalLink, Plus, Trash2 } from "lucide-react";
 
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +14,10 @@ import {
   COMMON_ERROR_MESSAGES,
   Field,
   fieldControlClass,
-  KIND_LABELS,
-  publicPath,
   StatusBanners,
   TextareaField,
 } from "../_components/fields";
+import { BUILDER_KIND_LABELS, builderPublicPath } from "@/lib/page-builder/registry";
 import { getAdminPageById } from "../loader";
 import { SectionFields } from "./_components/section-fields";
 import { addSection, deleteSection, moveSection, savePage } from "./actions";
@@ -54,24 +53,46 @@ export default async function ContentEditorPage({
   const iconButton = (extra?: string) =>
     cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), extra);
 
+  // نوع `landing` قد يسبق تسجيله في `lib/content-types.ts`، والمسار يُقرأ من
+  // مصدرٍ متسامح يرجع `null` بدل أن يعرض رابطاً فارغاً
+  const pagePath = builderPublicPath(page.kind, page.slug);
+
+  /**
+   * 🔒 هذا المحرر **مسطّح ويبقى مسطّحاً**: يعرض كتل الجذر وحدها، وأبناء كتلة
+   * الأعمدة تُحرَّر في المنشئ. والسبب ليس ذوقاً — `moveSection` هنا يعيد ترقيم
+   * `sort` لكل صفوف الصفحة تسلسلياً، فلو دخل الأبناء في العدّ لخلط ترتيبَ
+   * الأعمدة داخل أبيها بترتيب الصفحة نفسها.
+   */
+  const rootSections = page.sections.filter((section) => !section.parentId);
+  const nestedCount = page.sections.length - rootSections.length;
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {/* ترويسة المحرر: العنوان + النوع + الحالة + الرابط العام */}
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-heading text-lg font-bold">{page.title}</h2>
-        <Badge variant="outline">{KIND_LABELS[page.kind]}</Badge>
+        <Badge variant="outline">{BUILDER_KIND_LABELS[page.kind] ?? page.kind}</Badge>
         <Badge variant={page.published ? "default" : "secondary"}>
           {page.published ? "منشورة" : "مسودة"}
         </Badge>
         <span className="ms-auto flex items-center gap-3">
           <Link
-            href={publicPath(page)}
-            target="_blank"
+            href={`/admin/content/${page.id}/builder`}
             className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
           >
-            <ExternalLink className="size-3.5" />
-            <span dir="ltr">{publicPath(page)}</span>
+            <Blocks className="size-3.5" />
+            المنشئ
           </Link>
+          {pagePath && (
+            <Link
+              href={pagePath}
+              target="_blank"
+              className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
+            >
+              <ExternalLink className="size-3.5" />
+              <span dir="ltr">{pagePath}</span>
+            </Link>
+          )}
           <Link
             href="/admin/content"
             className="text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
@@ -165,13 +186,24 @@ export default async function ContentEditorPage({
           </HelpTip>
         </div>
 
-        {page.sections.length === 0 && (
+        {nestedCount > 0 && (
+          <Card className="p-4 text-sm leading-relaxed text-muted-foreground">
+            في هذه الصفحة {nestedCount} كتلة داخل كتلة أعمدة — لا تظهر هنا لأن هذا المحرر مسطّح.
+            حرّرها ورتّبها من{" "}
+            <Link href={`/admin/content/${page.id}/builder`} className="text-primary hover:underline">
+              منشئ الصفحات
+            </Link>
+            .
+          </Card>
+        )}
+
+        {rootSections.length === 0 && (
           <Card className="p-5 text-sm text-muted-foreground">
             لا أقسام في هذه الصفحة بعد — أضف أول قسم من بطاقة «إضافة قسم» بالأسفل.
           </Card>
         )}
 
-        {page.sections.map((section, index) => {
+        {rootSections.map((section, index) => {
           const typeInfo = SECTION_TYPE_LABELS[section.type];
           return (
             <Card key={section.id} className="space-y-4 p-5">
@@ -195,7 +227,7 @@ export default async function ContentEditorPage({
                     type="submit"
                     formAction={moveSection.bind(null, page.id, section.id, "down")}
                     formNoValidate
-                    disabled={readOnly || index === page.sections.length - 1}
+                    disabled={readOnly || index === rootSections.length - 1}
                     aria-label="تحريك القسم لأسفل"
                     title="تحريك لأسفل"
                     className={iconButton()}
