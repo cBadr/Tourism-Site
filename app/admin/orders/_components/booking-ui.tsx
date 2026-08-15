@@ -16,7 +16,25 @@ import { cn } from "@/lib/utils";
  * لا حساب مالي هنا: الأرقام تصل جاهزة من قاعدة البيانات وما يجري تنسيق عرض فقط.
  */
 
-/** ترتيب دورة الحياة كما في lib/booking-types.ts */
+/**
+ * الحالة السابعة `failed` (هجرة `0051`) — **حالةُ قاعدةٍ قائمة لا حالةُ شاشة**:
+ * `bookings_status_check` تقبلها منذ 0051، و`mark_booking_failed` هي كاتبها
+ * الوحيد. ولم تصل بعد إلى `lib/booking-types.ts` لأن ملف العقد خارج مجموعة هذا
+ * الوكيل — فتُعرَّف هنا توسعةً لا استنساخاً، ويبقى `BookingStatus` مصدرَ الست
+ * الأخرى حرفاً بحرف. **ومن ضمّها إلى العقد لاحقاً فليُسقط هذا النوع** ولا يترك
+ * تعريفين لقائمةٍ واحدة.
+ */
+export type AdminBookingStatus = BookingStatus | "failed";
+
+/**
+ * ترتيب دورة الحياة كما في lib/booking-types.ts.
+ *
+ * 🔒 **الست وحدها، و`failed` ليست منها بقصد**: هذه القائمة تغذّي قائمة «تغيير
+ * الحالة يدوياً»، و`failed` لا تُكتب بتحديث حالة إطلاقاً — حارس
+ * `bookings_guard_failed` يرفض أي انتقال إليها بلا صفّ سببٍ مسجَّل، فبندٌ في تلك
+ * القائمة كان وعداً ينتهي برسالة رفض من القاعدة. مدخلها الوحيد نموذج «تعليم
+ * الرحلة فاشلة» بسببه وإجرائه المالي.
+ */
 export const BOOKING_STATUSES: BookingStatus[] = [
   "pending_payment",
   "under_review",
@@ -26,27 +44,39 @@ export const BOOKING_STATUSES: BookingStatus[] = [
   "cancelled",
 ];
 
-export const STATUS_LABELS: Record<BookingStatus, string> = {
+/** كل ما قد يظهر في عمود الحالة — للعرض والترشيح لا للاختيار من قائمة */
+export const ADMIN_BOOKING_STATUSES: AdminBookingStatus[] = [...BOOKING_STATUSES, "failed"];
+
+export const STATUS_LABELS: Record<AdminBookingStatus, string> = {
   pending_payment: "بانتظار الدفع",
   under_review: "قيد المراجعة",
   confirmed: "مؤكد",
   assigned: "مُسند",
   completed: "منفذ",
   cancelled: "ملغي",
+  failed: "فاشلة",
 };
 
 /** شرح مختصر لكل حالة — يظهر في تلميحات الشاشة وقائمة تغيير الحالة */
-export const STATUS_HINTS: Record<BookingStatus, string> = {
+export const STATUS_HINTS: Record<AdminBookingStatus, string> = {
   pending_payment: "أُنشئ الحجز والعميل لم يرفع إيصال التحويل بعد.",
   under_review: "رُفع الإيصال وينتظر تحقق التشغيل من وصول المبلغ.",
   confirmed: "تحقق التشغيل من التحويل والحجز مضمون للعميل.",
   assigned: "أُسند لمتعهد — يُفعَّل بالكامل في المرحلة ٦.",
   completed: "نُفذت الرحلة وانتهى الالتزام.",
   cancelled: "أُلغي الحجز — حالة نهائية.",
+  failed:
+    "الرحلة لم تُنفَّذ — حالة نهائية لا تعود إلى الطابور: يُردّ للعميل ماله ويحجز من جديد، ولكل رحلة فاشلة سببٌ من الكتالوج وإجراءٌ مالي مسجَّل.",
 };
 
-/** ألوان الحالة — نفس لوحة ألوان بطاقات التنبيه في بقية اللوحة */
-const STATUS_TONE: Record<BookingStatus, string> = {
+/**
+ * ألوان الحالة — نفس لوحة ألوان بطاقات التنبيه في بقية اللوحة.
+ *
+ * و`failed` **مملوءة لا محاطة**: هي الوحيدة كذلك في اللوحة. و«ملغي» أحمر محاط،
+ * والفرق بينهما فرقُ معنىً لا درجةِ لون (إلغاءٌ قبل التنفيذ مقابل رحلةٍ خابت
+ * على العميل)، فلونان متقاربان في وسمين صغيرين كانا سيُقرآن واحداً في طابور.
+ */
+const STATUS_TONE: Record<AdminBookingStatus, string> = {
   pending_payment:
     "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
   under_review:
@@ -59,10 +89,12 @@ const STATUS_TONE: Record<BookingStatus, string> = {
     "border-teal-300 bg-teal-100 text-teal-900 dark:border-teal-700 dark:bg-teal-950 dark:text-teal-100",
   cancelled:
     "border-red-300 bg-red-100 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100",
+  failed:
+    "border-red-600 bg-red-600 text-white dark:border-red-500 dark:bg-red-700 dark:text-white",
 };
 
-export function isBookingStatus(value: unknown): value is BookingStatus {
-  return typeof value === "string" && (BOOKING_STATUSES as string[]).includes(value);
+export function isBookingStatus(value: unknown): value is AdminBookingStatus {
+  return typeof value === "string" && (ADMIN_BOOKING_STATUSES as string[]).includes(value);
 }
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
@@ -98,6 +130,46 @@ export function eventLabel(value: string | null): string {
   if (isBookingStatus(value)) return `الحالة: ${STATUS_LABELS[value]}`;
   return value;
 }
+
+/* ── الرحلة الفاشلة (هجرة `0051`) — ثلاثة قواميس رموزٍ إلى عربية ─────────────
+ *
+ * كلها **رموز تعبر من الخادم** (`none`/`pay`/`deduct` و`ledger_effect`) وتُترجَم
+ * هنا لا هناك: جملةٌ عربية يؤلّفها SQL تهزم السطح المترجَم — وهو الدرس المكتوب
+ * في موجز الموجة الأولى.
+ *
+ * وموضعها في هذا الملف لا في إحدى الشاشتين لأن قارئيها اثنان: شاشة الطلب التي
+ * تعرض ما وقع، وشاشة الكتالوج التي تحرّر ما يُقترح. ونسختان تنحرفان.
+ */
+
+/** الإجراء المالي الثلاثي كما يفرضه `failure_reasons_action_chk` */
+export const FAILURE_ACTION_LABELS: Record<string, string> = {
+  none: "لا شيء",
+  pay: "دفع كامل المستحق",
+  deduct: "خصم",
+};
+
+/** ماذا يعني كل إجراء في الدفتر فعلاً — يُقرأ قبل الاختيار لا بعده */
+export const FAILURE_ACTION_HINTS: Record<string, string> = {
+  none: "لا قيد. من رحلةٍ مُسندة: لا مستحق يُنشأ أصلاً. ومن رحلةٍ مكتملة: يُعكس المستحق الذي كُتب عند الاكتمال، ويبقى ما قبضه المتعهد نقداً ديناً علينا عنده.",
+  pay: "المتعهد يأخذ مستحقه كاملاً. من رحلةٍ مُسندة يُنشأ المستحق بمبلغ الإسناد، ومن رحلةٍ مكتملة تبقى التسوية كما كُتبت بلا لمس.",
+  deduct:
+    "يُقيَّد المبلغ الذي يكتبه المدير على المتعهد فينزل صافي مستحقه — ومن رحلةٍ مكتملة يُعكس المستحق كذلك. والخصم يُكتب موجباً على دور «المحصَّل» لا سالباً على دور معاكس.",
+};
+
+/**
+ * رمز `booking_failures.ledger_effect` — **ما وقع في الدفتر فعلاً** لا ما طُلب.
+ * `payout-missing` تحديداً ليست خطأً: مستحقٌّ غير موجود أو معكوسٌ سلفاً، والرمز
+ * يقولها بدل أن يدّعي عكساً لم يقع.
+ */
+export const LEDGER_EFFECT_LABELS: Record<string, string> = {
+  none: "لا قيد في الدفتر",
+  "payout-created": "أُنشئ مستحق المتعهد بمبلغ الإسناد",
+  deduct: "قُيِّد الخصم على المتعهد",
+  "payout-kept": "بقي مستحق المتعهد كما كُتب عند الاكتمال",
+  "payout-reversed": "عُكس مستحق المتعهد",
+  "payout-reversed+deduct": "عُكس مستحق المتعهد وقُيِّد الخصم",
+  "payout-missing": "لا مستحق يُعكس — إما لم يُكتب أصلاً أو سبق عكسه",
+};
 
 export const PAYMENT_KIND_LABELS: Record<string, string> = {
   wallet: "محفظة إلكترونية",

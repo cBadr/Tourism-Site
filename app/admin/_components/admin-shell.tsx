@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  AlertTriangle,
   Banknote,
   BarChart3,
   Bell,
@@ -54,6 +55,7 @@ type NavItem = {
     | "/admin/discounts"
     | "/admin/dispatch"
     | "/admin/extras"
+    | "/admin/failure-reasons"
     | "/admin/finance"
     | "/admin/fleet"
     | "/admin/integrations"
@@ -118,6 +120,11 @@ const NAV_ITEMS: NavItem[] = [
   // «الإسناد» بعد «المتعهدون» مباشرة: الشاشتان وجهان لعلاقة واحدة — من الشركاء،
   // ثم كيف تصل إليهم الرحلة.
   { label: "الإسناد", icon: Radio, href: "/admin/dispatch" },
+  // «أسباب فشل الرحلة» بعد «الإسناد» مباشرة وقبل «المالية»: هذا الكتالوج يُقرأ
+  // في اللحظة التي تلي الإسناد — رحلةٌ أُسندت ثم لم تُنفَّذ — **وأثره مالي على
+  // المتعهد** (لا شيء · دفع كامل · خصم). فموضعه بين مَن ينفّذ ومَن يُحاسَب.
+  // وهو شاشة إعدادٍ تُفتح مرات معدودة في العمر، فلا تتصدّر شاشات العمل اليومي.
+  { label: "أسباب فشل الرحلة", icon: AlertTriangle, href: "/admin/failure-reasons" },
   // «المالية» فُعِّلت في المرحلة ٧: الخزينة والمصروفات ومقاصة المتعهدين وكشوف
   // الحساب. البند يبقى فعالاً على مساراتها الفرعية كلها (فحص startsWith أدناه).
   { label: "المالية", icon: Wallet, href: "/admin/finance" },
@@ -148,6 +155,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/discounts/banners": "بانرات العروض",
   "/admin/dispatch": "الإسناد",
   "/admin/extras": "الخدمات الإضافية",
+  // بنفس نصّ `export const metadata` في الشاشة، وإلا قرأ المالك عنوانين مختلفين
+  // في الترويسة وتبويب المتصفح
+  "/admin/failure-reasons": "أسباب فشل الرحلة",
   "/admin/finance": "المالية",
   "/admin/finance/expenses": "المصروفات",
   "/admin/finance/partners": "مقاصة المتعهدين",

@@ -38,6 +38,8 @@ import { PromoBanners } from "../promo-banner";
 import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
 import { readPaymentSettings, splitAmounts } from "./payment";
 import { todayInputValue, toIsoFromCairoInputs } from "./datetime";
+import { previewPaymentHold } from "./hold-action";
+import type { PaymentHold } from "./hold";
 
 /**
  * مسار إتمام الحجز — ثلاث خطوات داخل نفس الصفحة (بلا تنقل حتى الإرسال):
@@ -315,6 +317,7 @@ export function Checkout({
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const [hold, setHold] = React.useState<PaymentHold | null>(null);
 
   const topRef = React.useRef<HTMLDivElement | null>(null);
   const minDate = React.useMemo(() => todayInputValue(), []);
@@ -357,6 +360,36 @@ export function Checkout({
   const scheduledPickup = trip.pickupAt ?? null;
   const pickupIso = scheduledPickup ?? toIsoFromCairoInputs(pickupDate, pickupTime);
   const hasExtras = offer.extras.length > 0;
+
+  /**
+   * مهلة حفظ الحجز — تُقرأ **على الخادم** حين تُفتح خطوة الدفع، لا قبلها.
+   *
+   * ولماذا هنا لا في أعلى الحاسبة: المعادلة تعتمد على **موعد الانطلاق**
+   * (‏`booking_hold_until` تأخذ الأبعد من «الآن + المهلة» و«الموعد − المهلة»)،
+   * والموعد لا يستقرّ إلا بعد اجتياز الخطوة الأولى. وسؤالُ الخادم قبل ذلك يعني
+   * جواباً عن موعدٍ لم يُختر بعد.
+   *
+   * 🔒 ولا حساب في المتصفح: النتيجة **تاريخٌ جاهز** من الدالة نفسها التي ينادي
+   * بها الكنس. وتعذّر القراءة يعني `null` ⇒ لا سطر — لا تاريخاً مخمَّناً.
+   */
+  React.useEffect(() => {
+    if (step !== 3 || !pickupIso) return;
+
+    let alive = true;
+    void previewPaymentHold(pickupIso)
+      .then((result) => {
+        if (alive) setHold(result);
+      })
+      .catch(() => {
+        // الصمت الآمن: تبقى الخطوة كما كانت بلا سطر مهلة
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [step, pickupIso]);
+
+  const holdUntilLabel = hold?.enabled ? fmt.dateTime(hold.holdUntil) : null;
 
   // ── الإجمالي الذي تُبنى عليه معاينة العربون ────────────────────────────────
   //
@@ -1024,6 +1057,29 @@ export function Checkout({
                 "بعد التأكيد تفتح لك صفحة الحجز بحسابات التحويل المتاحة، وترفع صورة الإيصال ليراجعه فريقنا. المبالغ النهائية تُثبَّت في تلك الصفحة."
               )}
             </p>
+
+            {/*
+              مهلة حفظ الحجز — السطر الذي كان ناقصاً كلياً: العميل يؤكد ثم يذهب
+              ليحوّل، ولا أحد أخبره أن للحجز عمراً.
+
+              🔒 **«محفوظ حتى» لا «يُلغى في»**: التاريخ أرضيةٌ آمنة لا موعد
+              إعدام — الكنس يستثني كذلك من عليه نشاط إيصالٍ حديث، فالمهلة تمتدّ
+              ولا تقصر. والصياغة تحتمل الامتداد ولا تحتمل خُلف الوعد.
+
+              وهي **معاينة** كمعاينة العربون فوقها تماماً: تُحسب من لحظة العرض،
+              والرقم المُلزِم يُثبَّت في صفحة المتابعة وهي مصدره الوحيد. ولذلك
+              لا تظهر إلا بتاريخٍ وصل فعلاً — وغيابها لا يترك فراغاً ولا وعداً.
+            */}
+            {holdUntilLabel ? (
+              <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-3 py-2.5 text-xs leading-6 text-muted-foreground">
+                <Clock className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                {t(
+                  "payment.holdUntil",
+                  "ويبقى حجزك محفوظاً لك حتى {value} لإتمام التحويل — وبعدها قد يُلغى تلقائياً ويعود موعده متاحاً لغيرك.",
+                  { value: holdUntilLabel }
+                )}
+              </p>
+            ) : null}
           </div>
         ) : null}
 

@@ -812,6 +812,112 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ج+) 🆕 0052 — حالة المتعهد شرطٌ للقبول، لا للرؤية
+--
+-- حسم بدر أن **الموقوف يرى رحلاته المُسنَدة** — وذلك سلوكٌ صحيحٌ يبقى. لكن
+-- `accept_offer` كانت لا تشترط شيئاً عن حالته (مقيس)، فمن أُوقف اليوم وبيده
+-- عرضٌ صدر **قبل** الإيقاف ولم تنتهِ مهلته كان يقبله فيكسب رحلةً وهو موقوف.
+--
+-- والقياس هنا **على العرض نفسه** الذي تستعمله بقية الأقسام: يُترك `pending`
+-- والمتعهد `approved` كما كانا، فلا يتأثر ما بعده.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_ident  text := current_setting('tours.d_identities', true);
+  v_b1     uuid := current_setting('tours.d_booking1', true)::uuid;
+  v_a      constant uuid := 'd0000000-0000-4000-8000-00000000000a';
+  v_prof_a constant uuid := 'd2000000-0000-4000-8000-00000000000a';
+  v_offer  uuid;
+  v_state  text;
+  v_hint   text;
+  v_status text;
+begin
+  if v_ident is distinct from '1' then
+    raise notice '  ↳ (ج+) تخطٍّ: بلا هويتي دخول';
+    return;
+  end if;
+
+  select o.id into v_offer
+  from public.trip_offers o
+  where o.booking_id = v_b1 and o.subcontractor_id = v_a and o.status = 'pending'
+  limit 1;
+
+  -- مسبار المسبار: بلا عرضٍ معلّقٍ لصاحبه لا شيء يُقاس
+  if v_offer is null then
+    raise exception '(ج+٠) لا عرض معلّق للمتعهد أ — القياس لا يقيس شيئاً';
+  end if;
+
+  -- الإيقاف يقع بلا هوية: `subcontractors_guard_self` تمنع المتعهد من تغيير
+  -- حالة نفسه، وهو حارسٌ قائم لا يلمسه هذا القسم
+  perform set_config('request.jwt.claim.sub', '', false);
+  perform set_config('request.jwt.claims', '', false);
+  update public.subcontractors set status = 'suspended' where id = v_a;
+
+  perform set_config('request.jwt.claim.sub', v_prof_a::text, false);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_prof_a)::text, false);
+
+  v_state := null;
+  begin
+    perform public.accept_offer(v_offer);
+    v_state := '(قُبل)';
+  exception
+    when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+      v_state := 'رُفض';
+  end;
+
+  if v_state = '(قُبل)' then
+    raise exception '(ج+١) 🔴 متعهدٌ موقوف قبل عرضاً بيده فكسب رحلةً وهو موقوف';
+  end if;
+  if coalesce(v_hint, '') <> 'partner-not-approved' then
+    raise exception '(ج+١) رمز الرفض «%» — المتوقع partner-not-approved، فالرفض جاء من حارسٍ آخر',
+      coalesce(v_hint, 'بلا');
+  end if;
+
+  -- ولا أثر: العرض معلّقٌ كما كان
+  select o.status into v_status from public.trip_offers o where o.id = v_offer;
+  if v_status <> 'pending' then
+    raise exception '(ج+١) حالة العرض صارت «%» بعد محاولةٍ مرفوضة', v_status;
+  end if;
+
+  -- (ج+٢) و`pending` كذلك: من لم يُعتمد قط لا يقبل عملاً — نفس شرط dispatch_pool
+  perform set_config('request.jwt.claim.sub', '', false);
+  perform set_config('request.jwt.claims', '', false);
+  update public.subcontractors set status = 'pending' where id = v_a;
+  perform set_config('request.jwt.claim.sub', v_prof_a::text, false);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_prof_a)::text, false);
+
+  v_state := null;
+  begin
+    perform public.accept_offer(v_offer);
+    v_state := '(قُبل)';
+  exception
+    when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+      v_state := 'رُفض';
+  end;
+  if v_state = '(قُبل)' then
+    raise exception '(ج+٢) 🔴 متعهدٌ لم يُعتمد بعد قبل عرضاً';
+  end if;
+
+  -- (ج+٣) 🔒 والاستعادة — والقسم (هـ) بعدُ يقبل هذا العرض نفسه بنجاح، وهو
+  --       الشاهد الإيجابي على أن الحارس لا يمنع الجميع
+  perform set_config('request.jwt.claim.sub', '', false);
+  perform set_config('request.jwt.claims', '', false);
+  update public.subcontractors set status = 'approved' where id = v_a;
+
+  select s.status into v_status from public.subcontractors s where s.id = v_a;
+  if v_status <> 'approved' then
+    raise exception '(ج+٣) لم تعُد حالة المتعهد أ إلى approved (‏«%») — الأقسام التالية ستفشل لسببٍ مزروع',
+      v_status;
+  end if;
+
+  raise notice '✔ (ج+) الموقوف وغيرُ المعتمَد لا يقبلان عرضاً بأيديهما، والعرض يبقى معلّقاً ليقبله المعتمَد في (هـ)';
+end;
+$$;
+
+
+-- ----------------------------------------------------------------------------
 -- (د) انتهاء المهلة ← الموجة الثانية بسقف أوسع
 --
 -- المهلة تُقدَّم زمنياً بدل الانتظار: `now()` مجمّدة داخل معاملة المشغّل، فتقديم
@@ -1956,6 +2062,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — البث بموجات، والقبول الذرّي، والخصوصية قبل القبول، والتصعيد اليدوي: كلها نجحت';
+  raise notice 'ALL PASSED — البث بموجات، والقبول الذرّي، والخصوصية قبل القبول، والتصعيد اليدوي، **وحالةُ المتعهد شرطٌ للقبول لا للرؤية (0052)**: كلها نجحت';
 end;
 $$;

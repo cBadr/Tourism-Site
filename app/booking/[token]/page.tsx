@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   BadgeCheck,
   Ban,
+  CircleSlash,
   CalendarClock,
   CarFront,
   CircleCheck,
@@ -34,6 +36,7 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { readPaymentSettings } from "@/components/booking/checkout/payment";
+import { readPaymentHold } from "@/components/booking/checkout/hold";
 import { CopyButton } from "@/components/booking/checkout/copy-button";
 import { PrintButton } from "@/components/booking/print-button";
 import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
@@ -137,16 +140,32 @@ function splitAroundSlot(text: string): [string, string] {
   return [text.slice(0, index), text.slice(index + SLOT.length)];
 }
 
-const STATUS_VALUES: BookingStatus[] = [
+/**
+ * حالة الحجز كما تصل هذه الصفحة — **سبعٌ لا ست**.
+ *
+ * ⚠ و`failed` ليست في `BookingStatus` بعد: العقد `lib/booking-types.ts` يعدّها
+ * ستاً، وقيد القاعدة `bookings_status_check` صار سبعاً في `0051` (مقروءاً من
+ * `pg_get_constraintdef`). فحتى يُضاف الحرف إلى العقد يعيش الاتحاد هنا، ويوم
+ * يُضاف يذوب هذا السطر بلا تغيير في سطرٍ آخر.
+ *
+ * 🔴 **وهذا ليس تجميلاً بل إغلاق ثغرة قائمة:** `readStatus` ترتدّ إلى
+ * `pending_payment` عند حالةٍ لا تعرفها، فرحلةٌ فاشلة كانت تُصيَّر **صفحةَ
+ * دفع**: «حوّل ١٬٢٠٠ ج لتأكيد الحجز» وأرقامَ المحافظ ونموذجَ رفع الإيصال —
+ * أي دعوةً لدفع ثمن رحلةٍ لن تقع، على حجزٍ حالته النهائية ردُّ المال.
+ */
+type TrackedStatus = BookingStatus | "failed";
+
+const STATUS_VALUES: TrackedStatus[] = [
   "pending_payment",
   "under_review",
   "confirmed",
   "assigned",
   "completed",
   "cancelled",
+  "failed",
 ];
 
-function readStatus(row: UnknownRow): BookingStatus {
+function readStatus(row: UnknownRow): TrackedStatus {
   const raw = readText(row, "status", "booking_status");
   const found = STATUS_VALUES.find((value) => value === raw);
   return found ?? "pending_payment";
@@ -275,6 +294,20 @@ function readCrew(row: UnknownRow): BookingTokenCrew | null {
  * جسم مكوّن (‏`react-hooks/purity`)، وهنا تُقرأ مرة واحدة عند التصيير — والصفحة
  * ديناميكية بالضرورة (توكن + كوكيز) فلا لقطة محفوظة تتجمّد عليها.
  */
+/**
+ * هل انقضت أرضية مهلة الحفظ؟
+ *
+ * دالةٌ في جذر الملف لا سطرٌ داخل الصفحة — **لنفس سبب `phoneWindowClosed` أدناه
+ * حرفياً**: قراءة الساعة أثرٌ جانبي لا يُكتب في جسم مكوّن (‏`react-hooks/purity`).
+ * وتُقرأ مرة واحدة عند التصيير، والصفحة ديناميكية بالضرورة (توكن + كوكيز) فلا
+ * لقطة محفوظة تتجمّد عليها.
+ */
+function holdWindowPassed(holdUntil: string | null): boolean {
+  if (holdUntil === null) return false;
+  const at = Date.parse(holdUntil);
+  return Number.isFinite(at) && at <= new Date().getTime();
+}
+
 function phoneWindowClosed(crew: BookingTokenCrew | null): boolean {
   if (crew === null || crew.driverPhone !== null || crew.phoneVisibleAt === null) return false;
   const opensAt = Date.parse(crew.phoneVisibleAt);
@@ -421,17 +454,24 @@ const STATUS_STEPS = [
   { key: "completed", label: "منفذ", icon: CircleCheck },
 ] as const;
 
-/** موضع كل حالة على المؤشر — «مُسند» يبقى ضمن مرحلة «مؤكد» في نظر العميل */
-const STATUS_POSITION: Record<BookingStatus, number> = {
+/**
+ * موضع كل حالة على المؤشر — «مُسند» يبقى ضمن مرحلة «مؤكد» في نظر العميل.
+ *
+ * و`failed` خارج المؤشر (‏`-1`) كـ`cancelled` تماماً، **ولنفس السبب لا مجاملةً**:
+ * المؤشر خطٌّ يتقدّم، والحالتان انقطاعٌ لا تقدّم. ووضعُ «فشلت» عند الخطوة الرابعة
+ * كان سيقول للعميل إن رحلته نُفِّذت.
+ */
+const STATUS_POSITION: Record<TrackedStatus, number> = {
   pending_payment: 0,
   under_review: 1,
   confirmed: 2,
   assigned: 2,
   completed: 3,
   cancelled: -1,
+  failed: -1,
 };
 
-function StatusStepper({ status, t }: { status: BookingStatus; t: Tx }) {
+function StatusStepper({ status, t }: { status: TrackedStatus; t: Tx }) {
   const current = STATUS_POSITION[status];
 
   return (
@@ -822,6 +862,33 @@ export default async function BookingStatusPage({ params }: PageParams) {
     })
   );
 
+  /**
+   * مهلة حفظ الحجز (م‑٥) — **الجواب على «حجزي اختفى ولم يقل لي أحد شيئاً».**
+   *
+   * رفع بدر المهلة إلى ٣٦٠ دقيقة من اللوحة، ولا حرف في هذه الصفحة يذكرها. ومن
+   * لم يُتمّ التحويل يجد حجزه ملغىً بلا إنذار — وهو أسوأ ما يمكن أن تفعله صفحةٌ
+   * كل وظيفتها أن تقول للعميل أين وصل.
+   *
+   * ⚠ **ولا تُكتب الجملة من رأسك:** «ست ساعات من الآن» صارت **خطأً** بعد `0052`.
+   * التاريخ يأتي من `booking_hold_until` — الدالة التي يسألها الكنس بعينها —
+   * وهي تأخذ الأبعد من (الإنشاء + المهلة) و(الموعد − المهلة). فحجزُ رحلةٍ بعد
+   * شهرٍ محفوظٌ قرابة الشهر لا ست ساعات. التفصيل في `checkout/hold.ts`.
+   *
+   * ولا يُسأل عنها إلا في `pending_payment`: الكنس لا يمسّ غيرها، فسطرُ مهلةٍ
+   * على حجزٍ مؤكد تهديدٌ بلا سبب.
+   */
+  const hold =
+    status === "pending_payment"
+      ? await readPaymentHold(createdAt, pickupAt)
+      : { enabled: false, holdUntil: null };
+  const holdUntilLabel = hold.enabled ? fmt.dateTime(hold.holdUntil) : null;
+  /**
+   * انقضت الأرضية؟ عندها **لا تصلح جملة «محفوظ حتى»** — تصير وعداً بماضٍ.
+   * والحجز ما زال قائماً وقد يمتدّ (نشاط إيصالٍ حديث يستثنيه)، فالصادق أن
+   * نقول: انقضت المهلة وقد يُلغى في أي وقت — لا «أُلغي» ولا «محفوظ».
+   */
+  const holdPassed = holdWindowPassed(hold.holdUntil);
+
   // حسابات الاستقبال المتاحة للمبلغ المطلوب — تُفلترها SQL بحدودها اليومية/الشهرية.
   // التوكن جزء من النداء: الصيغة المقصورة على التوكن هي وحدها الممنوحة للزائر،
   // فلا تُعدّ أرقام المحافظ من متصفح بلا حجز قائم بانتظار الدفع.
@@ -936,10 +1003,17 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 سطر «أُنشئ في …» أسفل رقم الحجز) */}
             <p className="print-only hidden text-sm font-bold">{settings.brand.name}</p>
 
+            {/*
+              العنوان يقول الحالة الاستثنائية ولا يخبّئها خلف «تفاصيل حجزك».
+              و«لم تُنفَّذ» غير «ملغي» بقرار المالك (§١-ب): الإلغاء قرارٌ سبق
+              الرحلة، وهذه رحلةٌ حان موعدها ولم تقع — والفرق يهمّ من يقرأ.
+            */}
             <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
               {status === "cancelled"
                 ? t("titleCancelled", "حجز ملغي")
-                : t("title", "تفاصيل حجزك")}
+                : status === "failed"
+                  ? t("titleFailed", "رحلة لم تُنفَّذ")
+                  : t("title", "تفاصيل حجزك")}
             </h1>
 
             <div className="flex flex-col items-center gap-2">
@@ -1031,6 +1105,143 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 </p>
               </div>
             </div>
+          ) : status === "failed" ? (
+            /*
+              ══════════════════════════════════════════════════════════════
+               الرحلة الفاشلة كما يراها العميل (‏موجز الرحلات الفاشلة §١-ب/ج)
+              ══════════════════════════════════════════════════════════════
+
+              حالةٌ **نهائية** بقرار المالك: لا تعود إلى الطابور، ولا تُبثّ من
+              جديد، ولا يُعاد فتح هذا الحجز. والمسار المتفق عليه سطران لا ثالث:
+              **ردُّ المال + حجزٌ جديد**. فالبطاقة تقولهما بهذا الترتيب.
+
+              ── وثلاثة أشياء لا تُقال هنا، وكلٌّ بسببه ────────────────────
+
+              ١. 🔒 **مَن أخفق** — قاعدة `D-19`/white-label: العميل لا يعرف أن
+                 وراء رحلته متعهداً أصلاً. وذكرُ «المتعهد» ولو بلا اسم يهدم
+                 النموذج كلَّه ويفتح باب «أعطوني رقمه».
+
+              ٢. 🔒 **السبب كما سجّله الأدمن** — وله سببان مستقلان، كلٌّ منهما
+                 كافٍ وحده. الأول: تصنيفٌ تشغيليٌّ داخلي وُضع **ليقرّر أثراً
+                 مالياً على المتعهد** (خصم · دفع · لا شيء)، لا ليُقرأ اعتذاراً؛
+                 و«السائق لم يحضر» في عين العميل اتهامٌ لنا يُدار بإنسان لا
+                 بسطرٍ في صفحة. والثاني بنيوي: `failure_reasons.label` نصٌّ
+                 **حرٌّ يحرّره المالك من `/admin`** — فعرضُه يعني جملةً عربية
+                 يؤلّفها الخادم تظهر كما هي على `/en`، وهو بعينه الدرس المعمَّم
+                 من الموجة الأولى («ما يعبر من الخادم إلى الواجهة رمزٌ لا جملة»).
+
+              ٣. 🔒 **رقمُ ردٍّ ولا تاريخه** — الردّ يُسجَّل قيداً في
+                 `ledger_entries` بيد المشرف (‏`record_refund`)، و
+                 `get_booking_by_token` لا تُخرج منه حرفاً. وقراءتُه بعميل
+                 الخدمة كانت ممكنة تقنياً و**رُفضت**: دلالةُ القيد ليست ملكاً
+                 لهذه الصفحة (ردٌّ جزئي؟ قيدٌ عُكس بـ`reverses_entry_id`؟
+                 جمعُ قيدين؟ — والجمع نفسه حسابُ مالٍ في TypeScript، وهو ممنوع
+                 بـ`D-05`). فالصفحة تقول **السياسة** التي حسمها المالك، ولا
+                 تدّعي **حالةً** لا تملك مصدرها. ويوم تُخرج القاعدة «المردود»
+                 حقلاً مُشتقاً، يصير هذا السطر رقماً بلا تغيير في نبرة البطاقة.
+
+              وطاقمُ الرحلة يغيب من نفسه: حارس `get_booking_by_token` يشترط
+              `b.status in ('assigned','completed')` — فلا لوحةَ سيارةٍ ولا اسمَ
+              سائقٍ على رحلةٍ لم تقع، بلا سطر حجبٍ واحد في هذا الملف.
+            */
+            <section
+              aria-label={t("failed.sectionLabel", "رحلة لم تُنفَّذ")}
+              className="flex flex-col gap-5 rounded-3xl border border-destructive/40 bg-destructive/5 p-5 sm:p-6"
+            >
+              <div className="flex items-start gap-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-destructive/15 text-destructive">
+                  <CircleSlash className="size-5" aria-hidden="true" />
+                </span>
+                <div className="flex flex-col gap-1.5">
+                  <h2 className="text-base font-bold">
+                    {t("failed.title", "نعتذر — هذه الرحلة لم تُنفَّذ")}
+                  </h2>
+                  <p className="text-sm leading-7 text-muted-foreground">
+                    {t(
+                      "failed.text",
+                      "لم تتم رحلتك كما ينبغي، وهذا الحجز أُغلق نهائياً فلا يُستأنف ولا يُعاد جدولته. وفيما يلي ما يخصّك: مالك، ثم رحلتك إن كنت ما تزال تحتاجها."
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                {/* المال أولاً — هو أول ما يسأل عنه من قرأ «لم تُنفَّذ» */}
+                <div className="flex items-start gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 text-card-foreground">
+                  <Wallet className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-bold">
+                      {t("failed.refundTitle", "ما دفعته يعود إليك")}
+                    </p>
+                    <p className="text-sm leading-7 text-muted-foreground">
+                      {t(
+                        "failed.refundText",
+                        "لا نأخذ مقابلاً عن رحلة لم تقع. فريقنا يرتّب ردّ ما دفعته ويتواصل معك بشأنه — ولأي استفسار عنه راسلنا بذكر رقم حجزك أعلاه."
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* ثم الرحلة — والزر يفتح حجزاً جديداً لا يستأنف هذا */}
+                <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 text-card-foreground">
+                  <div className="flex items-start gap-3">
+                    <RouteIcon
+                      className="mt-0.5 size-4 shrink-0 text-primary"
+                      aria-hidden="true"
+                    />
+                    <div className="flex flex-col gap-1">
+                      <p className="text-sm font-bold">
+                        {t("failed.rebookTitle", "وإن كنت ما تزال تحتاج الرحلة")}
+                      </p>
+                      <p className="text-sm leading-7 text-muted-foreground">
+                        {t(
+                          "failed.rebookText",
+                          "احجزها من جديد ويصلك رقم حجز جديد. ولأننا نبدأ من الصفر، تأكد من الموعد والوجهة قبل التأكيد — فسعر اليوم قد يختلف عن سعر حجزك السابق."
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  {/* أداةُ تفاعل: تذهب مع الطباعة كبقية الأزرار في هذه الصفحة */}
+                  <Link
+                    href={localePath(locale, "/book")}
+                    className={`${PRINT_HIDDEN_CLASS} inline-flex h-11 w-fit items-center justify-center gap-2 rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50`}
+                  >
+                    <RouteIcon className="size-4 shrink-0" aria-hidden="true" />
+                    {t("failed.rebookCta", "احجز رحلة جديدة")}
+                  </Link>
+                </div>
+              </div>
+
+              {/*
+                وبابُ الإنسان — لا يُستغنى عنه هنا بحال: كل ما لا تقوله هذه
+                البطاقة (ماذا جرى بالضبط، ومتى يصل الردّ) جوابه محادثةٌ لا سطر،
+                والمنصة وحدها تعرف من نفّذ الرحلة وتصل إليه.
+              */}
+              {whatsapp || phone ? (
+                <div className={`${PRINT_HIDDEN_CLASS} flex flex-wrap gap-2`}>
+                  {whatsapp ? (
+                    <a
+                      href={waHref(whatsapp)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-border bg-background px-5 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      <MessageCircle className="size-4 shrink-0" aria-hidden="true" />
+                      {t("failed.whatsapp", "تواصل عبر واتساب")}
+                    </a>
+                  ) : null}
+                  {phone ? (
+                    <a
+                      href={telHref(phone)}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-border bg-background px-5 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      <Phone className="size-4 shrink-0" aria-hidden="true" />
+                      {t("failed.phone", "اتصل بنا")}
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
           ) : (
             <section
               aria-label={t("stepsLabel", "مراحل الحجز")}
@@ -1274,18 +1485,34 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 </dt>
                 <dd className="font-medium">{fmt.money(total, currency)}</dd>
               </div>
-              <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">
-                <dt className="font-semibold">{t("amounts.dueNow", "المطلوب الآن")}</dt>
-                <dd className="text-lg font-extrabold">{fmt.money(amountDue, currency)}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">
-                  {t("amounts.remaining", "المتبقي مع السائق")}
-                </dt>
-                <dd className="font-medium">{fmt.money(amountRemaining, currency)}</dd>
-              </div>
+              {/*
+                🔒 صفّا «المطلوب الآن» و«المتبقي مع السائق» يصفان **التزاماً
+                حيّاً**، ولا التزام على رحلةٍ لم تُنفَّذ: لا مبلغ يُطلب، ولا سائق
+                يُحصِّل، والمسار المعلن فوقهما ردٌّ لا تحصيل. وإبقاؤهما كان
+                يجعل الصفحة تناقض نفسها في شاشةٍ واحدة.
+
+                ويبقى «الإجمالي» فوقهما: هو **ما كانت تساويه الرحلة**، وسجلُّه
+                حقُّ العميل ومرجعه حين يسأل عن الردّ.
+
+                ⚠ و`cancelled` تُترك كما شُحنت — ليست من عهدة هذه الموجة، والملاحظة
+                مرفوعة لمالك ذلك السطح لا مُصلَحة بالمرور.
+              */}
+              {status === "failed" ? null : (
+                <>
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">
+                    <dt className="font-semibold">{t("amounts.dueNow", "المطلوب الآن")}</dt>
+                    <dd className="text-lg font-extrabold">{fmt.money(amountDue, currency)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">
+                      {t("amounts.remaining", "المتبقي مع السائق")}
+                    </dt>
+                    <dd className="font-medium">{fmt.money(amountRemaining, currency)}</dd>
+                  </div>
+                </>
+              )}
             </dl>
-            {amountRemaining > 0 ? (
+            {status !== "failed" && amountRemaining > 0 ? (
               <p className="text-xs leading-6 text-muted-foreground">
                 {t("amounts.remainingNote", "المتبقي يُحصَّل نقداً مع السائق يوم الرحلة.")}
               </p>
@@ -1402,6 +1629,36 @@ export default async function BookingStatusPage({ params }: PageParams) {
                       )
                     : payment.transferInstructions}
                 </p>
+
+                {/*
+                  مهلة الحفظ — تحت العنوان مباشرةً لأنها **شرط** إتمام ما تحته،
+                  لا حاشية. وتُطبع مع الورقة: من يطبع صفحته وهو بانتظار الدفع
+                  يحمل معه أرقام الحسابات، فليحمل معها الموعد.
+
+                  🔒 وصياغتان لا واحدة، لأن الحقيقتين مختلفتان:
+                    • قبل الأرضية ⇒ «محفوظ حتى» — وعدٌ نستطيع الوفاء به: الكنس
+                      لا يلمسه قبلها، وقد يتأخر عنها (نشاط إيصالٍ حديث يستثنيه)
+                      فالامتداد لا يكذّب الجملة والتقصير مستحيل.
+                    • بعدها ⇒ «انقضت وقد يُلغى في أي وقت» — لا «أُلغي» فالحجز
+                      قائم أمامه، ولا «محفوظ حتى» فذلك وعدٌ بماضٍ.
+                */}
+                {holdUntilLabel ? (
+                  <p className="flex items-start gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-7">
+                    <Clock className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+                    <span>
+                      {holdPassed
+                        ? t(
+                            "pay.holdPassed",
+                            "انقضت مهلة حفظ هذا الحجز، وقد يُلغى تلقائياً في أي وقت. إن كنت قد حوّلت فارفع الإيصال الآن، وإلا فتواصل معنا بذكر رقم حجزك."
+                          )
+                        : t(
+                            "pay.holdUntil",
+                            "حجزك محفوظ لك حتى {value} — أتمّ التحويل وارفع الإيصال قبله، فبعده قد يُلغى تلقائياً ويعود موعده متاحاً لغيرك.",
+                            { value: holdUntilLabel }
+                          )}
+                    </span>
+                  </p>
+                ) : null}
               </div>
 
               {gateways.length > 0 ? (

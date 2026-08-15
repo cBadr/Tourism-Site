@@ -8,11 +8,12 @@ import { PagePulse } from "@/components/stats/page-pulse";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { BookingStatus, TripSnapshot } from "@/lib/booking-types";
+import type { TripSnapshot } from "@/lib/booking-types";
 import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import {
+  type AdminBookingStatus,
   Banners,
   COMMON_BOOKING_ERRORS,
   PLAN_LABELS,
@@ -39,14 +40,21 @@ const hasSupabaseEnv = () =>
 const LIST_COLUMNS =
   "id, reference, status, class_slug, class_title, total, currency, plan, amount_due, amount_remaining, customer_name, customer_phone, created_at, trip";
 
-/** تبويبات الترشيح — «مُسند» يظهر ضمن «الكل» ويأخذ تبويبه في المرحلة ٦ مع الإسناد */
-const TABS: { key: string; label: string; status: BookingStatus | null }[] = [
+/**
+ * تبويبات الترشيح — «مُسند» يظهر ضمن «الكل» ويأخذ تبويبه في المرحلة ٦ مع الإسناد.
+ *
+ * و«فاشلة» (‏0051) لها تبويبها من اليوم: هي **مقياسُ جودة تشغيل** لا حالةً عابرة
+ * — «كم رحلة خابت هذا الشهر؟» سؤالٌ يُسأل، وتركُها مبعثرةً في «الكل» يجعله سؤالاً
+ * بلا شاشة. وموضعها بعد «ملغي» لأن كليهما نهاية طريق.
+ */
+const TABS: { key: string; label: string; status: AdminBookingStatus | null }[] = [
   { key: "all", label: "الكل", status: null },
   { key: "pending_payment", label: "بانتظار الدفع", status: "pending_payment" },
   { key: "under_review", label: "قيد المراجعة", status: "under_review" },
   { key: "confirmed", label: "مؤكد", status: "confirmed" },
   { key: "completed", label: "منفذ", status: "completed" },
   { key: "cancelled", label: "ملغي", status: "cancelled" },
+  { key: "failed", label: "فاشلة", status: "failed" },
 ];
 
 const MAX_ROWS = 100;
@@ -93,7 +101,7 @@ const numberOf = (v: unknown): number => {
 };
 
 async function loadOrders(
-  status: BookingStatus | null,
+  status: AdminBookingStatus | null,
   query: string
 ): Promise<{
   orders: OrderRow[];
@@ -107,7 +115,7 @@ async function loadOrders(
   if (!supabase) return empty;
 
   // عدّ كل تبويب داخل Postgres (COUNT) مع نفس شرط البحث الجاري — لا عدّ في الواجهة
-  const countOf = async (tabStatus: BookingStatus | null) => {
+  const countOf = async (tabStatus: AdminBookingStatus | null) => {
     let q = supabase.from("bookings").select("id", { count: "exact", head: true });
     if (tabStatus) q = q.eq("status", tabStatus);
     if (query) q = q.or(searchFilter(query));
@@ -347,7 +355,7 @@ export default async function OrdersPage({ searchParams }: PageProps<"/admin/ord
       {/* التبويبات وبطاقات الأعداد شيء واحد: كل بطاقة تعرض عدد حالتها من Postgres وتُرشِّح عند الضغط */}
       <nav
         aria-label="ترشيح الطلبات بالحالة"
-        className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
+        className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7"
       >
         {TABS.map((item) => {
           const active = item.key === tab.key;

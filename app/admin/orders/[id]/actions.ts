@@ -408,3 +408,113 @@ export async function setTripCrewByAdmin(bookingId: string, formData: FormData) 
   revalidatePath("/", "layout");
   redirect(url(bookingId, "saved=crew"));
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * تعليم الرحلة **فاشلة** (هجرة `0051`)
+ *
+ * قرار المالك: ما يخفق ليس «ملغى» بل «فشل»، والفشل **نهائي** لا يعود إلى
+ * الطابور — والعميل يُردّ إليه ماله ويحجز من جديد. وسببُ الفشل من **كتالوج
+ * مُدار** (‏`/admin/failure-reasons`) لكل سببٍ فيه إجراءٌ مالي مقترح، والمدير
+ * يقبله أو يتجاوزه بمبرر مكتوب.
+ *
+ * 🔒 **ولا قرار هنا إطلاقاً.** `mark_booking_failed` وحدها: تلقط لقطة السبب
+ * والتسمية والإجراء الافتراضي، وتنفّذ الأثر المالي على `record_partner_adjustment`
+ * و`reverse_ledger_entry`، ثم تنقل الحالة فتعكس المُشغّلات النقاط. وكل نداء
+ * PostgREST معاملةٌ واحدة (**D-48**) — فالنداء المرفوض لا يترك نصف فشل.
+ *
+ * وما يقع هنا: تحقق **شكلي** من المدخلات، ثم ترجمة رمز الرفض. وتحديداً **لا
+ * يُفحص هنا** أن الإجراء يوافق الافتراضي، ولا أن الخصم يستلزم مبلغاً: هذه قيود
+ * جدولٍ ودالة، وتكرارها في TypeScript يخلق مصدرَ قرارٍ ثانياً ينحرف يوم يحرّر
+ * المالك الكتالوج (النمط ٨ في `handover/LESSONS.md`).
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * رموز `hint` الخاصة بمسار الفشل.
+ *
+ * ⚠ **رمزان يعنيان في هذه الدالة غير ما يعنيانه في غيرها**، فلا يُتركان للجدول
+ * العام: `invalid-status` هنا «الفشل من مُسندة أو مكتملة وحدهما» لا «الاعتماد
+ * يحتاج قيد المراجعة»، و`invalid-input` هنا «مبلغ خصمٍ مع إجراءٍ ليس خصماً» لا
+ * «بيانات ناقصة».
+ *
+ * وثلاثة منها (`negative-amount` · `note-required` · `not-found`) **لا ترفعها
+ * `mark_booking_failed` بنفسها** بل الدالتان الماليتان اللتان تناديهما، والاستثناء
+ * يصعد بـ`hint`ـه كما هو — فغيابها من الجدول كان سيُسقطها على رسالة الصلاحيات.
+ */
+const FAILED_HINTS: Record<string, string> = {
+  "invalid-status": "failstatus",
+  "invalid-input": "faildeductunused",
+  "completion-time-unknown": "failnotime",
+  "reclass-window-closed": "failwindow",
+  "reason-not-found": "failnoreason",
+  "reason-inactive": "failinactive",
+  "invalid-action": "failaction",
+  "override-note-required": "failnote",
+  "deduct-amount-required": "faildeduct",
+  "no-partner": "failnopartner",
+  "no-payout": "failnopayout",
+  "already-failed": "failalready",
+  "failure-record-required": "failguard",
+  // ↓ من `record_partner_adjustment` و`reverse_ledger_entry`
+  "negative-amount": "failamountsign",
+  "note-required": "failledgernote",
+  "not-found": "failledgermissing",
+};
+
+/** الإجراءات الثلاثة كما يفرضها `failure_reasons_action_chk` — والفارغ «اتّبع المقترح» */
+const FAILURE_ACTIONS = ["none", "pay", "deduct"];
+
+/** حدّ `failure_reasons_slug_chk`: حروف صغيرة وأرقام وشرطات، وطوله ٢–٦٤ */
+const REASON_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * تعليم الرحلة فاشلة بسببٍ من الكتالوج وإجراءٍ مالي.
+ *
+ * `p_action` **فارغاً يعني «اتّبع مقترح الكتالوج»** — لا «لا شيء»: الدالة تأخذ
+ * `default_action` عند `null`، فتمرير الفارغ كـ`null` هو ما يجعل الاقتراح يسري
+ * كما هو مكتوب في الكتالوج لحظة الضغط لا كما نسخته الشاشة قبل دقيقة.
+ *
+ * ولا فحص «صفر صفوف» هنا: النداء دالة `security definer` ترفع استثناءً عند
+ * الرفض، والفحص المكافئ فحصُ `error` — كما في رأس هذا الملف.
+ */
+export async function markBookingFailed(bookingId: string, formData: FormData) {
+  if (!UUID.test(bookingId)) redirect("/admin/orders");
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url(bookingId, "error=env"));
+
+  // الرجوع إلى النموذج مفتوحاً عند الرفض: خطوة التأكيد في الرابط وحده كما في
+  // `?confirm=cancel`، فلا يفقد المشغّل ما اختاره بلا سبب ظاهر
+  const back = (code: string) => url(bookingId, `error=${code}&confirm=failed#actions`);
+
+  const reason = text(formData, "reason")?.toLowerCase() ?? null;
+  if (!reason || !REASON_SLUG.test(reason) || reason.length < 2 || reason.length > 64)
+    redirect(back("failnoreason"));
+
+  const rawAction = text(formData, "action");
+  if (rawAction !== null && !FAILURE_ACTIONS.includes(rawAction)) redirect(back("failaction"));
+
+  // المبلغ **يُقرأ ولا يُحسب**: لا تقريب ولا سقف — `mark_booking_failed` تقرّب
+  // لخانتين وترفض غير الموجب، وترفض وجوده أصلاً مع إجراءٍ ليس خصماً.
+  const rawAmount = amountOf(formData, "deduct_amount");
+  if (rawAmount !== null && (!Number.isFinite(rawAmount) || rawAmount <= 0))
+    redirect(back("faildeduct"));
+
+  const { error } = await supabase.rpc("mark_booking_failed", {
+    p_booking_id: bookingId,
+    p_reason_slug: reason,
+    p_action: rawAction,
+    p_deduct_amount: rawAmount,
+    p_note: trimNote(text(formData, "failure_note")),
+  });
+
+  if (error) {
+    const code = isMissingFunction(error.code)
+      ? "failnotready"
+      : hintCode(error, "save", FAILED_HINTS);
+    redirect(back(code));
+  }
+
+  // صفحة متابعة العميل تقرأ الحالة نفسها — فتُبطَل ذاكرة المسارات كلها كالمعتاد
+  revalidatePath("/", "layout");
+  redirect(url(bookingId, "saved=failed"));
+}

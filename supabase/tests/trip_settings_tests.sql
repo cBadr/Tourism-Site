@@ -30,6 +30,8 @@
 --   (ط) الملاحظة التلقائية تصل إلى `booking_events` **لكل صف**، وبلا قيد دفتر.
 --   (ي) `p_limit` مُحترَم.
 --   (ك) عدّاد `failed`: كتلة الاستثناء لكل صف موجودة، وشكل الإرجاع ثلاثي مرتّب.
+--   (م) 🆕 0052: الكنس بقرب الموعد لا بعمر الحجز — أربعة حجوزات لا يفرّقها إلا المتغيّر المُختبَر.
+--   (ن) 🆕 0052: `booking_hold_until` تعريفٌ واحد بثلاثة فروع، ومنحُها تطابق من يعرضها.
 --
 -- المرجع: supabase/migrations/0027_batch_two.sql (ق١ و ق٢)
 --         · lib/booking-types.ts (‏TripSettings و DEFAULT_TRIP_SETTINGS)
@@ -799,7 +801,8 @@ begin
 
   -- المهلة تُقرأ من نفس المصدر الذي تقرؤه الدالة، فنص الملاحظة مشتقٌّ لا محفور
   select c.unpaid_timeout_minutes into v_timeout from public.trip_config() c;
-  v_expect := 'إلغاء تلقائي — انتهت مهلة الدفع (' || v_timeout || ' دقيقة)';
+  -- 0052: النصّ يذكر المقبضين معاً لأن الكنس صار مشروطاً بهما معاً
+  v_expect := 'إلغاء تلقائي — مضت مهلة الدفع (' || v_timeout || ' دقيقة) واقترب موعد الرحلة';
 
   select count(*) into v_older
   from public.bookings b
@@ -1021,6 +1024,169 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (م) 🆕 0052 — الكنس بقرب الموعد لا بعمر الحجز وحده
+--
+-- العطب المقيس: الشرط كان `b.created_at < now() - timeout` **وحده**، فحجزٌ
+-- لرحلةٍ بعد سنة يُلغى بالساعة نفسها التي يُلغى بها حجزُ الغد.
+--
+-- أربعة حجوزات، ولا يختلف اثنان منها إلا في **المتغيّر المُختبَر وحده**:
+--   البعيد   — قديمٌ جداً، وموعده بعيد   ⇒ يبقى  (وهو العطب الذي أُصلح)
+--   القريب   — قديمٌ جداً، وموعده قريب   ⇒ يُلغى (الشاهد الإيجابي: الكنس يعمل)
+--   الطازج   — جديد،      وموعده قريب   ⇒ يبقى  (المهلة المعلنة وعدٌ لا يُقصَّر)
+--   بلا موعد — قديمٌ جداً، ولا `pickupAt` ⇒ يُلغى (السلوك القديم لم ينكسر)
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_admin    text := nullif(current_setting('tours.test_admin', true), '');
+  v_far      uuid := 'e0000000-0000-4000-8000-000000000052';
+  v_near     uuid := 'e0000000-0000-4000-8000-000000000053';
+  v_fresh    uuid := 'e0000000-0000-4000-8000-000000000054';
+  v_nopick   uuid := 'e0000000-0000-4000-8000-000000000055';
+  v_timeout  integer;
+  v_total    integer;
+  v_res      record;
+  v_hold     timestamptz;
+  v_st       text;
+begin
+  if to_regprocedure('public.booking_hold_until(timestamptz,timestamptz)') is null
+     or to_regprocedure('public.trip_pickup_at(jsonb)') is null then
+    raise exception '(م-٠) دوال 0052 مفقودة — نفّذ 0052_assignment_guards.sql أولاً';
+  end if;
+
+  if v_admin is not null then
+    perform set_config('request.jwt.claim.sub', v_admin, true);
+  end if;
+
+  insert into public.trip_settings (id, unpaid_cancel_enabled, unpaid_timeout_minutes)
+  values (true, true, 43200)
+  on conflict (id) do update
+    set unpaid_cancel_enabled  = excluded.unpaid_cancel_enabled,
+        unpaid_timeout_minutes = excluded.unpaid_timeout_minutes;
+
+  -- التوقّعات تُشتق من نفس مصدر الدالة، لا من رقمٍ محفور (اتفاقية ٨)
+  select c.unpaid_timeout_minutes into v_timeout from public.trip_config() c;
+
+  insert into public.bookings (
+    id, reference, public_token, status, class_slug, class_title,
+    total, currency, plan, amount_due, amount_remaining,
+    customer_name, customer_phone, trip, created_at
+  )
+  select x.id, x.ref, md5(x.id::text) || md5(x.id::text || 'b'),
+         'pending_payment', 'sweep-fixture', 'فئة اختبار الكنس',
+         100, 'EGP', 'full', 100, 0,
+         'عميل اختبار كنس', '01000000000',
+         case when x.pick is null
+              then jsonb_build_object('notes', 'TRIP_SWEEP_FIXTURE')
+              else jsonb_build_object('notes', 'TRIP_SWEEP_FIXTURE',
+                                      'pickupAt', to_char(x.pick, 'YYYY-MM-DD"T"HH24:MI:SSOF'))
+         end,
+         x.created
+  from (values
+    (v_far,    'TR-SWEEP-52', now() - interval '400 days',
+                              now() + make_interval(mins => v_timeout) + interval '30 days'),
+    (v_near,   'TR-SWEEP-53', now() - interval '400 days', now() + interval '1 hour'),
+    (v_fresh,  'TR-SWEEP-54', now() - interval '1 minute', now() + interval '1 hour'),
+    (v_nopick, 'TR-SWEEP-55', now() - interval '400 days', null::timestamptz)
+  ) as x(id, ref, created, pick);
+
+  -- ── مسبار المسبار (١): الموعد قُرئ فعلاً من اللقطة، وإلا فكل ما يلي يقيس null
+  if public.trip_pickup_at((select b.trip from public.bookings b where b.id = v_far))
+     is null then
+    raise exception '(م-٠) trip_pickup_at لم تقرأ موعد الحجز البعيد — الفيكسترة لم تُبنَ';
+  end if;
+
+  -- ── مسبار المسبار (٢): البعيد **متقادمٌ بالقاعدة القديمة** — أي أنه كان يُكنَس
+  if not (select b.created_at < now() - make_interval(mins => v_timeout)
+            from public.bookings b where b.id = v_far) then
+    raise exception '(م-٠) الحجز البعيد ليس متقادماً بالقاعدة القديمة — الفحص لا يقيس التغيير';
+  end if;
+
+  select public.booking_hold_until(b.created_at, public.trip_pickup_at(b.trip))
+    into v_hold from public.bookings b where b.id = v_far;
+  if v_hold <= now() then
+    raise exception '(م-٠) موعد كنس الحجز البعيد % ماضٍ — الصيغة لا تحمي المبكّر', v_hold;
+  end if;
+
+  select count(*) into v_total from public.bookings b where b.status = 'pending_payment';
+  select * into v_res from public.cancel_stale_bookings(v_total + 5);
+
+  select b.status into v_st from public.bookings b where b.id = v_near;
+  if v_st <> 'cancelled' then
+    raise exception '(م-١) الحجز القريب لم يُكنَس (حالته «%») — الكنس لا يعمل، وكل ما بعده عمى', v_st;
+  end if;
+
+  select b.status into v_st from public.bookings b where b.id = v_far;
+  if v_st <> 'pending_payment' then
+    raise exception '(م-٢) 🔴 حجزٌ لرحلةٍ بعيدة أُلغي بساعة حجزِ الغد (حالته «%») — عطبُ 0052 قائم', v_st;
+  end if;
+
+  select b.status into v_st from public.bookings b where b.id = v_fresh;
+  if v_st <> 'pending_payment' then
+    raise exception '(م-٣) 🔴 حجزٌ صاحبُه ما زال داخل مهلته المعلنة أُلغي (حالته «%») — الوعد مكسور', v_st;
+  end if;
+
+  select b.status into v_st from public.bookings b where b.id = v_nopick;
+  if v_st <> 'cancelled' then
+    raise exception '(م-٤) حجزٌ بلا موعدٍ ومتقادم لم يُكنَس (حالته «%») — السلوك القديم انكسر', v_st;
+  end if;
+
+  raise notice '✔ (م) الكنس يحترم قرب الموعد: البعيد باقٍ والقريب مكنوس والطازج محفوظ وبلا موعدٍ كما كان (‏%، %، %)',
+    v_res.scanned, v_res.cancelled, v_res.failed;
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن) 🆕 0052 — صيغة «حجزك محفوظ حتى…» مصدرٌ واحد، ومنحُها تطابق مَن يعرضها
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_t   integer;
+  v_c   timestamptz := now() - interval '2 hours';
+  v_p   timestamptz;
+  v_got timestamptz;
+begin
+  select c.unpaid_timeout_minutes into v_t from public.trip_config() c;
+
+  -- بلا موعد: العمر وحده
+  v_got := public.booking_hold_until(v_c, null);
+  if v_got is distinct from v_c + make_interval(mins => v_t) then
+    raise exception '(ن-١) بلا موعد: توقعنا % وحصلنا %', v_c + make_interval(mins => v_t), v_got;
+  end if;
+
+  -- موعدٌ بعيد: الموعد ناقص المهلة هو الحاكم
+  v_p   := now() + make_interval(mins => v_t) + interval '10 days';
+  v_got := public.booking_hold_until(v_c, v_p);
+  if v_got is distinct from v_p - make_interval(mins => v_t) then
+    raise exception '(ن-٢) موعدٌ بعيد: توقعنا % وحصلنا %', v_p - make_interval(mins => v_t), v_got;
+  end if;
+
+  -- موعدٌ قريب: المهلة الكاملة هي الحاكمة — فالوعد لا يُقصَّر
+  v_p   := now() + interval '1 hour';
+  v_got := public.booking_hold_until(v_c, v_p);
+  if v_got is distinct from v_c + make_interval(mins => v_t) then
+    raise exception '(ن-٣) موعدٌ قريب: توقعنا % وحصلنا %', v_c + make_interval(mins => v_t), v_got;
+  end if;
+
+  -- 🔒 والمنحة: `/booking/[token]` صفحةٌ عامة، فبلا anon لا وعدَ يُعرض
+  if not has_function_privilege('anon',
+       'public.booking_hold_until(timestamptz,timestamptz)', 'execute') then
+    raise exception '(ن-٤) anon لا ينفّذ booking_hold_until — صفحة الحجز العامة لن تعرض «محفوظ حتى…»';
+  end if;
+  -- وفي المقابل: `trip_pickup_at` تلمس لقطة الرحلة، فلا تُمنح للزائر
+  if has_function_privilege('anon', 'public.trip_pickup_at(jsonb)', 'execute') then
+    raise exception '(ن-٥) anon ينفّذ trip_pickup_at — منحةٌ بلا حاجة';
+  end if;
+
+  raise notice '✔ (ن) booking_hold_until تعريفٌ واحد بثلاثة فروع صحيحة، ومنحُها تطابق من يعرضها';
+end;
+$$;
+
+
+-- ----------------------------------------------------------------------------
 -- (ل) التنظيف — لا شيء من صفوف الاختبار يبقى، والجلسة تعود كما كانت
 --
 -- كل كتلة كنس تراجعت عن نفسها، فلا يُتوقع بقاء صف. والتنظيف هنا يغطي تشغيلاً
@@ -1091,6 +1257,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — إعدادات الرحلات وكنس الطلبات غير المدفوعة (0027 ق١ و ق٢)';
+  raise notice 'ALL PASSED — إعدادات الرحلات وكنس الطلبات غير المدفوعة (0027 ق١ و ق٢)، والكنس صار مشروطاً بقرب الموعد ومضيِّ المهلة معاً عبر booking_hold_until (0052) — والبعيد يبقى والطازج محفوظ وبلا موعدٍ كما كان';
 end;
 $$;

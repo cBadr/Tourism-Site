@@ -366,7 +366,8 @@
         "dueNow": "Due now",
         "remaining": "Remaining",
         "remainingWithDriver": "collected by the driver",
-        "afterConfirm": "After you confirm, your booking page opens with the available transfer accounts, where you upload the receipt for our team to review. The final amounts are locked in on that page."
+        "afterConfirm": "After you confirm, your booking page opens with the available transfer accounts, where you upload the receipt for our team to review. The final amounts are locked in on that page.",
+        "holdUntil": "And your booking stays held for you until {value} so you can complete the transfer — after that it may be cancelled automatically and its slot released to someone else."
       },
       "errors": {
         "pickupRequired": "Choose the pickup date and time.",
@@ -503,6 +504,7 @@
       "metaDescription": "Your booking status, transfer details and receipt upload.",
       "title": "Your booking details",
       "titleCancelled": "Cancelled booking",
+      "titleFailed": "Trip not completed",
       "reference": "Booking number",
       "referenceCopyLabel": "the booking number",
       "createdAt": "Created on {value}",
@@ -525,6 +527,18 @@
       "cancelled": {
         "title": "This booking has been cancelled",
         "text": "If the cancellation was not intended, contact us and we will rearrange your trip."
+      },
+      "failed": {
+        "sectionLabel": "Trip not completed",
+        "title": "We are sorry — this trip did not take place",
+        "text": "Your trip did not go as it should have, and this booking is now closed for good: it cannot be resumed or rescheduled. Here is what concerns you — your money first, then your trip if you still need it.",
+        "refundTitle": "What you paid comes back to you",
+        "refundText": "We do not charge for a trip that did not happen. Our team is arranging the refund of what you paid and will be in touch about it — for any question, message us quoting your booking number above.",
+        "rebookTitle": "And if you still need the trip",
+        "rebookText": "Book it again and you will receive a new booking number. Because we start from scratch, check the time and destination before you confirm — today's price may differ from that of your previous booking.",
+        "rebookCta": "Book a new trip",
+        "whatsapp": "Contact us on WhatsApp",
+        "phone": "Call us"
       },
       "amounts": {
         "heading": "Amounts",
@@ -574,6 +588,8 @@
       "pay": {
         "sectionLabel": "Complete the payment",
         "heading": "Transfer {amount} to confirm your booking",
+        "holdUntil": "Your booking is held for you until {value} — complete the transfer and upload the receipt before then, after which it may be cancelled automatically and its slot released to someone else.",
+        "holdPassed": "The hold on this booking has expired, and it may be cancelled automatically at any time. If you have already transferred, upload the receipt now; otherwise contact us quoting your booking number.",
         "noAccounts": "We will contact you to confirm the payment method — your booking is saved under the number above.",
         "uploadHeading": "After the transfer: upload the receipt",
         "accountFallbackLabel": "Transfer account",
@@ -599,12 +615,15 @@
         "heading": "Trip details",
         "vehicleClass": "Vehicle class",
         "passengers": "Passengers",
+        "luggage": "Bags",
         "tripType": "Trip type",
         "roundTrip": "Round trip",
         "oneWay": "One way",
         "distance": "Distance",
         "waitingHours": "Waiting hours",
+        "waitingDerivedNote": "Calculated automatically from your return time on the same day — the driver waits for you in between.",
         "pickupAt": "Pickup time",
+        "returnAt": "Return time",
         "notes": "Your notes"
       },
       "crew": {
@@ -812,6 +831,28 @@
         "worthLabel": "Worth today",
         "spendNote": "Your points are applied as a discount when you confirm your next booking — we show you the amount before you confirm."
       }
+    }
+  },
+
+  "payment": {
+    "heading": "Pay {amount} to confirm your booking",
+    "chooseMethod": "Choose whichever suits you best — every method confirms the booking for the same amount.",
+    "methodLegend": "Choose a payment method",
+    "sandboxBadge": "Test mode",
+    "manual": {
+      "label": "Manual transfer — wallet or InstaPay",
+      "hint": "You transfer from your own app and upload a photo of the receipt, and our team confirms your booking after reviewing it."
+    },
+    "gateway": {
+      "hint": "You are taken to the secure payment page, and your booking is confirmed as soon as the bank's confirmation arrives.",
+      "pay": "Continue to payment",
+      "starting": "Opening the payment page…",
+      "startingStatus": "Opening the payment page",
+      "security": "Your card details are entered on the provider's page only — they never pass through our site and are not stored with us."
+    },
+    "errors": {
+      "startFailed": "We could not open the payment page right now. Try another method or transfer manually — your booking is saved under its number.",
+      "network": "We could not reach the server. Check your internet connection and try again."
     }
   },
 

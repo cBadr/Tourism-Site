@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
+  AlertTriangle,
   Ban,
   CarFront,
   CheckCircle2,
@@ -53,7 +54,10 @@ import {
   controlClass,
   dateTimeLabel,
   eventLabel,
+  FAILURE_ACTION_HINTS,
+  FAILURE_ACTION_LABELS,
   isBookingStatus,
+  LEDGER_EFFECT_LABELS,
   PAYMENT_KIND_LABELS,
   pick,
   PLAN_LABELS,
@@ -67,6 +71,7 @@ import { DispatchPanel } from "./_components/dispatch-panel";
 import {
   cancelBooking,
   changeStatus,
+  markBookingFailed,
   setReceiptVisibility,
   setTripCrewByAdmin,
   uploadAdminReceipt,
@@ -157,6 +162,32 @@ type EventRow = {
 type Account = { label: string; kind: string | null; handle: string | null };
 
 /**
+ * صفّ الفشل — لقطة مجمَّدة لرحلةٍ خابت (‏`booking_failures` · هجرة `0051`).
+ *
+ * 🔒 **لقطة لا مرجع حي**: التسمية والإجراء الافتراضي مخزَّنان في الصفّ نفسه لحظة
+ * الوقوع، فإعادة تسمية سببٍ في `/admin/failure-reasons` غداً لا تُعيد كتابة ما
+ * قيل اليوم (نفس مبرر لقطة السعر في `create_booking` ولقطة عنوان الخدمة).
+ * والجدول **مُلحَقٌ فقط**: مُشغّل يرفض أي `update` أو `delete` عليه، فما يُعرض
+ * هنا هو ما وقع — لا ما يُظنّ أنه وقع.
+ */
+type FailureRecord = {
+  reasonSlug: string;
+  reasonLabel: string;
+  defaultAction: string;
+  actionTaken: string;
+  deductAmount: number | null;
+  overrideNote: string | null;
+  fromStatus: string | null;
+  payoutSnapshot: number | null;
+  /** رمزُ ما وقع في الدفتر — **رمز لا جملة**، يُترجَم في `LEDGER_EFFECT_LABELS` */
+  ledgerEffect: string;
+  failedAt: string | null;
+};
+
+/** سببٌ مفعَّل من الكتالوج كما هو **الآن** — يُقرأ لحظة العرض لا يُخزَّن */
+type FailureReasonOption = { slug: string; label: string; defaultAction: string };
+
+/**
  * الحساب الفعلي للرحلة — من العرض `v_booking_profit` (المرحلة ٧).
  *
  * الفرق بينه وبين بطاقة «ربحية الرحلة» جوهري: تلك **لقطة نيّة** مثبَّتة لحظة
@@ -233,6 +264,8 @@ const SAVED_MESSAGES: Record<string, string> = {
     "صار صف هذا الإيصال ضمن حمولة صفحة متابعة العميل — تعرضه الصفحة حيث تسرد إيصالات الحجز، ومنه تقرأ سبب الرفض إن كان مرفوضاً.",
   hidden:
     "أُسقط صف الإيصال من حمولة صفحة العميل نفسها لا من عرضها فقط، فلا يصل متصفحه إطلاقاً — ومعه يسقط سبب رفضه إن كان مرفوضاً. ويبقى هنا كاملاً ويبقى أثره المحاسبي كما هو.",
+  failed:
+    "سُجِّلت الرحلة فاشلة بسببها وإجرائها المالي، وحالتها الآن «فاشلة» — وهي نهائية لا تعود إلى الطابور. راجع بطاقة «رحلة فاشلة» أعلى الصفحة: فيها ما وقع في الدفتر بالضبط. وردّ مال العميل إجراء مالي مستقل يُنفَّذ من شاشة المالية — لا يقع بتغيير الحالة.",
   crew:
     "سُجِّل طاقم الرحلة موسوماً «أدخلته الإدارة» — ويظهر للعميل في صفحة متابعته فوراً: المركبة ولونها ولوحتها واسم السائق. أما هاتف السائق فتكشفه له قاعدة البيانات وحدها قبل موعد الانطلاق بالمدة المضبوطة في «إعدادات الرحلات»، لا قبلها ولا بقرار من هذه الشاشة.",
 };
@@ -256,6 +289,32 @@ const PRICE_SOURCE_LABELS: Record<PriceSource, string> = {
   subcontractor: "سعر متعهد",
   tariff: "تعريفة كيلومتر",
 };
+
+/**
+ * فاصل زمني من PostgREST إلى ميلي ثانية — «48:00:00» أو «2 days 12:00:00».
+ *
+ * ولمَ يُقرأ من القاعدة أصلاً بدل كتابة «٤٨ ساعة»؟ لأن `failed_reclass_window()`
+ * **مصدرٌ واحد يقرؤه الحارس والشاشة معاً** بنصّ الهجرة، ورقمٌ مكتوب هنا يصير
+ * الرقم الثاني الذي ينحرف يوم يتغيّر ذاك. وتعذّر التحويل يعيد `null` فلا يُعرض
+ * موعدٌ مخترع — والقاعدة تبقى الحَكَم في الحالتين.
+ */
+function intervalToMs(raw: unknown): number | null {
+  const s = asText(raw);
+  if (!s) return null;
+  let ms = 0;
+  let matched = false;
+  const days = /(\d+)\s+days?/.exec(s);
+  if (days) {
+    ms += Number(days[1]) * 86_400_000;
+    matched = true;
+  }
+  const clock = /(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(s);
+  if (clock) {
+    ms += (Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3])) * 1000;
+    matched = true;
+  }
+  return matched && ms > 0 ? ms : null;
+}
 
 /**
  * اسم شركة المتعهد للعرض في اللوحة — قراءة متسامحة تماماً.
@@ -539,6 +598,24 @@ async function loadOrder(id: string): Promise<{
   extrasReady: boolean;
   /** المركبة والسائق بعد الإسناد (هجرة `0040`) */
   crew: CrewLoaded;
+  /* ── الرحلة الفاشلة (هجرة `0051`) ───────────────────────────────────────── */
+  /** جدولا `0051` مقروءان — أي أن الهجرة مطبَّقة على هذه القاعدة */
+  failureReady: boolean;
+  /** صفّ الفشل إن كانت الرحلة فاشلة فعلاً، وإلا `null` */
+  failure: FailureRecord | null;
+  /** أسباب الكتالوج **المفعَّلة** وحدها — المعطَّل مرجعٌ لصفوفٍ قديمة ولا يُختار */
+  reasons: FailureReasonOption[];
+  /** مستحق الإسناد من `dispatches` — بلا حساب: يُقرأ ليُقرأ */
+  assignedPayout: number | null;
+  /** لحظة بلوغ الحجز `completed` من سجل الأحداث — أساس نافذة إعادة التصنيف */
+  completedAt: string | null;
+  /**
+   * لحظة إغلاق نافذة إعادة التصنيف = زمن الاكتمال + `failed_reclass_window()`.
+   * `null` = لا اكتمال في السجل أو تعذّر قراءة النافذة ⇒ لا موعد يُعرض.
+   */
+  reclassDeadline: string | null;
+  /** أُغلقت النافذة وقت تحميل الصفحة — والقاعدة هي التي تفرضها وقت الضغط */
+  reclassClosed: boolean;
 }> {
   const blank = {
     ready: false,
@@ -556,6 +633,13 @@ async function loadOrder(id: string): Promise<{
     extras: [] as BookingExtra[],
     extrasReady: false,
     crew: EMPTY_CREW,
+    failureReady: false,
+    failure: null as FailureRecord | null,
+    reasons: [] as FailureReasonOption[],
+    assignedPayout: null as number | null,
+    completedAt: null as string | null,
+    reclassDeadline: null as string | null,
+    reclassClosed: false,
   };
 
   const supabase = await createServerSupabase();
@@ -602,6 +686,10 @@ async function loadOrder(id: string): Promise<{
     partnerCodeRes,
     extrasRes,
     crew,
+    failureRes,
+    reasonsRes,
+    dispatchRes,
+    windowRes,
   ] = await Promise.all([
     supabase.from("payments").select("*").eq("booking_id", id),
     supabase.from("booking_events").select("*").eq("booking_id", id),
@@ -617,6 +705,25 @@ async function loadOrder(id: string): Promise<{
     supabase.from("booking_extras").select("*").eq("booking_id", id),
     // طاقم الرحلة وسجلّ الشريك (0040) — القارئ نفسه يتدهور بهدوء قبل الهجرة
     loadCrew(supabase, id),
+    // ── الرحلة الفاشلة (0051). القراءة متسامحة كبقية جداول اللوحة: قبل الهجرة
+    //    يعود خطأ «لا جدول» فتبقى اللوحة معطَّلة برسالتها ولا تسقط الشاشة.
+    supabase.from("booking_failures").select("*").eq("booking_id", id).maybeSingle(),
+    supabase
+      .from("failure_reasons")
+      .select("slug, label, default_action")
+      .eq("active", true)
+      .order("sort", { ascending: true })
+      .order("label", { ascending: true }),
+    // مستحق الإسناد — **من `dispatches` لا من `bookings.subcontractor_cost`**:
+    // ذاك لقطةُ من سُعِّر على أساسه، وهذا ما اتُّفق عليه مع من نفّذ فعلاً. وهو
+    // نفس التمييز الذي تفرضه `mark_booking_failed` حين تختار مَن يُدفع له.
+    supabase
+      .from("dispatches")
+      .select("assigned_payout")
+      .eq("booking_id", id)
+      .maybeSingle(),
+    // طول نافذة إعادة التصنيف من مصدرها الوحيد — لا رقم مكتوب في الواجهة
+    supabase.rpc("failed_reclass_window"),
   ]);
 
   const accounts = new Map<string, Account>();
@@ -715,6 +822,33 @@ async function loadOrder(id: string): Promise<{
     }))
     .sort((a, b) => a.title.localeCompare(b.title, "ar"));
 
+  /**
+   * لحظة بلوغ الحجز `completed` **من سجل الأحداث** لا من `updated_at`.
+   *
+   * ونفس مصدر `booking_completed_at()` التي يقرؤها الحارس حرفاً بحرف — تلك دالة
+   * `definer` بلا منحٍ لأي دور متصفح فلا تُنادى من هنا، والصفوف نفسها مقروءة
+   * أعلاه على أي حال. والسجل مرتَّب تصاعدياً فآخر تطابقٍ هو الأحدث.
+   */
+  const completedAt = sortedEvents.reduce<string | null>((latest, e) => {
+    const to = asText(pick(e, ["to_status"]));
+    const at = asText(pick(e, ["created_at"]));
+    return to === "completed" && at ? at : latest;
+  }, null);
+
+  const failureRow = failureRes.error ? null : (failureRes.data as Record<string, unknown> | null);
+
+  /**
+   * موعد إغلاق نافذة إعادة التصنيف — يُحسب **هنا لا في التصيير**: قراءة الساعة
+   * أثناء التصيير نتيجةٌ غير مستقرة تتبدّل مع كل إعادة رسم (‏`react-hooks/purity`).
+   * وهو **إعلانُ نيّةٍ لا حُكم** على أي حال: `guard_booking_failed` تفرض النافذة
+   * لحظة الضغط بساعة القاعدة، فسطرٌ متأخر ثانيةً هنا لا يفتح ما أُغلق هناك.
+   */
+  const reclassWindowMs = windowRes.error ? null : intervalToMs(windowRes.data);
+  const reclassDeadline =
+    completedAt !== null && reclassWindowMs !== null
+      ? new Date(Date.parse(completedAt) + reclassWindowMs).toISOString()
+      : null;
+
   return {
     ready: true,
     booking,
@@ -732,7 +866,130 @@ async function loadOrder(id: string): Promise<{
     extras,
     extrasReady: !extrasRes.error,
     crew,
+    // جاهزية الهجرة تُقاس بالكتالوج لا بصفّ الفشل: `maybeSingle()` تعيد `null`
+    // بلا خطأ لحجزٍ سليم لم يفشل، فهي لا تفرّق «لا هجرة» من «لا فشل».
+    failureReady: !reasonsRes.error,
+    failure: !failureRow
+      ? null
+      : {
+          reasonSlug: asText(pick(failureRow, ["reason_slug"])) ?? "",
+          reasonLabel: asText(pick(failureRow, ["reason_label"])) ?? "—",
+          defaultAction: asText(pick(failureRow, ["default_action"])) ?? "",
+          actionTaken: asText(pick(failureRow, ["action_taken"])) ?? "",
+          deductAmount: asNumber(pick(failureRow, ["deduct_amount"])),
+          overrideNote: asText(pick(failureRow, ["override_note"])),
+          fromStatus: asText(pick(failureRow, ["from_status"])),
+          payoutSnapshot: asNumber(pick(failureRow, ["payout_snapshot"])),
+          ledgerEffect: asText(pick(failureRow, ["ledger_effect"])) ?? "none",
+          failedAt: asText(pick(failureRow, ["failed_at"])),
+        },
+    reasons: (reasonsRes.error ? [] : ((reasonsRes.data ?? []) as Record<string, unknown>[]))
+      .map((row) => ({
+        slug: asText(pick(row, ["slug"])) ?? "",
+        label: asText(pick(row, ["label"])) ?? "",
+        defaultAction: asText(pick(row, ["default_action"])) ?? "none",
+      }))
+      .filter((r) => r.slug !== "" && r.label !== ""),
+    assignedPayout: dispatchRes.error
+      ? null
+      : asNumber(pick(dispatchRes.data as Record<string, unknown> | null, ["assigned_payout"])),
+    completedAt,
+    reclassDeadline,
+    reclassClosed: reclassDeadline !== null && Date.now() > Date.parse(reclassDeadline),
   };
+}
+
+/**
+ * بطاقة «رحلة فاشلة» — تقرأ صفّ `booking_failures` ولا تُعيد تفسيره.
+ *
+ * موضعها أعلى الشاشة لا في لوح الإجراءات: هذه **نتيجة** لا قرار، وهي أهم ما
+ * يُقرأ عن هذا الحجز. ولا تُطبع: ورقة التشغيل تُحمل إلى الميدان، ورحلةٌ فشلت لا
+ * تُنفَّذ — والحالة «فاشلة» في ترويسة الورقة كافية لمن يمسك ورقةً قديمة.
+ *
+ * 🔒 **ما تعرضه لقطةٌ لا كتالوج**: التسمية والإجراء الافتراضي كما كانا لحظة
+ * الوقوع، فإعادة تسمية السبب اليوم لا تغيّر سطراً هنا.
+ */
+function FailureCard({
+  failure,
+  currency,
+}: {
+  failure: FailureRecord;
+  currency: string;
+}) {
+  const overridden = failure.actionTaken !== failure.defaultAction;
+
+  return (
+    <Card className="no-print space-y-3 border-red-300 bg-red-50 p-5 text-red-950 dark:border-red-800 dark:bg-red-950/60 dark:text-red-50">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+          <AlertTriangle className="size-4" />
+          رحلة فاشلة
+        </h3>
+        <HelpTip>
+          سجلٌّ مُلحَقٌ فقط: لا يُعدَّل ولا يُحذف. وتصحيح أثره المالي يقع على الدفتر نفسه
+          (عكس قيد أو تسوية من شاشة مقاصة المتعهدين) لا بتعديل هذا السطر — فالسجل يقول ما
+          وقع يومها لا ما نتمنى أنه وقع.
+        </HelpTip>
+        <span className="ms-auto text-xs">
+          {dateTimeLabel(failure.failedAt)} · {relativeTime(failure.failedAt)}
+        </span>
+      </div>
+
+      <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+        <p>
+          <span className="opacity-70">السبب:</span>{" "}
+          <span className="font-semibold">{failure.reasonLabel}</span>
+        </p>
+        <p>
+          <span className="opacity-70">حالتها قبل الفشل:</span>{" "}
+          {failure.fromStatus && isBookingStatus(failure.fromStatus)
+            ? STATUS_LABELS[failure.fromStatus]
+            : (failure.fromStatus ?? "—")}
+        </p>
+        <p>
+          <span className="opacity-70">الإجراء المنفَّذ:</span>{" "}
+          <span className="font-semibold">
+            {FAILURE_ACTION_LABELS[failure.actionTaken] ?? failure.actionTaken}
+          </span>
+          {failure.deductAmount !== null ? (
+            <span dir="ltr"> · {formatMoney(failure.deductAmount, currency)}</span>
+          ) : null}
+        </p>
+        <p>
+          <span className="opacity-70">المقترح وقتها:</span>{" "}
+          {FAILURE_ACTION_LABELS[failure.defaultAction] ?? failure.defaultAction}
+          {overridden ? (
+            <Badge variant="outline" className="ms-2 border-current">
+              تجاوزٌ بمبرر
+            </Badge>
+          ) : null}
+        </p>
+        <p className="sm:col-span-2">
+          <span className="opacity-70">ما وقع في الدفتر:</span>{" "}
+          {LEDGER_EFFECT_LABELS[failure.ledgerEffect] ?? failure.ledgerEffect}
+          {failure.payoutSnapshot !== null ? (
+            <>
+              {" · "}
+              <span className="opacity-70">مستحق الإسناد وقتها:</span>{" "}
+              <span dir="ltr">{formatMoney(failure.payoutSnapshot, currency)}</span>
+            </>
+          ) : null}
+        </p>
+      </div>
+
+      {failure.overrideNote ? (
+        <p className="rounded-lg border border-red-300 bg-red-100/70 p-3 text-sm leading-relaxed dark:border-red-800 dark:bg-red-900/40">
+          <span className="font-semibold">مبرر التجاوز:</span> {failure.overrideNote}
+        </p>
+      ) : null}
+
+      <p className="text-xs leading-relaxed opacity-80">
+        الحالة نهائية: الرحلة لا تعود إلى طابور الإسناد، والعميل يحجز من جديد.
+        <span className="font-semibold"> وردّ ماله إجراء مالي مستقل</span> يُسجَّل في شاشة
+        المالية — لم يقع بتعليم الرحلة فاشلة، ولا يقع بتغيير حالة.
+      </p>
+    </Card>
+  );
 }
 
 /** سطر «تسمية ← قيمة» داخل بطاقة */
@@ -1295,6 +1552,13 @@ export default async function OrderDetailPage({
     extras,
     extrasReady,
     crew,
+    failureReady,
+    failure,
+    reasons,
+    assignedPayout,
+    completedAt,
+    reclassDeadline,
+    reclassClosed,
   } = await loadOrder(id);
   if (ready && !booking) notFound();
 
@@ -1302,6 +1566,7 @@ export default async function OrderDetailPage({
   const savedCode = typeof sp.saved === "string" ? sp.saved : null;
   const error = typeof sp.error === "string" ? sp.error : null;
   const confirmingCancel = sp.confirm === "cancel";
+  const confirmingFailed = sp.confirm === "failed";
   const confirmingAssign = sp.confirm === "assign";
   // خطوة التأكيد الثانية للإسناد فوق سقف دين المتعهد — نفس نمط ‎?confirm=cancel‎:
   // الحالة في الرابط وحده، فلا حالة على العميل والصفحة قابلة للمشاركة والتحديث.
@@ -1351,6 +1616,44 @@ export default async function OrderDetailPage({
       "المركبة أو السائق المختار ليس من سجلّ المتعهد المُسنَد إليه هذه الرحلة، والقاعدة ترفض إعلان مركبة شريكٍ آخر على صفحة العميل. أعد تحميل الصفحة لترى سجلّ المنفِّذ الحالي — غالباً تغيّر الإسناد بعد فتحك الصفحة، أو حُذف الصف من بورتال الشريك.",
     crewnotready:
       "تسجيل طاقم الرحلة يحتاج هجرة 0040 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب ولا في صفحة العميل.",
+    /* ── تعليم الرحلة فاشلة (0051) — رمزٌ لكل سبب رفضٍ ترفعه `mark_booking_failed`
+     *    أو الدالتان الماليتان اللتان تناديهما. ولا واحد منها نقصُ صلاحية، ولا
+     *    واحد منها يترك أثراً: كل نداء معاملةٌ واحدة (D-48) فالرفض يُرجعها كاملة.
+     */
+    failstatus:
+      "الفشل يُعلَّم على رحلة «مُسندة» أو «منفذة» وحدهما — رحلةٌ لم تُسنَد بعد لا يوجد من خابت عنده، والملغاة أُغلقت بمسارها. يبدو أن الحالة تغيّرت بعد فتح الصفحة، أعد تحميلها لترى الحقيقة.",
+    failwindow:
+      "انقضت نافذة إعادة تصنيف هذه الرحلة المكتملة — القاعدة تسمح بها خلال المدة المضبوطة من لحظة الاكتمال وحدها، وقد مضت. لم يتغيّر شيء: لا حالة الحجز ولا الدفتر. وأي تسويةٍ بعد ذلك تُكتب على الدفتر مباشرةً من شاشة مقاصة المتعهدين بقرار مالي صريح.",
+    failnotime:
+      "لا يوجد في سجل الحجز حدثٌ يثبت لحظة اكتمال هذه الرحلة، والقاعدة ترفض إعادة تصنيف اكتمالٍ لا تعرف زمنه — والاتجاه الآمن أن نعجز، لا أن نفتح رحلةً عمرها سنة. لم يتغيّر شيء.",
+    failnoreason:
+      "سبب الفشل غير موجود في الكتالوج — اختر سبباً من القائمة. وإن كانت القائمة فارغة فأضف الأسباب أولاً من شاشة «أسباب فشل الرحلة».",
+    failinactive:
+      "هذا السبب معطَّل في الكتالوج فلا يُختار من جديد — يبقى مرجعاً للرحلات التي وقعت عليه من قبل. اختر سبباً مفعَّلاً، أو أعد تفعيله من شاشة «أسباب فشل الرحلة».",
+    failaction:
+      "الإجراء المالي غير معروف — لا شيء، أو دفع كامل المستحق، أو خصم. أعد تحميل الصفحة واختر من القائمة.",
+    failnote:
+      "اخترت إجراءً يخالف المقترح في الكتالوج، والمبرر المكتوب إلزامي عندها — القيد في قاعدة البيانات نفسها لا في هذه الشاشة، فالسجل لا يحمل تجاوزاً بلا سبب. اكتب المبرر ثم أعد المحاولة.",
+    faildeduct:
+      "الخصم يستلزم مبلغاً موجباً — اكتب المبلغ الذي يُقيَّد على المتعهد. (وإن كنت تريد ألّا يأخذ شيئاً بلا خصمٍ عليه فالإجراء هو «لا شيء» لا خصمُ صفر.)",
+    faildeductunused:
+      "كتبت مبلغ خصم مع إجراء ليس خصماً — القاعدة ترفض مبلغاً بلا معنى في السجل. امسح المبلغ، أو اختر «خصم» إن كان هذا قصدك.",
+    failnopartner:
+      "لا متعهد مُسنَد لهذا الحجز، فلا طرف يُدفع له ولا يُخصم منه. «لا شيء» هو الإجراء الوحيد الممكن هنا.",
+    failnopayout:
+      "مستحق الإسناد صفر أو مفقود على هذه الرحلة، فلا مبلغ يُدفع. راجع لوحة الإسناد أعلاه — وإن كان الاتفاق على مبلغ فسجّله تسويةً من شاشة مقاصة المتعهدين بقرار مالي صريح.",
+    failalready:
+      "هذه الرحلة معلَّمة فاشلة سلفاً — والسجل مُلحَقٌ فقط فلا يُكتب مرتين. أعد تحميل الصفحة لترى صفّ الفشل المسجَّل، وتصحيحُ أثره المالي يقع على الدفتر لا على هذا السجل.",
+    failguard:
+      "رفضت قاعدة البيانات تعليم الرحلة فاشلة بلا صفّ سببٍ مسجَّل — وهو حارسٌ يعني أن الحالة حاولت التغيّر من خارج المسار الوحيد. لم يتغيّر شيء؛ أعد تحميل الصفحة واستعمل نموذج الفشل أدناه.",
+    failamountsign:
+      "رفضت قاعدة البيانات مبلغاً غير موجب في القيد المالي — الخصم يُكتب موجباً على دوره الصحيح. لم يُقيَّد شيء ولم تتغيّر حالة الحجز.",
+    failledgernote:
+      "رفض الدفتر قيداً بلا ملاحظة — وهذا انحرافُ واجهةٍ عن عقد القاعدة لا خطأ منك. لم يتغيّر شيء؛ أبلغ عن الحالة قبل إعادة المحاولة.",
+    failledgermissing:
+      "لم يجد الدفتر الطرف الذي يُقيَّد عليه هذا الإجراء (المتعهد أو القيد المقابل). لم يُقيَّد شيء ولم تتغيّر حالة الحجز — راجع لوحة الإسناد أعلاه ثم أعد المحاولة.",
+    failnotready:
+      "تعليم الرحلات فاشلة يحتاج هجرة 0051 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب ولا في الدفتر.",
   };
 
   if (!booking) {
@@ -1415,6 +1718,22 @@ export default async function OrderDetailPage({
   const canAttachReceipt =
     booking.status === "pending_payment" || booking.status === "under_review";
   const hasPendingReceipt = payments.some((payment) => payment.status === "pending");
+
+  /* ── الرحلة الفاشلة (0051) — الشاشة تقول قبل الضغط ما تقوله القاعدة بعده ────
+   *
+   * `mark_booking_failed` تقبل «مُسندة» و«منفذة» وحدهما، وتفرض على الثانية نافذة
+   * إعادة تصنيف من لحظة الاكتمال. فالشرط أدناه **إعلانُ نيّةٍ لا حُكم**: الحارس
+   * في القاعدة يفرض الشرطين على أي حال، وهذا يمنع زرّاً ينتهي برسالة رفض.
+   */
+  const isFailed = booking.status === "failed";
+  // اكتمالٌ بلا حدثٍ يثبته: القاعدة ترفض إعادة التصنيف صراحةً، فلا يُعرض نموذج
+  // مصيرُه الرفض. (وهو فرعٌ لا يُبلَغ اليوم — صفرُ حجزٍ مكتمل بلا صفّ حدث.)
+  const completionUnknown = booking.status === "completed" && completedAt === null;
+  const canMarkFailed =
+    failureReady &&
+    !isFailed &&
+    (booking.status === "assigned" ||
+      (booking.status === "completed" && !reclassClosed && !completionUnknown));
 
   return (
     <div className="print-sheet mx-auto max-w-4xl space-y-6">
@@ -1518,6 +1837,13 @@ export default async function OrderDetailPage({
           readOnlyBody={null}
         />
       </div>
+
+      {/*
+        رحلة فاشلة — أول ما يُقرأ عن هذا الحجز إن كان قد خاب. والشرط على **الصفّ**
+        لا على الحالة وحدها: صفٌّ بلا حالة يعني قاعدةً في وضع لا يجوز، وحالةٌ بلا
+        صفٍّ مستحيلةٌ بحارس القاعدة — فعرضُ ما وُجد أصدق من افتراض تطابقهما.
+      */}
+      {failure && <FailureCard failure={failure} currency={booking.currency} />}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* لقطة الرحلة — مخزّنة مع الحجز فلا تتغير بتغير التعريفات لاحقاً */}
@@ -2240,6 +2566,211 @@ export default async function OrderDetailPage({
             </Link>
             <HelpTip>
               خطوة تأكيد إجبارية تسبق الإلغاء — لا يقع الإلغاء بضغطة واحدة على حجز مدفوع.
+            </HelpTip>
+          </div>
+        )}
+
+        <Separator />
+
+        {/*
+          ── تعليم الرحلة فاشلة (0051) ─────────────────────────────────────────
+          «فشل» لا «إلغاء»: الإلغاء يقع قبل التنفيذ، والفشل بعد أن صار للرحلة
+          منفِّذ — فلكلٍّ أثرٌ مالي مختلف على المتعهد، ولذلك زرّان لا زر.
+          والقرار قرار المدير: الكتالوج **يقترح** والمدير ينفّذ أو يتجاوز بمبرر،
+          والمنفَّذ وحده هو ما يُخزَّن.
+        */}
+        {!failureReady ? (
+          <p className="text-sm text-muted-foreground">
+            تعليم الرحلات فاشلة يحتاج هجرة <code dir="ltr">0051</code> — نفِّذها من{" "}
+            <code dir="ltr">supabase/migrations</code> ثم أعد تحميل الصفحة.
+          </p>
+        ) : isFailed ? (
+          <p className="text-sm text-muted-foreground">
+            هذه الرحلة معلَّمة فاشلة، والحالة نهائية — لا تعود إلى الطابور ولا تُعلَّم مرتين.
+            تفصيل السبب وأثره المالي في بطاقة «رحلة فاشلة» أعلى الصفحة.
+          </p>
+        ) : !canMarkFailed ? (
+          <p className="text-sm text-muted-foreground">
+            {completionUnknown
+              ? "لا يوجد في سجل هذا الحجز حدثٌ يثبت لحظة اكتماله، والقاعدة ترفض إعادة تصنيف اكتمالٍ لا تعرف زمنه — فلا نموذج هنا."
+              : reclassClosed
+                ? `انقضت نافذة إعادة تصنيف هذه الرحلة المكتملة — أُغلقت في ${dateTimeLabel(reclassDeadline)}. وأي تسوية بعدها تُكتب على الدفتر مباشرةً من شاشة مقاصة المتعهدين.`
+                : `تعليم الرحلة فاشلة متاح في حالتَي «مُسند» و«منفذ» وحدهما — قبل الإسناد لا يوجد من خابت عنده. الحالة الحالية «${isBookingStatus(booking.status) ? STATUS_LABELS[booking.status] : booking.status}».`}
+          </p>
+        ) : reasons.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            كتالوج أسباب الفشل فارغ — ولا فشلَ بلا سبب مصنَّف. أضف الأسباب أولاً من{" "}
+            <Link href="/admin/failure-reasons" className="text-primary hover:underline">
+              شاشة أسباب فشل الرحلة
+            </Link>
+            .
+          </p>
+        ) : confirmingFailed ? (
+          <form
+            action={markBookingFailed.bind(null, booking.id)}
+            className="space-y-4 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-950"
+          >
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-red-900 dark:text-red-100">
+                تعليم الرحلة {booking.reference} فاشلة
+              </p>
+              <p className="text-sm leading-relaxed text-red-900/90 dark:text-red-100/90">
+                حالة نهائية: الرحلة لا تعود إلى طابور الإسناد، والعميل يحجز من جديد.{" "}
+                <span className="font-semibold">وردّ ماله إجراء مالي مستقل</span> من شاشة
+                المالية — لا يقع بهذا النموذج. أما ما يقع به فهو الأثر على{" "}
+                <span className="font-semibold">المتعهد</span> أدناه.
+                {booking.status === "completed" && reclassDeadline ? (
+                  <>
+                    {" "}
+                    وهذه رحلة مكتملة، فالنافذة مفتوحة حتى{" "}
+                    <span className="font-semibold">{dateTimeLabel(reclassDeadline)}</span> —
+                    بعدها ترفضها القاعدة.
+                  </>
+                ) : null}
+              </p>
+            </div>
+
+            <fieldset className="space-y-2">
+              <legend className="flex items-center gap-1.5 text-sm font-medium">
+                سبب الفشل
+                <HelpTip>
+                  الأسباب كتالوج تحرّره بنفسك من شاشة «أسباب فشل الرحلة»، ولكل سبب{" "}
+                  <span className="font-semibold">إجراء مالي مقترح</span> يظهر بجواره.
+                  والمقترح اقتراحُ لحظةٍ لا حكمٌ دائم: تغييره في الكتالوج غداً لا يمسّ ما
+                  سُجِّل اليوم، لأن التسمية والإجراء يُلقَطان في صفّ هذه الرحلة نفسه.
+                </HelpTip>
+              </legend>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {reasons.map((reason) => (
+                  <label
+                    key={reason.slug}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-red-200 bg-background/60 px-2.5 py-2 text-sm dark:border-red-900"
+                  >
+                    <input
+                      type="radio"
+                      name="reason"
+                      value={reason.slug}
+                      required
+                      className="size-4 shrink-0 accent-primary"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{reason.label}</span>
+                    <Badge variant="outline" className="shrink-0 text-xs">
+                      المقترح: {FAILURE_ACTION_LABELS[reason.defaultAction] ?? reason.defaultAction}
+                    </Badge>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="failure_action" className="flex items-center gap-1.5">
+                  الإجراء المالي مع المتعهد
+                  <HelpTip>
+                    <span className="font-semibold">لا شيء:</span>{" "}
+                    {FAILURE_ACTION_HINTS.none}
+                    <br />
+                    <span className="font-semibold">دفع كامل المستحق:</span>{" "}
+                    {FAILURE_ACTION_HINTS.pay}
+                    <br />
+                    <span className="font-semibold">خصم:</span> {FAILURE_ACTION_HINTS.deduct}
+                  </HelpTip>
+                </Label>
+                <select
+                  id="failure_action"
+                  name="action"
+                  defaultValue=""
+                  className={controlClass}
+                >
+                  <option value="">اتّبع الإجراء المقترح للسبب المختار</option>
+                  <option value="none">{FAILURE_ACTION_LABELS.none}</option>
+                  <option value="pay">{FAILURE_ACTION_LABELS.pay}</option>
+                  <option value="deduct">{FAILURE_ACTION_LABELS.deduct}</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="failure_deduct" className="flex items-center gap-1.5">
+                  مبلغ الخصم ({booking.currency})
+                  <HelpTip>
+                    مع إجراء «خصم» وحده — ومعه إلزامي وموجب. ومع أي إجراء آخر تركه فارغاً
+                    شرطٌ ترفض القاعدة خرقه، فلا يبقى في السجل مبلغٌ بلا معنى.
+                    {assignedPayout !== null ? (
+                      <>
+                        {" "}
+                        ومستحق الإسناد على هذه الرحلة{" "}
+                        <span dir="ltr" className="font-semibold">
+                          {formatMoney(assignedPayout, booking.currency)}
+                        </span>{" "}
+                        — والخصم رقمٌ تقرّره أنت، لا نسبة تُشتق منه.
+                      </>
+                    ) : null}
+                  </HelpTip>
+                </Label>
+                <input
+                  id="failure_deduct"
+                  name="deduct_amount"
+                  type="number"
+                  inputMode="decimal"
+                  dir="ltr"
+                  step="0.01"
+                  min="0"
+                  placeholder="مع «خصم» فقط"
+                  className={controlClass}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="failure_note" className="flex items-center gap-1.5">
+                المبرر
+                <HelpTip>
+                  إلزامي متى خالف اختيارك المقترحَ — والقيد في قاعدة البيانات نفسها لا في
+                  هذه الشاشة: السجل لا يقبل تجاوزاً بلا سبب مكتوب. ويُسجَّل كذلك في سجل
+                  الحجز أسفل الصفحة فيقرؤه من يراجع لاحقاً.
+                </HelpTip>
+              </Label>
+              <input
+                id="failure_note"
+                name="failure_note"
+                className={controlClass}
+                placeholder="سبب مخالفة المقترح — إلزامي عند التجاوز"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" variant="destructive">
+                <AlertTriangle />
+                تأكيد: الرحلة فاشلة
+              </Button>
+              <Link
+                href={`/admin/orders/${booking.id}#actions`}
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
+              >
+                تراجع
+              </Link>
+            </div>
+          </form>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/admin/orders/${booking.id}?confirm=failed#actions`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 transition-colors hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+            >
+              <AlertTriangle className="size-4" />
+              تعليم الرحلة فاشلة
+            </Link>
+            <HelpTip>
+              للرحلة التي لم تُنفَّذ: السائق لم يحضر، أو تعطّلت السيارة، أو لم يحضر العميل.
+              وهي <span className="font-semibold">ليست إلغاءً</span> — الإلغاء يقع قبل
+              التنفيذ، والفشل بعد أن صار للرحلة منفِّذ، فلكلٍّ أثرٌ مالي مختلف عليه.
+              {booking.status === "completed" && reclassDeadline ? (
+                <>
+                  {" "}
+                  وهذه رحلة مكتملة: النافذة مفتوحة حتى{" "}
+                  <span className="font-semibold">{dateTimeLabel(reclassDeadline)}</span>.
+                </>
+              ) : null}
             </HelpTip>
           </div>
         )}
