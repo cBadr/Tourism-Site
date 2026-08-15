@@ -122,6 +122,11 @@ export type OffersProps = {
   locale?: string;
   /** نظام الخصومات مفعَّل — غيابه يعني مطفأ (الافتراضي الآمن) */
   discountEnabled?: boolean;
+  /**
+   * نظام الولاء مفعَّل (المرحلة ١٢ب) — رايةٌ لا رقم، بنفس منطق أختها أعلاه.
+   * غيابها يعني **مطفأ**: لا تُسأل خدمة معاينة النقاط أصلاً في مسار الحجز.
+   */
+  loyaltyEnabled?: boolean;
   /** بانرات موضع «شاشة العروض» — عرض فقط */
   offerBanners?: PromoBanner[];
   /** بانرات موضع «صفحة الحجز» — تمرّ إلى مسار الحجز */
@@ -567,6 +572,7 @@ export function Offers({
   compact = false,
   locale = DEFAULT_LOCALE,
   discountEnabled = false,
+  loyaltyEnabled = false,
   offerBanners = [],
   checkoutBanners = [],
 }: OffersProps) {
@@ -612,6 +618,7 @@ export function Offers({
         compact={compact}
         locale={locale}
         discountEnabled={discountEnabled}
+        loyaltyEnabled={loyaltyEnabled}
         banners={checkoutBanners}
         onBack={() => setBookingOffer(null)}
       />

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { QuoteRequestRow } from "@/lib/booking-types";
+import { telLink, waLink } from "@/lib/phone";
 import { SERVICES } from "@/lib/site-config";
 import { readPagePulse, type PagePulseData } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -138,27 +139,48 @@ const ERROR_MESSAGES: Record<string, string> = {
   status: "حالة غير معروفة — اختر واحدة من حالات المتابعة الأربع.",
 };
 
+/**
+ * رقم صاحب طلب عرض السعر — أسوأ النسخ الأربع أثراً، وهنا سبب ذلك.
+ *
+ * ⚠ هذه الشاشة **بلا شرط على الواتساب أصلاً**: الحقل واحد (`customer_phone`)
+ * وكان الزران يُبنيان منه معاً، فرابط واتساب يخرج **لكل صف بلا استثناء**. والقاعدة
+ * الحية: ٣٠ من ٣٠ طلباً بصفرٍ بادئ ⇒ `wa.me/01229674663` في كل واحد منها، أي
+ * أن **الشاشة كلها** كانت أزرارَ خطأ. وهي شاشة طلبات لم تُسعَّر بعد — أي أن كل
+ * زرٍّ منها مبيعٌ محتمل يسقط عند أول نقرة.
+ *
+ * والرقم يبقى معروضاً حتى لو تعذّر بناء أيٍّ من الرابطين — الموظف يقرؤه ويطلبه
+ * بيده، وهذا خيرٌ من زرٍّ يَعِد ولا يفي.
+ */
 function ContactLinks({ phone }: { phone: string | null }) {
   if (!phone) return <span className="text-xs text-muted-foreground">بلا رقم</span>;
-  const digits = phone.replace(/[^\d+]/g, "");
+  const tel = telLink(phone);
+  const wa = waLink(phone);
   return (
     <span className="flex flex-wrap items-center gap-2">
-      <a
-        href={`tel:${digits}`}
-        className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
-      >
-        <Phone className="size-3.5" />
-        <span dir="ltr">{phone}</span>
-      </a>
-      <a
-        href={`https://wa.me/${digits.replace(/^\+/, "")}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1 text-xs text-emerald-800 transition-colors hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950"
-      >
-        <MessageCircle className="size-3.5" />
-        واتساب
-      </a>
+      {tel ? (
+        <a
+          href={tel}
+          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
+        >
+          <Phone className="size-3.5" />
+          <span dir="ltr">{phone}</span>
+        </a>
+      ) : (
+        <span className="text-xs" dir="ltr">
+          {phone}
+        </span>
+      )}
+      {wa ? (
+        <a
+          href={wa}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1 text-xs text-emerald-800 transition-colors hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950"
+        >
+          <MessageCircle className="size-3.5" />
+          واتساب
+        </a>
+      ) : null}
     </span>
   );
 }

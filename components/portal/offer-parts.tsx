@@ -10,6 +10,7 @@ import {
   waitingLabel,
 } from "@/components/booking/format";
 import { Badge } from "@/components/ui/badge";
+import { telLink, waLink } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 
 /**
@@ -185,8 +186,17 @@ export function TripNotes({ notes }: { notes: string | null }) {
 /* بيانات التواصل — بعد الإسناد وحده                                    */
 /* ------------------------------------------------------------------ */
 
-const digitsOnly = (value: string) => value.replace(/[^\d+]/g, "");
-
+/**
+ * بطاقة تواصل العميل — الروابط من `lib/phone.ts` وحدها.
+ *
+ * ⚠ كانت هنا نسخةٌ محلية (`digitsOnly` ثم نزع `+`) ورثت العيب الأصلي كاملاً:
+ * القاعدة الحية تُظهر أن **٣٣٧ من ٣٤١** حجزاً تحمل هاتف العميل بصفرٍ بادئ
+ * (`01188511418`)، فكان الزر يفتح `wa.me/01188511418` أي رسالة «الرقم غير
+ * صالح» — وهذه الشاشة يفتحها المتعهد **قبل موعد الانطلاق** ليجد راكبه.
+ *
+ * والزر يغيب حين يتعذّر بناء الرقم بدل أن يَعِد بمحادثة تنتهي إلى خطأ — الحكم
+ * الذي حكمت به `waLink` أصلاً؛ وبقاء `phone` نصّاً بلا رابط أهون من مرساةٍ ميتة.
+ */
 export function CustomerContact({
   name,
   phone,
@@ -196,7 +206,8 @@ export function CustomerContact({
   phone: string | null;
   whatsapp: string | null;
 }) {
-  const waNumber = whatsapp ? digitsOnly(whatsapp).replace(/^\+/, "") : null;
+  const tel = telLink(phone);
+  const wa = waLink(whatsapp);
 
   return (
     <div className="rounded-xl bg-background p-3 ring-1 ring-border">
@@ -204,17 +215,23 @@ export function CustomerContact({
       <div className="mt-1 flex flex-wrap items-center gap-2">
         <span className="font-medium">{name || "—"}</span>
         {phone ? (
-          <a
-            href={`tel:${digitsOnly(phone)}`}
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
-          >
-            <Phone className="size-3.5" aria-hidden="true" />
-            <span dir="ltr">{phone}</span>
-          </a>
+          tel ? (
+            <a
+              href={tel}
+              className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
+            >
+              <Phone className="size-3.5" aria-hidden="true" />
+              <span dir="ltr">{phone}</span>
+            </a>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-xs" dir="ltr">
+              {phone}
+            </span>
+          )
         ) : null}
-        {waNumber ? (
+        {wa ? (
           <a
-            href={`https://wa.me/${waNumber}`}
+            href={wa}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1 text-xs text-emerald-800 transition-colors hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950"
@@ -223,7 +240,7 @@ export function CustomerContact({
             واتساب
           </a>
         ) : null}
-        {!phone && !waNumber ? (
+        {!phone && !wa ? (
           <span className="text-sm text-muted-foreground">
             لم تصلنا وسيلة تواصل — راسل الإدارة قبل موعد الانطلاق.
           </span>

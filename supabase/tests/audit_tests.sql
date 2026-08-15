@@ -265,16 +265,60 @@ begin
    *
    * فالهاتف يُطابَق محاطاً بغير حرف ورقم، والبريد يُطلب فيه اسمٌ قبل `@`
    * وامتدادٌ بعد النقطة.
+   *
+   * ── ⚠ واستثناءٌ واحد صريح: `site_settings` ────────────────────────────────
+   *
+   * رنّ الفحص على صفَّين حقيقيَّين: تعديلُ المالك لكتلة `contact` من اللوحة،
+   * وقد سجّل رقمه وبريده في `changes`. ولم أحجبهما، وهذا مبرر الحكم:
+   *
+   * 1. **القيمة منشورةٌ أصلاً على كل صفحة** — رقم النشاط وبريده في التذييل
+   *    وقسم التواصل وبطاقة `LocalBusiness`. فليست سرّاً يُحجب، والقرار المكتوب
+   *    في `lib/audit-types.ts` كان «الأسرار تُسجَّل «تغيّرت» بلا قيمها» —
+   *    والسرّ هناك توكنٌ أو مفتاح، لا رقمٌ يُعلَن للعالم.
+   * 2. **وحجبُها يهدم غرض السجل لهذا الكيان بالذات**: السؤال الذي يُفتح لأجله
+   *    السجلّ هنا هو «مَن غيّر رقم التواصل، وما كان قبله؟» — وسطرٌ يقول «تغيّر
+   *    الهاتف» بلا قيمةٍ سابقة لا يُرجع رقماً كُتب خطأً.
+   * 3. **والسجلّ نفسه للإدارة وحدها** (‏`is_admin()`)، فلا جمهور جديد يبلغه.
+   *
+   * 🔒 **والاستثناء ضيّقٌ بقصد**: كيانٌ واحد بالاسم، لا «تجاهل الإعدادات» ولا
+   * تليينٌ للنمط. فما يبحث عنه هذا الحارس يوم الحريق — هاتفُ **عميل** أو بريد
+   * **متعهد** يتسرّب من `bookings` أو `subcontractors` أو `payments` — يبقى
+   * ممسوكاً كما كان. والتوكيد التالي يُثبت أن الاستثناء لم يُعمِ الحارس.
    */
   select count(*) into v_n from public.audit_log
-   where (snapshot is not null and snapshot::text ~ '(^|[^0-9A-Za-z])01[0-9]{9}([^0-9A-Za-z]|$)')
-      or (changes  is not null and changes::text  ~ '(^|[^0-9A-Za-z])01[0-9]{9}([^0-9A-Za-z]|$)')
-      or (snapshot is not null and snapshot::text ~ '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')
-      or (changes  is not null and changes::text  ~ '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}');
+   where entity is distinct from 'site_settings'
+     and ((snapshot is not null and snapshot::text ~ '(^|[^0-9A-Za-z])01[0-9]{9}([^0-9A-Za-z]|$)')
+       or (changes  is not null and changes::text  ~ '(^|[^0-9A-Za-z])01[0-9]{9}([^0-9A-Za-z]|$)')
+       or (snapshot is not null and snapshot::text ~ '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')
+       or (changes  is not null and changes::text  ~ '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'));
   if v_n > 0 then
     raise exception
       '(ب-٣-٥) % صفاً في السجل يحمل نمط هاتف أو بريد — الحجب لا يغطي مساراً ما', v_n;
   end if;
+
+  /*
+   * (ب-٣-٦) 🔒 **وإثبات أن الاستثناء أعلاه لم يُعمِ الحارس** — وإلا لكان تضييق
+   * فحصٍ أمني بلا برهانٍ أنه ما زال يرى. نُدخل صفَّ تسريبٍ مصطنعاً على كيانٍ
+   * **غير** مستثنى، ونتأكد أن استعلام (ب-٣-٥) نفسه يمسكه، ثم نُرجعه.
+   *
+   * والفحص الذي لا يمكن أن يفشل أسوأ من غيابه (النمط ٩) — فهذا يفشل عمداً أولاً.
+   */
+  begin
+    insert into public.audit_log (entity, action, actor_kind, changes)
+    values ('bookings', 'update', 'system', '{"probe":{"phone":"01234567890"}}'::jsonb);
+
+    select count(*) into v_n from public.audit_log
+     where entity is distinct from 'site_settings'
+       and changes is not null
+       and changes::text ~ '(^|[^0-9A-Za-z])01[0-9]{9}([^0-9A-Za-z]|$)';
+    if v_n = 0 then
+      raise exception '(ب-٣-٦) الحارس لم يرَ تسريباً مزروعاً — الاستثناء أعماه';
+    end if;
+    raise exception 'zz-audit-probe-rollback';
+  exception
+    when others then
+      if sqlerrm <> 'zz-audit-probe-rollback' then raise; end if;
+  end;
 
   -- (ب-٣-٦) ومسارات الدلو الخاص محجوبة (0039): بلا قيمة تدقيقية، وبنفس مبرر
   -- منعها في التصدير — والتناقض بين العقدين هو ما كشفه سقوط (ب-٣-٥).

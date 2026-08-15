@@ -59,7 +59,7 @@ begin
     ('public.redeem_coupon(text, uuid, numeric, text)'),
     ('public.section_stats(text, date, date)'),
     ('public.analytics_admin_allowed()'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

@@ -63,7 +63,7 @@ begin
     ('public.settle_payment_intent(text, text, text, text, integer, jsonb)'),
     ('public.get_payment_intent_status(uuid)'),
     ('public.to_minor_units(numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb)'),
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer)'),
     -- تصليب 0025 البند (١): الجسم انتقل إلى دالة داخلية، والغلافان يستدعيانها
     ('public.payment_accounts_within_caps(numeric)'),
     ('public.available_payment_accounts(numeric)'),

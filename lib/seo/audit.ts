@@ -28,6 +28,7 @@
 import type { PageKind, PageWithSections } from "@/lib/content-types";
 import { metaFieldState, type MetaFieldState } from "@/lib/seo/meta";
 import { pagePublicPath } from "@/lib/seo/site-paths";
+import { e164Number } from "@/lib/phone";
 import { geoNode, postalAddressNode, sameAsList } from "@/lib/seo/jsonld";
 import { socialHrefs, type SiteSettings } from "@/lib/site-config";
 
@@ -281,9 +282,9 @@ export type BusinessField = {
 /**
  * حقول بطاقة النشاط — وكل سطر هنا يعكس شرط الإدراج في `lib/seo/jsonld.ts`.
  *
- * ⚠ وحقلا العنوان والإحداثيات لا يُفحصان بنصّ مكتوب هنا بل **بمناداة الباني
- * نفسه** (`postalAddressNode` و`geoNode`): لو تشدّد الباني يوماً (رفض إحداثي
- * خارج مداه مثلاً) تشدّد الفحص معه في السطر نفسه. ونسخةُ شرطٍ ثانية هنا تعني
+ * ⚠ وحقول العنوان والإحداثيات **والهاتف** لا تُفحص بنصّ مكتوب هنا بل **بمناداة
+ * الباني نفسه** (`postalAddressNode` و`geoNode` و`e164Number`): لو تشدّد الباني
+ * يوماً (رفض إحداثي خارج مداه مثلاً) تشدّد الفحص معه في السطر نفسه. ونسخةُ شرطٍ ثانية هنا تعني
  * شاشةً تقول «مضبوط» عن قيمة يرفضها التصيير صامتاً — وهو بالضبط النمط ٢ الذي
  * يوجد هذا الملف لمنعه.
  */
@@ -304,8 +305,15 @@ export function auditBusiness(settings: SiteSettings): BusinessField[] {
       label: "رقم الهاتف",
       group: "identity",
       severity: "warn",
-      present: set(settings.contact.phone),
-      note: "بلا رقم لا تعرض جوجل زر الاتصال بجوار نتيجة الموقع.",
+      /**
+       * ⚠ **لا `set(...)` هنا بل الباني نفسه** — للسبب المشروح في ترويسة الدالة:
+       * `localBusinessNode` صارت تُخرج الرقم بالصيغة الدولية عبر `e164Number`،
+       * فرقمٌ لا تستطيع بناءه (نصٌّ بلا أرقام، أو أقصر من تسع خانات) **يسقط من
+       * البيانات المهيكلة** وإن كان الحقل مملوءاً في الإعدادات. ونسخةُ شرطٍ ثانية
+       * هنا («غير فارغ») كانت ستقول للمالك «مضبوط» عن حقلٍ لا يخرج.
+       */
+      present: e164Number(settings.contact.phone) !== null,
+      note: "بلا رقم لا تعرض جوجل زر الاتصال بجوار نتيجة الموقع. ويخرج بالصيغة الدولية (‏+20…) لأن الرقم المحلي لا يُطابق بلداً — فرقمٌ أقصر من تسع خانات لا يخرج أصلاً.",
     },
     {
       key: "description",

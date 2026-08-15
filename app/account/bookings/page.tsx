@@ -32,7 +32,9 @@ import { HelpTip } from "@/components/shared/HelpTip";
 import type { LocaleFormatter } from "@/components/booking/format";
 import type { MyBookingRow } from "@/lib/customer-types";
 import { ACCOUNT_HOME_PATH, ACCOUNT_LOGIN_PATH } from "../_lib/session";
+import { LoyaltyBalance } from "../_components/loyalty-balance";
 import { loadMyBookings } from "./data";
+import { loadMyLoyalty } from "./loyalty";
 import { linkBooking, openBooking, type AccountErrorCode, type AccountNoticeCode } from "./actions";
 
 /**
@@ -525,11 +527,20 @@ type AccountPageProps = {
 
 export default async function MyBookingsPage({ searchParams }: AccountPageProps) {
   const locale = await resolveLocale();
-  const [settings, t, params, result] = await Promise.all([
+  const [settings, t, params, result, loyalty] = await Promise.all([
     getSettings(locale),
     getT("pages.account", locale),
     searchParams,
     loadMyBookings(),
+    /**
+     * الرصيد **بالتوازي** لا بالتتابع: القراءتان مستقلتان تماماً (دالتان
+     * منفصلتان في القاعدة)، وتسلسلُهما يضيف رحلةً كاملة إلى زمن أول بايت على
+     * شاشةٍ تُفتح من الجوال غالباً. وكلتاهما مُذاكَرة، فلا نداء يتكرر.
+     *
+     * ولا تُبطل إحداهما الأخرى عند الفشل: بطاقة الرصيد تصمت وحدها، والقائمة
+     * تُعرض كما هي (انظر `_components/loyalty-balance.tsx`).
+     */
+    loadMyLoyalty(),
   ]);
 
   const fmt = createFormatter(locale);
@@ -588,6 +599,15 @@ export default async function MyBookingsPage({ searchParams }: AccountPageProps)
                 {t(NOTICE_TEXT[notice].key, NOTICE_TEXT[notice].fallback)}
               </p>
             ) : null}
+
+            {/*
+              ── رصيد النقاط ─────────────────────────────────────────────
+              فوق القائمة لا تحتها: هو **حصيلة** ما فيها، وقراءته أولاً تجعل
+              القائمة تحتها تُقرأ بياناً له. والبطاقة تصمت في كل حالة عدا
+              الثلاث المعروضة — ومنها «المحرّك غير مطبَّق» وهي الحالة الجارية
+              اليوم، فلا يظهر شيء إطلاقاً حتى تصل هجرة الولاء.
+            */}
+            <LoyaltyBalance state={loyalty} t={t} fmt={fmt} />
 
             {/* ── بلا جلسة ─────────────────────────────────────────────── */}
             {result.state === "anonymous" ? (

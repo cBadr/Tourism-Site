@@ -1,4 +1,4 @@
-import { waNumber } from "@/lib/phone";
+import { telLink, waLink } from "@/lib/phone";
 import { socialHref, type SiteSettings, type SocialSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { Tx } from "./i18n";
@@ -71,17 +71,17 @@ export function localeHref(path: string, locale: string = DEFAULT_LOCALE): strin
 /**
  * رابط محادثة واتساب مع رقمنا.
  *
- * ⚠ الرقم يمرّ بـ`waNumber` لا بنزع الرموز: المخزَّن محليٌّ (`01010000506`)
- * و`wa.me` يشترط الصيغة الدولية، فالنزع وحده كان يفتح رسالة «الرقم غير صالح»
- * في **كل** سطح يناديه. الشرح الكامل عند `waNumber` في `lib/phone.ts`.
+ * ⚠ العنوان يُبنى في `waLink` لا هنا: المخزَّن محليٌّ (`01010000506`) و`wa.me`
+ * يشترط الصيغة الدولية، فنزع الرموز وحده كان يفتح رسالة «الرقم غير صالح» في
+ * **كل** سطح يناديه. وبعد إصلاح هذه الدالة وحدها بقيت أربع شاشات تبني العنوان
+ * بيدها فورثت العيب — فصار البناء كله في `lib/phone.ts` وقاعدة لِنت تحرسه.
  *
  * ويبقى الإرجاع `string` لأن كل مناديه يضعه في `href` مباشرةً؛ وحين يتعذّر بناء
  * الرقم يعود إلى `wa.me` بلا وجهة — يفتح واتساب ولا يدّعي محادثةً مع رقمٍ خاطئ.
  * ومن يملك بديلاً أحسن (‏`contactHref`) يفحص القيمة قبل النداء أصلاً.
  */
 export function waHref(whatsapp: string): string {
-  const number = waNumber(whatsapp);
-  return number ? `https://wa.me/${number}` : "https://wa.me/";
+  return waLink(whatsapp) ?? "https://wa.me/";
 }
 
 /**
@@ -102,9 +102,23 @@ export function telegramHref(telegram: string): string {
   return `https://t.me/${telegram.replace(/^@/, "")}`;
 }
 
-/** يبني رابط اتصال هاتفي نظيفاً */
+/**
+ * رابط اتصال هاتفي — **بالصيغة الدولية**، لا بنزع الرموز وحده.
+ *
+ * ⚠ كان `tel:${phone.replace(/[^+\d]/g, "")}` فيخرج `tel:01010000506` من الرقم
+ * المخزَّن محلياً. وهذا ليس مكسوراً كما كان `wa.me` — يطلب من هاتفٍ داخل مصر —
+ * لكنه يفشل صامتاً عند **من هو خارجها**، وهو جمهور منتج نقلٍ سياحي بعينه.
+ * الموازنة كاملةً ولماذا لا يخسر المحلي شيئاً عند `telLink` في `lib/phone.ts`.
+ *
+ * والنص المعروض للزائر لا يتغير بحرف: `contact.tsx` يعرض `channel.value` خاماً
+ * ويضع هذه في `href` وحدها.
+ *
+ * ويبقى الإرجاع `string` لأن ستة مواضع تضعه في `href` مباشرةً وكلها تحرس
+ * `if (phone)` قبل النداء؛ فـ`tel:` العاري لا يُبلغه إلا نصٌّ بلا رقم واحد —
+ * وهو الناتج نفسه الذي كان يعطيه السطر القديم لتلك الحالة بالضبط.
+ */
 export function telHref(phone: string): string {
-  return `tel:${phone.replace(/[^+\d]/g, "")}`;
+  return telLink(phone) ?? "tel:";
 }
 
 /**

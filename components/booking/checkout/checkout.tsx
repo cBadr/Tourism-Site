@@ -29,8 +29,10 @@ import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import type { PromoBanner } from "@/lib/discount-types";
 import type { AppliedDiscount } from "@/lib/discounts/types";
+import type { AppliedRedemption } from "@/lib/loyalty/types";
 import { createFormatter, type LocaleFormatter } from "../format";
 import { CouponField, DiscountRows } from "../coupon-field";
+import { RedeemField, RedeemRows } from "../redeem-field";
 import { PromoBanners } from "../promo-banner";
 import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
 import { readPaymentSettings, splitAmounts } from "./payment";
@@ -53,6 +55,28 @@ import { todayInputValue, toIsoFromLocalInputs } from "./datetime";
  * الحساب وتُجمّد الخصم في لقطة الحجز. والمعروض هنا معاينة لا التزام — فإن نفد
  * سقف الكوبون بين المعاينة والتأكيد أنشأت القاعدة الحجز بالسعر الكامل، والمبالغ
  * النهائية تظهر في صفحة متابعة الحجز (وهي مصدرها الوحيد).
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  المرحلة ١٢ب — النقاط: طبقةٌ **ثالثة** تحت الكوبون، بترتيبٍ لا يُقلَب
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * §٢ في `lib/loyalty-types.ts`:
+ *
+ *     سعر الرحلة − الكوبون − النقاط = سعر الرحلة بعد التنزيلات، ثم + الخدمات
+ *
+ * وثلاثة أشياء في هذا الملف تتبع ذلك الترتيب حرفياً: موضع اللوحة تحت حقل
+ * الكوبون، وترتيب الصفوف في تفصيل السعر، و**إسقاط الاستبدال كلما تغيّر الكوبون**.
+ *
+ * 🔴 والأخير هو الحارس الحقيقي: **السقف واحدٌ للطبقتين مجتمعتين، لا سقفان
+ * يُجمعان** (‏§١). فرقمُ نقاطٍ حُسب قبل الكوبون يصير — لحظةَ تطبيق الكوبون —
+ * وعداً بخصمٍ لم تعد له مساحة. وإبقاؤه معروضاً يعني إمّا تخييب العميل عند
+ * التأكيد، وإمّا (وهو الأسوأ) إجمالاً يظنّه صحيحاً وهو تحت أرضية المتعهد. ولذلك
+ * يُسقَط الرقم **فوراً وفي نفس الضغطة** التي تُغيّر الكوبون، ثم تُعاد المعاينة.
+ * ونيّةُ العميل («استخدم نقاطي») تنجو وتُطبَّق على الرقم الجديد — انظر
+ * `../redeem-field.tsx`.
+ *
+ * ولا يُرسَل عند التأكيد عددُ نقاطٍ ولا مبلغ: **رايةٌ منطقية واحدة**، والقاعدة
+ * تقرّر (‏**D-05**). وصاحبُ الرصيد يُشتقّ من الجلسة على الخادم لا من الجسم.
  */
 
 /** الرحلة كما تصل من الحاسبة — بإحداثيات النقطتين (شرط بدء الحجز) */
@@ -95,6 +119,13 @@ export type CheckoutProps = {
    * (القرار ١٠: النظام مطفأ في البذرة، والافتراضي هو ما سيعمل في الإنتاج).
    */
   discountEnabled?: boolean;
+  /**
+   * نظام الولاء مفعَّل — يصل من الصفحة الخادمية كنظيره أعلاه، وغيابه يعني
+   * **مطفأ** فلا تُسأل خدمة المعاينة أصلاً. وهو **راية عرضٍ لا حارس**: الحارس
+   * في القاعدة (‏`preview_redeem_points` و`create_booking`)، ووظيفة الراية أن
+   * تمنع نداءً لا جواب له على كل فتحة للخطوة الثالثة.
+   */
+  loyaltyEnabled?: boolean;
   /** بانرات موضع «الحجز» — عرض فقط، بلا أثر على أي سعر */
   banners?: PromoBanner[];
 };
@@ -252,6 +283,7 @@ export function Checkout({
   compact = false,
   locale = DEFAULT_LOCALE,
   discountEnabled = false,
+  loyaltyEnabled = false,
   banners = [],
 }: CheckoutProps) {
   const router = useRouter();
@@ -259,6 +291,7 @@ export function Checkout({
   const tCommon = useT("common");
   const tSummary = useT("booking.offers.summary");
   const tDiscount = useT("discount");
+  const tLoyalty = useT("loyalty");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
   const uid = React.useId();
 
@@ -276,6 +309,7 @@ export function Checkout({
   const [plan, setPlan] = React.useState<PaymentPlan>("deposit");
   const [payment, setPayment] = React.useState<PaymentSettings>(DEFAULT_PAYMENT_SETTINGS);
   const [discount, setDiscount] = React.useState<AppliedDiscount | null>(null);
+  const [redemption, setRedemption] = React.useState<AppliedRedemption | null>(null);
 
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -334,9 +368,34 @@ export function Checkout({
   // `extrasTotal` إليه، وهو **معاينة** كما `splitAmounts` تماماً: الرقم المُلزِم
   // يعود من `create_booking` (‏`total = ride_total − discount + extras_total`)
   // ويظهر في صفحة متابعة الحجز وهي مصدره الوحيد.
-  const effectiveTotal = discount ? discount.totalAfter + offer.extrasTotal : offer.total;
+  //
+  // ومع نقاط: `redemption.rideAfter` هو سعر الرحلة **بعد الكوبون وبعد النقاط
+  // معاً** — تحسبه القاعدة في نداءٍ واحد يعرف الرمز المطبَّق (‏§١: سقفٌ واحد
+  // للطبقتين). فلا يُطرح هنا `worth` من `totalAfter`: طرحٌ في المتصفح يعني
+  // رقماً ثانياً لسعر الرحلة لا يطابق ما تُثبّته `create_booking`.
+  const rideAfterAll = redemption
+    ? redemption.rideAfter
+    : discount
+      ? discount.totalAfter
+      : null;
+  const effectiveTotal =
+    rideAfterAll !== null ? rideAfterAll + offer.extrasTotal : offer.total;
+  const discounted = discount !== null || redemption !== null;
   const amounts = splitAmounts(effectiveTotal, plan, payment);
   const depositPreview = splitAmounts(effectiveTotal, "deposit", payment);
+
+  /**
+   * 🔒 تغيّر الكوبون ⇒ **يسقط رقم النقاط في الحال**.
+   *
+   * السقف مشترك (‏§١)، فرقمٌ حُسب على سقفٍ قبل الكوبون يصير كذبةً في اللحظة التي
+   * يُطبَّق فيها الكوبون — لا بعد المعاينة التالية. وإسقاطه هنا لا هناك يعني أنه
+   * لا توجد **أي** تصييرة يظهر فيها إجماليٌّ مبنيّ على طبقتين حُسبتا على سقفين.
+   * واللوحة تُعيد السؤال فوراً وتُطبّق نيّة العميل على الجواب الجديد.
+   */
+  function applyDiscount(next: AppliedDiscount | null) {
+    setDiscount(next);
+    setRedemption(null);
+  }
 
   function validateStepOne(): FieldErrors {
     const next: FieldErrors = {};
@@ -408,6 +467,9 @@ export function Checkout({
       // 🔒 الرمز وحده — ولا `amount` ولا `totalAfter` ولا أي رقم من المعاينة.
       // `create_booking` تعيد الحساب بنفسها وتُجمّده في اللقطة.
       couponCode: discount ? discount.code : null,
+      // 🔒 وللنقاط **رايةٌ منطقية** لا رقم: لا عدد نقاط ولا مبلغ ولا معرّف حساب.
+      // الخادم يشتقّ صاحب الرصيد من الجلسة، والقاعدة تقرّر كم يُنفَق (D-05).
+      redeemPoints: redemption !== null,
       // 🔒 وكذلك الخدمات: **رموز وكميات فقط**، والأسعار من الكتالوج في القاعدة.
       returnAt: trip.returnAt ?? null,
       luggage: trip.luggage ?? 0,
@@ -430,6 +492,17 @@ export function Checkout({
         // الكوبون هنا وإلا أُعيد إرساله في كل محاولة تالية ففشلت جميعها حتماً.
         // إسقاطه يجعل التفصيل يعرض السعر الكامل وزرَّ التأكيد قابلاً للنجاح.
         if (json.code === "coupon-rejected") setDiscount(null);
+        /**
+         * 🔒 ونظيرها للنقاط: أنفق العميل رصيده في تبويب آخر بين المعاينة
+         * والتأكيد، أو ضاقت المساحة، أو انتهت جلسته فلم يعد للخادم من يشتقّ
+         * منه صاحب الرصيد. القاعدة **ترفض ولا تُنشئ الحجز بالسعر الأعلى**، وهنا
+         * تُسقَط الراية — وإلا أُعيد إرسالها في كل محاولة تالية ففشلت جميعها
+         * حتماً، والعميل لا يعرف أن إلغاء الاستخدام يحلّ المشكلة.
+         *
+         * ⚠ ولا يُلمَس `discount` هنا ولا العكس: رمزان مستقلان لسببين مستقلين،
+         * وإسقاط الاثنين معاً يحرم العميل من خصمٍ ما زال صالحاً.
+         */
+        if (json.code === "redeem-rejected") setRedemption(null);
         setSubmitError(
           json.message || t("errors.createFailed", "تعذّر إنشاء الحجز الآن. حاول مرة أخرى.")
         );
@@ -494,8 +567,9 @@ export function Checkout({
         total={effectiveTotal}
         // السعر المشطوب هو إجمالي العرض كما جاء من `quote_public` (بلا كوبون
         // أصلاً) — لا `discount.totalBefore` الذي يخصّ الرحلة وحدها، وإلا شُطب
-        // رقمٌ أقلّ من الرقم الجديد حين توجد خدمات.
-        originalTotal={discount ? offer.total : null}
+        // رقمٌ أقلّ من الرقم الجديد حين توجد خدمات. والنقاط تنزيلٌ مثله تماماً،
+        // فالشرط يشمل الطبقتين ولا يُشطب شيء حين لا تنزيل أصلاً.
+        originalTotal={discounted ? offer.total : null}
         t={tSummary}
         fmt={fmt}
       />
@@ -721,8 +795,28 @@ export function Checkout({
                 trip={trip}
                 classSlug={offer.classSlug}
                 applied={discount}
-                onApply={setDiscount}
+                onApply={applyDiscount}
                 suggestedCode={banners.find((banner) => banner.couponCode)?.couponCode ?? null}
+                disabled={submitting}
+                compact={compact}
+                locale={locale}
+              />
+            ) : null}
+
+            {/*
+              لوحة النقاط **تحت** حقل الكوبون: هو الترتيب الذي تنفّذه القاعدة
+              (‏§٢)، والصفوف أسفل الشاشة تحكي القصة نفسها. وهي لا تظهر إلا حين
+              يكون هناك رصيدٌ يُنفَق فعلاً — فمن لا حساب له، ومن لا رصيد له، ومن
+              لم تصل قاعدتَه هجرةُ المحرّك، ثلاثتهم يرون هذه الخطوة كما كانت.
+              و`couponCode` يُمرَّر كي يُحسب الرقمان على **سقفٍ واحد** لا سقفين.
+            */}
+            {loyaltyEnabled ? (
+              <RedeemField
+                trip={trip}
+                classSlug={offer.classSlug}
+                couponCode={discount?.code ?? null}
+                applied={redemption}
+                onApply={setRedemption}
                 disabled={submitting}
                 compact={compact}
                 locale={locale}
@@ -816,17 +910,23 @@ export function Checkout({
                 ثلاثتها من `apply_discount`. وحين لا خصم يبقى الصف الواحد كما كان
                 حرفياً — لا صفوف صفرية تشوّش القراءة.
               */}
+              {/*
+                ⚠ «الإجمالي» تصير كلمةً كاذبة كلما تلاها سطرٌ يطرح: خدماتٌ
+                تُضاف، أو نقاطٌ تُخصم. فالمدى `ride` يُحسب من **الاثنين معاً** لا
+                من الخدمات وحدها كما كان، وإلا قرأ صاحبُ الكوبون والنقاط
+                «الإجمالي بعد الخصم» ثم رأى تحته خصماً ثانياً.
+              */}
               {discount ? (
                 <DiscountRows
                   discount={discount}
                   t={tDiscount}
                   fmt={fmt}
-                  scope={hasExtras ? "ride" : "total"}
+                  scope={hasExtras || redemption ? "ride" : "total"}
                 />
               ) : (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-muted-foreground">
-                    {hasExtras
+                    {hasExtras || redemption
                       ? t("payment.rideTotal", "سعر الرحلة")
                       : t("payment.total", "إجمالي الرحلة")}
                   </dt>
@@ -835,6 +935,20 @@ export function Checkout({
                   </dd>
                 </div>
               )}
+
+              {/*
+                النقاط **بعد** الكوبون وقبل الخدمات — ترتيب §٢ حرفياً. وموضع
+                هذه الصفوف في الشاشة هو نفسه موضع الطبقة في القاعدة، فما يقرؤه
+                العميل هو ما يجري فعلاً لا ترتيبٌ اختير للجمال.
+              */}
+              {redemption ? (
+                <RedeemRows
+                  redemption={redemption}
+                  t={tLoyalty}
+                  fmt={fmt}
+                  scope={hasExtras ? "ride" : "total"}
+                />
+              ) : null}
 
               {/*
                 الخدمات سطراً سطراً ثم الإجمالي — الترتيب نفسه الذي تنفّذه

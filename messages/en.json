@@ -793,6 +793,16 @@
         "title": "Can't find a booking you know you made?",
         "text": "Bookings are not added to an account automatically — add it with its number and phone, or contact us and we will do it for you.",
         "contact": "Contact us"
+      },
+
+      "loyalty": {
+        "title": "Your points",
+        "unproven": "We track your points against your phone number, and you have not verified a number with us yet. Add any past booking using its reference and phone number in the form below — the balance for every trip on that number appears at once.",
+        "zero": "Your balance is zero points right now. Points are earned on completed trips and appear here after your trip runs.",
+        "pointsLabel": "Balance",
+        "pointsValue": "{count} points",
+        "worthLabel": "Worth today",
+        "spendNote": "Your points are applied as a discount when you confirm your next booking — we show you the amount before you confirm."
       }
     }
   },
@@ -842,6 +852,35 @@
 
     "banner": {
       "codeLabel": "discount code"
+    }
+  },
+
+  "loyalty": {
+    "field": {
+      "use": "Use my points on this trip",
+      "summary": "Spending {points} points saves you {amount} off the trip price.",
+      "balance": "Your current balance is {points} points."
+    },
+
+    "rows": {
+      "redeem": "Points discount ({points} points)",
+      "minus": "‑{amount}",
+      "after": "Total after points",
+      "rideAfter": "Trip price after points"
+    },
+
+    "redeem": {
+      "signedOut": "Points can be used once you sign in — finish your booking now; you earn points either way.",
+      "noBalance": "No points balance yet. Points are earned on completed trips.",
+      "belowMinimum": "Your balance is below the minimum for redemption. Collect more points and use them on a future trip.",
+      "notApplicable": "Your points cannot be used on this trip. Continue at the price shown — your balance stays as it is.",
+      "unavailable": "Point redemption is not available right now. Continue at the price shown.",
+      "rateLimited": "Too many requests in a short time. Wait a minute and try again."
+    },
+
+    "status": {
+      "checking": "Calculating your points value",
+      "applied": "Points discount applied"
     }
   }
 }

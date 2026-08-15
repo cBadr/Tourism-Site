@@ -1,5 +1,6 @@
 import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
+import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { SearchWidget } from "./search-widget";
 import { getPublicExtras } from "./extras-catalog";
@@ -19,9 +20,10 @@ import type { BookingContact } from "./offers";
  * يفعله `HeroSection` مع `<Hero>` المتزامن الشكل غير المتزامن التنفيذ. هذا ما
  * يُبقي سجل الأقسام (`components/sections/render.tsx`) على نوعه بلا تعديل.
  *
- * 🔒 ما يعبر إلى المتصفح: `discountEnabled` (رايةٌ لا رقم) ونصوص البانرات
- * المعروضة للعامة أصلاً. ولا تعبر `maxPercent` ولا أرضيات الهامش ولا أي رقم من
- * `DiscountSettings` — لا يوجد له مكان في أنواع الويدجت أصلاً.
+ * 🔒 ما يعبر إلى المتصفح: `discountEnabled` و`loyaltyEnabled` (رايتان لا رقمان)
+ * ونصوص البانرات المعروضة للعامة أصلاً. ولا تعبر `maxPercent` ولا أرضيات الهامش
+ * ولا `currencyPerPoint` ولا أي رقم من `DiscountSettings` أو `LoyaltySettings` —
+ * لا يوجد له مكان في أنواع الويدجت أصلاً.
  */
 export async function BookingWidget({
   contact,
@@ -34,17 +36,21 @@ export async function BookingWidget({
   locale?: string;
   className?: string;
 }) {
-  const [discountEnabled, offerBanners, checkoutBanners, extras, maxLuggage] = await Promise.all([
-    isDiscountEnabled(),
-    getPromoBanners("offers"),
-    getPromoBanners("checkout"),
-    // كتالوج الخدمات (0031): يُقرأ هنا لا في الجزيرة — والفارغ يعني ألّا يظهر
-    // في الويدجت شيء إطلاقاً، وهي الحالة الافتراضية حتى يضيف المالك خدماته.
-    getPublicExtras(),
-    // سقف عدّاد الحقائب من الأسطول نفسه: عدّادٌ يصعد فوق أكبر سعة يعرض على
-    // العميل رقماً يضمن «لا توجد فئة». والفشل يعيد null فيبقى السقف الثابت.
-    getMaxLuggageCapacity(),
-  ]);
+  const [discountEnabled, loyaltyEnabled, offerBanners, checkoutBanners, extras, maxLuggage] =
+    await Promise.all([
+      isDiscountEnabled(),
+      // راية الولاء (١٢ب) — تُقرأ هنا لا في الجزيرة، ولنفس سبب أختها: قراءةُ
+      // إعدادٍ من المتصفح رحلةُ شبكة على أسخن مسار في الموقع.
+      isLoyaltyEnabled(),
+      getPromoBanners("offers"),
+      getPromoBanners("checkout"),
+      // كتالوج الخدمات (0031): يُقرأ هنا لا في الجزيرة — والفارغ يعني ألّا يظهر
+      // في الويدجت شيء إطلاقاً، وهي الحالة الافتراضية حتى يضيف المالك خدماته.
+      getPublicExtras(),
+      // سقف عدّاد الحقائب من الأسطول نفسه: عدّادٌ يصعد فوق أكبر سعة يعرض على
+      // العميل رقماً يضمن «لا توجد فئة». والفشل يعيد null فيبقى السقف الثابت.
+      getMaxLuggageCapacity(),
+    ]);
 
   return (
     <SearchWidget
@@ -53,6 +59,7 @@ export async function BookingWidget({
       locale={locale}
       className={className}
       discountEnabled={discountEnabled}
+      loyaltyEnabled={loyaltyEnabled}
       offerBanners={offerBanners}
       checkoutBanners={checkoutBanners}
       extras={extras}

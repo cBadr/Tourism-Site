@@ -12,6 +12,7 @@ import { getPublicExtras } from "@/components/booking/extras-catalog";
 import { getMaxLuggageCapacity } from "@/components/booking/fleet-luggage";
 import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
+import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
 
 /**
  * صفحة الحجز (/book) — الصفحة المخصصة لمحرك التسعير: ترويسة قصيرة،
@@ -73,13 +74,23 @@ export default async function BookPage() {
   // الخصومات (المرحلة ١٢أ): الصفحة الخادمية وحدها تقرأ `site_settings` وجدول
   // البانرات، وتمرّرهما props إلى جزيرة العميل — فلا يقرأ المتصفح إعداداً ولا
   // يستنتج وجود حملة من غياب حقل. البانرات محتوى عرض بلا أثر على أي سعر.
-  const [settings, t, offerBanners, checkoutBanners, discountEnabled, extras, maxLuggage] =
-    await Promise.all([
+  const [
+    settings,
+    t,
+    offerBanners,
+    checkoutBanners,
+    discountEnabled,
+    loyaltyEnabled,
+    extras,
+    maxLuggage,
+  ] = await Promise.all([
       getSettings(locale),
       getT("pages.book", locale),
       getPromoBanners("offers"),
       getPromoBanners("checkout"),
       isDiscountEnabled(),
+      // راية الولاء (١٢ب) — رايةٌ لا رقم، والصفحة الخادمية وحدها تقرؤها
+      isLoyaltyEnabled(),
       // كتالوج الخدمات الإضافية (0031) — الصفحة الخادمية وحدها تقرؤه
       getPublicExtras(),
       // سقف عدّاد الحقائب من الأسطول النشط: بدونه يصعد العدّاد إلى ٢٠ ثابتة
@@ -132,6 +143,7 @@ export default async function BookPage() {
               contact={contact}
               locale={locale}
               discountEnabled={discountEnabled}
+              loyaltyEnabled={loyaltyEnabled}
               checkoutBanners={checkoutBanners}
               extras={extras}
               maxLuggage={maxLuggage}

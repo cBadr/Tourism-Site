@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { telLink, waLink } from "@/lib/phone";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
   readPartnerCredit,
@@ -277,23 +278,37 @@ function Row({ label, help, children }: { label: string; help?: string; children
   );
 }
 
+/**
+ * روابط التواصل مع المتعهد — من `lib/phone.ts` وحدها.
+ *
+ * ⚠ والقاعدة الحية تبيّن لماذا لم يُكتشف العيب هنا بالعين: واتساب المتعهد مخزَّن
+ * بالصيغة الدولية سلفاً في **٩ من ١١** صفاً (`201000111222`) لأن البذرة تكتبه
+ * كذلك، فالنسخة المحلية كانت تُخرج رابطاً صحيحاً **بالصدفة**. لكن `phone` عنده
+ * محليٌّ (١٠ من ١١)، وأول متعهد يُدخِل واتسابه كما يكتبه في هاتفه (`0101…`) كان
+ * يقع في الخطأ نفسه. فالصحة هنا كانت خاصيةَ بيانات لا خاصيةَ كود.
+ */
 function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: string | null }) {
-  const digits = (v: string) => v.replace(/[^\d+]/g, "");
-  const waNumber = whatsapp ? digits(whatsapp).replace(/^\+/, "") : null;
+  const tel = telLink(phone);
+  const wa = waLink(whatsapp);
   return (
     <span className="flex flex-wrap items-center gap-2">
-      {phone && (
+      {phone &&
+        (tel ? (
+          <a
+            href={tel}
+            className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
+          >
+            <Phone className="size-3.5" />
+            <span dir="ltr">{phone}</span>
+          </a>
+        ) : (
+          <span className="text-xs" dir="ltr">
+            {phone}
+          </span>
+        ))}
+      {wa && (
         <a
-          href={`tel:${digits(phone)}`}
-          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
-        >
-          <Phone className="size-3.5" />
-          <span dir="ltr">{phone}</span>
-        </a>
-      )}
-      {waNumber && (
-        <a
-          href={`https://wa.me/${waNumber}`}
+          href={wa}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1 text-xs text-emerald-800 transition-colors hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950"
@@ -302,7 +317,7 @@ function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: str
           واتساب
         </a>
       )}
-      {!phone && !waNumber && <span className="text-sm text-muted-foreground">—</span>}
+      {!phone && !wa && <span className="text-sm text-muted-foreground">—</span>}
     </span>
   );
 }

@@ -19,7 +19,7 @@
  * وما لا يوجد منها لا يُعرض — لا اسم ولا رقم مكتوب في هذا الملف.
  */
 
-import { waNumber } from "@/lib/phone";
+import { telLink, waLink } from "@/lib/phone";
 
 export const MAINTENANCE_SETTINGS_KEY = "maintenance";
 
@@ -216,18 +216,23 @@ export function maintenanceContactLinks(
    * ⚠ كانت هنا **نسخةٌ ثانية** من بناء رابط واتساب (`replace(/[^\d]/g, "")`)،
    * فورثت العيب نفسه: الرقم المحلي يخرج بلا رمز دولة و`wa.me` يردّه غير صالح.
    * وموضعها يجعل الأمر أسوأ لا أهون — **صفحة الصيانة هي القناة الوحيدة العاملة
-   * حين يكون الموقع مطفأً**، فرابطٌ مكسور فيها يقطع آخر خيط. الآن `waNumber`
-   * وحدها، وشرحها في `lib/site-config.ts`.
+   * حين يكون الموقع مطفأً**، فرابطٌ مكسور فيها يقطع آخر خيط. الآن `waLink`
+   * وحدها تبني العنوان، وشرحها في `lib/phone.ts`.
    */
-  const wa = waNumber(state.contact.whatsapp);
+  const wa = waLink(state.contact.whatsapp);
   if (wa) {
-    links.push({ href: `https://wa.me/${wa}`, label: "تواصل عبر واتساب" });
+    links.push({ href: wa, label: "تواصل عبر واتساب" });
   }
-  if (state.contact.phone) {
-    links.push({
-      href: `tel:${state.contact.phone.replace(/\s+/g, "")}`,
-      label: `اتصل بنا: ${state.contact.phone}`,
-    });
+  /**
+   * والهاتف يمرّ بـ`telLink` للسبب نفسه بدرجةٍ أخف: كان `replace(/\s+/g, "")`
+   * يُخرج `tel:01010000506` — يطلب من داخل مصر ويفشل صامتاً على شريحة أجنبية.
+   * وموضعه يرجّح الكفة كما رجّحها في الواتساب: **الصفحة الوحيدة العاملة والموقع
+   * مطفأ**، وزائرها الأرجح سائحٌ لا يفهم لماذا لا يردّ أحد. والنص المعروض يبقى
+   * `state.contact.phone` كما كتبه المالك — التطبيع في `href` وحده.
+   */
+  const tel = telLink(state.contact.phone);
+  if (tel) {
+    links.push({ href: tel, label: `اتصل بنا: ${state.contact.phone}` });
   }
   return links;
 }

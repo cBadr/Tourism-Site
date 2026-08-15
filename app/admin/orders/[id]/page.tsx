@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import type { TripSnapshot } from "@/lib/booking-types";
+import { telLink, waLink } from "@/lib/phone";
 import type { PriceSource } from "@/lib/subcontractor-types";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -1225,24 +1226,39 @@ function TripCrewCard({
   );
 }
 
-/** رقم موبايل بصيغة رابط اتصال — الأرقام تُعرض ltr دائماً */
+/**
+ * رقم موبايل بصيغة رابط اتصال — الأرقام تُعرض ltr دائماً.
+ *
+ * ⚠ الروابط من `lib/phone.ts` لا من نزع رموزٍ محلي. كانت هنا نسخةٌ ثالثة من
+ * العيب الأصلي: هاتف العميل يصل بصفرٍ بادئ في ٣٣٧ من ٣٤١ حجزاً حياً، فيخرج
+ * `wa.me/01188511418` ويردّه واتساب «غير صالح» — والإدارة تفتح هذه الشاشة
+ * تحديداً حين تحتاج أن تصل بالعميل الآن.
+ *
+ * والزر يغيب حين لا يُبنى رقم صالح: مرساةٌ تفتح خطأً أسوأ من غيابها، والرقم
+ * يبقى معروضاً نصّاً على أي حال.
+ */
 function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: string | null }) {
-  const digits = (v: string) => v.replace(/[^\d+]/g, "");
-  const waNumber = whatsapp ? digits(whatsapp).replace(/^\+/, "") : null;
+  const tel = telLink(phone);
+  const wa = waLink(whatsapp);
   return (
     <span className="flex flex-wrap items-center gap-2">
-      {phone && (
+      {phone &&
+        (tel ? (
+          <a
+            href={tel}
+            className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
+          >
+            <Phone className="size-3.5" />
+            <span dir="ltr">{phone}</span>
+          </a>
+        ) : (
+          <span className="text-xs" dir="ltr">
+            {phone}
+          </span>
+        ))}
+      {wa && (
         <a
-          href={`tel:${digits(phone)}`}
-          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
-        >
-          <Phone className="size-3.5" />
-          <span dir="ltr">{phone}</span>
-        </a>
-      )}
-      {waNumber && (
-        <a
-          href={`https://wa.me/${waNumber}`}
+          href={wa}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1 text-xs text-emerald-800 transition-colors hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950"
@@ -1251,7 +1267,7 @@ function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: str
           واتساب
         </a>
       )}
-      {!phone && !waNumber && <span className="text-sm text-muted-foreground">—</span>}
+      {!phone && !wa && <span className="text-sm text-muted-foreground">—</span>}
     </span>
   );
 }

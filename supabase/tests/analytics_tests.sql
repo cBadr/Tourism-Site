@@ -95,7 +95,7 @@ begin
     ('public.funnel_daily(date, date)'),
     ('public.funnel_summary(date, date)'),
     ('public.prune_funnel_events(integer)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

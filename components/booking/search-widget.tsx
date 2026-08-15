@@ -98,6 +98,11 @@ export type SearchWidgetProps = {
    * تقرأ `site_settings`. غيابه يعني **مطفأ**: لا يظهر حقل كوبون في مسار الحجز.
    */
   discountEnabled?: boolean;
+  /**
+   * نظام الولاء مفعَّل (المرحلة ١٢ب) — رايةٌ لا رقم، تصل من الصفحة الخادمية
+   * كأختها أعلاه. غيابها يعني **مطفأ**، فلا تظهر لوحة النقاط ولا يُسأل الخادم.
+   */
+  loyaltyEnabled?: boolean;
   /** بانرات موضع «شاشة العروض» و«صفحة الحجز» — عرض فقط، بلا أثر على أي سعر */
   offerBanners?: PromoBanner[];
   checkoutBanners?: PromoBanner[];
@@ -449,6 +454,7 @@ export function SearchWidget({
   locale = DEFAULT_LOCALE,
   className,
   discountEnabled = false,
+  loyaltyEnabled = false,
   offerBanners = [],
   checkoutBanners = [],
   extras = [],
@@ -1113,6 +1119,7 @@ export function SearchWidget({
             compact={compact}
             locale={locale}
             discountEnabled={discountEnabled}
+            loyaltyEnabled={loyaltyEnabled}
             offerBanners={offerBanners}
             checkoutBanners={checkoutBanners}
           />

@@ -24,6 +24,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  Sparkles,
   TicketPercent,
   Wallet,
   Wrench,
@@ -58,6 +59,7 @@ type NavItem = {
     | "/admin/integrations"
     | "/admin/languages"
     | "/admin/logs"
+    | "/admin/loyalty"
     | "/admin/maintenance"
     | "/admin/notifications"
     | "/admin/orders"
@@ -102,6 +104,11 @@ const NAV_ITEMS: NavItem[] = [
   // البند يبقى فعالاً على مساراته الفرعية (شاشة الكوبون والبانرات) بفحص
   // startsWith أدناه.
   { label: "الخصومات", icon: TicketPercent, href: "/admin/discounts" },
+  // «الولاء» ملاصقة لـ«الخصومات» لأنهما التوأم الذي تصنّفه الرؤية مكمّلات للتسعير
+  // (VISION.md:76 داخل قسم «آلية التسعير»)، ولأنهما في المعادلة **طبقتان
+  // متتاليتان تقتسمان أرضية هامشٍ واحدة**: الكوبون ثم النقاط، بسقفٍ واحد لا
+  // سقفين يُجمعان. فمن يضبط إحداهما يحتاج أن يرى الأخرى على بُعد سطر.
+  { label: "الولاء والنقاط", icon: Sparkles, href: "/admin/loyalty" },
   { label: "حسابات الدفع", icon: CreditCard, href: "/admin/payment-accounts" },
   // «المدفوعات» بعد «حسابات الدفع» مباشرة: الشاشتان وجها تحصيل واحد — الحسابات
   // للتحويل اليدوي، وهذه للبوابات الإلكترونية ومطابقة جلساتها (المرحلة ٩).
@@ -151,6 +158,9 @@ const PAGE_TITLES: Record<string, string> = {
   // بنفس نصّ `export const metadata` في الشاشة، وإلا قرأ المالك عنوانين مختلفين
   // في الترويسة وتبويب المتصفح فظنّ أنه غادر القسم
   "/admin/logs": "السجلات",
+  // بنفس نصّ `export const metadata` في الشاشة، وإلا قرأ المالك عنوانين مختلفين
+  // في الترويسة وتبويب المتصفح
+  "/admin/loyalty": "الولاء",
   "/admin/maintenance": "وضع الصيانة",
   "/admin/notifications": "الإشعارات",
   "/admin/orders": "الطلبات",
