@@ -17,6 +17,21 @@
 -- وتُمسح في بداية الملف ونهايته معاً (فحتى لو انهار تشغيل سابق في المنتصف يبدأ
 -- التالي من أرض نظيفة).
 --
+-- ── ولماذا الممر **صحراوي نائٍ** لا القاهرة–الإسكندرية ───────────────────────
+-- هذا الملف يقيس أساساً «حوض الموجة ١ = المتعهد الأرخص وحده»، وهو قياسٌ يفترض
+-- أن **لا أحد غير الفيكسترة يغطي الممر**. وكان الملف يستعمل ممر القاهرة–
+-- الإسكندرية الحقيقي — وهو أكثر ممرات المالك مبيعاً — فلما أضاف المالك قائمة
+-- أسعار حقيقية عليه (سيدان بتكلفة ١٥٠٠، أي مساوية لتكلفة المتعهد «أ» تماماً)
+-- دخل متعهدٌ حقيقي الحوضَ **بجدارة**: معتمَد، وله مركبة فعّالة، وتحت سقف الموجة.
+-- فصار (أ-٣) يقرأ ٢ ويتوقع ١، والعيب في عزل الاختبار لا في `dispatch_pool`.
+-- ولأن التساوي كان في التكلفة بالضبط، لم يسقط تأكيد مصدر التسعير (٠-د) فيدلّ
+-- على السبب — بل سقط أول تأكيدٍ يعدّ العروض، وهو أبعد ما يكون عن جذره.
+--   • الإحداثيات الآن **صحراوية نائية** (٢٦٫٥، ٢٧٫٠) ← (٢٥٫٧، ٢٨٫٤) بنطاقَي ٤٠ كم،
+--     ولا قائمة حقيقية واحدة تغطيها (مقيسٌ حياً: صفر تطابق مقابل ٢ على الممر القديم).
+--   • وسابقتها في المشروع: `finance_tests.sql` هجرت الممر نفسه للسبب نفسه.
+--   • وفوقها **حارسٌ في (٠)** يعدّ التغطية الحقيقية على الممر قبل بناء الفيكسترة
+--     ويرمي برسالة تسمّي السبب — فلا يعود هذا الصنف من الفشل مُعمّى على قارئه.
+--
 -- الأرقام غير مثبتة في الكود: تكلفة المتعهد الأول ثابتة، ثم تُشتق تكاليف الباقين
 -- من **الهامش الفعلي الذي سجّله الحجز**، فتبقى الاختبارات صحيحة مهما عاير المالك
 -- التعريفة أو نسبة الهامش من اللوحة.
@@ -56,6 +71,8 @@ declare
   v_missing text;
   v_classes text[];
   v_rows    integer;
+  v_cov     integer;
+  v_who     text;
 begin
   select string_agg(x.sig, '، ')
     into v_missing
@@ -112,6 +129,26 @@ begin
                     'd2000000-0000-4000-8000-00000000000b'::uuid);
   exception when others then null;
   end;
+
+  -- ⚠ حارس العزل: الممر الصحراوي **بلا تغطية حقيقية** — شرطُ صحةِ كل ما بعده.
+  --
+  -- كل تأكيدٍ يعدّ العروض في هذا الملف يفترض أن الفيكسترة وحدها تغطي الممر.
+  -- ومتعهدٌ حقيقي يغطيه يدخل الحوض **بجدارة** فيرفع العدد بلا أن يكون في
+  -- `dispatch_pool` عيب — وهو بالضبط ما وقع على الممر القديم (القاهرة–
+  -- الإسكندرية). فالفحص هنا يسبق الفيكسترة ويسمّي السبب، بدل أن يظهر لاحقاً
+  -- كرقمٍ مخالف في (أ-٣) لا يدلّ على جذره. (والفيكسترة القديمة مُسحت أعلاه،
+  -- فما يبقى من تغطية هنا حقيقيٌّ حتماً.)
+  select count(*), string_agg(distinct s.company_name, '، ')
+    into v_cov, v_who
+  from public.coverage_matches(26.620000, 27.180000, 25.640000, 28.310000) cm
+  join public.subcontractors s on s.id = cm.subcontractor_id;
+
+  if v_cov > 0 then
+    raise exception
+      'شرط مسبق: الممر الصحراوي للاختبار صار يغطيه % متعهداً حقيقياً (%) — '
+      'انقل إحداثيات الفيكسترة إلى ممر أنأى، ولا تُرخِ التأكيدات',
+      v_cov, coalesce(v_who, 'بلا اسم');
+  end if;
 
   -- الفئة المؤهلة لراكب واحد كما يرجعها المحرك نفسه لا تخميناً منّا
   select array_agg(q.class_slug order by q.capacity asc)
@@ -224,15 +261,16 @@ begin
   values (v_a, v_cls, 'مركبة اختبار أ', true),
          (v_e, v_cls, 'مركبة اختبار هـ', true);
 
-  -- القاهرة ← الإسكندرية بنطاقَي ٤٠ كم (نفس مثال الرؤية)
+  -- ممر صحراوي نائٍ بنطاقَي ٤٠ كم — لا قائمة حقيقية تغطيه (الحارس في (٠) يثبته).
+  -- وكان هنا ممر القاهرة–الإسكندرية، فسحبه متعهدٌ حقيقي إلى الحوض. الشرح في الترويسة.
   insert into public.price_lists
     (id, subcontractor_id, title, origin_label, origin_lat, origin_lng, origin_radius_km,
      dest_label, dest_lat, dest_lng, dest_radius_km, bidirectional, status)
   values
-    (v_la, v_a, 'DISPATCH_TESTS قائمة أ', 'القاهرة', 30.044400, 31.235700, 40,
-     'الإسكندرية', 31.200100, 29.918700, 40, true, 'approved'),
-    (v_le, v_e, 'DISPATCH_TESTS قائمة هـ', 'القاهرة', 30.044400, 31.235700, 40,
-     'الإسكندرية', 31.200100, 29.918700, 40, true, 'approved');
+    (v_la, v_a, 'DISPATCH_TESTS قائمة أ', 'الفرافرة', 26.500000, 27.000000, 40,
+     'الداخلة', 25.700000, 28.400000, 40, true, 'approved'),
+    (v_le, v_e, 'DISPATCH_TESTS قائمة هـ', 'الفرافرة', 26.500000, 27.000000, 40,
+     'الداخلة', 25.700000, 28.400000, 40, true, 'approved');
 
   insert into public.price_list_items (price_list_id, class_slug, cost)
   values (v_la, v_cls, v_cost),
@@ -253,8 +291,11 @@ declare
   v_b     record;
 begin
   select * into v_res from public.create_booking(
-    jsonb_build_object('label', 'مصر الجديدة، القاهرة', 'lat', 30.080800, 'lng', 31.322200),
-    jsonb_build_object('label', '١٢ شارع الجيش، المعمورة، الإسكندرية', 'lat', 31.279000, 'lng', 30.017000),
+    -- نقطتان داخل نطاقَي القائمتين (٢٢ و١١ كم من المركزين)، والمسافة المستقيمة
+    -- بينهما ١٥٧ كم — فـ٢٢٠ كم المُدخلة تمرّ من حاجز هافرساين في `create_booking`.
+    -- ووسم الوصول يحمل رقم عقار عمداً: عليه يقوم تأكيد التعميم (ب-٤).
+    jsonb_build_object('label', 'قصر الفرافرة، الوادي الجديد', 'lat', 26.620000, 'lng', 27.180000),
+    jsonb_build_object('label', '١٢ شارع الوادي، موط، الداخلة', 'lat', 25.640000, 'lng', 28.310000),
     1, false, 0,
     220, null, 'test',
     v_cls, 'full',
@@ -329,12 +370,12 @@ begin
     (id, subcontractor_id, title, origin_label, origin_lat, origin_lng, origin_radius_km,
      dest_label, dest_lat, dest_lng, dest_radius_km, bidirectional, status)
   values
-    (v_lb, v_b_id, 'DISPATCH_TESTS قائمة ب', 'القاهرة', 30.044400, 31.235700, 40,
-     'الإسكندرية', 31.200100, 29.918700, 40, true, 'approved'),
-    (v_lc, v_c_id, 'DISPATCH_TESTS قائمة ج', 'القاهرة', 30.044400, 31.235700, 40,
-     'الإسكندرية', 31.200100, 29.918700, 40, true, 'approved'),
-    (v_ld, v_d_id, 'DISPATCH_TESTS قائمة د', 'القاهرة', 30.044400, 31.235700, 40,
-     'الإسكندرية', 31.200100, 29.918700, 40, true, 'approved');
+    (v_lb, v_b_id, 'DISPATCH_TESTS قائمة ب', 'الفرافرة', 26.500000, 27.000000, 40,
+     'الداخلة', 25.700000, 28.400000, 40, true, 'approved'),
+    (v_lc, v_c_id, 'DISPATCH_TESTS قائمة ج', 'الفرافرة', 26.500000, 27.000000, 40,
+     'الداخلة', 25.700000, 28.400000, 40, true, 'approved'),
+    (v_ld, v_d_id, 'DISPATCH_TESTS قائمة د', 'الفرافرة', 26.500000, 27.000000, 40,
+     'الداخلة', 25.700000, 28.400000, 40, true, 'approved');
 
   insert into public.price_list_items (price_list_id, class_slug, cost)
   values (v_lb, v_cls, v_cost_b),
@@ -578,7 +619,7 @@ begin
   if v_row.dest_label ~ '[0-9٠-٩]' then
     raise exception '(ب-٤) ثغرة خصوصية: وسم الوصول يحمل رقماً («%»)', v_row.dest_label;
   end if;
-  if v_row.dest_label not like '%المعمورة%' and v_row.dest_label not like '%الإسكندرية%' then
+  if v_row.dest_label not like '%موط%' and v_row.dest_label not like '%الداخلة%' then
     raise exception '(ب-٤) وسم الوصول فقد معناه الجغرافي («%»)', v_row.dest_label;
   end if;
 
@@ -1310,8 +1351,8 @@ declare
   v_n     integer;
 begin
   select * into v_res from public.create_booking(
-    jsonb_build_object('label', 'مصر الجديدة، القاهرة', 'lat', 30.080800, 'lng', 31.322200),
-    jsonb_build_object('label', 'المعمورة، الإسكندرية', 'lat', 31.279000, 'lng', 30.017000),
+    jsonb_build_object('label', 'قصر الفرافرة، الوادي الجديد', 'lat', 26.620000, 'lng', 27.180000),
+    jsonb_build_object('label', 'موط، الداخلة', 'lat', 25.640000, 'lng', 28.310000),
     1, false, 0,
     220, null, 'test',
     v_cls, 'full',
@@ -1870,8 +1911,8 @@ begin
     raise notice '  ↳ (ك-١) تخطٍّ: في القاعدة % حجز مؤكَّد غريب — لن نرفع auto_start عليه', v_alien;
   else
     select * into v_res from public.create_booking(
-      jsonb_build_object('label', 'مصر الجديدة، القاهرة', 'lat', 30.080800, 'lng', 31.322200),
-      jsonb_build_object('label', 'المعمورة، الإسكندرية', 'lat', 31.279000, 'lng', 30.017000),
+      jsonb_build_object('label', 'قصر الفرافرة، الوادي الجديد', 'lat', 26.620000, 'lng', 27.180000),
+      jsonb_build_object('label', 'موط، الداخلة', 'lat', 25.640000, 'lng', 28.310000),
       1, false, 0, 220, null, 'test', v_cls, 'full',
       'عميل اختبار البدء التلقائي', '01333333333', null, now() + interval '4 days',
       'DISPATCH_TESTS_FIXTURE — البدء التلقائي'
@@ -1921,8 +1962,8 @@ begin
     jsonb_build_object('sub', current_setting('tours.d_admin', true))::text, false);
 
   select * into v_res from public.create_booking(
-    jsonb_build_object('label', 'مصر الجديدة، القاهرة', 'lat', 30.080800, 'lng', 31.322200),
-    jsonb_build_object('label', 'المعمورة، الإسكندرية', 'lat', 31.279000, 'lng', 30.017000),
+    jsonb_build_object('label', 'قصر الفرافرة، الوادي الجديد', 'lat', 26.620000, 'lng', 27.180000),
+    jsonb_build_object('label', 'موط، الداخلة', 'lat', 25.640000, 'lng', 28.310000),
     1, false, 0, 220, null, 'test', v_cls, 'full',
     'عميل اختبار الإسناد المباشر', '01444444444', null, now() + interval '5 days',
     'DISPATCH_TESTS_FIXTURE — إسناد مباشر'

@@ -14,6 +14,7 @@ import {
   type RenderContext,
   type RenderedMessage,
 } from "@/lib/notifications/render";
+import type { EscalationCode, RecipientKind } from "@/lib/partner-alerts-types";
 
 /**
  * صياغة رسائل أحداث البث الأربعة بالعربية (`DispatchNotificationEvent`).
@@ -28,12 +29,21 @@ import {
  * المسار العامّتان، وصف الرحلة، **مستحق المتعهد وحده**، والمهلة. هذا الملف لا
  * يقرأ حقول العميل أصلاً في فرع العرض — الحارس بالبناء لا بالمراجعة.
  *
+ * 🔒 **ومنها مرجع الحجز نفسه (0056).** كان سطر «رقم الطلب» يُطبع من
+ * `payload.reference` **لكلا الجمهورين**، فيتسلّم المتعهد على تليجرام المفتاحَ
+ * الذي أزالته 0028 من `portal_offers`: المرجع + الهاتف الذي يملكه أصلاً =
+ * نموذج «تابع حجزك» ⇒ صفحة العميل ⇒ إجماليه ⇒ هامشنا. فصار ما يقرؤه هذا الملف
+ * لجمهور المتعهد **`tripCode` وحده** (`audienceReference` أدناه)، وحُذف المرجع
+ * من الحمولة العامة في القاعدة — طبقتان، لأن إحداهما وحدها تُنسى عند أول حدثٍ
+ * جديد يُوجَّه إلى متعهد.
+ *
  * الحمولة يكتبها مُنتِج الإشعار في SQL، فتُقرأ بتسامح (snake_case وcamelCase
  * معاً عبر `str` المشتركة) ويُتخطى أي حقل غائب: رسالة ناقصة سطراً أفضل من
  * إشعار لا يصل.
  *
  * ── مفاتيح الحمولة التي تقرؤها هذه الوحدة (كلها اختيارية) ───────────────────
- *   المشترك:        reference, booking_id, round, max_rounds, currency,
+ *   المشترك:        trip_code (للمتعهد) · reference (للتشغيل وحده)،
+ *                   booking_id, round, max_rounds, currency,
  *                   origin_label, dest_label, distance_km, class_title,
  *                   passengers, round_trip, waiting_hours, pickup_at
  *   trip_offered:   payout, expires_at, window_minutes, notes,
@@ -171,6 +181,32 @@ function companyName(payload: Payload): string | null {
   return firstStr(payload, ["companyName", "subcontractorName", "partnerName"]);
 }
 
+/**
+ * رمز الرحلة كما يراه المتعهد: `#A1B2C3D4` — مشتقٌّ من معرّف الحجز
+ * (`partner_trip_code` في القاعدة)، وتعرضه له `portal_offers` و`portal_trips`
+ * وصندوق البورتال بالاسم نفسه منذ 0028.
+ */
+function tripCode(payload: Payload): string | null {
+  return firstStr(payload, ["tripCode", "partnerTripCode"]);
+}
+
+/**
+ * 🔒 **المعرّف المسموح لهذا الجمهور — وهو الحارس البنيوي كله.**
+ *
+ * فرعُ المتعهد **لا يقرأ `reference` إطلاقاً**: لا شرطاً ولا احتياطاً ولا
+ * `??`. فحتى لو حملت حمولةٌ قديمة في الطابور مرجعَ العميل، أو أعادته هجرةٌ
+ * قادمة إلى النصف العام سهواً، **لا يوجد في هذا الملف مسارٌ يطبعه للمتعهد**.
+ * والاحتياطُ لو كُتب هنا `tripCode ?? reference` لكان أعاد العيب حرفياً في
+ * أول صفٍّ لم يُحدَّث — وهو بالضبط شكل الانحدار الذي وقع في 0031 (D-58).
+ *
+ * وفرعُ التشغيل بالعكس: المرجع أولاً لأن المالك يطابق به ما يقوله العميل،
+ * والرمز بديلاً حين يكون الصفُّ صفَّ متعهدٍ صُعِّد إليه (حمولته عامّة بلا مرجع).
+ */
+function audienceReference(payload: Payload, audience: DispatchAudience): string | null {
+  if (audience === "partner") return tripCode(payload);
+  return bookingReference(payload) ?? tripCode(payload);
+}
+
 // ---------------------------------------------------------------------------
 // توجيه الرسالة: المتعهد أم فريق التشغيل؟
 // ---------------------------------------------------------------------------
@@ -179,10 +215,18 @@ export type DispatchRecipients = {
   audience: DispatchAudience;
   telegramChatId: string | null;
   emailTo: string | null;
+  /**
+   * 🔒 رمزُ سبب التصعيد حين يسقط الجمهور من «متعهد» إلى «تشغيل». رمزٌ لا جملة،
+   * ويُخزَّن على الصف ليعرف المالك **لماذا** وصله عرضٌ كان لغيره.
+   */
+  escalation?: EscalationCode;
 };
 
 /** وسائل تواصل المتعهد كما تكتبها SQL في حمولة الإشعار (كلها اختيارية) */
-export function partnerContacts(payload: Payload): { telegramChatId: string | null; emailTo: string | null } {
+export function partnerContacts(payload: Payload): {
+  telegramChatId: string | null;
+  emailTo: string | null;
+} {
   return {
     telegramChatId: firstStr(payload, [
       "partnerTelegramChatId",
@@ -193,12 +237,29 @@ export function partnerContacts(payload: Payload): { telegramChatId: string | nu
   };
 }
 
-/** حالة القنوات وقت التسليم — المطلوبة في صف الإشعار والمفعَّلة في الإعدادات */
+/**
+ * حالة القنوات وقت التسليم — المطلوبة في صف الإشعار، والمفعَّلة **عند صاحبها**.
+ *
+ * ⚠ ومنذ 0054 صار «المفعَّلة» يعني شيئين مختلفين بحسب الجمهور: إعدادات المالك
+ * لصفوف التشغيل، و**تفضيلات المتعهد نفسه** لصفوفه هو. والمنادي هو من يملأها
+ * من المصدر الصحيح — وهذا هو التوجيه لكل مستقبِل بعينه.
+ */
 export type ChannelState = {
-  /** ما طُلب فعلاً لهذا الصف (`notification_channels()` وقت الإدراج) */
+  /** ما طُلب فعلاً لهذا الصف (`notification_channels_for()` وقت الإدراج) */
   requested: readonly string[];
   telegramEnabled: boolean;
   emailEnabled: boolean;
+  /** دفع الويب — القناة البالغة الثالثة (0054). الغياب = غير مفعَّلة */
+  webpushEnabled?: boolean;
+  /** وهل له اشتراك جهازٍ واحد فعلاً؟ قناةٌ بلا جهاز مسجَّل لا تبلغ أحداً */
+  webpushSubscribed?: boolean;
+};
+
+/** من هو مستقبِل هذا الصف كما تقوله القاعدة (0054) */
+export type RecipientState = {
+  kind: RecipientKind;
+  /** هل عُثر على المتعهد فعلاً؟ معرّفٌ يتيم يصعّد بـ`partner-not-found` */
+  found: boolean;
 };
 
 /**
@@ -238,15 +299,45 @@ export function dispatchRecipients(
   event: string,
   payload: Payload,
   ops: { telegramChatId: string | null; emailTo: string | null },
-  channels?: ChannelState
+  channels?: ChannelState,
+  recipient?: RecipientState
 ): DispatchRecipients {
-  if (event === "trip_offered") {
+  /**
+   * ── ومنذ 0054: الوجهة تُقرأ من الصف لا تُستنتج من اسم الحدث ──────────────
+   *
+   * `recipient_kind` عمودٌ على `notifications` تكتبه `queue_notification`.
+   * واستنتاجُها من `event === "trip_offered"` كان صحيحاً ما دام حدثاً واحداً
+   * موجَّهاً للمتعهد؛ وأولُ حدثٍ ثانٍ يُوجَّه إليه كان سيذهب إلى المالك بصمت.
+   *
+   * والشرط القديم يبقى **فرعاً احتياطياً** لصفوفٍ أُدرجت قبل الهجرة وما زالت
+   * في الطابور: بلا العمود، `trip_offered` وحده يُعامَل معاملة المتعهد.
+   */
+  const partnerBound =
+    recipient !== undefined ? recipient.kind === "partner" : event === "trip_offered";
+
+  if (partnerBound) {
+    const toOps = (escalation: EscalationCode): DispatchRecipients => ({
+      audience: "ops",
+      telegramChatId: ops.telegramChatId,
+      emailTo: ops.emailTo,
+      escalation,
+    });
+
+    // معرّفُ مستقبِلٍ لا يقابل متعهداً (حُذف أو بياناتٌ قديمة): لا تُبتلع الرسالة
+    if (recipient?.kind === "partner" && !recipient.found) {
+      return toOps("partner-not-found");
+    }
+
     const partner = partnerContacts(payload);
 
     /**
      * بلا وصفٍ للقنوات نعود إلى السلوك القديم (وجود عنوان يكفي) — لأن الوسيط
      * اختياري كي لا ينكسر أي منادٍ لم يُحدَّث بعد. والمنادي الحقيقي الوحيد
      * (`lib/notifications/dispatch.ts`) يمرّره، فالمسار العامل محروس.
+     *
+     * 🔒 و`inbox` **ليس في هذه القائمة** كما أن `dashboard` ليس فيها: كلاهما
+     * يستلزم أن ينظر صاحبه، فاعتباره بلوغاً يُسكِت الاحتياطي في الحالة التي
+     * وُجد لها بالضبط. القائمة هنا هي القنوات **البالغة** وحدها.
      */
     const reachable = channels
       ? (channels.requested.includes("telegram") &&
@@ -254,12 +345,16 @@ export function dispatchRecipients(
           Boolean(partner.telegramChatId)) ||
         (channels.requested.includes("email") &&
           channels.emailEnabled &&
-          Boolean(partner.emailTo))
+          Boolean(partner.emailTo)) ||
+        (channels.requested.includes("webpush") &&
+          Boolean(channels.webpushEnabled) &&
+          Boolean(channels.webpushSubscribed))
       : Boolean(partner.telegramChatId || partner.emailTo);
 
     if (reachable) {
       return { audience: "partner", ...partner };
     }
+    return toOps("partner-unreachable");
   }
   return { audience: "ops", telegramChatId: ops.telegramChatId, emailTo: ops.emailTo };
 }
@@ -300,7 +395,8 @@ export function renderDispatchNotification(
   audience: DispatchAudience = "ops"
 ): RenderedMessage {
   const currency = str(payload, "currency") ?? ctx.currency;
-  const reference = bookingReference(payload);
+  // 🔒 0056: المرجع بحسب الجمهور — المتعهد يرى رمز الرحلة، والتشغيل يرى المرجع
+  const reference = audienceReference(payload, audience);
   const lines: MessageLine[] = [];
 
   const route = routeLabel(payload);
@@ -326,6 +422,8 @@ export function renderDispatchNotification(
           ? `وصلك عرض رحلة جديد من ${ctx.brandName}. راجع التفاصيل واقبله من صندوق طلباتك قبل انتهاء المهلة — أول متعهد يقبل يفوز بالرحلة.`
           : `بُث عرض رحلة على متعهد لا نملك له وسيلة تواصل مسجَّلة. أبلغه هاتفياً أو أضف بياناته من صفحة المتعهدين قبل انتهاء المهلة.`;
 
+      // «رقم الطلب» للمتعهد = رمز الرحلة `#A1B2C3D4` — نفس ما تعرضه له شاشة
+      // `/portal/requests`، فيبقى الطرفان على معرّفٍ واحد بلا مفتاح «تابع حجزك»
       push(lines, "رقم الطلب", reference);
       if (audience === "ops") push(lines, "المتعهد", company);
       push(lines, "المسار", route);

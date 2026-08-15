@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Bell, BellOff, Loader2 } from "lucide-react";
+import { Bell, BellOff, Loader2, VolumeX } from "lucide-react";
 
+import { SoundGate, SoundToggle, useNotificationSound } from "@/components/admin/notification-sound";
 import { toArabicDigits } from "@/components/booking/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,11 +33,43 @@ import { cn } from "@/lib/utils";
  * عدّاد «غير المقروء» علامة على هذا الجهاز فقط (localStorage): كل إشعار أحدث من
  * آخر فتحٍ للقائمة يُعدّ جديداً. اخترناه لأنه صادق وواضح — لا يدّعي مزامنة بين
  * أجهزة المستخدم ولا يعبث بعمود `delivered_at` الذي يخص الإرسال الخارجي لا القراءة.
+ *
+ * ── 🔔 الصوت (طلب بدر 2026-08-15) ───────────────────────────────────────────
+ *
+ * **آلية «وصل جديد» ليست آليةً جديدة**: الجرس **مشترِكٌ أصلاً** في
+ * `postgres_changes` على `notifications`، ويستطلع كل ٦٠ ثانية شبكةَ أمانٍ حين
+ * تكون الصفحة ظاهرة وحدها. فالصوت يركب على ما هو قائم و**لا يضيف نداءً واحداً**
+ * — لا مؤقّت ثانٍ ولا نقطة `/api` جديدة ولا `EventSource`. وهذا بعينه تبرير
+ * «كلفة الاستطلاع»: الكلفة صفر لأن لا استطلاع جديد.
+ *
+ * **وشرط «جديد» خط أساسٍ لا مقارنة قراءة**: أول قراءة ناجحة بعد كل تركيب تسجّل
+ * أحدث `created_at` **بلا رنين** — فإعادة التحميل لا تُصدر صوتاً مهما تراكم.
+ * وما بعدها: أي صفٍّ أحدث من خط الأساس ⇒ رنّة واحدة.
+ *
+ * ⚠ **ولم تُضَف مقارنةٌ بعلامة «مقروء» عمداً**، وهي تبدو أشدّ التزاماً بالطلب:
+ * علامة القراءة تُختم بساعة **المتصفح** والصفوف تُختم بساعة **الخادم**، فجهازٌ
+ * ساعته متقدمة دقيقتين كان سيبتلع كل رنّة في تلك الدقيقتين **صمتاً**. وخط
+ * الأساس يعطي الضمانة نفسها بلا هذا الخطر: صفٌّ وصل بعد فتح الصفحة لا يمكن أن
+ * يكون قد قُرئ قبلها.
+ *
+ * ── ولماذا لا يرنّ لصفوف المتعهدين ولا تظهر في القائمة ──────────────────────
+ * منذ `0054` صار `notifications` يحمل صفوفاً موجَّهة إلى **متعهد بعينه**
+ * (`recipient_kind = 'partner'`)، وموجةُ بثٍّ واحدة تُدرج **صفّاً لكل متعهد في
+ * المعاملة نفسها**. فبلا هذا الاستبعاد يبتلع بثٌّ واحد قائمة الجرس العشرة ويرفع
+ * عدّاد «غير المقروء» بما لا يخصّ الإدارة. والسجل الكامل — بما فيه صفوف
+ * المتعهدين — باقٍ في `/admin/notifications` بلا نقصان.
+ *
+ * والاستبعاد مكتوب بالنفي (`!== "partner"`) لا بالإثبات (`=== "ops"`): جمهورٌ
+ * ثالث يُضاف غداً يظهر في الجرس بدل أن يختفي بصمت. والترشيح **في المتصفح** لا
+ * في الاستعلام كي لا ينهار الجرس على خادمٍ بلا العمود (‏`select("*")` نفسه هو
+ * سبب بقائه شغالاً عبر تغيّرات المخطط).
  */
 
 const SEEN_KEY = "tours01:notifications:seen-at";
 const POLL_MS = 60_000;
 const LIST_LIMIT = 10;
+/** نجلب أكثر مما نعرض: الترشيح في المتصفح، وموجةُ بثٍّ قد تملأ الصفحة الأولى */
+const FETCH_LIMIT = 50;
 
 type Row = {
   id: string;
@@ -44,9 +77,18 @@ type Row = {
   payload: Record<string, unknown> | null;
   status: string;
   created_at: string | null;
+  /** أضافته 0054 — وغيابه على خادمٍ أقدم يُقرأ «تشغيل» ضمناً */
+  recipient_kind?: string | null;
 };
 
 type Phase = "loading" | "ready" | "unavailable";
+
+/** الزمن رقماً لا نصّاً: PostgREST يعيد `+00:00` والمتصفح يكتب `Z`، والمقارنة النصية بينهما كاذبة */
+function timeOf(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 function readSeenAt(): string | null {
   try {
@@ -78,6 +120,23 @@ export function NotificationBell() {
   );
   const containerRef = React.useRef<HTMLDivElement>(null);
 
+  const sound = useNotificationSound();
+  /**
+   * الرنّة عبر مرجع لا عبر تبعية: `useNotificationSound()` تُعيد كائناً جديداً
+   * كل تصيير، وإدراجه في تبعيات التأثير أدناه كان سيفكّ اشتراك Realtime ويعيد
+   * بناءه مع كل تحديث حالة — أي انقطاعٌ دوري في القناة التي عليها يقوم الصوت.
+   */
+  const ringRef = React.useRef(sound.ring);
+  React.useEffect(() => {
+    ringRef.current = sound.ring;
+  }, [sound.ring]);
+
+  /**
+   * أحدث `created_at` رأيناه — `null` تعني «لم نقرأ بعد».
+   * أول قراءة تضبطه **بلا رنين**؛ وهو الفرق بين «وصل جديد» و«أُعيد تحميل الصفحة».
+   */
+  const newestRef = React.useRef<number | null>(null);
+
   React.useEffect(() => {
     if (!supabase) return;
 
@@ -89,14 +148,28 @@ export function NotificationBell() {
         .from("notifications")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(LIST_LIMIT);
+        .limit(FETCH_LIMIT);
 
       if (!alive) return;
       if (error) {
         setPhase("unavailable");
         return;
       }
-      setRows((data ?? []) as Row[]);
+
+      // صفوف المتعهدين خارج جرس الإدارة (انظر ترويسة الملف) — ثم أول عشرة
+      const list = ((data ?? []) as Row[])
+        .filter((row) => row.recipient_kind !== "partner")
+        .slice(0, LIST_LIMIT);
+
+      const newest = list.reduce((max, row) => Math.max(max, timeOf(row.created_at)), 0);
+      if (newestRef.current === null) {
+        newestRef.current = newest; // خط الأساس — صمتٌ مقصود عند أول قراءة
+      } else if (newest > newestRef.current) {
+        newestRef.current = newest;
+        ringRef.current(); // ⬅ الرنّة الوحيدة في هذا الملف
+      }
+
+      setRows(list);
       setPhase("ready");
     };
 
@@ -162,6 +235,12 @@ export function NotificationBell() {
   };
 
   const unavailable = phase === "unavailable";
+  /**
+   * تنبيهٌ وصل ولم يُسمَع صوته. علامته على **زرّ الجرس نفسه** لا داخل القائمة
+   * وحدها: من لا يفتح القائمة لن يعرف أبداً أن الصوت لا يعمل — وهذا هو الفشل
+   * الصامت الذي يمنعه الطلب صراحةً.
+   */
+  const soundMissed = !unavailable && sound.unheard > 0;
 
   return (
     <div ref={containerRef} className="relative">
@@ -172,20 +251,32 @@ export function NotificationBell() {
           unavailable
             ? "الإشعارات غير متاحة"
             : unread > 0
-              ? `الإشعارات — ${unread} جديد`
-              : "الإشعارات"
+              ? `الإشعارات — ${unread} جديد${soundMissed ? " · الصوت لم يعمل" : ""}`
+              : soundMissed
+                ? "الإشعارات — الصوت لم يعمل"
+                : "الإشعارات"
         }
         aria-haspopup="menu"
         aria-expanded={open}
         title={
           unavailable
             ? "الإشعارات تعمل بعد ربط قاعدة البيانات وتنفيذ هجرة المرحلة ٤."
-            : undefined
+            : soundMissed
+              ? "وصل تنبيه ولم يُسمَع صوته — افتح القائمة وفعّل الصوت."
+              : undefined
         }
         onClick={toggle}
         className="relative"
       >
         {unavailable ? <BellOff className="opacity-60" /> : <Bell />}
+        {soundMissed && (
+          <span
+            aria-hidden
+            className="absolute -bottom-0.5 -start-0.5 grid size-3.5 place-items-center rounded-full bg-amber-500 text-white"
+          >
+            <VolumeX className="size-2.5" />
+          </span>
+        )}
         {!unavailable && unread > 0 && (
           <span
             aria-hidden
@@ -206,6 +297,9 @@ export function NotificationBell() {
             <span className="text-sm font-semibold">آخر الإشعارات</span>
             {phase === "loading" && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           </div>
+
+          {/* سطر الصوت أعلى القائمة لا في ذيلها: حين يظهر يكون هو الخبر */}
+          {!unavailable ? <SoundGate sound={sound} /> : null}
           <Separator />
 
           <div className="max-h-96 overflow-y-auto">
@@ -291,9 +385,18 @@ export function NotificationBell() {
             >
               مركز الإشعارات
             </Link>
-            <span className="text-[10px] text-muted-foreground">
-              علامة «مقروء» على هذا الجهاز فقط
-            </span>
+            {/* مفتاح الكتم إلزامي: صوتٌ لا يُطفأ يُغلق اللوحة في وجه صاحبها */}
+            {!unavailable ? <SoundToggle sound={sound} /> : null}
+          </div>
+          <div className="px-3 pb-2 text-[10px] leading-relaxed text-muted-foreground">
+            علامة «مقروء» وقرار الصوت محفوظان على هذا الجهاز وحده. والقائمة تعرض ما يخص
+            الإدارة؛ وما يصل المتعهدين في <Link
+              href="/admin/notifications"
+              onClick={() => setOpen(false)}
+              className="underline hover:text-primary"
+            >
+              مركز الإشعارات
+            </Link>.
           </div>
         </div>
       )}

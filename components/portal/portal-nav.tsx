@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BellRing,
   CarFront,
   IdCard,
   LayoutDashboard,
@@ -20,12 +21,17 @@ import { cn } from "@/lib/utils";
  *
  * و«سائقيّ» يقع بعد «أسطولي» مباشرةً لأنهما وجها سجلٍّ واحد: المركبة ومن يقودها،
  * وهما معاً ما يُسنَد للرحلة وما يقرؤه العميل بعد الإسناد.
+ *
+ * و«قنوات التنبيه» تلي «ملفي» مباشرةً: الملف من أنت، والقنوات كيف نبلغك — وهي
+ * أول ما يجب أن يجده الشريك الجديد. **وبلا هذا البند لا وجود للشاشة أصلاً** من
+ * وجهة نظر من لا يعرف رابطها (القاعدة الذهبية ١٧: ابحث عن المنادي قبل الإعلان).
  */
 
 type PortalNavItem = {
   href:
     | "/portal"
     | "/portal/profile"
+    | "/portal/notifications"
     | "/portal/fleet"
     | "/portal/drivers"
     | "/portal/prices";
@@ -36,6 +42,7 @@ type PortalNavItem = {
 const ITEMS: PortalNavItem[] = [
   { href: "/portal", label: "لوحة المتعهد", icon: LayoutDashboard },
   { href: "/portal/profile", label: "ملفي", icon: UserRound },
+  { href: "/portal/notifications", label: "قنوات التنبيه", icon: BellRing },
   { href: "/portal/fleet", label: "أسطولي", icon: CarFront },
   { href: "/portal/drivers", label: "سائقيّ", icon: IdCard },
   { href: "/portal/prices", label: "قوائم أسعاري", icon: ReceiptText },

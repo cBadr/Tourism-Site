@@ -1,4 +1,5 @@
 import type { NotificationChannel, NotificationEvent } from "@/lib/booking-types";
+import type { EscalationCode, PartnerChannel, RecipientKind } from "@/lib/partner-alerts-types";
 
 /**
  * أنواع أنبوب الإشعارات (المرحلة ٤ — قرار ٦: نمط Outbox).
@@ -32,6 +33,14 @@ export type NotificationRecord = {
   error?: string | null;
   created_at?: string | null;
   delivered_at?: string | null;
+  /**
+   * وجهة الصف (0054): `ops` أو `partner`. اختياريان كبقية الحقول كي يعمل
+   * العامل على قاعدةٍ لم تُهاجَر بعد — وغيابهما يعني `ops`، أي السلوك السابق
+   * حرفياً.
+   */
+  recipient_kind?: RecipientKind | string | null;
+  recipient_id?: string | null;
+  escalation?: EscalationCode | string | null;
 };
 
 /**
@@ -63,6 +72,14 @@ export type NotificationOutcome = {
   event: string;
   status: NotificationStatus;
   channels: ChannelOutcome[];
+  /**
+   * 🔒 لماذا صعد هذا الصف إلى فريق التشغيل؟ رمزٌ لا جملة.
+   *
+   * والحارس الذي ينتجه **قائمٌ ويجب أن يبقى**: متعهدٌ تعذّر بلوغه على كل قناةٍ
+   * اختارها يذهب إشعاره إلى التشغيل ليبلّغه هاتفياً. وبدونه ينتهي عرض الرحلة
+   * بمهلته غير مقروء، وتُعاد الرحلة إلى الطابور بلا أن يعرف أحد لماذا.
+   */
+  escalation?: EscalationCode;
 };
 
 /**
@@ -91,9 +108,15 @@ export type QueueStats = {
   reason?: string;
 };
 
-/** حالة قناة من منظور «جاهزة للإرسال أم لا» — تغذّي بطاقة بيانات الاعتماد */
+/**
+ * حالة قناة من منظور «جاهزة للإرسال أم لا» — تغذّي بطاقة بيانات الاعتماد.
+ *
+ * والنوع يقبل قنوات المتعهد كذلك (0054): البطاقة تخصّ **الخادم** لا المالك،
+ * ومفاتيح VAPID ينقصها هو ويضبطها هو. وبلا ذلك تبقى القناة مظلمة ولا شاشة
+ * واحدة في اللوحة تقول لماذا.
+ */
 export type ChannelReadiness = {
-  channel: NotificationChannel;
+  channel: NotificationChannel | PartnerChannel;
   label: string;
   ready: boolean;
   /** ما ينقص بالضبط، جاهزاً للعرض بالعربية */
