@@ -110,25 +110,70 @@ async function loadPricingSettings(): Promise<{
   const supabase = await createServerSupabase();
   if (!supabase) return { settings: fallback, ready: false, marginReady: false };
 
-  const res = await supabase.from("pricing_settings").select("*").limit(1);
+  /**
+   * ── 🔴 لماذا أعمدةٌ مسمّاة لا `select("*")` ────────────────────────────────
+   *
+   * كان هنا `.select("*")`، فكانت الشاشة **ميتةً بالكامل** — كل حقولها معطَّلة —
+   * وتخبر المالك أن «هجرة المرحلة ٣ لم تُنفَّذ». وكلاهما كذب.
+   *
+   * والسبب أن `pricing_settings` تمنح `authenticated` قراءةً **على مستوى العمود**:
+   *
+   *     SELECT ⇒ currency · id · peak_enabled · peak_percent · updated_at
+   *     UPDATE ⇒ الأعمدة كلها، ومنها الهامش
+   *
+   * وأعمدةُ الهامش مستثناةٌ **عمداً** منذ `0011_partner_isolation`: المتعهد
+   * `authenticated` كذلك (القاعدة الأم)، و`margin_value` هو ربحنا فوق تكلفته —
+   * وهو آخر ما يجوز أن يراه (**D-19**).
+   *
+   * وطلبُ عمودٍ واحد لا تملكه يجعل Postgres يرفض **الجملة كلها**:
+   * `permission denied for table pricing_settings`. فلا يفشل الهامش وحده، بل
+   * تفشل قراءةُ الذروة معه، فيسقط كل شيء إلى `ready: false`.
+   *
+   * ⚠ **والقياس هو ما كشفه، لا القراءة**: `select peak_enabled, peak_percent`
+   * تنجح للمشرف، و`select *` تُرفض، و`select count(*)` تنجح — فمن قاس بالعدّ
+   * وحده خرج بأن كل شيء سليم.
+   *
+   * وأخطر أثرٍ كان **عدم التماثل بين الكتابة والقراءة**: الحفظ ينجح (‏`UPDATE`
+   * ممنوح على كل الأعمدة) والقراءة تفشل — فيغيّر المالك رقماً ويحفظ ويجد الشاشة
+   * كما كانت. وذلك يعلّمه ألا يثق باللوحة، وهو أسوأ من خطأٍ صريح.
+   */
+  const res = await supabase
+    .from("pricing_settings")
+    .select("peak_enabled, peak_percent, currency")
+    .limit(1);
   if (res.error) return { settings: fallback, ready: false, marginReady: false };
 
   const row = (res.data?.[0] ?? null) as Record<string, unknown> | null;
   if (!row) return { settings: fallback, ready: true, marginReady: false };
 
-  const marginReady = "margin_type" in row;
-  const rawType = row.margin_type;
+  /**
+   * والهامش من `get_margin_settings()` — دالة `security definer` **مبنيّة منذ
+   * المرحلة ٥ ولم تُستعمل قط**: تُرجع الأعمدة الثلاثة لمن `is_admin()` وحده.
+   * مقيسٌ حياً: مشرفٌ ⇒ صفٌّ واحد، ومتعهدٌ ⇒ **صفر صفوف**.
+   *
+   * و`marginReady` صارت تعني «هذه الجلسة تملك قراءة الهامش» لا «العمود موجود في
+   * الحمولة» — والثاني كان يستحيل تحققه أصلاً بعد أن مُنع العمود.
+   */
+  const margin = await supabase.rpc("get_margin_settings");
+  const marginRow = (Array.isArray(margin.data) ? margin.data[0] : null) as Record<
+    string,
+    unknown
+  > | null;
+  const marginReady = !margin.error && marginRow !== null;
+  const rawType = marginRow?.margin_type;
 
   return {
     settings: {
       peakEnabled: row.peak_enabled === true,
-      peakPercent: typeof row.peak_percent === "number" ? row.peak_percent : null,
+      peakPercent: Number.isFinite(Number(row.peak_percent)) ? Number(row.peak_percent) : null,
       currency: typeof row.currency === "string" ? row.currency : "EGP",
       marginType:
         rawType === "percent" || rawType === "fixed" ? rawType : DEFAULT_MARGIN.marginType,
-      marginValue: Number.isFinite(Number(row.margin_value)) ? Number(row.margin_value) : null,
-      marginMinAmount: Number.isFinite(Number(row.margin_min_amount))
-        ? Number(row.margin_min_amount)
+      marginValue: Number.isFinite(Number(marginRow?.margin_value))
+        ? Number(marginRow?.margin_value)
+        : null,
+      marginMinAmount: Number.isFinite(Number(marginRow?.margin_min_amount))
+        ? Number(marginRow?.margin_min_amount)
         : null,
     },
     ready: true,
@@ -200,8 +245,33 @@ async function runTestQuote(
 
   let coverageEngaged = input.coords !== null;
 
+  /**
+   * ── 🔴 `admin_quote_preview` لا `quote_price` ──────────────────────────────
+   *
+   * كان الصندوق ينادي `quote_price`، **وهي ممنوحة لـ`postgres` و`service_role`
+   * وحدهما** — مقيسٌ حياً. والشاشة تقرأ بعميلٍ بهوية المستخدم، فيرجع
+   * `permission denied for function quote_price` ⇒ «تعذر الاحتساب — تأكد أن
+   * الدالة منفَّذة»، وهي **رسالةٌ كاذبة** توجّه المالك إلى هجرةٍ مطبَّقة سلفاً.
+   *
+   * 🔒 **وضيقُ تلك المنحة صواب لا عطل**: نوع إرجاع `quote_price` يحمل
+   * `subcontractor_cost` و`margin_amount` و`subcontractor_id` — فمتعهدٌ يناديها
+   * (وهو `authenticated` كذلك، القاعدة الأم) يرى **تكلفة أرخص منافسٍ له
+   * وهامشنا معاً**: نقضٌ لـ**D-19** وللـwhite-label في نداءٍ واحد.
+   *
+   * ولذلك **لم تُوسَّع المنحة** — بُني غلافٌ إدارياً في `0050`:
+   * `admin_quote_preview` تفحص `is_admin()` وتفوّض إلى `quote_price` بلا أن
+   * تستنسخ منها معادلةً واحدة (**القاعدة ١٢** و**D-05**). مقيسٌ في فحصها
+   * الذاتي: المشرف يرى الأعمدة الأربعة عشر، **والمتعهد صفر صفوف**.
+   *
+   * ⚠ **ولا `quote_public` أيضاً**: توقيعها الوحيد يشترط الإحداثيات الأربعة
+   * (بلا افتراضيات)، ولا تُرجع `price_source` أصلاً — فمناداتها كانت ستُسقط
+   * «مصدر السعر لكل فئة» وهو ما تَعِد به هذه الشاشة نصّاً.
+   *
+   * 🔒 **ولا عميل الخدمة بحال**: يتخطّى RLS فيُظهر سعراً لا يراه الزائر — أي
+   * صندوق اختبارٍ يكذب في الاتجاه الأخطر: يطمئن المالك إلى سعرٍ لا يخرج أصلاً.
+   */
   let { data, error } = await supabase.rpc(
-    "quote_price",
+    "admin_quote_preview",
     input.coords
       ? {
           ...baseArgs,
@@ -215,7 +285,7 @@ async function runTestQuote(
 
   if (error && (error.code === "PGRST202" || error.code === "42883")) {
     coverageEngaged = false;
-    ({ data, error } = await supabase.rpc("quote_price", baseArgs));
+    ({ data, error } = await supabase.rpc("quote_public", baseArgs));
   }
 
   if (error) return { rows: [], failed: true, coverageEngaged: false };
@@ -718,8 +788,14 @@ export default async function PricingPage({ searchParams }: PageProps<"/admin/pr
               <Separator />
               {test.failed ? (
                 <p className="text-sm font-medium text-red-700 dark:text-red-300">
-                  تعذر الاحتساب — تأكد أن دالة <code dir="ltr">quote_price</code> منفَّذة في
-                  قاعدة البيانات (هجرة المرحلة ٣).
+                  {/*
+                    ⚠ كانت الرسالة توجّه المالك إلى «تنفيذ هجرة المرحلة ٣» — وهي
+                    مطبَّقة منذ شهور. والسبب الحقيقي كان منحةً ضيّقة على
+                    `quote_price`، فذهب يبحث عمّا لا يجده. الرسالة الآن تصف ما
+                    يستطيع فعله فعلاً: إعادة المحاولة، ثم مراسلة الدعم بالمدخلات.
+                  */}
+                  تعذّر احتساب الأسعار بهذه المدخلات. راجع المسافة وعدد الركاب وأعد المحاولة —
+                  وإن تكرر الأمر فالخلل في محرك التسعير لا في مدخلاتك.
                 </p>
               ) : test.rows.length === 0 ? (
                 <p className="text-sm text-muted-foreground">

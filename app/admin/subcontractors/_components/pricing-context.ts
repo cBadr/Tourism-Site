@@ -39,22 +39,42 @@ export const EMPTY_PRICING_CONTEXT: PricingContext = {
 };
 
 export async function loadPricingContext(supabase: SupabaseClient): Promise<PricingContext> {
-  const [classesRes, tariffsRes, settingsRes] = await Promise.all([
+  const [classesRes, tariffsRes, settingsRes, marginRes] = await Promise.all([
     supabase
       .from("vehicle_classes")
       .select("id, slug, title, capacity, active, sort")
       .order("sort", { ascending: true })
       .order("capacity", { ascending: true }),
     supabase.from("tariffs").select("class_id, min_price"),
-    // `select("*")` لا أعمدة مسمّاة: أعمدة الهامش تُضيفها هجرة المرحلة ٥، وطلبها
-    // بالاسم قبل تنفيذها كان سيُفشل الاستعلام كله بدل السقوط على قيم العقد
-    supabase.from("pricing_settings").select("*").limit(1).maybeSingle(),
+    /**
+     * ── 🔴 كان `select("*")`، وكان **يفشل دائماً** ─────────────────────────
+     *
+     * التعليق القديم برّره بأن «أعمدة الهامش تُضيفها هجرة المرحلة ٥، وطلبها
+     * بالاسم قبل تنفيذها يُفشل الاستعلام». والأعمدة موجودة منذ `0010` —
+     * لكن `pricing_settings` تمنح `authenticated` قراءةً **على مستوى العمود**
+     * وأعمدةُ الهامش مستثناة عمداً منذ `0011_partner_isolation`. فطلبُ `*`
+     * يُرفض **دائماً**، ويُبتلع الرفض في `settingsRes.error` بصمت، فيسقط
+     * `readMargin` على **قيم العقد الافتراضية**.
+     *
+     * ⚠ **والأثر ليس تجميلياً**: هاتان الشاشتان تعرضان «سعر العميل» المحسوب
+     * بهذا الهامش. فكان المالك يرى سعراً مبنيّاً على هامشٍ **ليس هامشه** —
+     * وتصادفُ تطابق الافتراضي مع المحفوظ اليوم (٢٠٪) هو ما أخفى العطب.
+     * ولو غيّره من شاشة التسعير لبقيت هاتان الشاشتان تحسبان بالقديم.
+     *
+     * والعملة تُقرأ من الجدول (ممنوحة)، والهامش من `get_margin_settings()` —
+     * `security definer` محروسة بـ`is_admin()`: صفٌّ للمشرف، وصفر للمتعهد.
+     */
+    supabase.from("pricing_settings").select("currency").limit(1).maybeSingle(),
+    supabase.rpc("get_margin_settings"),
   ]);
 
   const settingsRow = settingsRes.error
     ? null
     : ((settingsRes.data ?? null) as Record<string, unknown> | null);
-  const margin = readMargin(settingsRow);
+  const marginRow = (
+    !marginRes.error && Array.isArray(marginRes.data) ? (marginRes.data[0] ?? null) : null
+  ) as Record<string, unknown> | null;
+  const margin = readMargin(marginRow);
   const currency = asText(settingsRow?.currency) ?? "EGP";
 
   if (classesRes.error) {

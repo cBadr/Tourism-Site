@@ -65,14 +65,33 @@ function parsePoint(formData: FormData, name: string): { lat: number; lng: numbe
 }
 
 /**
- * هل وصلت أعمدة الهامش إلى الجدول؟ استعلام عمود واحد أرخص فحص ممكن:
- * العمود المفقود يجعل PostgREST يرد بخطأ، ووجوده يرد بصف (أو لا صفوف) بلا خطأ.
+ * هل تملك هذه الجلسة قراءة الهامش؟
+ *
+ * ── 🔴 السؤال القديم كان بلا جواب ممكن ─────────────────────────────────────
+ *
+ * كان الجسم `select("margin_type")` بحجة أن «العمود المفقود يجعل PostgREST يردّ
+ * بخطأ». والعمود موجودٌ منذ `0010` — لكن `pricing_settings` تمنح `authenticated`
+ * قراءةً **على مستوى العمود**، وأعمدة الهامش مستثناة عمداً منذ
+ * `0011_partner_isolation` (المتعهد `authenticated` كذلك، و`margin_value` ربحنا
+ * فوق تكلفته). فالاستعلام يُرفض **دائماً**، وترجع الدالة `false` **دائماً**،
+ * فيُعاد التوجيه إلى `error=marginmig` — «نفِّذ هجرة المرحلة ٥» — وهي **مطبَّقة**.
+ *
+ * أي أن **حفظ إعدادات التسعير كان ميتاً**: أرسلتُ ١٧٪ فبقيت القاعدة على ١٥
+ * (مقيسٌ بالنقر، لا بالقراءة).
+ *
+ * 🔒 والسؤال نفسه كان خاطئاً: «هل العمود موجود؟» لا يُجاب عليه بـ`SELECT` من دور
+ * محجوبٍ عنه. والسؤال الصحيح **«هل تملك هذه الجلسة قراءة الهامش؟»**، وجوابه
+ * `get_margin_settings()` — `security definer` محروسة بـ`is_admin()`، تُرجع
+ * الصف للمشرف و**صفر صفوف للمتعهد** (مقيسٌ حياً).
+ *
+ * وتُميَّز الحالتان: **صفر صفوف** = لستَ مشرفاً، و**خطأ** = خللٌ حقيقي في القاعدة.
+ * والخلط بينهما هو ما أنتج الرسالة الكاذبة أصلاً.
  */
-async function marginColumnsReady(
+async function marginReadable(
   supabase: NonNullable<Awaited<ReturnType<typeof createServerSupabase>>>
 ): Promise<boolean> {
-  const res = await supabase.from("pricing_settings").select("margin_type").limit(1);
-  return !res.error;
+  const res = await supabase.rpc("get_margin_settings");
+  return !res.error && Array.isArray(res.data) && res.data.length > 0;
 }
 
 /**
@@ -106,14 +125,18 @@ export async function savePricingSettings(formData: FormData) {
     const marginMin = num(formData, "margin_min_amount") ?? 0;
     if (marginMin < 0 || marginMin > MAX_MARGIN_AMOUNT) redirect(url("error=margin"));
 
-    if (!(await marginColumnsReady(supabase))) redirect(url("error=marginmig"));
+    if (!(await marginReadable(supabase))) redirect(url("error=marginmig"));
 
     patch.margin_type = marginType;
     patch.margin_value = marginValue;
     patch.margin_min_amount = marginMin;
   }
 
-  const existing = await supabase.from("pricing_settings").select("*").limit(1);
+  /**
+   * ⚠ `select("id")` لا `select("*")`: الثاني يطلب أعمدة الهامش المحجوبة فيُرفض
+   * **الاستعلام كله**، فيموت الحفظ عند بابه. و`id` هو كل ما يُستعمل بعده.
+   */
+  const existing = await supabase.from("pricing_settings").select("id").limit(1);
   if (existing.error) redirect(url("error=save"));
 
   const current = (existing.data?.[0] ?? null) as Record<string, unknown> | null;
@@ -122,10 +145,15 @@ export async function savePricingSettings(formData: FormData) {
     // الصف الوحيد: نقيّده بعمود id إن وُجد، وإلا بمرشّح يطابق الصف الوحيد دائماً
     // (`peak_enabled` مضمون الوجود بحسب العقد) — لا نرسل تحديثاً بلا مرشّح أبداً
     const query = supabase.from("pricing_settings").update(patch);
+    /**
+     * ⚠ `select("id")` لا `select()`: الأخيرة تُرجع `*` ضمنياً، فتطلب أعمدة
+     * الهامش المحجوبة بعد كتابةٍ **نجحت فعلاً** — فيبدو الحفظ فاشلاً وقد وقع.
+     * و`id` يكفي للتمييز الذي يقوم عليه السطر التالي.
+     */
     const res = await (current.id === undefined
       ? query.not("peak_enabled", "is", null)
       : query.eq("id", current.id as string)
-    ).select();
+    ).select("id");
     // صفر صفوف مع نجاح ظاهري = RLS رفضت الكتابة (المستخدم ليس admin)
     if (res.error || !res.data || res.data.length === 0) redirect(url("error=save"));
   } else {
@@ -133,7 +161,7 @@ export async function savePricingSettings(formData: FormData) {
     const res = await supabase
       .from("pricing_settings")
       .insert({ ...patch, currency: "EGP" })
-      .select();
+      .select("id");
     if (res.error || !res.data || res.data.length === 0) redirect(url("error=save"));
   }
 
