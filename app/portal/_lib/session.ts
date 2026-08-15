@@ -48,15 +48,27 @@ export type PortalSub = {
  * - `env`: بيئة Supabase غير مضبوطة (تطوير محلي) — معاينة بلا تحرير.
  * - `anonymous`: لا جلسة — الغلاف يعيد التوجيه إلى الدخول.
  * - `schema`: جداول المرحلة ٥ غير منفَّذة بعد (هجرة 0010).
- * - `no-account`: جلسة صالحة بلا صف متعهد مرتبط بها.
- * - `pending` / `suspended` / `active`: حالة الصف نفسها.
+ * - `no-account`: جلسة صالحة بلا صف متعهد مرتبط بها — **تبقى مقفلة**، فلا شيء
+ *   نملك أن نفتحه لمن لا صفَّ له أصلاً (لا `subcontractor_id` ⇒ لا سياسة تسمح بحرف).
+ * - `onboarding`: صفّ حالته `pending` — مدعوٌّ لم يُعتمد بعد. **يُفتح له التجهيز**
+ *   (الملف والأسطول والسائقون والأسعار) ويبقى التشغيل (الطلبات والرحلات) مقفلاً.
+ * - `suspended`: موقوف — يبقى على شاشة الحالة كما كان؛ الإيقاف عقوبة لا تجهيز.
+ * - `active`: معتمد — البورتال كامل.
+ *
+ * ⚠ **لماذا `onboarding` حالةٌ مفتوحة وليست شاشة انتظار؟** لأن RLS تسمح بهذا
+ * العمل منذ `0011` ولا شرط حالة في سياسة واحدة منها — تحقّقناه حياً بانتحال
+ * صفة شريكٍ حالته `pending` داخل معاملة مُلغاة: التعديل على `subcontractors`
+ * والإدراج في `subcontractor_vehicles` و`subcontractor_drivers` و`price_lists`
+ * ونداء `upsert_price_list` كلها تنجح، بينما ترقية الحالة إلى `approved` تُرفض
+ * برسالة صريحة. والضررُ ممنوعٌ حيث يجب: `coverage_matches` و`dispatch_pool`
+ * تشترطان `s.status = 'approved'`، فلا قائمةُ مَن ينتظر تدخل تسعيراً ولا يصله بثّ.
  */
 export type PortalGate =
   | { state: "env" }
   | { state: "anonymous" }
   | { state: "schema" }
   | { state: "no-account" }
-  | { state: "pending"; sub: PortalSub }
+  | { state: "onboarding"; sub: PortalSub }
   | { state: "suspended"; sub: PortalSub }
   | { state: "active"; sub: PortalSub };
 
@@ -138,21 +150,37 @@ export const readPortalGate = cache(async (): Promise<PortalGate> => {
 
   const sub = toSub(row);
   if (sub.status === "suspended") return { state: "suspended", sub };
-  if (sub.status !== "approved") return { state: "pending", sub };
+  if (sub.status !== "approved") return { state: "onboarding", sub };
   return { state: "active", sub };
 });
 
 /** رموز منع الوصول — تُترجَم إلى رسائل عربية في `COMMON_PORTAL_ERRORS` */
 export type PortalDenial = "env" | "auth" | "schema" | "account";
 
+/**
+ * مرحلة الشريك كما يراها سطحٌ سُمح له بالعمل:
+ * - `active`: معتمد، وكل شيء مفتوح.
+ * - `onboarding`: مدعوٌّ يجهّز نفسه — يكتب بياناته ولا يمسّ تشغيلاً.
+ *
+ * ولماذا يخرج هذا الحقل أصلاً؟ لأن الشاشة الواحدة تخدم الحالتين بنصّين مختلفين
+ * («سعرك يدخل التسعير الآن» مقابل «سيدخل فور الاعتماد»)، والنصّ الذي يَعِد بأثرٍ
+ * لم يقع بعدُ هو بعينه النمط ٢ في `LESSONS.md`.
+ */
+export type PortalStage = "active" | "onboarding";
+
 export type PortalAccess =
-  | { ok: true; supabase: SupabaseClient; sub: PortalSub }
+  | { ok: true; supabase: SupabaseClient; sub: PortalSub; stage: PortalStage }
   | { ok: false; code: PortalDenial };
 
 /**
  * حارس الـ server actions: يُستدعى في **بداية كل إجراء** قبل أي كتابة.
  * صفحات البورتال محمية بالغلاف، أما الإجراءات فنقاط POST مستقلة يمكن استدعاؤها
  * مباشرة — فلا يُكتب شيء قبل التأكد من أن صاحب الجلسة متعهد معتمد.
+ *
+ * 🔒 **هذا هو الحارس الضيّق ويبقى ضيّقاً: `active` وحدها.** كل ما يمسّ تشغيلاً —
+ * قبول عرض، رفضه، تسجيل طاقم رحلة، قراءة صندوق الطلبات أو الرحلات أو الرصيد —
+ * يبقى عليه. وضيقُه هو ما يجعل السهو آمناً: أي إجراء جديد يُكتب غداً ولا ينتبه
+ * كاتبه إلى مرحلة التجهيز يقع **مقفلاً** لا مفتوحاً.
  */
 export async function portalAccess(): Promise<PortalAccess> {
   const gate = await readPortalGate();
@@ -163,5 +191,31 @@ export async function portalAccess(): Promise<PortalAccess> {
 
   const supabase = await createServerSupabase();
   if (!supabase) return { ok: false, code: "env" };
-  return { ok: true, supabase, sub: gate.sub };
+  return { ok: true, supabase, sub: gate.sub, stage: "active" };
+}
+
+/**
+ * حارس أسطح **التجهيز** — الملف والأسطول والسائقون وقوائم الأسعار: يسمح للمعتمد
+ * وللمدعوّ في مرحلة `onboarding` معاً، ويرفض ما عداهما بنفس رموز `portalAccess`.
+ *
+ * ⚠ **ولا يُستعمل في سطحٍ تشغيلي أبداً.** الفارق بين الحارسين هو الفارق بين
+ * «يجهّز نفسه» و«ينفّذ رحلة عميل دفع»، ولا شيء في اسم الدالة يمنع خلطهما — فمن
+ * يوسّع سطحاً جديداً يقرأ هذا السطر أولاً.
+ *
+ * والمبدأ الذي يجعل التوسعة سليمة: **الشاشة تتبع الحارس لا العكس.** فتحُ الغلاف
+ * وحده كان سيُنتج شاشاتٍ تُصيَّر وأزراراً تُعيد `error=account` — وهو أسوأ من
+ * قفلٍ صريح، لأن الشريك يظنّ أنه أخطأ وهو لم يخطئ.
+ */
+export async function portalSetupAccess(): Promise<PortalAccess> {
+  const gate = await readPortalGate();
+  if (gate.state === "env") return { ok: false, code: "env" };
+  if (gate.state === "anonymous") return { ok: false, code: "auth" };
+  if (gate.state === "schema") return { ok: false, code: "schema" };
+  if (gate.state !== "active" && gate.state !== "onboarding") {
+    return { ok: false, code: "account" };
+  }
+
+  const supabase = await createServerSupabase();
+  if (!supabase) return { ok: false, code: "env" };
+  return { ok: true, supabase, sub: gate.sub, stage: gate.state };
 }

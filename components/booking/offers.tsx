@@ -77,6 +77,94 @@ export type TripSummary = {
 /** رابط صفحة طلب عرض سعر — لما هو خارج الحاسبة (جولات، مناسبات، إيجار يومي) */
 const QUOTE_REQUEST_PATH = "/quote-request";
 
+/**
+ * ما يُحمَل معه العميل إلى `/quote-request` حين تعجز الحاسبة عن رحلته.
+ *
+ * ── لماذا يُحمَل شيء أصلاً ──────────────────────────────────────────────────
+ * العميل كتب المسار والعدد والموعد مرةً بالفعل. وبطاقةُ مخرجٍ تُلقيه على نموذج
+ * فارغ تطلب منه كتابة كل شيء من جديد هي **مخرجٌ يزيد الكلفة لا يقلّلها** — وهو
+ * بالضبط الجمهور الذي يُفترض أن ننقذه: المجموعة والوفد والمؤتمر.
+ *
+ * ── 🔒 وما لا يُحمَل أبداً ─────────────────────────────────────────────────
+ * **لا اسم ولا هاتف في الرابط.** الرابط يُشارَك ويُلصَق ويبقى في تاريخ المتصفح
+ * وفي سجلات أي وسيط، ونموذجُ `/quote-request` يسأل عنهما بنفسه بعد سطرين. وما
+ * يُحمل هنا (أسماء أماكن اختارها العميل من الاقتراحات + عدد + موعد) هو نصُّ
+ * الرحلة لا هوية صاحبها.
+ *
+ * ⚠ **والحقول أسماءٌ متفق عليها مع الصفحة المستقبِلة**: `service` وحده تقرؤه
+ * `app/quote-request/page.tsx` اليوم؛ والأربعة الباقية تُحمَل ولا تُقرأ بعد،
+ * وقراءتها عملُ من يملك تلك الصفحة (انظر التقرير المرفق بهذا العمل).
+ */
+export type QuoteRequestPrefill = {
+  /** رمز الخدمة كما في `SERVICES` — يُقرأ اليوم في `?service=` */
+  service?: string | null;
+  passengers?: number | null;
+  /** موعد الانطلاق ISO — موجود في الذهاب والعودة وحدها (الاتجاه الواحد لا يسأله) */
+  pickupAt?: string | null;
+  from?: string | null;
+  to?: string | null;
+};
+
+/**
+ * أقصى طول لاسم مكان داخل الرابط. الإكمال التلقائي (Nominatim) يُنتج عناوين
+ * مُسهبة، وثلاثة منها في رابط واحد تتجاوز حدود بعض الوسطاء — والقصّ يفقد ذيل
+ * العنوان لا معناه، والعميل يراه في الحقل ويكمله.
+ */
+const MAX_PREFILL_LABEL = 120;
+
+/** نصٌّ صالح للرابط، أو `null` — الفارغ لا يُكتب مفتاحاً فارغاً */
+function prefillText(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length === 0 ? null : trimmed.slice(0, MAX_PREFILL_LABEL);
+}
+
+/**
+ * يبني رابط `/quote-request` محمّلاً بما كتبه العميل.
+ *
+ * `URLSearchParams` تتكفّل بالترميز — والعناوين العربية تمرّ عليها كما هي فلا
+ * يُبنى الرابط بلصق نصوص (وهو مصدر «//#services» في `LESSONS.md` القسم ٣).
+ * وبلا حمولة يعود المسار وحده بلا `?` معلّقة.
+ */
+export function buildQuoteRequestHref(locale: string, prefill?: QuoteRequestPrefill): string {
+  const base = localePath(locale, QUOTE_REQUEST_PATH);
+  if (!prefill) return base;
+
+  const params = new URLSearchParams();
+
+  const service = prefillText(prefill.service);
+  if (service) params.set("service", service);
+
+  const { passengers } = prefill;
+  if (typeof passengers === "number" && Number.isFinite(passengers) && passengers > 0) {
+    params.set("passengers", String(Math.trunc(passengers)));
+  }
+
+  const pickup = prefillText(prefill.pickupAt);
+  if (pickup) params.set("pickup", pickup);
+
+  const from = prefillText(prefill.from);
+  if (from) params.set("from", from);
+
+  const to = prefillText(prefill.to);
+  if (to) params.set("to", to);
+
+  // `+` بدل المسافة صحيحٌ في `URLSearchParams` وملتبسٌ عند أي قارئ آخر (وسيط،
+  // سجل، لصقٌ يدوي). و`%20` يقرأه الاثنان قراءةً واحدة — فلا يصل «مطار+القاهرة»
+  // إلى حقلٍ في النموذج.
+  const query = params.toString().replace(/\+/g, "%20");
+  return query.length === 0 ? base : `${base}?${query}`;
+}
+
+/** ملخص الرحلة ⇐ حمولة الرابط — بلا اسم ولا هاتف (ولا يملكهما هذا النوع أصلاً) */
+export function prefillFromTrip(trip: TripSummary): QuoteRequestPrefill {
+  return {
+    passengers: trip.passengers,
+    pickupAt: trip.pickupAt ?? null,
+    from: trip.originLabel,
+    to: trip.destinationLabel,
+  };
+}
+
 /** يحوّل ملخص الرحلة إلى مدخلات الحجز — null إن غابت الإحداثيات */
 function toCheckoutTrip(trip: TripSummary): CheckoutTrip | null {
   const { originLat, originLng, destLat, destLng } = trip;
@@ -516,25 +604,53 @@ function OfferCard({
   );
 }
 
+/**
+ * سبب عجز الحاسبة كما فرّقه `/api/quote` **برمزه لا بجملته**.
+ *
+ * الخادم يعرف أي الشرطين سقط (ركاب وحدهم أم ركاب وحقائب معاً) ولا يعرفه هذا
+ * المكوّن؛ لكن **النصّ يُختار هنا** من `messages/*.json` لا هناك — وإلا وصلت
+ * جملةٌ عربية مؤلَّفة في الخادم إلى زائر `/en` فغلبت ترجمته.
+ * و`undefined` تعني «سببٌ غير معروف» فيبقى النص العام صحيحاً في الحالتين.
+ */
+export type NoClassesReason = "passengers" | "luggage";
+
 /** دعوة لطلب عرض سعر — لما هو خارج الحاسبة أو حين لا تتسع الفئات للمجموعة */
 function QuoteRequestNote({
   standalone = false,
+  reason,
+  prefill,
   t,
   locale,
 }: {
   standalone?: boolean;
+  reason?: NoClassesReason;
+  prefill?: QuoteRequestPrefill;
   t: Tx;
   locale: string;
 }) {
-  const href = localePath(locale, QUOTE_REQUEST_PATH);
+  const href = buildQuoteRequestHref(locale, prefill);
   if (standalone) {
     return (
       <div className="flex flex-col items-start gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-4">
+        {/*
+          نصٌّ لكل سبب — ونصيحة «جرّب حقائب أقل» لا تُقال لمن لم يُعلن حقيبة
+          أصلاً: كانت الجملتان تفرّقان ذلك في الخادم، والفرق محفوظ هنا بالرمز.
+        */}
         <p className="text-sm font-medium leading-7">
-          {t(
-            "quoteRequest.standalone",
-            "لا توجد فئة تتسع لهذه الرحلة عبر الحاسبة — نرتّبها لك يدوياً بأكثر من سيارة."
-          )}
+          {reason === "luggage"
+            ? t(
+                "quoteRequest.standaloneLuggage",
+                "لا توجد فئة سيارات تتسع لعدد الركاب وعدد الحقائب معاً — جرّب حقائب أقل، أو اطلب عرض سعر مخصص ونرتّب لك أكثر من سيارة."
+              )
+            : reason === "passengers"
+              ? t(
+                  "quoteRequest.standalonePassengers",
+                  "لا توجد فئة سيارات واحدة تتسع لهذا العدد من الركاب — نرتّب لك أكثر من سيارة بعرض سعر مخصص."
+                )
+              : t(
+                  "quoteRequest.standalone",
+                  "لا توجد فئة تتسع لهذه الرحلة عبر الحاسبة — نرتّبها لك يدوياً بأكثر من سيارة."
+                )}
         </p>
         <a
           href={href}
@@ -543,6 +659,13 @@ function QuoteRequestNote({
           <FileText className="size-4 shrink-0" aria-hidden="true" />
           {t("quoteRequest.cta", "اطلب عرض سعر")}
         </a>
+        {/* لا نَعِد بحفظ ما لم نحمله: النص يقول ما ينتقل معه بالضبط */}
+        <p className="text-xs leading-6 text-muted-foreground">
+          {t(
+            "quoteRequest.carried",
+            "ننقل معك تفاصيل رحلتك إلى النموذج — يبقى اسمك ورقمك لتكتبهما هناك."
+          )}
+        </p>
       </div>
     );
   }
@@ -559,6 +682,36 @@ function QuoteRequestNote({
       {t("quoteRequest.inlineSuffix", "ونرد عليك بعرض مخصص.")}
     </p>
   );
+}
+
+/**
+ * بطاقة الإنقاذ حين ترد `/api/quote` بـ`no-classes` — **خارج شجرة `Offers`**.
+ *
+ * ── لماذا وُلدت هذه الصادرة ────────────────────────────────────────────────
+ * النسخة القائمة داخل `Offers` (‏`offers.length === 0`) كانت **كوداً ميتاً**:
+ * المسار لا يُرجع مصفوفة عروض فارغة أبداً — يُرجع `ok:false, code:"no-classes"`،
+ * فيمسح الويدجت النتيجة و`Offers` لا يُصيَّر أصلاً. أي أن الطريق كُتب ثم دُفن،
+ * والعميل يرى صندوقاً أحمر ويغادر (النمط ٣ في `handover/LESSONS.md`).
+ * فصار المخرجُ مكوّناً يناديه الويدجت مباشرةً عند ذلك الرمز بعينه.
+ *
+ * ويملك ترجمته بنفسه (`booking.offers`) لأن مُناديه يعيش في مساحة أخرى
+ * (`booking.search`) — فلا يُمرَّر `t` من نطاق لا تخصّه نصوصه.
+ *
+ * 🔒 **ويأخذ `reason` رمزاً لا `message` جملةً**: كان الويدجت يمرّر إليه الجملة
+ * التي ألّفها `/api/quote` بالعربية فتُطبع كما هي، وتغلب نصَّ `messages/en.json`
+ * على `/en`. الآن يصل السبب رمزاً ويُختار النص من ملفَّي الرسائل.
+ */
+export function NoClassesRescue({
+  reason,
+  prefill,
+  locale = DEFAULT_LOCALE,
+}: {
+  reason?: NoClassesReason;
+  prefill?: QuoteRequestPrefill;
+  locale?: string;
+}) {
+  const t = useT("booking.offers");
+  return <QuoteRequestNote standalone reason={reason} prefill={prefill} t={t} locale={locale} />;
 }
 
 /** قائمة العروض مع ترويسة تلخّص المسار والمسافة والمدة */
@@ -605,7 +758,13 @@ export function Offers({
     if (bookingOffer) setBookingOffer(null);
   }
 
-  if (offers.length === 0) return <QuoteRequestNote standalone t={t} locale={locale} />;
+  // احتياطٌ لا مسارٌ حيّ: `/api/quote` يردّ `no-classes` قبل أن تصل مصفوفة فارغة
+  // إلى هنا، والمخرج الحيّ هو `NoClassesRescue` في الويدجت. يبقى هذا الفرع لأن
+  // `Offers` مكوّن عام قد يناديه مستدعٍ آخر بمصفوفة فارغة — وحينها ينبغي أن يجد
+  // الزائر مخرجاً لا فراغاً.
+  if (offers.length === 0) {
+    return <QuoteRequestNote standalone t={t} locale={locale} prefill={prefillFromTrip(trip)} />;
+  }
 
   const isEstimate = distanceSource === "estimate";
 
@@ -712,7 +871,9 @@ export function Offers({
         )}
       </p>
 
-      <QuoteRequestNote t={t} locale={locale} />
+      {/* السطر الأخير تحت البطاقات: الرحلة معروضة، لكن قد تكون جولةً لا نقلة —
+          وهو يحمل ما كتبه العميل كما تحمله بطاقة الإنقاذ حرفياً. */}
+      <QuoteRequestNote t={t} locale={locale} prefill={prefillFromTrip(trip)} />
     </div>
   );
 }

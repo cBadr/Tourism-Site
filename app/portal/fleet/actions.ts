@@ -12,13 +12,16 @@ import {
   num,
   text,
 } from "../_lib/form";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 
 /**
  * إجراءات أسطول المتعهد — جدول `subcontractor_vehicles`.
  *
  * قواعد ثابتة:
- * - `portalAccess()` أولاً، وكل استعلام مقيَّد بـ `subcontractor_id` صراحةً فوق RLS.
+ * - `portalSetupAccess()` أولاً — الحارس **الموسَّع**: الأسطول سجلٌّ يملكه الشريك،
+ *   وسياساته الأربع بلا شرط حالة، والمدعوّ يجهّزه قبل اعتماده. والضرر ممنوع حيث
+ *   يجب: `dispatch_pool` تشترط `s.status = 'approved'`، فمركبة من ينتظر لا تدخل
+ *   بثاً. وكل استعلام مقيَّد بـ `subcontractor_id` صراحةً فوق RLS.
  * - فئة المركبة تُتحقَّق من `vehicle_classes` النشطة على الخادم: القائمة المنسدلة
  *   حماية تجربة لا حماية بيانات، فمن يعدّل النموذج لا يستطيع اختراع فئة.
  * - فخ RLS المعروف: `.select()` بعد كل كتابة وفحص طول النتيجة (صفر صفوف = رفض سياسة).
@@ -84,7 +87,7 @@ async function classExists(supabase: SupabaseClient, slug: string): Promise<bool
 }
 
 export async function createVehicle(formData: FormData) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -104,7 +107,7 @@ export async function createVehicle(formData: FormData) {
 }
 
 export async function saveVehicle(vehicleId: string, formData: FormData) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -128,7 +131,7 @@ export async function saveVehicle(vehicleId: string, formData: FormData) {
 
 /** تفعيل/إيقاف مركبة — الإيقاف يبقيها في السجل ويخرجها من حساب فئاتك المطلوبة */
 export async function toggleVehicle(vehicleId: string) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -156,7 +159,7 @@ export async function toggleVehicle(vehicleId: string) {
 }
 
 export async function deleteVehicle(vehicleId: string) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 

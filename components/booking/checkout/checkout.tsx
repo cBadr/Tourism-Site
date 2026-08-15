@@ -9,6 +9,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   LoaderCircle,
   Route,
   TriangleAlert,
@@ -36,7 +37,7 @@ import { RedeemField, RedeemRows } from "../redeem-field";
 import { PromoBanners } from "../promo-banner";
 import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
 import { readPaymentSettings, splitAmounts } from "./payment";
-import { todayInputValue, toIsoFromLocalInputs } from "./datetime";
+import { todayInputValue, toIsoFromCairoInputs } from "./datetime";
 
 /**
  * مسار إتمام الحجز — ثلاث خطوات داخل نفس الصفحة (بلا تنقل حتى الإرسال):
@@ -354,7 +355,7 @@ export function Checkout({
 
   /** موعد الانطلاق: من الحاسبة حين جمعته (ذهاب وعودة)، وإلا من حقلَي هذه الخطوة */
   const scheduledPickup = trip.pickupAt ?? null;
-  const pickupIso = scheduledPickup ?? toIsoFromLocalInputs(pickupDate, pickupTime);
+  const pickupIso = scheduledPickup ?? toIsoFromCairoInputs(pickupDate, pickupTime);
   const hasExtras = offer.extras.length > 0;
 
   // ── الإجمالي الذي تُبنى عليه معاينة العربون ────────────────────────────────
@@ -402,9 +403,12 @@ export function Checkout({
     // الموعد المُثبَّت في الحاسبة تحقّقت منه هناك، وهو معروض هنا للقراءة فقط
     if (scheduledPickup) return next;
 
-    const iso = toIsoFromLocalInputs(pickupDate, pickupTime);
+    const iso = toIsoFromCairoInputs(pickupDate, pickupTime);
     if (!iso) {
       next.pickup = t("errors.pickupRequired", "حدد تاريخ ووقت الانطلاق.");
+      // مقارنة **لحظتين مطلقتين** لا ساعتَي حائط: `iso` صار موعد القاهرة
+      // محوَّلاً إلى UTC، و`Date.now()` لحظة مطلقة أصلاً — فالمقارنة صحيحة
+      // أياً كانت منطقة الجهاز، ولا يجوز إقحام أي تحويل ثانٍ عليها.
     } else if (new Date(iso).getTime() < Date.now()) {
       next.pickup = t("errors.pickupPast", "موعد الانطلاق يجب أن يكون في المستقبل.");
     }
@@ -581,6 +585,24 @@ export function Checkout({
             <p className="flex items-center gap-2 text-sm font-semibold">
               <CalendarClock className="size-4 shrink-0 text-primary" aria-hidden="true" />
               {t("trip.heading", "موعد الانطلاق")}
+            </p>
+
+            {/*
+              🔴 وسم التوقيت — يظهر في الفرعين معاً (المُثبَّت والقابل للكتابة).
+
+              كل موعد في هذا المنتج بتوقيت القاهرة: المكتوب هنا يُفسَّر به
+              (‏`toIsoFromCairoInputs`)، والمعروض أعلاه وفي صفحة المتابعة يُعرض
+              به (‏`format.ts`). ومن يحجز من الخليج أو أوروبا لا يعرف ذلك من
+              تلقاء نفسه — وحقلا التاريخ والوقت في المتصفح لا يقولان منطقةً
+              بحال. فالسطر ليس تزييناً: هو الفرق بين «كتبتُ ١٠:٠٠ بتوقيت بلدي»
+              و«كتبتُ ١٠:٠٠ بتوقيت مصر»، وثمن الالتباس سائقٌ يصل بساعة خطأ.
+            */}
+            <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-3 py-2 text-xs leading-6 text-muted-foreground">
+              <Clock className="mt-1 size-3.5 shrink-0 text-primary" aria-hidden="true" />
+              {t(
+                "trip.timeZoneNote",
+                "كل المواعيد بتوقيت القاهرة (مصر) — اكتب موعد الانطلاق كما هو في مصر لا بتوقيت بلدك."
+              )}
             </p>
 
             {/*

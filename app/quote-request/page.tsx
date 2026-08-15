@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { localeHref } from "@/components/site/links";
+import { readTripPrefill } from "./_lib/prefill";
 import { QuoteRequestForm } from "./_components/quote-form";
 
 /**
@@ -16,6 +17,12 @@ import { QuoteRequestForm } from "./_components/quote-form";
  *
  * يقبل ?service=slug لتحديد الخدمة مسبقاً (روابط صفحات الخدمات) — والـ slug
  * لا يُترجم أبداً، فالرابط نفسه يعمل من أي لغة.
+ *
+ * ويقبل **حمولة بطاقة الإنقاذ** كذلك: `from` و`to` و`passengers` و`pickup`،
+ * وهي ما تكتبه `buildQuoteRequestHref` في `components/booking/offers.tsx` حين
+ * تعجز الحاسبة عن الرحلة. كانت الصفحة تقرأ `service` وحده وتُسقط الأربعة —
+ * فتقول البطاقة «ننقل معك تفاصيل رحلتك» ولا يصل شيء، والعميل يعيد الكتابة.
+ * القراءة والتنقية في `_lib/prefill.ts`، وتركيب السطر في جزيرة العميل.
  */
 
 type QuoteRequestPageProps = {
@@ -78,6 +85,9 @@ export default async function QuoteRequestPage({ searchParams }: QuoteRequestPag
     ? requested
     : undefined;
 
+  // 🔒 اقتراح تعبئة يحرّره العميل، لا واقعة تُخزَّن — والتنقية تحرس الحقل والتخطيط
+  const tripPrefill = readTripPrefill(params);
+
   return (
     <>
       <SiteHeader settings={settings} locale={locale} />
@@ -115,6 +125,7 @@ export default async function QuoteRequestPage({ searchParams }: QuoteRequestPag
           <div className="mx-auto w-full max-w-2xl px-4 sm:px-6">
             <QuoteRequestForm
               defaultService={defaultService}
+              tripPrefill={tripPrefill}
               services={services}
               locale={locale}
             />

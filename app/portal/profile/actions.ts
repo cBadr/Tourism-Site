@@ -5,13 +5,16 @@ import { redirect } from "next/navigation";
 
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { clamp, safeUrl, text, toLatinDigits } from "../_lib/form";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 
 /**
  * إجراءات ملف المتعهد — تعديل صفه في `subcontractors` ورفع صورته.
  *
  * قواعد ثابتة:
- * - `portalAccess()` أولاً في كل إجراء: الغلاف لا يحمي نقاط الـ POST.
+ * - `portalSetupAccess()` أولاً في كل إجراء: الغلاف لا يحمي نقاط الـ POST.
+ *   وهو الحارس **الموسَّع** (معتمَد أو مدعوّ في مرحلة التجهيز) لا الضيّق: الملف
+ *   بيانات الشريك نفسه، وRLS تسمح بتعديله بلا شرط حالة منذ `0011` — متحقَّقٌ حياً
+ *   بانتحال صفة شريكٍ `pending` داخل معاملة مُلغاة. ولا شيء هنا يمسّ تشغيلاً.
  * - الحقول المكتوبة محصورة في قائمة بيضاء صريحة — لا `status` ولا `profile_id`
  *   ولا `notes` تمر من نموذج، مهما أُرسل في الـ FormData.
  * - فخ RLS المعروف: التحديث ينجح ظاهرياً بصفر صفوف عند رفض السياسة، لذلك
@@ -65,7 +68,7 @@ async function uploadAvatar(
 }
 
 export async function saveProfile(formData: FormData) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -128,7 +131,7 @@ export async function saveProfile(formData: FormData) {
 
 /** إزالة الصورة — نمسح الرابط فقط ونترك الملف في الدلو (لا حذف صامت لبيانات) */
 export async function removeAvatar() {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 

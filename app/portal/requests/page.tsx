@@ -20,7 +20,8 @@ import {
 } from "@/components/portal/portal-ui";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { portalAccess } from "../_lib/session";
+import { StageLock } from "../_components/stage-lock";
+import { portalAccess, readPortalGate } from "../_lib/session";
 import { acceptOffer, rejectOffer } from "./actions";
 import { loadOffers, type PortalOffer } from "./data";
 import { REJECT_REASONS } from "./reasons";
@@ -225,9 +226,30 @@ function OfferCard({ offer, now }: { offer: PortalOffer; now: number }) {
 /* ------------------------------------------------------------------ */
 
 export default async function PortalRequestsPage({ searchParams }: PageProps<"/portal/requests">) {
-  const [params, access] = await Promise.all([searchParams, portalAccess()]);
-  // الغلاف يعرض شاشة الحالة المناسبة؛ الصفحة لا تُصيَّر أصلاً في تلك الحالات
-  if (!access.ok) return null;
+  const [params, access, gate] = await Promise.all([
+    searchParams,
+    portalAccess(),
+    readPortalGate(),
+  ]);
+
+  if (!access.ok) {
+    // مرحلة التجهيز تُركِّب الشاشات الداخلية، فهذه الوجهة قابلة للبلوغ بالرابط
+    // المباشر ولو غاب زرّها. والقفل يُقال ولا يُصمَت عنه: `return null` هنا كان
+    // سيعرض صفحة بيضاء تُقرأ عطلاً.
+    if (gate.state === "onboarding") {
+      return (
+        <StageLock title="صندوق الطلبات يُفتح بعد اعتماد حسابك">
+          <p>
+            الرحلات تُبَث على المتعهدين المعتمدين وحدهم، فلا يصل هذا الصندوق شيئاً قبل الاعتماد.
+            ولا يعني ذلك أنك تنتظر بلا عمل: أكمل أسطولك وسائقيك وقوائم أسعارك الآن، فالقائمة
+            المعتمَدة هي بعينها ما يجعل الرحلة تجدك.
+          </p>
+        </StageLock>
+      );
+    }
+    // بقية الحالات يعرضها الغلاف بنفسه، والصفحة لا تُصيَّر فيها أصلاً
+    return null;
+  }
 
   const { offers, ready, failed, now } = await loadOffers();
 

@@ -12,7 +12,7 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { createServiceSupabase } from "@/lib/supabase/admin";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 import { removeAvatar, saveProfile } from "./actions";
 
 /**
@@ -40,7 +40,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 export default async function PortalProfilePage({ searchParams }: PageProps<"/portal/profile">) {
-  const [params, access] = await Promise.all([searchParams, portalAccess()]);
+  const [params, access] = await Promise.all([searchParams, portalSetupAccess()]);
   if (!access.ok) return null;
 
   const { sub } = access;

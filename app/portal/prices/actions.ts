@@ -16,12 +16,17 @@ import {
   num,
   text,
 } from "../_lib/form";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 
 /**
  * إجراءات قوائم أسعار المتعهد — قلب المرحلة ٥ من جهة البورتال.
  *
  * القواعد المحسومة التي ينفّذها هذا الملف:
+ * - `portalSetupAccess()` هو الحارس — **الموسَّع**: سياسات `price_lists_*` تكيل
+ *   بـ`current_subcontractor_id()` بلا شرط حالة، وحدّ الكتابة فيها أن الحالة
+ *   المسموح بها `draft` أو `pending` لا `approved`. فالمدعوّ يبني قوائمه ويرسلها
+ *   للمراجعة قبل اعتماده، ولا تدخل تسعيراً بحال: `coverage_matches` تشترط
+ *   `pl.status = 'approved'` **و**`s.status = 'approved'` معاً.
  * - المتعهد لا يعتمد نفسه أبداً: الحفظ يبقي القائمة مسودة/مرفوضة كما هي، والإرسال
  *   يضعها في `pending`، و`approved` حكرٌ على الإدارة.
  * - تعديل قائمة **معتمدة** يعيدها إلى `pending` فوراً — إبقاؤها معتمدة يعني تغيّر
@@ -260,7 +265,7 @@ async function submitList(
  * الزر المضغوط يصل في `intent`: `draft` حفظ فقط، `submit` حفظ ثم إرسال للاعتماد.
  */
 export async function savePriceList(listId: string | null, formData: FormData) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   const back = (qs: string) => (listId ? editorUrl(listId, qs) : listUrl(qs));
   if (!access.ok) redirect(back(`error=${access.code}`));
   const { supabase, sub } = access;
@@ -330,7 +335,7 @@ export async function savePriceList(listId: string | null, formData: FormData) {
 
 /** إرسال قائمة قائمة للاعتماد من شاشة القوائم بلا فتح المحرر */
 export async function submitPriceList(listId: string) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(listUrl(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -350,7 +355,7 @@ export async function submitPriceList(listId: string) {
  * تخص الإدارة أيضاً: سحبها يمر بها حتى لا تختفي تغطية من تحت عروض حيّة.
  */
 export async function deletePriceList(listId: string) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(listUrl(`error=${access.code}`));
   const { supabase, sub } = access;
 

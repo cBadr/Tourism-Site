@@ -24,7 +24,14 @@ import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import type { PromoBanner } from "@/lib/discount-types";
 import { createFormatter, type LocaleFormatter } from "./format";
-import { Offers, type BookingContact, type TripSummary } from "./offers";
+import {
+  NoClassesRescue,
+  Offers,
+  type BookingContact,
+  type NoClassesReason,
+  type QuoteRequestPrefill,
+  type TripSummary,
+} from "./offers";
 import { ExtrasPicker } from "./extras-picker";
 import { todayInputValue, toIsoFromLocalInputs } from "./checkout/datetime";
 import {
@@ -78,7 +85,29 @@ import {
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 350;
 const MIN_PASSENGERS = 1;
+
+/**
+ * الحدّ الأعلى المطلق الذي يقبله `/api/quote` — **سقف ارتداد لا سقف أسطول**.
+ *
+ * كان هذا الرقم وحده سقفَ العدّاد، وأكبر فئة نشطة تتسع لـ٥٠ — فعشرة أرقام (٥١
+ * إلى ٦٠) كانت **تضمن** رد «لا توجد فئة». صار السقف الفعلي `passengerCap`
+ * المشتقّ من الأسطول، ولا يُستعمل هذا الثابت إلا حين تتعذّر قراءة الأسطول:
+ * سلوكُ اليوم نفسه، لا انحدار ولا تشديد بالخطأ.
+ */
 const MAX_PASSENGERS = 60;
+
+/**
+ * رمز «لا فئة تتسع» ⇐ سببه. المسار يرسل رمزاً لا جملة (انظر ترويسة
+ * `app/api/quote/route.ts`)، وهذا الجدول هو **الموضع الوحيد** الذي يترجم رمز
+ * السلك إلى سبب تفهمه الواجهة — ومنه يختار `NoClassesRescue` نصّه المترجم.
+ *
+ * ورمزٌ جديدٌ لا يُذكر هنا يسقط إلى مسار الخطأ العام، وهو مسارٌ **مترجم** كذلك:
+ * لا يمكن أن ينتج عن إغفالٍ هنا نصٌّ عربي على `/en`.
+ */
+const NO_CLASSES_REASONS: Record<string, NoClassesReason> = {
+  "no-classes": "passengers",
+  "no-classes-luggage": "luggage",
+};
 
 /** استجابة /api/geocode كما نتعامل معها في العميل */
 type GeocodeResponse =
@@ -114,12 +143,22 @@ export type SearchWidgetProps = {
    */
   extras?: PublicExtra[];
   /**
-   * أكبر سعة حقائب في الأسطول النشط (‏`getMaxLuggageCapacity`) — **سقف إدخال
+   * أكبر سعة حقائب في الأسطول النشط (‏`getFleetCaps`) — **سقف إدخال
    * لا قاعدة أهلية**. بدونه يصعد العدّاد إلى ٢٠ ثابتة فيعرض على العميل أرقاماً
    * تضمن «لا توجد فئة» قبل أن يضغط. و`null`/`undefined` = تعذّرت القراءة
    * (هجرة أو بيئة) فيبقى السقف الثابت كما كان — لا تشديد بالخطأ.
    */
   maxLuggage?: number | null;
+  /**
+   * أكبر سعة **ركاب** في الأسطول النشط — **سقف إدخال لا قاعدة أهلية** (D-12)،
+   * بنفس منطق `maxLuggage` حرفياً ومن **القراءة نفسها** (`getFleetCaps`).
+   *
+   * كان الويدجت يقرأ هذا الرقم بنفسه من `GET /api/quote` لأن غلافيه الخادميَّين
+   * كانا خارج نطاق العمل الذي وُلد فيه؛ فصار للجدول الواحد قارئان. والآن يصل
+   * `prop` من الغلافين — وهما كلّ من يُركّب هذه الجزيرة — فحُذف المسار العام.
+   * و`null`/`undefined` = تعذّرت القراءة فيبقى الثابت المطلق كما كان.
+   */
+  maxPassengers?: number | null;
 };
 
 /* ------------------------------------------------------------------ */
@@ -459,6 +498,7 @@ export function SearchWidget({
   checkoutBanners = [],
   extras = [],
   maxLuggage = null,
+  maxPassengers = null,
 }: SearchWidgetProps) {
   const t = useT("booking.search");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
@@ -491,6 +531,18 @@ export function SearchWidget({
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<QuoteResponseWithExtras | null>(null);
   const [trip, setTrip] = React.useState<TripSummary | null>(null);
+  /**
+   * حالة «الحاسبة لا تغطي هذه الرحلة» — **ليست خطأً**.
+   *
+   * كان رمز `no-classes` يسقط مع كل رموز الخطأ في صندوق أحمر واحد، فيرى الوفدُ
+   * والمجموعةُ والمؤتمر «لا توجد فئة» ثم يغادرون؛ وبطاقةُ المخرج المكتوبة في
+   * `offers.tsx` **لم تكن تُصيَّر أبداً** لأن الويدجت يمسح النتيجة فلا يُركَّب
+   * `Offers` أصلاً. فصارت حالةً مستقلة برسالة القاعدة وبما كتبه العميل.
+   */
+  const [rescue, setRescue] = React.useState<{
+    reason: NoClassesReason;
+    prefill: QuoteRequestPrefill;
+  } | null>(null);
 
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
   const minDate = React.useMemo(() => todayInputValue(), []);
@@ -516,6 +568,43 @@ export function SearchWidget({
   const luggageAtCap = luggage >= luggageCap;
   /** والسقف معلوم من الأسطول لا مجرد ثابت واجهة — فلا نُعلن رقماً لا نعرفه */
   const luggageCapKnown = luggageCap < MAX_LUGGAGE;
+
+  /* ---------------------------------------------------------------- */
+  /* سقف عدّاد الركاب — نفس قاعدة الحقائب حرفياً ومن قراءتها نفسها      */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * ⚠ **سقف إدخال لا ترشيح** (D-12 بلا مساس): أي فئة تُعرض أو تُخفى تُقرّره
+   * `quote_price` وحدها. ما يمنعه هذا السقف أن يعرض العدّاد رقماً **لا يمكن أن
+   * ينجح**: كان يصعد إلى ٦٠ وأكبر سيارة تتسع لـ٥٠، فيصل وفدٌ من ٥٥ إلى صندوق
+   * أحمر بعد أن قدّمت له الشاشةُ الرقمَ المستحيل بنفسها.
+   *
+   * ولا ينزل عن `MIN_PASSENGERS` مهما كان المقروء: سقفٌ صفريٌّ من قراءة فاشلة
+   * كان سيمنع كل عميل من طلب راكب واحد.
+   */
+  const passengerCap =
+    typeof maxPassengers === "number" &&
+    Number.isFinite(maxPassengers) &&
+    maxPassengers >= MIN_PASSENGERS
+      ? Math.min(Math.trunc(maxPassengers), MAX_PASSENGERS)
+      : MAX_PASSENGERS;
+  /**
+   * وصل سقفٌ أقلّ ممّا اختاره العميل ⇒ ينزل العدّاد إليه **أثناء التصيير**.
+   *
+   * نمط «تعديل الحالة عند تغيّر المُدخل» الموثّق في React، وهو المستعمل في
+   * `offers.tsx` نفسه: التعديل هنا يعيد التصيير فوراً قبل أي رسم — بلا وميض
+   * وبلا تأثير جانبي، وبلا التصيير المتتالي الذي يمنعه `set-state-in-effect`.
+   */
+  const [lastPassengerCap, setLastPassengerCap] = React.useState(passengerCap);
+  if (lastPassengerCap !== passengerCap) {
+    setLastPassengerCap(passengerCap);
+    if (passengers > passengerCap) setPassengers(passengerCap);
+  }
+
+  /** بلغ العميل سقف الأسطول فعلاً — عندها وحدها يُقال له ما البديل */
+  const passengersAtCap = passengers >= passengerCap;
+  /** والسقف معلوم من الأسطول لا مجرد ثابت واجهة — فلا نُعلن رقماً لا نعرفه */
+  const passengerCapKnown = passengerCap < MAX_PASSENGERS;
 
   // مواعيد الرحلة تُجمع هنا **للذهاب والعودة وحدها** — لأنها وحدها تغيّر السعر
   // (منها تُشتق ساعات الانتظار). ورحلة الاتجاه الواحد تبقى كما كانت: موعدها
@@ -565,7 +654,7 @@ export function SearchWidget({
 
   function updatePassengers(next: number) {
     if (!Number.isFinite(next)) return;
-    const clamped = Math.min(MAX_PASSENGERS, Math.max(MIN_PASSENGERS, Math.round(next)));
+    const clamped = Math.min(passengerCap, Math.max(MIN_PASSENGERS, Math.round(next)));
     setPassengers(clamped);
   }
 
@@ -582,6 +671,7 @@ export function SearchWidget({
     event.preventDefault();
     setHint(null);
     setError(null);
+    setRescue(null);
 
     if (!origin) {
       setHint(
@@ -646,6 +736,32 @@ export function SearchWidget({
         setResult(null);
         setTrip(null);
         setQuotedSchedule(null);
+
+        // 🔑 الفرق الذي يصنع الفارق كله: `no-classes*` **نتيجة بحث لا عطل**.
+        // بقية الرموز تقول «حاول مرة أخرى» وهي نصيحة صحيحة لها؛ وهذان الرمزان
+        // إعادةُ المحاولة فيهما بالأرقام نفسها **لا يمكن أن تنجح أبداً**،
+        // فالمخرج الوحيد قناةٌ بشرية — تحمل معها ما كتبه العميل بالفعل.
+        //
+        // 🔒 ولا نقرأ `json.message` هنا إطلاقاً: النص يُختار من الرمز في
+        // `NoClassesRescue` بلغة الزائر. قراءتُه كانت تطبع عربيةَ الخادم على
+        // `/en` — وهي القاعدة العامة لا استثناءها.
+        const reason = NO_CLASSES_REASONS[json.code];
+        if (reason) {
+          setRescue({
+            reason,
+            prefill: {
+              passengers,
+              // موعد الانطلاق موجود في الذهاب والعودة وحدها (الاتجاه الواحد
+              // يُسأل عنه في مسار الحجز)، و`null` لا يُكتب في الرابط أصلاً.
+              pickupAt,
+              from: origin.label || originText,
+              to: destination.label || destinationText,
+              // 🔒 ولا اسم ولا هاتف — والويدجت لا يملكهما أصلاً في هذه المرحلة
+            },
+          });
+          return;
+        }
+
         setError(
           json.message ||
             t("errors.quoteFailed", "تعذر حساب السعر الآن. حاول مرة أخرى بعد قليل.")
@@ -688,6 +804,7 @@ export function SearchWidget({
       setResult(null);
       setTrip(null);
       setQuotedSchedule(null);
+      setRescue(null);
       setError(
         t("errors.network", "تعذر الاتصال بالخادم. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
       );
@@ -696,15 +813,16 @@ export function SearchWidget({
     }
   }
 
-  // إظهار النتائج للزائر فور وصولها — مهم خاصة في نسخة البطل المضغوطة
+  // إظهار النتائج للزائر فور وصولها — مهم خاصة في نسخة البطل المضغوطة.
+  // وبطاقة الإنقاذ نتيجةٌ كالعروض: من لا يراها يظن أن الضغطة لم تفعل شيئاً.
   React.useEffect(() => {
-    if (!result || !resultsRef.current) return;
+    if ((!result && !rescue) || !resultsRef.current) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     resultsRef.current.scrollIntoView({
       behavior: reduceMotion ? "auto" : "smooth",
       block: "nearest",
     });
-  }, [result]);
+  }, [result, rescue]);
 
   return (
     <div
@@ -762,17 +880,36 @@ export function SearchWidget({
               id={passengersId}
               value={passengers}
               min={MIN_PASSENGERS}
-              max={MAX_PASSENGERS}
+              max={passengerCap}
               onChange={updatePassengers}
               decreaseLabel={t("passengers.decrease", "إنقاص عدد الركاب")}
               increaseLabel={t("passengers.increase", "زيادة عدد الركاب")}
               describedBy={passengersNoteId}
               fieldHeight={fieldHeight}
             />
+            {/*
+              نفس بنية نص الحقائب حرفياً: شرحٌ دائم، ثم — عند السقف وحده — ما
+              البديل. والبديل يُقال **قبل** الاصطدام لا بعده، ولا يُعلَن رقمٌ
+              للأسطول ما لم يُقرأ فعلاً (`passengerCapKnown`).
+            */}
             <p id={passengersNoteId} className="text-xs leading-5 text-muted-foreground">
               {t("passengers.note", "الأطفال يُحسبون ضمن العدد — الحالي: {current}.", {
                 current: fmt.passengers(passengers),
               })}
+              {passengerCapKnown ? (
+                <>
+                  {" "}
+                  {passengersAtCap
+                    ? t(
+                        "passengers.atCap",
+                        "وهذا أقصى ما تتسع له أكبر سيارة لدينا ({max}). لمجموعة أكبر نرتّب أكثر من سيارة — اطلب عرض سعر.",
+                        { max: fmt.passengers(passengerCap) }
+                      )
+                    : t("passengers.capNote", "وأكبر سيارة لدينا تتسع لـ{max}.", {
+                        max: fmt.passengers(passengerCap),
+                      })}
+                </>
+              ) : null}
             </p>
           </div>
 
@@ -1082,12 +1219,35 @@ export function SearchWidget({
           ? t("statusCalculating", "جارٍ حساب السعر")
           : error
             ? error
-            : result
-              ? t("statusOffers", "تم عرض {count} من عروض الأسعار", {
-                  count: fmt.number(result.offers.length),
-                })
-              : ""}
+            : rescue
+              ? // نتيجةٌ تُنطق كالعروض: قارئ الشاشة يسمع سبب العجز والمخرج معاً.
+                // والسبب يأتي رمزاً فيُنطق بلغة الزائر — لا بجملة الخادم.
+                rescue.reason === "luggage"
+                ? t(
+                    "statusNoClassesLuggage",
+                    "لا توجد فئة تتسع لعدد الركاب وعدد الحقائب معاً — يمكنك طلب عرض سعر مخصص."
+                  )
+                : t(
+                    "statusNoClasses",
+                    "لا توجد فئة تتسع لهذا العدد من الركاب — يمكنك طلب عرض سعر مخصص."
+                  )
+              : result
+                ? t("statusOffers", "تم عرض {count} من عروض الأسعار", {
+                    count: fmt.number(result.offers.length),
+                  })
+                : ""}
       </span>
+
+      {/*
+        بطاقة الإنقاذ — المخرج الوحيد الذي يمكن أن ينجح حين لا تتسع أي فئة.
+        موضعها موضعُ العروض بالضبط (نفس المرساة ونفس الحدّ العلوي) لأنها **بديلٌ
+        عنها لا خطأٌ فوق النموذج**: الزائر ينظر إلى حيث تظهر الأسعار عادةً.
+      */}
+      {rescue ? (
+        <div ref={resultsRef} className="flex flex-col gap-4 border-t border-border pt-5">
+          <NoClassesRescue reason={rescue.reason} prefill={rescue.prefill} locale={locale} />
+        </div>
+      ) : null}
 
       {/* العروض — في نفس الشجرة أسفل النموذج مباشرة */}
       {result && trip ? (

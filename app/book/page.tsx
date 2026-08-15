@@ -9,7 +9,7 @@ import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { SearchWidget } from "@/components/booking/search-widget";
 import { PromoBanners } from "@/components/booking/promo-banner";
 import { getPublicExtras } from "@/components/booking/extras-catalog";
-import { getMaxLuggageCapacity } from "@/components/booking/fleet-luggage";
+import { getFleetCaps } from "@/components/booking/fleet-luggage";
 import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
 import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
@@ -82,7 +82,7 @@ export default async function BookPage() {
     discountEnabled,
     loyaltyEnabled,
     extras,
-    maxLuggage,
+    fleet,
   ] = await Promise.all([
       getSettings(locale),
       getT("pages.book", locale),
@@ -93,10 +93,11 @@ export default async function BookPage() {
       isLoyaltyEnabled(),
       // كتالوج الخدمات الإضافية (0031) — الصفحة الخادمية وحدها تقرؤه
       getPublicExtras(),
-      // سقف عدّاد الحقائب من الأسطول النشط: بدونه يصعد العدّاد إلى ٢٠ ثابتة
-      // فيعرض على العميل رقماً تضمن معه القاعدةُ صفرَ عروض. والفشل يعيد null
-      // فيبقى السقف الثابت كما كان.
-      getMaxLuggageCapacity(),
+      // سقفا عدّادَي الركاب والحقائب من الأسطول النشط — **قراءة واحدة للرقمين**:
+      // بدونهما يصعد العدّادان إلى ثابتيهما (٦٠ راكباً و٢٠ حقيبة) فيعرضان على
+      // العميل أرقاماً تضمن معها القاعدةُ صفرَ عروض. والفشل يعيد null للرقمين
+      // فيبقى الثابتان كما كانا.
+      getFleetCaps(),
     ]);
   const contact = {
     whatsapp: settings.contact.whatsapp,
@@ -146,7 +147,8 @@ export default async function BookPage() {
               loyaltyEnabled={loyaltyEnabled}
               checkoutBanners={checkoutBanners}
               extras={extras}
-              maxLuggage={maxLuggage}
+              maxLuggage={fleet.maxLuggage}
+              maxPassengers={fleet.maxPassengers}
             />
           </div>
         </section>

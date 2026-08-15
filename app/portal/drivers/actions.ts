@@ -4,14 +4,17 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { clamp, text, toLatinDigits } from "../_lib/form";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 
 /**
  * إجراءات سجلّ سائقي المتعهد — جدول `subcontractor_drivers` (هجرة 0040).
  *
  * نظير `fleet/actions.ts` حرفاً بحرف، وبقواعده الثلاث نفسها:
- * - `portalAccess()` أولاً في **كل** إجراء: الغلاف يحمي شجرة التصيير لا نقاط
- *   الـ POST، وهذه نقاط مستقلة تُنادى مباشرة.
+ * - `portalSetupAccess()` أولاً في **كل** إجراء: الغلاف يحمي شجرة التصيير لا نقاط
+ *   الـ POST، وهذه نقاط مستقلة تُنادى مباشرة. وهو الحارس **الموسَّع** لأن السجلّ
+ *   ملك الشريك ولا يمسّ تشغيلاً — بينما `set_trip_crew` التي تقرأ منه تبقى على
+ *   الحارس الضيّق. ولهذا التقسيم قياسٌ يسنده: `subcontractor_drivers` كان فارغاً
+ *   عند كل شريكٍ حقيقي في قاعدة بدر، لأن أحداً لم يعرف أن عليه ملؤه قبل الرحلة.
  * - كل استعلام مقيَّد بـ `subcontractor_id` صراحةً رغم أن RLS تعزل أصلاً —
  *   الشرط يجعل النية مقروءة، والسياسة تبقى خط الدفاع الذي لا يُتجاوز.
  * - فخ RLS المعروف: الكتابة «تنجح» بصفر صفوف حين ترفضها السياسة، فـ`.select()`
@@ -63,7 +66,7 @@ function readDriver(formData: FormData, prefix = ""): DriverFields | string {
 }
 
 export async function createDriver(formData: FormData) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -82,7 +85,7 @@ export async function createDriver(formData: FormData) {
 }
 
 export async function saveDriver(driverId: string, formData: FormData) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -111,7 +114,7 @@ export async function saveDriver(driverId: string, formData: FormData) {
  * رجعي، بينما الإيقاف يوقف الإسناد الجديد ولا يمسّ ما مضى.
  */
 export async function toggleDriver(driverId: string) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 
@@ -139,7 +142,7 @@ export async function toggleDriver(driverId: string) {
 }
 
 export async function deleteDriver(driverId: string) {
-  const access = await portalAccess();
+  const access = await portalSetupAccess();
   if (!access.ok) redirect(url(`error=${access.code}`));
   const { supabase, sub } = access;
 

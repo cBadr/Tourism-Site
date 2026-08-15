@@ -20,7 +20,8 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { portalAccess } from "../_lib/session";
+import { StageLock } from "../_components/stage-lock";
+import { portalAccess, readPortalGate } from "../_lib/session";
 import {
   CREW_ERROR_MESSAGES,
   CREW_SAVED_MESSAGE,
@@ -123,8 +124,30 @@ function TripCard({ trip, past }: { trip: PortalTrip; past?: boolean }) {
 }
 
 export default async function PortalTripsPage({ searchParams }: PageProps<"/portal/trips">) {
-  const [params, access] = await Promise.all([searchParams, portalAccess()]);
-  if (!access.ok) return null;
+  const [params, access, gate] = await Promise.all([
+    searchParams,
+    portalAccess(),
+    readPortalGate(),
+  ]);
+
+  if (!access.ok) {
+    // نظير `requests/page.tsx`: القفل يُعلَن ولا يُصمَت عنه في مرحلة التجهيز
+    if (gate.state === "onboarding") {
+      return (
+        <StageLock title="لا رحلات قبل اعتماد حسابك">
+          <p>
+            هنا تظهر الرحلات التي تقبلها من صندوق الطلبات ببيانات تواصل عملائها. والصندوق نفسه
+            لا يستقبل شيئاً قبل الاعتماد، فلا رحلة تصل هذه الشاشة بعد.
+          </p>
+          <p>
+            وحين تصل أولى الرحلات ستُطالَب بتسجيل مركبتها وسائقها من سجلّك — فسجِّل سائقاً واحداً
+            على الأقل الآن حتى لا تقف عند تلك اللحظة.
+          </p>
+        </StageLock>
+      );
+    }
+    return null;
+  }
 
   // `now` من القراءة نفسها لا من التصيير — فصل «القادم» عن «السابق» قرار زمني
   // يجب أن يبقى ثابتاً بين تصييرين متطابقين

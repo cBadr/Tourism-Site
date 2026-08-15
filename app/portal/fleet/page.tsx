@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { loadVehicleClasses, loadVehicles, type PortalVehicle } from "../_lib/data";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 import { createVehicle, deleteVehicle, saveVehicle, toggleVehicle } from "./actions";
 
 /**
@@ -205,7 +205,7 @@ function VehicleCard({
 }
 
 export default async function PortalFleetPage({ searchParams }: PageProps<"/portal/fleet">) {
-  const [params, access] = await Promise.all([searchParams, portalAccess()]);
+  const [params, access] = await Promise.all([searchParams, portalSetupAccess()]);
   if (!access.ok) return null;
 
   const { supabase, sub } = access;

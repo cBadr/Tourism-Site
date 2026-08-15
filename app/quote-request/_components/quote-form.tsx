@@ -6,9 +6,10 @@ import { CircleCheck, LoaderCircle, Send, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { ServiceDef } from "@/lib/site-config";
-import { useT } from "@/components/site/i18n";
+import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
-import { createFormatter } from "@/components/booking/format";
+import { createFormatter, type LocaleFormatter } from "@/components/booking/format";
+import { hasTripPrefill, type QuoteTripPrefill } from "../_lib/prefill";
 
 /**
  * نموذج «اطلب عرض سعر» — لما هو خارج الحاسبة الفورية: الجولات والمناسبات
@@ -43,12 +44,58 @@ function isPhoneValid(value: string): boolean {
 
 type FieldErrors = Partial<Record<"service" | "name" | "phone" | "details", string>>;
 
+/**
+ * سقف السطر الافتتاحي المُركَّب داخل حقلٍ حدّه ٢٠٠٠ (‏`maxLength` هنا، وقيد
+ * `quote_requests_details_len_chk` في القاعدة). أطول تركيبة ممكنة من الحمولة
+ * المنقّاة (‏١٢٠+١٢٠ حرفاً للمكانين + عدد + تاريخ) لا تبلغ نصف هذا الرقم —
+ * فهو حزامٌ ثانٍ لا حدّ عامل، ويضمن أن يبقى للعميل مجالٌ يكتب فيه بقية طلبه.
+ */
+const MAX_PREFILL_LINE = 600;
+
+/**
+ * يركّب السطر الافتتاحي من حمولة بطاقة الإنقاذ — **في المتصفح لا في الخادم**.
+ *
+ * 🔒 القاعدة: ما يعبر من الخادم إلى الواجهة رمزٌ لا جملة. لو رُكِّبت العبارة في
+ * `page.tsx` لوصلت `/en` عربيةً بلا ترجمة. فالخادم يمرّر بيانات، وهنا تُبنى
+ * الجملة بمفاتيح ترجمة (ونصّها العربي احتياطياً) وبمُنسِّق اللغة نفسه الذي
+ * يعرض السعر والمواعيد في كل الموقع — فالخانات عربية هندية في العربية،
+ * والتاريخ بتوقيت القاهرة، بلا صيغة ثانية تُخترع هنا.
+ */
+function composePrefillLine(prefill: QuoteTripPrefill, t: Tx, fmt: LocaleFormatter): string {
+  const parts: string[] = [];
+
+  const { from, to, passengers, pickupAt } = prefill;
+  if (from && to) {
+    parts.push(t("prefill.route", "من {from} إلى {to}", { from, to }));
+  } else if (from) {
+    parts.push(t("prefill.origin", "من {from}", { from }));
+  } else if (to) {
+    parts.push(t("prefill.destination", "إلى {to}", { to }));
+  }
+
+  if (typeof passengers === "number") parts.push(fmt.passengers(passengers));
+
+  const when = fmt.dateTime(pickupAt ?? null);
+  if (when) parts.push(when);
+
+  if (parts.length === 0) return "";
+  // الفاصل نفسه الذي يفصل مقاطع ملخّص الرحلة في شاشة العروض
+  return parts.join(" · ").slice(0, MAX_PREFILL_LINE);
+}
+
 export function QuoteRequestForm({
   defaultService,
+  tripPrefill,
   services,
   locale = DEFAULT_LOCALE,
 }: {
   defaultService?: string;
+  /**
+   * ما حملته بطاقة الإنقاذ في الرابط — **منقّى** في `_lib/prefill.ts`.
+   * يبدأ به حقل التفاصيل ليعدّله العميل، ولا يُرسَل حقلاً مستقلاً ولا يُخزَّن
+   * منفصلاً: القاعدة لا تعرف من هذا الطلب غير `details` نصّاً حراً.
+   */
+  tripPrefill?: QuoteTripPrefill;
   /** الخدمات بلغة الزائر — تصل من الصفحة الخادمية */
   services: ServiceDef[];
   /** لغة الزائر — تصل من الصفحة الخادمية، وغيابها يعني العربية */
@@ -61,7 +108,13 @@ export function QuoteRequestForm({
   const [serviceSlug, setServiceSlug] = React.useState(defaultService ?? "");
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
-  const [details, setDetails] = React.useState("");
+  // القيمة الابتدائية تُحسب مرة واحدة: بعدها الحقل ملك العميل يمحوه ويكتب فوقه.
+  // والسطران الفارغان بعده مقصودان — يترك المؤشر في مساحة بقية التفاصيل.
+  const [details, setDetails] = React.useState(() => {
+    if (!tripPrefill || !hasTripPrefill(tripPrefill)) return "";
+    const line = composePrefillLine(tripPrefill, t, fmt);
+    return line ? `${line}\n\n` : "";
+  });
 
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [submitError, setSubmitError] = React.useState<string | null>(null);

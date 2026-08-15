@@ -12,7 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 import { createDriver, deleteDriver, saveDriver, toggleDriver } from "./actions";
 import { loadDrivers, type PortalDriver } from "./data";
 
@@ -133,7 +133,7 @@ function DriverCard({ driver }: { driver: PortalDriver }) {
 }
 
 export default async function PortalDriversPage({ searchParams }: PageProps<"/portal/drivers">) {
-  const [params, access] = await Promise.all([searchParams, portalAccess()]);
+  const [params, access] = await Promise.all([searchParams, portalSetupAccess()]);
   if (!access.ok) return null;
 
   const { supabase, sub } = access;

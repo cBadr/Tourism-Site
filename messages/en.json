@@ -191,7 +191,9 @@
         "label": "Passengers",
         "decrease": "Decrease passengers",
         "increase": "Increase passengers",
-        "note": "Children count towards the total — currently: {current}."
+        "note": "Children count towards the total — currently: {current}.",
+        "capNote": "Our largest vehicle seats {max}.",
+        "atCap": "That is the most our largest vehicle can seat ({max}). For a larger group we arrange more than one vehicle — request a quote."
       },
       "luggage": {
         "label": "Bags",
@@ -245,7 +247,9 @@
       "submitting": "Calculating your price…",
       "staleResults": "You changed the trip details after the prices were shown — press “Get the price” to refresh them before booking.",
       "statusCalculating": "Calculating your price",
-      "statusOffers": "{count} price offers are now shown"
+      "statusOffers": "{count} price offers are now shown",
+      "statusNoClasses": "No vehicle class seats this many passengers — you can request a tailored quote.",
+      "statusNoClassesLuggage": "No vehicle class fits this many passengers and bags together — you can request a tailored quote."
     },
 
     "offers": {
@@ -294,7 +298,10 @@
       "priceNote": "The price is calculated automatically from the distance, the number of passengers and your trip options, and is locked in when you confirm the booking. You can pay the full amount or a deposit, with the rest paid to the driver.",
       "quoteRequest": {
         "standalone": "No vehicle class in the calculator fits this trip — we will arrange it manually with more than one vehicle.",
+        "standalonePassengers": "No single vehicle class seats this many passengers — we will arrange more than one vehicle with a tailored quote.",
+        "standaloneLuggage": "No vehicle class fits this many passengers and bags together — try fewer bags, or request a tailored quote and we will arrange more than one vehicle.",
         "cta": "Request a quote",
+        "carried": "We carry your trip details over to the form — your name and phone are left for you to fill in there.",
         "inlinePrefix": "Is your trip outside the calculator (a tour, an event, a daily rental)?",
         "inlineSuffix": "and we will reply with a tailored offer."
       },
@@ -325,6 +332,7 @@
       "stepStatus": "Step {index}",
       "trip": {
         "heading": "Pickup time",
+        "timeZoneNote": "All times are Cairo time (Egypt) — enter the pickup time as it is in Egypt, not in your own time zone.",
         "date": "Date",
         "time": "Time",
         "pickupAt": "Pickup",

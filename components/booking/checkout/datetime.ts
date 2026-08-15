@@ -8,7 +8,32 @@ import { formatDateLabel, formatDateTimeLabel } from "../format";
  * التنسيق (أرقام، مبالغ، مسافات) حتى تخرج كل الأرقام المرئية من مُنسّق واحد
  * يعرف لغة الزائر. ما بقي هنا: تحويل حقول النموذج، ومرادفان عربيان يحفظان
  * توافق المستدعين القدامى (صفحة متابعة الحجز ولوحة التحكم — عربيتان بالتعريف).
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 الوقت الذي يكتبه العميل **وقتُ القاهرة**، لا وقتُ جهازه
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * كان هذا الملف يبني `new Date(\`${date}T${time}\`)` — وهذه الصيغة يفسّرها
+ * المتصفح **بالمنطقة الزمنية للجهاز** — ثم يستدعي `toISOString()`. وكل عرضٍ
+ * في المنتج (‏`format.ts` · `i18n/request.ts`) بتوقيت `Africa/Cairo`. فمن
+ * يحجز من الخليج ويكتب ١٠:٠٠ كنّا نخزّن له لحظةً تُقرأ في القاهرة ٠٩:٠٠،
+ * ويصل السائق إلى مطار القاهرة بساعة خطأ. وهو عطل تشغيلي لا تجميلي.
+ *
+ * والعلاج **مسار تحويل واحد**: هذه الدالة وحدها تحوّل مُدخل النموذج، وكل من
+ * يبني موعداً من حقلَي `date`/`time` يمرّ بها. ومسارا تحويلٍ لقيمةٍ واحدة هو
+ * صنف العيب الذي يتكرر في هذا المشروع، فلا يُفتح ثانٍ.
+ *
+ * ⚠ **ولا يجوز إزاحة ثابتة `+02:00`**: مصر أعادت التوقيت الصيفي في 2023، فهي
+ * ‏`+03:00` من آخر جمعة في أبريل إلى آخر خميس في أكتوبر. الاشتقاق هنا من
+ * `Intl` بمنطقة `Africa/Cairo` — أي من قاعدة بيانات المناطق الحيّة — لا من
+ * رقم مكتوب.
+ *
+ * ⚠ **وما هو مخزَّن لا يُمسّ**: هذا الملف يغيّر **كيف يُحوَّل مُدخل جديد** فقط.
+ * قراءة الطوابع المخزّنة وعرضها لم تتغير بحرف — تبقى في `format.ts`.
  */
+
+/** منطقة تشغيل المنتج — نفس ثابت `i18n/request.ts` و`format.ts` */
+export const BOOKING_TIME_ZONE = "Africa/Cairo";
 
 /** تاريخ كامل بلغة العرض — الأحد ١٤ سبتمبر ٢٠٢٦ */
 export function formatDate(
@@ -36,21 +61,149 @@ export function formatArabicDateTime(value: string | null | undefined): string |
   return formatDateTimeLabel(value, "ar");
 }
 
+/* ------------------------------------------------------------------ */
+/* التحويل — من ساعة القاهرة إلى اللحظة المطلقة                          */
+/* ------------------------------------------------------------------ */
+
 /**
- * يبني ISO من حقلي <input type="date"> و<input type="time"> بتوقيت جهاز الزائر.
- * يرجع null إن كان أحد الحقلين ناقصاً أو التاريخ غير صالح.
+ * مكوّنات لحظةٍ مطلقة كما تُقرأ **على ساعة القاهرة**، معادةً كطابعٍ رقمي
+ * «كأنها UTC». الفرق بينها وبين اللحظة الأصلية هو إزاحة القاهرة في تلك اللحظة
+ * بالضبط (‏`+02:00` شتاءً و`+03:00` صيفاً) — فلا رقم إزاحةٍ مكتوب في الكود.
  */
-export function toIsoFromLocalInputs(date: string, time: string): string | null {
-  if (!date || !time) return null;
-  const parsed = new Date(`${date}T${time}`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
+function cairoWallClockAsUtc(instantMs: number): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: BOOKING_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(instantMs));
+
+    const read = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+    const year = read("year");
+    const month = read("month");
+    const day = read("day");
+    const hour = read("hour");
+    const minute = read("minute");
+    const second = read("second");
+    if ([year, month, day, hour, minute, second].some((n) => !Number.isFinite(n))) return null;
+
+    return Date.UTC(year, month - 1, day, hour, minute, second);
+  } catch {
+    // بيئة بلا بيانات مناطق زمنية كاملة
+    return null;
+  }
 }
 
-/** تاريخ اليوم بصيغة yyyy-mm-dd بتوقيت الجهاز — لخاصية min في حقل التاريخ */
+/**
+ * إزاحة القاهرة (بالميلي ثانية) عند لحظةٍ بعينها.
+ *
+ * وحين تتعذّر قراءتها نُرجع صفراً عمداً — أي نعامل المُدخل كأنه UTC. وهو
+ * **نفس ما تفعله `format.ts`** حين يسقط `Intl` عندها (تعرض بـ UTC)، فيبقى ما
+ * كتبه العميل مطابقاً لما يُعرض له. أي أن الطرفين يسقطان معاً على نفس المرجع،
+ * ولا ينشأ فرقُ ساعةٍ صامت بين الإدخال والعرض في تلك البيئة النادرة.
+ */
+function cairoOffsetMs(instantMs: number): number {
+  const wall = cairoWallClockAsUtc(instantMs);
+  return wall === null ? 0 : wall - instantMs;
+}
+
+/** yyyy-mm-dd كما يخرجها `<input type="date">` */
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** HH:mm أو HH:mm:ss كما يخرجها `<input type="time">` */
+const TIME_PATTERN = /^(\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+/**
+ * يبني ISO من حقلي `<input type="date">` و`<input type="time">`، **مفسِّراً ما
+ * كتبه العميل على ساعة القاهرة** أياً كانت منطقة جهازه.
+ *
+ * يرجع null إن كان أحد الحقلين ناقصاً أو التاريخ غير صالح.
+ *
+ * الخوارزمية: نبني الطابع «الساذج» (‏`Date.UTC` للمكوّنات كما كُتبت)، ثم نطرح
+ * إزاحة القاهرة. والطرح يُعاد مرةً ثانية بالإزاحة المقيسة عند النتيجة نفسها،
+ * لأن الإزاحة قد تختلف بين الطابع الساذج واللحظة الحقيقية في **ليلتَي تغيير
+ * التوقيت وحدهما** — وبهذه التمريرة الثانية تستقر النتيجة.
+ *
+ * وحالتان في السنة كلها تخرجان عن «المكتوب = المعروض»، وكلتاهما بحكم التقويم
+ * لا بخلل في الحساب (مقيستان على سنة ٢٠٢٦ كاملة: ٢٬١٩٠ موعداً، لا ثالثة لهما):
+ *
+ * • **الساعة المعدومة** — ليلة بدء التوقيت الصيفي تقفز ساعة القاهرة من ٠٠:٠٠
+ *   إلى ٠١:٠٠، فالساعة الأولى من ذلك اليوم لا وجود لها. ومن كتبها تُدفع إلى
+ *   أول لحظة قائمة بعدها (‏٠٠:٣٠ ⇐ ٠١:٣٠) — وهو السلوك الصحيح: لا يجوز أن
+ *   يُرفض الحجز، ولا أن تُنتَج لحظةٌ في اليوم السابق.
+ * • **الساعة المكرّرة** — ليلة نهاية التوقيت الصيفي تقع ٢٣:٠٠–٢٣:٥٩ مرتين،
+ *   فنختار **الثانية** (بعد التحويل). فرق الاختيار ساعة واحدة في ليلةٍ واحدة،
+ *   والمعروض للعميل يطابق ما كتبه في الحالتين.
+ */
+export function toIsoFromCairoInputs(date: string, time: string): string | null {
+  if (!date || !time) return null;
+
+  const dateMatch = DATE_PATTERN.exec(date);
+  const timeMatch = TIME_PATTERN.exec(time);
+  if (!dateMatch || !timeMatch) return null;
+
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  const second = Number(timeMatch[3] ?? "0");
+
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  const naive = Date.UTC(year, month - 1, day, hour, minute, second);
+  if (Number.isNaN(naive)) return null;
+  // يرفض ما لا وجود له في التقويم (‏٣٠ فبراير) — `Date.UTC` تُدوِّره بصمت
+  const naiveDate = new Date(naive);
+  if (
+    naiveDate.getUTCFullYear() !== year ||
+    naiveDate.getUTCMonth() !== month - 1 ||
+    naiveDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  const first = naive - cairoOffsetMs(naive);
+  const settled = naive - cairoOffsetMs(first);
+  return new Date(settled).toISOString();
+}
+
+/**
+ * ⚠ الاسم القديم — يبقى **مرادفاً للدالة نفسها** لا مساراً ثانياً.
+ *
+ * سببه أن `components/booking/search-widget.tsx` يستورده بهذا الاسم، وهو ملف
+ * خارج نطاق هذه الموجة فلا يُلمَس. وهو يكسب التصحيح كاملاً لأن الجسم واحد.
+ * ومتى نُقل ذلك المستدعي إلى الاسم الصريح، حُذف هذا السطر.
+ *
+ * @deprecated استعمل `toIsoFromCairoInputs` — «Local» هنا تعني القاهرة لا الجهاز.
+ */
+export const toIsoFromLocalInputs = toIsoFromCairoInputs;
+
+/**
+ * تاريخ اليوم بصيغة yyyy-mm-dd **بتوقيت القاهرة** — لخاصية `min` في حقل التاريخ.
+ *
+ * وليس بتوقيت الجهاز: من يحجز من نيويورك مساءً يكون في القاهرة قد دخل اليوم
+ * التالي، فأرضيةٌ محسوبة على جهازه تسمح باختيار يومٍ **مضى** في مصر. والحقل
+ * صار يعني «تاريخ القاهرة» بعد التصحيح أعلاه، فأرضيته يجب أن تُقاس بنفس الساعة.
+ */
 export function todayInputValue(): string {
   const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
+  try {
+    // en-CA تُخرج yyyy-mm-dd مباشرةً — نفس صيغة `<input type="date">`
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: BOOKING_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  } catch {
+    // نفس منطق السقوط أعلاه: UTC مرجعاً مشتركاً بدل توقيت الجهاز
+    const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(now.getUTCDate()).padStart(2, "0");
+    return `${now.getUTCFullYear()}-${month}-${day}`;
+  }
 }

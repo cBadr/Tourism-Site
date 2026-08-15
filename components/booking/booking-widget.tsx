@@ -4,7 +4,7 @@ import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { SearchWidget } from "./search-widget";
 import { getPublicExtras } from "./extras-catalog";
-import { getMaxLuggageCapacity } from "./fleet-luggage";
+import { getFleetCaps } from "./fleet-luggage";
 import type { BookingContact } from "./offers";
 
 /**
@@ -36,7 +36,7 @@ export async function BookingWidget({
   locale?: string;
   className?: string;
 }) {
-  const [discountEnabled, loyaltyEnabled, offerBanners, checkoutBanners, extras, maxLuggage] =
+  const [discountEnabled, loyaltyEnabled, offerBanners, checkoutBanners, extras, fleet] =
     await Promise.all([
       isDiscountEnabled(),
       // راية الولاء (١٢ب) — تُقرأ هنا لا في الجزيرة، ولنفس سبب أختها: قراءةُ
@@ -47,9 +47,10 @@ export async function BookingWidget({
       // كتالوج الخدمات (0031): يُقرأ هنا لا في الجزيرة — والفارغ يعني ألّا يظهر
       // في الويدجت شيء إطلاقاً، وهي الحالة الافتراضية حتى يضيف المالك خدماته.
       getPublicExtras(),
-      // سقف عدّاد الحقائب من الأسطول نفسه: عدّادٌ يصعد فوق أكبر سعة يعرض على
-      // العميل رقماً يضمن «لا توجد فئة». والفشل يعيد null فيبقى السقف الثابت.
-      getMaxLuggageCapacity(),
+      // سقفا عدّادَي الركاب والحقائب من الأسطول نفسه — **قراءة واحدة للرقمين**:
+      // عدّادٌ يصعد فوق أكبر سعة يعرض على العميل رقماً يضمن «لا توجد فئة».
+      // والفشل يعيد null للرقمين فيبقى الثابتان كما كانا.
+      getFleetCaps(),
     ]);
 
   return (
@@ -63,7 +64,8 @@ export async function BookingWidget({
       offerBanners={offerBanners}
       checkoutBanners={checkoutBanners}
       extras={extras}
-      maxLuggage={maxLuggage}
+      maxLuggage={fleet.maxLuggage}
+      maxPassengers={fleet.maxPassengers}
     />
   );
 }

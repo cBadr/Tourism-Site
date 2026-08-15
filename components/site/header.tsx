@@ -67,16 +67,38 @@ export async function SiteHeader({
           )}
         </a>
 
-        {/* التنقل — شاشات متوسطة فأكبر */}
+        {/*
+         * التنقل — العتبة `xl` لا `lg`. القياس (لا التقدير) على خادم التطوير:
+         * القائمة **سبعة** روابط (`NAV_LINKS` في links.ts)، وعرضها الطبيعي على
+         * سطر واحد ٧١٠ بكسل بالإنجليزية مقابل ٥٧٩ بالعربية — «Track your
+         * booking» وحدها ١٥٣ مقابل «تابع حجزك» ٩٥. ومع الشعار (٩٢) وكتلة
+         * اليمين (٢٠٣) وفجوتَي ١٦ يلزم الصفَّ ‏١٠٣٧ بكسل صافية.
+         *
+         * وعند `lg` (‏١٠٢٤) المتاح ٩٧٦ فقط بعد `px-6`، فكان أربعة روابط تلتف
+         * سطرين داخل صناديقها (ارتفاع الشريط ٥٦ بدل ٣٦) بين ١٠٢٤ و‏١١٣٠ على
+         * `/en` وحدها — العربية أقصر فلم تُظهر العيب لمن قاس بها.
+         *
+         * ولماذا `xl` لا نقطة توقّف مفصّلة عند ١١٠٠؟ لأن المتاح فوق ‏١١٥٢
+         * ثابت عند ١١٠٤ (‏`max-w-6xl`) فالهامش ٦٧ بكسل مستقرّ ولا يتعلق
+         * بعرض النافذة، بينما ١١٣٠ يعطي ١٥ بكسل فقط بعد شريط التمرير —
+         * و**عرض الشعار يأتي من الإعدادات** (صورة يرفعها المالك) فأي عتبة
+         * مضبوطة على أطوال اليوم تتقادم مع أول شعار أعرض أو أول لغة ثالثة.
+         * وما دون العتبة ليس فقداناً: قائمة الجوال تحمل الروابط السبعة نفسها.
+         *
+         * و`whitespace-nowrap` مع `shrink-0` يجعلان الالتفاف مستحيلاً بنيوياً
+         * لا مستبعَداً بالحساب: إن ضاق الصف يوماً ينكمش الشعار (وهو ما يحتمله)
+         * ولا يعود الشريط سطرين. و`px-2.5` بدل `px-3` تكسب ٢٨ بكسل إضافية
+         * فيتّسع الهامش لشعار حتى ١٨٧ بكسل بدل ١٦٠.
+         */}
         <nav
           aria-label={t("mainNav", "التنقل الرئيسي")}
-          className="hidden items-center gap-1 lg:flex"
+          className="hidden shrink-0 items-center gap-1 xl:flex"
         >
           {links.map((link) => (
             <a
               key={link.href}
               href={link.href}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              className="rounded-lg px-2.5 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
               {link.label}
             </a>
@@ -102,9 +124,10 @@ export async function SiteHeader({
           </a>
 
           {/* قائمة الجوال — بلا JavaScript */}
-          {/* العتبة `lg` لا `md`: بند «تابع حجزك» رفع روابط التنقّل إلى خمسة،
-              ومع مبدّل اللغة (يظهر فور تفعيل لغة ثانية) يفيض الشريط بين ٧٦٨ و٨٦٠ بكسل. */}
-          <details className="group relative lg:hidden">
+          {/* ⚠ العتبة هنا **مرآة** لعتبة `<nav>` أعلاه ولا تُغيَّر وحدها: أيّ
+              اختلاف بينهما يترك نطاقاً بلا أي مدخل للتنقّل، أو يعرض القائمتين
+              معاً. المبرر الكامل للرقم — ومقاسات السبعة روابط — عند `<nav>`. */}
+          <details className="group relative xl:hidden">
             <summary
               className="grid size-9 cursor-pointer list-none place-items-center rounded-xl border border-border bg-background text-foreground transition-colors hover:bg-muted [&::-webkit-details-marker]:hidden"
               aria-label={t("menu", "القائمة")}

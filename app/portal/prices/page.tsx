@@ -27,7 +27,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { countItemsByList, loadPriceLists, type PortalPriceList } from "../_lib/data";
-import { portalAccess } from "../_lib/session";
+import { portalSetupAccess } from "../_lib/session";
 import { deletePriceList, submitPriceList } from "./actions";
 
 /**
@@ -150,7 +150,7 @@ function ListCard({ list, itemCount }: { list: PortalPriceList; itemCount: numbe
 }
 
 export default async function PortalPricesPage({ searchParams }: PageProps<"/portal/prices">) {
-  const [params, access] = await Promise.all([searchParams, portalAccess()]);
+  const [params, access] = await Promise.all([searchParams, portalSetupAccess()]);
   if (!access.ok) return null;
 
   const { supabase, sub } = access;

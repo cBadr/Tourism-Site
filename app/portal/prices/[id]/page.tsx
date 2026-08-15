@@ -31,7 +31,7 @@ import {
   toPriceList,
   type PortalPriceList,
 } from "../../_lib/data";
-import { isSchemaMissing, portalAccess } from "../../_lib/session";
+import { isSchemaMissing, portalSetupAccess } from "../../_lib/session";
 import { savePriceList } from "../actions";
 
 /**
@@ -115,7 +115,7 @@ export default async function PortalPriceListPage({
   params,
   searchParams,
 }: PageProps<"/portal/prices/[id]">) {
-  const [{ id }, query, access] = await Promise.all([params, searchParams, portalAccess()]);
+  const [{ id }, query, access] = await Promise.all([params, searchParams, portalSetupAccess()]);
   if (!access.ok) return null;
 
   const { supabase, sub } = access;
