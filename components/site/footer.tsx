@@ -6,7 +6,7 @@ import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
 import { createFormatter } from "@/components/booking/format";
 import { LocaleSwitcher } from "./locale-switcher";
-import { externalLinkProps, localeHref, navLinks, socialEntries } from "./links";
+import { accountLinks, externalLinkProps, localeHref, navLinks, socialEntries } from "./links";
 import { SOCIAL_ICONS } from "./social-icons";
 
 /**
@@ -20,6 +20,9 @@ const LEGAL_PAGES = [
   { slug: "refund-policy", key: "legal.refundPolicy", label: "سياسة الاسترداد" },
   { slug: "privacy", key: "legal.privacy", label: "سياسة الخصوصية" },
 ] as const;
+
+/** الصفحات الثابتة التي يملكها صفّ الحقوق أدناه — تُستبعَد من عمود الأقسام */
+const LEGAL_SLUGS: ReadonlySet<string> = new Set(LEGAL_PAGES.map((page) => page.slug));
 
 /** عمود روابط موحّد في التذييل */
 function FooterLinkColumn({
@@ -57,10 +60,23 @@ export async function SiteFooter({
   settings: SiteSettings;
   locale?: string;
 }) {
-  const [services, corridors, statics, t, tNav, tSocial] = await Promise.all([
+  const [services, corridors, statics, landings, t, tNav, tSocial] = await Promise.all([
     getPagesByKind("service", locale),
     getPagesByKind("corridor", locale),
     getPagesByKind("static", locale),
+    /**
+     * 🔴 النوع الرابع `landing` (الفجوة ١٦ والفجوة ٢٣).
+     *
+     * `/business` صفحةُ هبوطٍ **منشورة وحيّة بخمسة أقسام، وبلا رابط واحد إليها
+     * في الموقع كله**: ليست في `NAV_LINKS`، وكان هذا المُولّد يقرأ ثلاثة أنواع
+     * فقط (`service` · `corridor` · `static`) — و`landing` خارجها. فصفحةٌ
+     * مكتوبة ومنشورة لا يصلها أحد، ولا زاحفٌ يجد إليها طريقاً داخلياً.
+     *
+     * والإصلاح سطرٌ في **المُولّد** لا رابطٌ مكتوب باليد: أي صفحة هبوط ينشرها
+     * المالك بعد اليوم تظهر وحدها، وإلغاء نشرها يُطفئ رابطها — وهو بالضبط ما
+     * يُقصد بـ«التذييل يُبنى من القاعدة» في قرار الفجوة ٢٣.
+     */
+    getPagesByKind("landing", locale),
     getT("site.footer", locale),
     getT("site.nav", locale),
     getT("site.social", locale),
@@ -74,7 +90,43 @@ export async function SiteFooter({
   // كانت تنتج «//#services» وهو رابط بروتوكول-نسبي مكسور
   const sectionLinks = [
     ...navLinks(tNav, locale),
-    { href: localeHref("/about", locale), label: tNav("about", "من نحن") },
+    /**
+     * 🔴 كل صفحة ثابتة منشورة — لا `/about` وحدها مكتوبةً باليد.
+     *
+     * **العيب المقيس الذي عالجه هذا السطر:** خريطة الموقع تُعلن `/contact`
+     * و`/faq` للزاحف (وهما صفحتان منشورتان من نوع `static`)، **ولا رابط داخلي
+     * واحد يقود إليهما في الموقع كله** — نفس صنف `/business` بالضبط. وصفحةٌ في
+     * الخريطة بلا طريق داخلي صفحةٌ يتيمة: يعرفها الزاحف ولا يعرفها زائر، ولا
+     * وزن داخلياً يصلها.
+     *
+     * وكان السطر السابق يكتب `/about` بيده — فحلّ العيبَ لصفحةٍ واحدة وأبقاه
+     * لكل ما بعدها. والقراءة من القاعدة تجعله يشفى وحده: أي صفحة ثابتة ينشرها
+     * المالك تظهر، وإلغاء نشرها يُطفئ رابطها. وهو بنصّه قرار الفجوة ٢٣.
+     *
+     * والصفحات القانونية الثلاث مستبعدة هنا لأن لها صفَّها المستقل أسفل التذييل
+     * — وإلا ظهر كلٌّ منها مرتين في الصفحة نفسها.
+     */
+    ...statics
+      .filter((page) => !LEGAL_SLUGS.has(page.slug))
+      .map((page) => ({
+        href: localeHref(`/${page.slug}`, locale),
+        label: page.title,
+      })),
+    // صفحات الهبوط من القاعدة — عنوانها منها فيُحرَّر من اللوحة كأي صفحة
+    ...landings.map((page) => ({
+      href: localeHref(`/${page.slug}`, locale),
+      label: page.title,
+    })),
+    /**
+     * رابطا الحساب — **ثابتان بلا قراءة جلسة**، وهذا شرطُ بقاء التذييل خادمياً
+     * على كل صفحة (نفس مبرر جزيرة الترويسة، من الجهة الأخرى).
+     *
+     * وعرضُهما للجميع سليم: `/account/login` تُحوِّل صاحب الجلسة إلى «حجوزاتي»،
+     * و«حجوزاتي» تلقى من لا جلسة له ببطاقة «سجّل دخولك» ومعها طريق `/track`.
+     * فلا يقع أحدٌ على باب مغلق، **ومن عطّل JavaScript يجد الطريقين هنا** بعد
+     * أن غابت عنه جزيرة الترويسة.
+     */
+    ...accountLinks(tNav, locale),
   ];
   const serviceLinks = services.map((page) => ({
     href: localeHref(`/services/${page.slug}`, locale),

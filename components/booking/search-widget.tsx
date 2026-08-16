@@ -33,7 +33,9 @@ import {
   type TripSummary,
 } from "./offers";
 import { ExtrasPicker } from "./extras-picker";
-import { todayInputValue, toIsoFromLocalInputs } from "./checkout/datetime";
+import { todayInputValue, toIsoFromLocalInputs, minInputValues } from "./checkout/datetime";
+import { previewLeadTime } from "./checkout/lead-time-action";
+import type { LeadTime } from "./checkout/lead-time";
 import {
   MAX_LUGGAGE,
   estimateWaitingHours,
@@ -545,7 +547,45 @@ export function SearchWidget({
   } | null>(null);
 
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
-  const minDate = React.useMemo(() => todayInputValue(), []);
+  const todayValue = React.useMemo(() => todayInputValue(), []);
+
+  /* ---------------------------------------------------------------- */
+  /* أ‑٢ — أدنى مهلة قبل الانطلاق، لمنتقي الذهاب والعودة                */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * موعدا الذهاب والعودة يُجمعان **هنا** حين تكون الرحلة ذهاباً وعودة (منذ
+   * 0031: هما مُدخلان سعريان)، فأرضية المهلة يجب أن تقع هنا كذلك. ولولا ذلك
+   * لسعّرنا للعميل رحلةً بموعدٍ **ترفضه القاعدة عند الحجز** — أي بطاقةُ سعرٍ
+   * لطلبٍ لا يمكن أن يُنشأ، وهو أسوأ من رسالة خطأ مبكرة.
+   *
+   * 🔒 والحدّ من `booking_min_pickup_at()` وحدها — نفس الدالة التي يفرضها
+   * `create_booking` — فلا معادلة ثانية في المتصفح.
+   *
+   * ⚠ ورحلة الاتجاه الواحد لا موعد لها هنا أصلاً: موعدها في مسار الحجز،
+   * وأرضيته هناك (`checkout.tsx`). فالقراءة تقع على الحالتين معاً لأن العميل
+   * قد يبدّل المفتاح بعد التحميل، والجواب واحد لا يُعاد سؤاله.
+   */
+  const [lead, setLead] = React.useState<LeadTime | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    void previewLeadTime()
+      .then((result) => {
+        if (alive) setLead(result);
+      })
+      .catch(() => {
+        // الصمت الآمن: تبقى الأرضية «اليوم» كما كانت، والقاعدة هي التي ترفض
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const leadFloor = lead?.enabled ? minInputValues(lead.minPickupAt) : null;
+  /** أرضية حقل التاريخ: الأبعد من «اليوم» و«يوم أقرب موعد متاح» */
+  const minDate = leadFloor && leadFloor.date > todayValue ? leadFloor.date : todayValue;
+  /** وأرضية الساعة في يوم الأرضية وحده — الحقل لا يعرف التاريخ */
+  const minPickupTime = leadFloor && pickupDate === leadFloor.date ? leadFloor.time : undefined;
 
   const fieldHeight = compact ? "h-11" : "h-12";
   const hasExtras = extras.length > 0;
@@ -705,6 +745,27 @@ export function SearchWidget({
     if (returnBeforePickup) {
       setHint(t("hints.returnOrder", "موعد العودة يجب أن يكون بعد موعد الانطلاق."));
       return;
+    }
+    /**
+     * أ‑٢ — طبقةٌ ثانية خلف أرضية المنتقي: `min` تلميحٌ يتجاوزه من يكتب
+     * التاريخ يدوياً، ومن يترك الصفحة مفتوحة حتى يزحف «الآن» على اختياره.
+     * والحدّ هو **ما أرجعته القاعدة** لا حاصلَ ضربٍ يُحسب هنا.
+     */
+    if (pickupAt !== null && lead?.enabled && lead.minPickupAt !== null) {
+      const floor = Date.parse(lead.minPickupAt);
+      if (Number.isFinite(floor) && new Date(pickupAt).getTime() < floor) {
+        setHint(
+          t(
+            "hints.pickupTooSoon",
+            "نحتاج مهلة {minutes} دقيقة على الأقل لتجهيز رحلتك — اختر موعد انطلاق بعد {value}.",
+            {
+              minutes: fmt.digits(lead.leadMinutes),
+              value: fmt.dateTime(lead.minPickupAt) ?? "",
+            }
+          )
+        );
+        return;
+      }
     }
 
     const payload: QuoteRequestWithExtras = {
@@ -1042,6 +1103,7 @@ export function SearchWidget({
                 <input
                   id={`${uid}-pickup-time`}
                   type="time"
+                  min={minPickupTime}
                   value={pickupTime}
                   onChange={(event) => setPickupTime(event.target.value)}
                   aria-describedby={scheduleNoteId}
@@ -1125,6 +1187,29 @@ export function SearchWidget({
                           "العودة في نفس اليوم — تُحتسب ساعات انتظار السائق بسعر الساعة لفئتك."
                         )}
             </p>
+
+            {/*
+              أ‑٢ — «أقرب موعد متاح» يُقال قبل المحاولة. أرضية المنتقي تمنع
+              الاختيار لكنها صامتة: من يضغط على يومٍ رمادي لا يعرف السبب.
+              ولا تظهر حين تكون المهلة مطفأة — سطرٌ يعلن قيداً لا وجود له عيبٌ
+              من صنف «شاشة تَعِد بما لا تفعله القاعدة».
+            */}
+            {leadFloor && lead?.enabled ? (
+              <p className="flex items-start gap-2 text-xs leading-6 text-muted-foreground">
+                <CalendarClock
+                  className="mt-1 size-3.5 shrink-0 text-primary"
+                  aria-hidden="true"
+                />
+                {t(
+                  "schedule.leadNote",
+                  "نحتاج مهلة {minutes} دقيقة على الأقل لتجهيز رحلتك — أقرب موعد متاح {value}.",
+                  {
+                    minutes: fmt.digits(lead.leadMinutes),
+                    value: fmt.dateTime(lead.minPickupAt) ?? "",
+                  }
+                )}
+              </p>
+            ) : null}
           </div>
         ) : null}
 

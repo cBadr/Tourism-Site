@@ -3,6 +3,22 @@ import type { SectionContentMap } from "@/lib/content-types";
 /**
  * قسم النص الحر: يقسم `body` على الأسطر الفارغة إلى فقرات <p>
  * بعرض قراءة مريح، مع عنوان اختياري فوقها.
+ *
+ * ── ما تغيّر في م‑١٠، ولماذا يخصّ هذا الملف بعينه ───────────────────────────
+ *
+ * هذه الكتلة هي **حاوية النثر الوحيدة في المنتج**، والصفحات الثابتة مبنيةٌ
+ * منها متتاليةً (الشروط ١١ · الخصوصية ١٠ · الاسترداد ٩). وحاويتها كانت
+ * `max-w-3xl` = ٧٦٨px، أي سطراً عربياً يقارب المئة محرف — والعين تفقد أول
+ * السطر التالي عند هذا العرض، فتُقرأ الفقرة مرتين أو يُقفز سطر.
+ *
+ * فحلّ `prose-ar` محلّ العرض والإيقاع المكتوبين بالأدوات:
+ *   `max-w-3xl` ⇐ عرض القراءة (‏`--measure-prose` ≈ ٦٨ محرفاً)
+ *   `leading-8 sm:leading-9` ⇐ `--leading-arabic` (١٫٨٥ — رمز الثيم القائم)
+ *   `gap-5` ⇐ إيقاع الفقرة (١٫١٥em)، فيتبع قياس الخطّ بدل أن يثبت على ٢٠px
+ *
+ * ⚠ **والقياسات صارت رموزاً**: `text-body` و`text-h3` من سلّم `@theme` لا
+ * `sm:text-lg`/`text-2xl` — فقياسُ المتن يتبع سلّم التصميم في الصفحات كلها،
+ * ونسخةٌ ثانية من العلامة تُطلق بتغيير سلّمٍ واحد لا بمطاردة أصنافٍ في ملفات.
  */
 export function RichTextSection({
   content,
@@ -17,19 +33,14 @@ export function RichTextSection({
   if (paragraphs.length === 0 && !content.title) return null;
 
   return (
-    <section className="py-16 md:py-20">
-      <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
-        {content.title ? (
-          <h2 className="mb-6 text-balance text-2xl font-bold leading-snug tracking-tight sm:text-3xl">
-            {content.title}
-          </h2>
-        ) : null}
-        <div className="flex flex-col gap-5">
+    <section className="py-12 md:py-16">
+      <div className="mx-auto w-full max-w-wrap px-gut">
+        <div className="prose-ar">
+          {content.title ? (
+            <h2 className="text-balance text-h3 font-bold">{content.title}</h2>
+          ) : null}
           {paragraphs.map((paragraph, index) => (
-            <p
-              key={index}
-              className="text-pretty leading-8 text-muted-foreground sm:text-lg sm:leading-9"
-            >
+            <p key={index} className="text-body text-muted-foreground">
               {paragraph}
             </p>
           ))}

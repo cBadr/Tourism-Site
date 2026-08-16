@@ -5,6 +5,7 @@ import {
   CustomerContact,
   PayoutBlock,
   TripFacts,
+  TripFlight,
   TripNotes,
   TripRoute,
   TripStatusChip,
@@ -102,6 +103,12 @@ function TripCard({ trip, past }: { trip: PortalTrip; past?: boolean }) {
       </div>
 
       <TripFacts trip={trip} />
+      {/*
+        ج‑٣ — رقم الرحلة الجوية **فوق** الملاحظات لا داخلها: هو ما يحدّد متى
+        يقف السائق فعلاً في نقل المطار (الرحلة تتأخر فيصير الموعد المكتوب
+        خطأً). وكان يصل مدسوساً في نصّ الملاحظات فيُقرأ أو لا يُقرأ.
+      */}
+      <TripFlight flightNumber={trip.flightNumber} />
       <TripNotes notes={trip.notes} />
 
       {/*

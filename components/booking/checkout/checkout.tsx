@@ -11,6 +11,8 @@ import {
   ChevronRight,
   Clock,
   LoaderCircle,
+  PhoneCall,
+  Plane,
   Route,
   TriangleAlert,
   User,
@@ -36,9 +38,13 @@ import { CouponField, DiscountRows } from "../coupon-field";
 import { RedeemField, RedeemRows } from "../redeem-field";
 import { PromoBanners } from "../promo-banner";
 import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
+import { isAirportTrip } from "../airport";
 import { readPaymentSettings, splitAmounts } from "./payment";
-import { todayInputValue, toIsoFromCairoInputs } from "./datetime";
+import { todayInputValue, toIsoFromCairoInputs, minInputValues } from "./datetime";
 import { previewPaymentHold } from "./hold-action";
+import { previewLeadTime, previewPhoneEcho } from "./lead-time-action";
+import type { LeadTime } from "./lead-time";
+import type { PhoneEcho } from "./phone-echo";
 import type { PaymentHold } from "./hold";
 
 /**
@@ -135,7 +141,7 @@ export type CheckoutProps = {
 
 type Step = 1 | 2 | 3;
 
-type FieldKey = "pickup" | "name" | "phone" | "whatsapp";
+type FieldKey = "pickup" | "name" | "phone" | "phoneConfirm" | "whatsapp";
 type FieldErrors = Partial<Record<FieldKey, string>>;
 
 const STEPS: { index: Step; key: string; title: string }[] = [
@@ -308,6 +314,25 @@ export function Checkout({
   const [phone, setPhone] = React.useState("");
   const [sameWhatsapp, setSameWhatsapp] = React.useState(true);
   const [whatsapp, setWhatsapp] = React.useState("");
+  /** ج‑٣ — رقم الرحلة الجوية، ولا يُجمع إلا في الرحلة المطارية */
+  const [flightNumber, setFlightNumber] = React.useState("");
+
+  /**
+   * أ‑١ — الرقم كما فهمه النظام، والشكل المعياري الذي أقرّه العميل.
+   *
+   * 🔒 **حالتان لا واحدة، والفصل بينهما هو الميزة كلها.** `echo` هو ما تقوله
+   * القاعدة عن النص المكتوب الآن؛ و`ackedNormalized` هو الشكل المعياري الذي
+   * ضغط العميل على إقراره. وما دام الإقرار مخزَّناً **بقيمة الرقم لا برايةٍ
+   * منطقية**، فأي تعديل يغيّر الرقم يُسقطه بنيوياً — بلا `useEffect` يتذكّر أن
+   * يُصفّره، وبلا احتمال أن ينجو إقرارٌ لرقمٍ لم يعد مكتوباً.
+   *
+   * ⚠ وتعديلٌ لا يغيّر الشكل المعياري (‏`0101 000 0506` ⇐ `+20 101 000 0506`)
+   * **لا يُسقط الإقرار** — وهو الصواب: العميل أقرّ الرقم لا نصّه.
+   */
+  const [echoState, setEchoState] = React.useState<(PhoneEcho & { forPhone: string }) | null>(
+    null
+  );
+  const [ackedNormalized, setAckedNormalized] = React.useState<string | null>(null);
 
   const [plan, setPlan] = React.useState<PaymentPlan>("deposit");
   const [payment, setPayment] = React.useState<PaymentSettings>(DEFAULT_PAYMENT_SETTINGS);
@@ -318,9 +343,46 @@ export function Checkout({
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [hold, setHold] = React.useState<PaymentHold | null>(null);
+  const [lead, setLead] = React.useState<LeadTime | null>(null);
 
   const topRef = React.useRef<HTMLDivElement | null>(null);
-  const minDate = React.useMemo(() => todayInputValue(), []);
+  const todayValue = React.useMemo(() => todayInputValue(), []);
+
+  /**
+   * أ‑٢ — أرضية المنتقي من `booking_min_pickup_at()` وحدها، وبلا معادلة هنا.
+   *
+   * تُقرأ عند تركيب المسار (والموعد يُختار في الخطوة الأولى، فهي أبكر لحظة
+   * ينفع فيها الجواب)، وتُقرأ ثانيةً كلما عاد العميل إلى الخطوة الأولى — لأن
+   * «الآن» يزحف: من يفتح النموذج ثم يتركه نصف ساعة كانت أرضيته القديمة تسمح
+   * بموعدٍ صار محظوراً.
+   *
+   * 🔒 والفشل يعيد `null` فتبقى الأرضية كما كانت (اليوم فقط) — والحارس في
+   * القاعدة هو الذي يمنع، لا هذه القراءة.
+   */
+  React.useEffect(() => {
+    if (step !== 1) return;
+    let alive = true;
+    void previewLeadTime()
+      .then((result) => {
+        if (alive) setLead(result);
+      })
+      .catch(() => {
+        // الصمت الآمن: تبقى الأرضية بلا تشديد، والقاعدة ترفض ما لا يجوز
+      });
+    return () => {
+      alive = false;
+    };
+  }, [step]);
+
+  const leadFloor = lead?.enabled ? minInputValues(lead.minPickupAt) : null;
+  /** أرضية حقل التاريخ: الأبعد من «اليوم» و«يوم أقرب موعد متاح» */
+  const minDate = leadFloor && leadFloor.date > todayValue ? leadFloor.date : todayValue;
+  /**
+   * أرضية حقل الساعة **تُطبَّق في يوم الأرضية وحده**: `<input type="time">`
+   * لا يعرف التاريخ، فوضعُ `min` عليه في يومٍ لاحق كان يمنع الحجز فجراً بعد
+   * غدٍ لمجرد أن أقرب موعدٍ اليوم بعد الظهر.
+   */
+  const minTime = leadFloor && pickupDate === leadFloor.date ? leadFloor.time : undefined;
 
   const fieldHeight = compact ? "h-11" : "h-12";
   const fieldClass = cn(
@@ -391,6 +453,81 @@ export function Checkout({
 
   const holdUntilLabel = hold?.enabled ? fmt.dateTime(hold.holdUntil) : null;
 
+  /* ---------------------------------------------------------------- */
+  /* أ‑١ — الهاتف كما فهمه النظام                                       */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * يُسأل الخادم عن الشكل المعياري بعد أن يهدأ الكتابة (‏٤٠٠ ملّي ثانية).
+   *
+   * ── لماذا الخادم أصلاً ───────────────────────────────────────────────────
+   * لأن المرجع الوحيد للتطبيع دالةُ `normalize_phone` في القاعدة (‏`0026`)،
+   * وعليها يُبنى `bookings.phone_norm` المولَّد وكل مطابقة عميل. وتطبيعٌ
+   * «مكافئ» في المتصفح يعني رقماً بمصدرين ينحرفان (النمط ٨) — أي أن نعرض على
+   * العميل رقماً غير الذي ستخزّنه القاعدة، فتصير شاشةُ التأكيد نفسها كذبة.
+   * والدالة **غير ممنوحة لـ`anon`** بقرارٍ محروسٍ بفحصٍ في `0026`، فالمسار
+   * إجراءٌ خادمي بمفتاح الخدمة (`./phone-echo.ts`).
+   *
+   * ── والاحتكاك مقيس ──────────────────────────────────────────────────────
+   * لا يُسأل الخادم عن كل ضغطة زر: `isPhoneValid` تحرس أولاً فلا يخرج نداء
+   * لنصٍّ ناقص، والتهدئة تجعل الكتابة المتصلة نداءً واحداً. ونداءٌ لا يعود
+   * (شبكة · بيئة غير مهيّأة) يترك `echo` فارغاً — وحينها **لا يُطلب إقرار
+   * أصلاً**: لا نمنع حجزاً لأن قراءةً تعذّرت.
+   */
+  const trimmedPhoneValue = phone.trim();
+
+  React.useEffect(() => {
+    const value = phone.trim();
+    if (step !== 2 || !isPhoneValid(value)) return;
+
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void previewPhoneEcho(value)
+        .then((result) => {
+          // 🔒 يُخزَّن **موسوماً بالنصّ الذي يصفه**، ولا يُمسح شيء هنا: المسح
+          //    داخل التأثير كان يُطلق تصييراً متتالياً (‏`set-state-in-effect`)،
+          //    والوسم يجعل قِدَم الجواب حالةً **مستحيلة العرض** لا حالةً
+          //    تحتاج من يتذكّر تنظيفها. وهو نمط `quotedInputsKey` نفسه في
+          //    `search-widget.tsx`.
+          if (alive && result.display !== null) setEchoState({ ...result, forPhone: value });
+        })
+        .catch(() => {
+          // الصمت الآمن: يبقى ما كان، والوسم يمنع عرضه لرقمٍ آخر
+        });
+    }, 400);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [phone, step]);
+
+  /**
+   * الجواب الذي يصف **الرقم المكتوب الآن** وحده. وأي جوابٍ لرقمٍ سابق يسقط
+   * بالمقارنة لا بمسحٍ مؤجَّل — فلا توجد تصييرة يظهر فيها رقمٌ لا يطابق الحقل.
+   */
+  const echo = echoState !== null && echoState.forPhone === trimmedPhoneValue ? echoState : null;
+
+  /** ثمة رقمٌ مفهوم يُعرض ⇒ ثمة ما يُقرّ به */
+  const echoReady = echo !== null && echo.display !== null && echo.normalized !== null;
+  /**
+   * 🔒 المقارنة بالشكل **المعياري** لا بنصّ الحقل: العميل أقرّ رقماً لا كتابةً.
+   * فمن أقرّ `01010000506` ثم أعاد كتابته `+20 101 000 0506` لا يُسأل ثانيةً،
+   * ومن قلب خانةً واحدة يُسأل — وهو بالضبط الحدث الذي وُجدت الميزة لأجله.
+   */
+  const phoneAcked = echoReady && ackedNormalized === echo?.normalized;
+
+  /* ---------------------------------------------------------------- */
+  /* ج‑٣ — رحلة مطار؟                                                   */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * مشتقٌّ من **وسمَي المكانين** — الإشارة الوحيدة القائمة في البيانات (لا
+   * جدول خدمات في هذا المنتج، وتصنيف Nominatim غير ملتقَط). التفصيل الكامل
+   * وما لم يُفعل عن قصد في ترويسة `../airport.ts`.
+   */
+  const airportTrip = isAirportTrip(trip.originLabel, trip.destinationLabel);
+
   // ── الإجمالي الذي تُبنى عليه معاينة العربون ────────────────────────────────
   //
   // بلا خصم: **الرقم كما جاء من `quote_public` حرفياً** (وهو أصلاً
@@ -433,8 +570,36 @@ export function Checkout({
 
   function validateStepOne(): FieldErrors {
     const next: FieldErrors = {};
-    // الموعد المُثبَّت في الحاسبة تحقّقت منه هناك، وهو معروض هنا للقراءة فقط
-    if (scheduledPickup) return next;
+
+    /**
+     * ⚠ الموعد المُثبَّت في الحاسبة (ذهاب وعودة) **لا يُعفى من فحص المهلة**.
+     *
+     * كان هذا الفرع يخرج فوراً لأن الحاسبة تحقّقت من الموعد هناك — وهو صحيح
+     * لكل ما لا يتحرّك. أما أدنى المهلة فأرضيتها **تزحف مع الساعة**: من طلب
+     * السعر لرحلة بعد ساعتين ثم تمهّل في ملء النموذج يعبر إلى الدفع بموعدٍ
+     * صار محظوراً، فيرتدّ من القاعدة بعد أن ملأ كل شيء. فالفحص يقع هنا كذلك،
+     * ورسالته تدلّه على الطريق الوحيد المفتوح له: الرجوع إلى العروض — لأن
+     * الموعد **مُدخل سعري** لا يجوز تعديله بعد عرض السعر.
+     */
+    if (scheduledPickup) {
+      if (lead?.enabled && lead.minPickupAt !== null) {
+        const floor = Date.parse(lead.minPickupAt);
+        if (
+          Number.isFinite(floor) &&
+          new Date(scheduledPickup).getTime() < floor
+        ) {
+          next.pickup = t(
+            "errors.scheduledTooSoon",
+            "موعد الانطلاق الذي اخترته صار أقرب من مهلة التجهيز ({minutes} دقيقة). ارجع إلى العروض واختر موعداً بعد {value}.",
+            {
+              minutes: fmt.digits(lead.leadMinutes),
+              value: fmt.dateTime(lead.minPickupAt) ?? "",
+            }
+          );
+        }
+      }
+      return next;
+    }
 
     const iso = toIsoFromCairoInputs(pickupDate, pickupTime);
     if (!iso) {
@@ -444,6 +609,25 @@ export function Checkout({
       // أياً كانت منطقة الجهاز، ولا يجوز إقحام أي تحويل ثانٍ عليها.
     } else if (new Date(iso).getTime() < Date.now()) {
       next.pickup = t("errors.pickupPast", "موعد الانطلاق يجب أن يكون في المستقبل.");
+      /**
+       * أ‑٢ — أدنى مهلة. الحدّ المقارَن به هو **ما أرجعته القاعدة**
+       * (`booking_min_pickup_at()`) لا حاصلَ ضربٍ يُحسب هنا، فلا يفترق ما
+       * تمنعه الشاشة عمّا يرفضه `create_booking`.
+       *
+       * ⚠ وهذه **طبقةٌ ثانية لا الحارس**: منتقيا التاريخ والساعة يمنعان
+       * الاختيار أصلاً، لكن `min` في المتصفح تلميحٌ يُتجاوَز بالكتابة اليدوية
+       * وبمن يترك النموذج مفتوحاً حتى يزحف «الآن» على اختياره. والحارس
+       * الحقيقي في SQL (`hint='lead-time'`)، وما هنا يوفّر رحلةَ شبكة.
+       */
+    } else if (lead?.enabled && lead.minPickupAt !== null) {
+      const floor = Date.parse(lead.minPickupAt);
+      if (Number.isFinite(floor) && new Date(iso).getTime() < floor) {
+        next.pickup = t(
+          "errors.pickupTooSoon",
+          "نحتاج مهلة {minutes} دقيقة على الأقل قبل الانطلاق — أقرب موعد متاح {value}.",
+          { minutes: fmt.digits(lead.leadMinutes), value: fmt.dateTime(lead.minPickupAt) ?? "" }
+        );
+      }
     }
     return next;
   }
@@ -455,6 +639,16 @@ export function Checkout({
     }
     if (!isPhoneValid(phone)) {
       next.phone = t("errors.phoneInvalid", "اكتب رقم هاتف صحيح للتواصل معك بشأن الرحلة.");
+    } else if (echoReady && !phoneAcked) {
+      /**
+       * 🔒 أ‑١ — الإقرار **لا يُطلب إلا حين يوجد ما يُقرّ به**.
+       *
+       * `echoReady` شرطُ المطالبة: بلا جوابٍ من الخادم (شبكة · بيئة غير مهيّأة
+       * · هجرة ناقصة) لا يُعرض رقم ولا يُطلب إقرار — فلا يُحبس عميلٌ خلف
+       * قراءةٍ تعذّرت. أما حين يُعرض الرقم فالإقرار **إلزامي**: أن يُعرض ثم
+       * يُمرَّر بلا نظر يعيدنا إلى ما قبل الميزة بالضبط.
+       */
+      next.phoneConfirm = t("errors.phoneUnconfirmed", "أكّد أن رقم هاتفك مكتوب صحيحاً.");
     }
     if (!sameWhatsapp && whatsapp.trim().length > 0 && !isPhoneValid(whatsapp)) {
       next.whatsapp = t("errors.whatsappInvalid", "رقم الواتساب غير صحيح.");
@@ -511,6 +705,14 @@ export function Checkout({
       returnAt: trip.returnAt ?? null,
       luggage: trip.luggage ?? 0,
       extras: trip.extras ?? [],
+      /**
+       * ج‑٣ — رقم الرحلة الجوية. يُرسَل **كما كتبه العميل**، والقاعدة تُطبّعه
+       * (`normalize_flight_number`) ولا ترفضه بحال. وشرطُ الرحلة المطارية هنا
+       * ليس حراسةً بل نظافة: من عدّل وجهته بعد أن كتب رقماً لا يُرسل رقم رحلةٍ
+       * لا علاقة له بحجزه.
+       */
+      flightNumber:
+        airportTrip && flightNumber.trim().length > 0 ? flightNumber.trim() : null,
     };
 
     setSubmitting(true);
@@ -540,6 +742,20 @@ export function Checkout({
          * وإسقاط الاثنين معاً يحرم العميل من خصمٍ ما زال صالحاً.
          */
         if (json.code === "redeem-rejected") setRedemption(null);
+        /**
+         * 🔒 أ‑٢ — رفضُ المهلة: العلاج **تغييرُ موعد**، لا مراجعةُ حقل.
+         *
+         * يقع حين يزحف «الآن» على موعدٍ اختاره العميل قبل دقائق — وهي الحالة
+         * الوحيدة التي لا يمسكها منتقٍ حُسبت أرضيته مرة واحدة. فنُعيده إلى
+         * الخطوة الأولى **ونُحدّث الأرضية من الخادم في الحال**، وإلا رأى
+         * الشاشة نفسها بأرضيتها القديمة تسمح بما رُفض لتوّه.
+         */
+        if (json.code === "lead-time") {
+          setStep(1);
+          void previewLeadTime()
+            .then(setLead)
+            .catch(() => {});
+        }
         setSubmitError(
           json.message || t("errors.createFailed", "تعذّر إنشاء الحجز الآن. حاول مرة أخرى.")
         );
@@ -667,6 +883,8 @@ export function Checkout({
                         "الموعدان مثبَّتان في السعر أعلاه. لتعديلهما ارجع إلى العروض."
                       )}
                 </p>
+                {/* والموعد المثبَّت قد يصير أقرب من المهلة بمرور الوقت — انظر `validateStepOne` */}
+                <FieldError id={`${uid}-pickup-error`} message={errors.pickup} />
               </dl>
             ) : (
               <>
@@ -694,18 +912,114 @@ export function Checkout({
                     <input
                       id={`${uid}-time`}
                       type="time"
+                      min={minTime}
                       value={pickupTime}
                       onChange={(event) => setPickupTime(event.target.value)}
                       aria-invalid={errors.pickup ? true : undefined}
-                      aria-describedby={errors.pickup ? `${uid}-pickup-error` : undefined}
+                      aria-describedby={
+                        errors.pickup
+                          ? `${uid}-pickup-error`
+                          : leadFloor
+                            ? `${uid}-lead-note`
+                            : undefined
+                      }
                       className={fieldClass}
                     />
                   </div>
                 </div>
 
+                {/*
+                  🔒 أ‑٢ — «أقرب موعد متاح» يُقال **قبل** المحاولة لا بعدها.
+
+                  والأرضية معروضةٌ نصّاً بجوار المنتقي عمداً: `min` في حقلَي
+                  التاريخ والوقت يمنع الاختيار، لكنه صامت — من يضغط على يومٍ
+                  رمادي لا يعرف لماذا رُفض، والمنتقي على الجوال قد لا يُظهر
+                  الحدّ أصلاً. فالجملة هي التي تحوّل المنع إلى تفسير.
+
+                  ولا تظهر حين تكون المهلة مطفأة: سطرٌ يعلن قيداً لا وجود له
+                  هو «شاشة تَعِد بغير ما تفعله القاعدة» مقلوبةً.
+                */}
+                {leadFloor && lead?.enabled ? (
+                  <p
+                    id={`${uid}-lead-note`}
+                    className="flex items-start gap-2 text-xs leading-6 text-muted-foreground"
+                  >
+                    <Clock className="mt-1 size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                    {t(
+                      "trip.leadNote",
+                      "نحتاج مهلة {minutes} دقيقة على الأقل لتجهيز رحلتك — أقرب موعد متاح {value}.",
+                      {
+                        minutes: fmt.digits(lead.leadMinutes),
+                        value: fmt.dateTime(lead.minPickupAt) ?? "",
+                      }
+                    )}
+                  </p>
+                ) : null}
+
                 <FieldError id={`${uid}-pickup-error`} message={errors.pickup} />
               </>
             )}
+
+            {/*
+              ج‑٣ — رقم الرحلة الجوية، **ولا يظهر إلا في الرحلة المطارية**.
+
+              حقلٌ يسأل كل عميل عن رقم رحلةٍ لا يملكها احتكاكٌ خالص؛ والاشتقاق
+              من وسمَي المكانين هو الإشارة الوحيدة القائمة في بيانات هذا
+              المنتج (لا جدول خدمات، وتصنيف Nominatim غير ملتقَط — التفصيل في
+              ترويسة `../airport.ts`).
+
+              🔒 **واختياري بنصّه**: رقمٌ خاطئ معلومةٌ ناقصة للمتعهد، ورفضُ
+              الحجز بسببه خسارةُ العميل كله. فلا `required` ولا تحقّق يمنع،
+              والقاعدة تخزّن ما وصل بعد تطبيعه.
+            */}
+            {airportTrip ? (
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor={`${uid}-flight`}
+                  className="flex items-center gap-2 text-sm font-medium"
+                >
+                  <Plane className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                  {t("trip.flightNumber", "رقم الرحلة الجوية")}{" "}
+                  <span className="font-normal text-muted-foreground">
+                    ({tCommon("optional", "اختياري")})
+                  </span>
+                </label>
+                <input
+                  id={`${uid}-flight`}
+                  type="text"
+                  dir="ltr"
+                  inputMode="text"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  maxLength={12}
+                  value={flightNumber}
+                  onChange={(event) => setFlightNumber(event.target.value)}
+                  placeholder="MS736"
+                  aria-describedby={`${uid}-flight-help`}
+                  className={cn(fieldClass, "text-start uppercase")}
+                />
+                <p id={`${uid}-flight-help`} className="text-xs leading-5 text-muted-foreground">
+                  {t(
+                    "trip.flightNumberHelp",
+                    "يصل رقم رحلتك إلى السائق مع بيانات الحجز، فيعرف موعد هبوطك الفعلي. مثال: MS736."
+                  )}
+                </p>
+                {/*
+                  ⚠ تحقّق الشكل **تلميحٌ لا حاجز** (رمز شركة حرفان أو ثلاثة ثم
+                  أرقام). يظهر ولا يمنع — والزر يبقى فعّالاً، والقاعدة تقبل.
+                */}
+                {flightNumber.trim().length > 0 &&
+                !/^[A-Za-z]{2}[A-Za-z]?\s*\d{1,4}[A-Za-z]?$/.test(flightNumber.trim()) ? (
+                  <p className="flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                    {t(
+                      "trip.flightNumberHint",
+                      "لا يبدو رقم رحلة معتاداً (حرفان ثم أرقام) — راجعه إن أمكن، ولن يمنع حجزك."
+                    )}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* الخدمات التي اختارها العميل — بأسمائها وأسعارها كما سعّرتها القاعدة */}
             {hasExtras ? (
@@ -796,6 +1110,89 @@ export function Checkout({
                 className={cn(fieldClass, "text-start")}
               />
               <FieldError id={`${uid}-phone-error`} message={errors.phone} />
+
+              {/*
+                ══════════════════════════════════════════════════════════════
+                 🔴 أ‑١ — الرقم كما فهمه النظام، وإقرارٌ صريح عليه
+                ══════════════════════════════════════════════════════════════
+
+                العميل يحجز ضيفاً بلا حساب وبلا بريدٍ إلزامي، **فالهاتف هو
+                القناة الوحيدة**. والتطبيع يمنع رقماً *فاسداً* ولا يمنع رقماً
+                *خاطئاً*: خانةٌ مقلوبة تُنتج رقماً سليم الشكل يقبله كل شيء —
+                والنتيجة عميلٌ لا يُبلَّغ ⇒ رحلة فاشلة بأثرٍ مالي حقيقي.
+
+                ── ولماذا هذا الشكل بالذات، وما رُفض قبله ──────────────────
+                • **لا خطوةٌ رابعة ولا نافذة تعترض الجميع**: خطوةٌ يضغطها كل
+                  عميل مرتين كلفةُ تحويلٍ مقابل عيبٍ نادر — والبطاقة هنا داخل
+                  الخطوة الثانية نفسها، بلا انتقال وبلا حجب.
+                • **ولا زرّ «التالي» أُعيدت تسميته**: ذاك يُضغط انعكاساً فلا
+                  يكسر الغفلة، وهو بالضبط ما نحتاج كسره. فالإقرار **فعلٌ
+                  مستقل صغير** — مربّعٌ واحد، مرةً واحدة، بجوار الرقم مباشرة.
+
+                ── والرقم يُعرض **بشكلٍ غير الذي كُتب** بقصد ────────────────
+                `+20 10 1000 0506` بدل `01010000506`: النصّ المطابق لِما كتبه
+                العميل تقفز عليه العين، والتجميع الدولي يجعل الخانة المقلوبة
+                مرئية. والشكل من `formatNormalizedPhone` فوق ناتج
+                `normalize_phone` في القاعدة — لا تطبيع ثانٍ في المتصفح.
+
+                🔒 و`ackedNormalized` يخزّن **الرقم المُقَرّ به لا رايةً**، فأي
+                تعديل يغيّر الشكل المعياري يُسقط الإقرار بنيوياً — لا بمُتذكِّرٍ
+                قد يُنسى.
+              */}
+              {echoReady ? (
+                <div
+                  className={cn(
+                    "flex flex-col gap-2 rounded-2xl border px-3.5 py-3 transition-colors",
+                    errors.phoneConfirm
+                      ? "border-destructive/50 bg-destructive/5"
+                      : phoneAcked
+                        ? "border-primary/40 bg-primary/5"
+                        : "border-border bg-muted/40"
+                  )}
+                >
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-7">
+                    <PhoneCall className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                    <span className="text-muted-foreground">
+                      {t("customer.echoLead", "سنراسلك ونتصل بك على")}
+                    </span>
+                    <bdi
+                      dir="ltr"
+                      className="font-mono text-base font-bold tracking-wider text-foreground"
+                    >
+                      {echo?.display}
+                    </bdi>
+                  </p>
+
+                  <label className="flex w-fit cursor-pointer items-start gap-2 text-sm font-medium">
+                    <input
+                      type="checkbox"
+                      checked={phoneAcked}
+                      onChange={(event) => {
+                        setAckedNormalized(
+                          event.target.checked ? (echo?.normalized ?? null) : null
+                        );
+                        // الإقرار يرفع خطأه فوراً — لا ينتظر ضغطة «التالي»
+                        if (event.target.checked) {
+                          setErrors((current) => ({ ...current, phoneConfirm: undefined }));
+                        }
+                      }}
+                      aria-invalid={errors.phoneConfirm ? true : undefined}
+                      aria-describedby={
+                        errors.phoneConfirm ? `${uid}-phone-confirm-error` : undefined
+                      }
+                      className="mt-0.5 size-4 shrink-0 rounded border-input accent-[var(--primary)]"
+                    />
+                    <span className="leading-6">
+                      {t("customer.echoConfirm", "نعم، هذا رقمي وأستقبل عليه المكالمات والرسائل.")}
+                    </span>
+                  </label>
+
+                  <FieldError
+                    id={`${uid}-phone-confirm-error`}
+                    message={errors.phoneConfirm}
+                  />
+                </div>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-2">

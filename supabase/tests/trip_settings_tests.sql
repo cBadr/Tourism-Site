@@ -32,6 +32,11 @@
 --   (ك) عدّاد `failed`: كتلة الاستثناء لكل صف موجودة، وشكل الإرجاع ثلاثي مرتّب.
 --   (م) 🆕 0052: الكنس بقرب الموعد لا بعمر الحجز — أربعة حجوزات لا يفرّقها إلا المتغيّر المُختبَر.
 --   (ن) 🆕 0052: `booking_hold_until` تعريفٌ واحد بثلاثة فروع، ومنحُها تطابق من يعرضها.
+--   (س) 🆕 0067: عمود `min_lead_minutes` وقيده، و`trip_config` رباعية، و`booking_min_pickup_at`.
+--   (ع) 🆕 0067: **الحارس في `create_booking`** — داخل النافذة مرفوض، وخارجها والحدُّ مقبولان،
+--                والإعداد هو الحاكم (لا ثابتٌ مدفون)، وبلا موعدٍ يمرّ.
+--   (ف) 🆕 0067: 🧬 **طفرة** — نزع الحارس يجعل الحجز يمرّ، فيثبت أن تأكيد (ع-٢) يحرسه فعلاً.
+--   (ص) 🆕 0067: رقم الرحلة الجوية — يُطبَّع ويُقصّ، **ولا يرفض حجزاً**، ويصل اللقطة وبوابة المتعهد.
 --
 -- المرجع: supabase/migrations/0027_batch_two.sql (ق١ و ق٢)
 --         · lib/booking-types.ts (‏TripSettings و DEFAULT_TRIP_SETTINGS)
@@ -110,10 +115,23 @@ begin
   -- لقطة إعدادات المالك قبل أي عبث — يقارنها القسم (ل) بعد كل الكتل. هذا هو
   -- البرهان العملي على أن كل كتلة تراجعت فعلاً: لو نسي أحدها علامة التراجع
   -- لبقي المفتاح مشتغلاً على قاعدة حيّة، وهو أسوأ ما قد يخلّفه ملف اختبار.
+  --
+  -- ⚠ و`min_lead_minutes` (‏0067) **داخل اللقطة**: هو مفتاح عالمي كأخيه — رفعُه
+  --   يرفض كل حجزٍ قريب على القاعدة الحيّة. فلو بقي خارج اللقطة لصار الفحص (ل-٤)
+  --   يقول «عادت كما كانت» عن قاعدةٍ تركها الاختبار ترفض حجوزات المالك.
   perform set_config(
     'tours.settings_before',
     (select t.unpaid_cancel_enabled::text || '/' || t.unpaid_timeout_minutes::text
+            || '/' || t.min_lead_minutes::text
        from public.trip_settings t),
+    false
+  );
+
+  -- فئة الاختبار — تُستخرج من الأسطول لا تُكتب بالاسم (تُستعمل في س و ع و ف و ص)
+  perform set_config(
+    'tours.test_class',
+    coalesce((select vc.slug from public.vehicle_classes vc
+               where vc.active order by vc.capacity asc limit 1), ''),
     false
   );
 
@@ -1186,6 +1204,481 @@ end;
 $$;
 
 
+-- ============================================================================
+-- 🆕 0067 — أدنى مهلة قبل الانطلاق (أ‑٢) ورقم الرحلة الجوية (ج‑٣)
+--
+-- ⚠⚠ **كل كتلة أدناه تتراجع عن نفسها** بـ`ROLLBACK_MARKER` — ولها هنا سببان
+-- لا سبب واحد:
+--   • `min_lead_minutes` مفتاحٌ **عالمي** كأخيه: رفعُه يرفض كل حجزٍ قريب على
+--     القاعدة الحيّة، فبقاؤه مرفوعاً بعد الاختبار عطبٌ في تشغيل المالك.
+--   • والكتل تنشئ حجوزاتٍ حقيقية عبر `create_booking` (مرجعاً وتوكناً وقيوداً
+--     وإشعارات) — والتراجع أنظف من التنظيف بعد الحدث.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- (س) البنية: العمود وقيده، و`trip_config()` الرباعية، و`booking_min_pickup_at`
+--
+-- ولماذا تُفحص البنية أصلاً وقد فحصتها الهجرة؟ لأن فحص الهجرة يقع **مرة واحدة
+-- لحظة تطبيقها**، وهذا يقع في كل تشغيل — فيمسك من عدّل الدالة بعدها بيده أو
+-- بهجرةٍ تالية غافلة.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_n      integer;
+  v_ok     boolean;
+  v_cols   text;
+  v_min    timestamptz;
+  v_before timestamptz;
+begin
+  -- (س-١) أعمدة `trip_config()` الأربعة بترتيبها
+  select string_agg(x.name, ',' order by x.ord) into v_cols
+  from (
+    select p.proargnames[i] as name, i as ord
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace,
+         generate_subscripts(p.proargnames, 1) i
+    where n.nspname = 'public' and p.proname = 'trip_config'
+  ) x;
+
+  if v_cols is distinct from
+     'unpaid_cancel_enabled,unpaid_timeout_minutes,driver_phone_lead_minutes,min_lead_minutes' then
+    raise exception '(س-١) أعمدة trip_config() «%» — 0067 غير مطبَّقة أو أُزيحت', coalesce(v_cols, 'null');
+  end if;
+
+  -- (س-٢) القيد يرفض السالب و١٠٠٨١، **ومعه شاهدان إيجابيان**: صفر و١٠٠٨٠ تمرّان.
+  --       بلا الشاهدين لا يفرّق الفحص بين «قيدٌ يعمل» و«جدولٌ لا يقبل شيئاً».
+  v_ok := false;
+  begin
+    update public.trip_settings set min_lead_minutes = -1 where id;
+  exception when check_violation then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(س-٢أ) القيد قبل مهلةً سالبة';
+  end if;
+
+  v_ok := false;
+  begin
+    update public.trip_settings set min_lead_minutes = 10081 where id;
+  exception when check_violation then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(س-٢ب) القيد قبل ١٠٠٨١ دقيقة — السقف (سبعة أيام) لا يُفرض';
+  end if;
+
+  update public.trip_settings set min_lead_minutes = 0     where id;
+  update public.trip_settings set min_lead_minutes = 10080 where id;
+
+  -- (س-٣) 🔒 صفر يعني **«لا قيد»** لا «الآن»: الدالة ترجع `null` صراحةً.
+  --       والفرق ليس لغوياً — عليه يسقط شرط الحارس كله، وعليه تمتنع الواجهة
+  --       عن عرض جملةٍ تَعِد بقيدٍ لا وجود له.
+  update public.trip_settings set min_lead_minutes = 0 where id;
+  if public.booking_min_pickup_at() is not null then
+    raise exception '(س-٣) المهلة صفر و`booking_min_pickup_at` ترجع % لا null',
+      public.booking_min_pickup_at();
+  end if;
+
+  -- (س-٤) والقيمة تحكم الناتج: ٩٠ دقيقة ⇒ الآن + ٩٠ بالضبط
+  update public.trip_settings set min_lead_minutes = 90 where id;
+  v_before := now() + interval '90 minutes';
+  v_min    := public.booking_min_pickup_at();
+  if v_min is distinct from v_before then
+    raise exception '(س-٤) ٩٠ دقيقة: توقعنا % وحصلنا %', v_before, v_min;
+  end if;
+
+  -- (س-٥) و**رقمٌ آخر يعطي حدّاً آخر** — الشاهد على أن الإعداد هو الذي يحكم
+  --       لا ثابتٌ مدفون في جسم الدالة (وهو ما كان سيمرّ لو فُحصت قيمة واحدة).
+  update public.trip_settings set min_lead_minutes = 240 where id;
+  v_before := now() + interval '240 minutes';
+  v_min    := public.booking_min_pickup_at();
+  if v_min is distinct from v_before then
+    raise exception '(س-٥) ٢٤٠ دقيقة: توقعنا % وحصلنا % — الحدّ لا يتبع الإعداد', v_before, v_min;
+  end if;
+
+  -- (س-٦) الصلاحيات: لا زائر ولا `authenticated` (وكل متعهد authenticated).
+  --       والشاهد الإيجابي للمسبار مأخوذ في (هـ-٢) أعلاه.
+  if has_function_privilege('authenticated', 'public.booking_min_pickup_at()', 'execute') then
+    raise exception '(س-٦أ) booking_min_pickup_at ممنوحة لـ authenticated — سياسة تشغيل تُقرأ بلا حاجة';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'anon')
+     and has_function_privilege('anon', 'public.booking_min_pickup_at()', 'execute') then
+    raise exception '(س-٦ب) booking_min_pickup_at ممنوحة لـ anon';
+  end if;
+
+  select count(*) into v_n from public.trip_settings;
+  if v_n <> 1 then
+    raise exception '(س-٧) trip_settings صار % صفاً أثناء الفحص', v_n;
+  end if;
+
+  raise notice '✔ (س) العمود وقيده (٠..١٠٠٨٠)، وtrip_config رباعية، وbooking_min_pickup_at تتبع الإعداد وترجع null عند الصفر';
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ع) 🔴 الحارس نفسه — **القاعدة هي التي ترفض، لا الشاشة**
+--
+-- هذا هو القسم الذي يحمل البند كله: كل ما قبله بنية، وكل ما بعده طفرةٌ تقيس
+-- قوّته. والتأكيدات الأربعة بأربع صياغات لا واحدة مكرّرة:
+--   (ع-٢) داخل النافذة ⇒ **مرفوض** بتلميح `lead-time` لا برمزٍ عام
+--   (ع-٣) خارجها بدقيقة ⇒ **مقبول** (شاهدٌ إيجابي: الرفض ليس لسببٍ آخر)
+--   (ع-٤) على الحدّ بالضبط ⇒ **مقبول** — الحدّ أقرب لحظة مسموحة لا أول ممنوعة
+--   (ع-٥) الإعداد هو الذي يحكم: موعدٌ **واحد** يُقبل بمهلةٍ ويُرفض بأخرى
+--   (ع-٦) بلا موعد ⇒ يمرّ (‏`p_pickup_at` يقبل null منذ 0007 ولا يخالف مهلة)
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_class  text := nullif(current_setting('tours.test_class', true), '');
+  v_res    record;
+  v_ok     boolean;
+  v_hint   text;
+  v_msg    text;
+  v_when   timestamptz;
+begin
+  if v_class is null then
+    raise notice '  ↳ (ع) لا فئة سيارات نشطة على هذه القاعدة — فحوص الحارس تُتخطّى';
+    raise exception 'ROLLBACK_MARKER';
+  end if;
+
+  -- (ع-١) شاهدٌ إيجابي أولاً: بلا مهلة يمرّ موعدٌ بعد عشر دقائق.
+  --       بدونه لا نعرف إن كان الرفض لاحقاً بسبب المهلة أم بسبب المحرّك نفسه.
+  update public.trip_settings set min_lead_minutes = 0 where id;
+  select * into v_res from public.create_booking(
+    '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار المهلة', '01000000000', null,
+    now() + interval '10 minutes', 'TRIP_SWEEP_FIXTURE'
+  );
+  if v_res.public_token is null then
+    raise exception '(ع-١) شاهد المسبار سقط: الحجز لم يُنشأ والمهلة مطفأة — فلا تصدّق أي رفضٍ بعده';
+  end if;
+
+  -- (ع-٢) ١٨٠ دقيقة ⇒ **نفس الحجز يُرفض**، وبتلميحٍ مسمّى
+  update public.trip_settings set min_lead_minutes = 180 where id;
+
+  v_ok := false;
+  begin
+    perform * from public.create_booking(
+      '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+      '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+      1, false, 0, 220, 180, 'osrm', v_class, 'full',
+      'اختبار المهلة', '01000000000', null,
+      now() + interval '10 minutes', 'TRIP_SWEEP_FIXTURE'
+    );
+  exception when others then
+    v_ok  := true;
+    v_msg := sqlerrm;
+    -- 🔒 التلميح لا نصّ الرسالة: الواجهة تفرّع عليه (‏`hint='lead-time'` ⇒ ٤٠٩
+    --    وإعادةُ العميل إلى الخطوة الأولى). تلميحٌ عام كان يجعل الرسالة «راجع
+    --    الحقول» على نموذجٍ كل ما فيه صحيح.
+    get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+
+  if not v_ok then
+    raise exception '(ع-٢أ) 🔴 حجزٌ بعد عشر دقائق مرّ والمهلة ١٨٠ دقيقة — الحارس لا يعمل';
+  end if;
+  if coalesce(v_hint, '') <> 'lead-time' then
+    raise exception '(ع-٢ب) رُفض بتلميح «%» لا «lead-time» — الواجهة تفرّع على التلميح (الرسالة: %)',
+      coalesce(v_hint, 'بلا تلميح'), v_msg;
+  end if;
+
+  -- (ع-٣) خارج النافذة بدقيقة ⇒ يمرّ
+  select * into v_res from public.create_booking(
+    '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار المهلة', '01000000000', null,
+    now() + interval '181 minutes', 'TRIP_SWEEP_FIXTURE'
+  );
+  if v_res.public_token is null then
+    raise exception '(ع-٣) موعدٌ خارج النافذة رُفض — الحارس يمنع ما يجب أن يمرّ';
+  end if;
+
+  -- (ع-٤) 🔒 **الحدّ بالضبط مقبول.** المقارنة `<` لا `<=` بقصد: ما تعرضه
+  --       الشاشة بوصفه «أقرب موعد متاح» يجب أن يمرّ لو اختاره العميل، وإلا
+  --       قدّمت الشاشة الرقم المستحيل بنفسها. و`now()` ثابتة داخل المعاملة
+  --       فالمقارنة على الحدّ حتمية لا سباق.
+  v_when := public.booking_min_pickup_at();
+  if v_when is null then
+    raise exception '(ع-٤أ) booking_min_pickup_at ترجع null والمهلة ١٨٠ — لا حدّ نختبره';
+  end if;
+
+  select * into v_res from public.create_booking(
+    '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار المهلة', '01000000000', null, v_when, 'TRIP_SWEEP_FIXTURE'
+  );
+  if v_res.public_token is null then
+    raise exception '(ع-٤ب) الحدّ نفسه (%) رُفض — الشاشة تعرضه «أقرب موعد متاح»', v_when;
+  end if;
+
+  -- وميكرو ثانية قبله ⇒ يُرفض: الحدّ **حادّ** لا تقريبي
+  v_ok := false;
+  begin
+    perform * from public.create_booking(
+      '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+      '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+      1, false, 0, 220, 180, 'osrm', v_class, 'full',
+      'اختبار المهلة', '01000000000', null,
+      v_when - interval '1 microsecond', 'TRIP_SWEEP_FIXTURE'
+    );
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(ع-٤ج) ميكرو ثانية قبل الحدّ مرّت — الحدّ ليس حادّاً';
+  end if;
+
+  -- (ع-٥) 🔑 **الإعداد هو الذي يحكم**: موعدٌ واحد بعينه (بعد ١٢٠ دقيقة) يُقبل
+  --       بمهلة ٦٠ ويُرفض بمهلة ٢٤٠. ولولا هذا التأكيد لمرّ ثابتٌ مدفون في
+  --       جسم الدالة بكل ما سبق.
+  v_when := now() + interval '120 minutes';
+
+  update public.trip_settings set min_lead_minutes = 60 where id;
+  select * into v_res from public.create_booking(
+    '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار المهلة', '01000000000', null, v_when, 'TRIP_SWEEP_FIXTURE'
+  );
+  if v_res.public_token is null then
+    raise exception '(ع-٥أ) موعدٌ بعد ساعتين رُفض والمهلة ٦٠ دقيقة';
+  end if;
+
+  update public.trip_settings set min_lead_minutes = 240 where id;
+  v_ok := false;
+  begin
+    perform * from public.create_booking(
+      '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+      '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+      1, false, 0, 220, 180, 'osrm', v_class, 'full',
+      'اختبار المهلة', '01000000000', null, v_when, 'TRIP_SWEEP_FIXTURE'
+    );
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(ع-٥ب) 🔴 الموعد نفسه مرّ بمهلة ٢٤٠ كما مرّ بمهلة ٦٠ — الحدّ ثابتٌ لا يتبع الإعداد';
+  end if;
+
+  -- (ع-٦) بلا موعد ⇒ يمرّ. `p_pickup_at` يقبل null منذ 0007، وحجزٌ بلا موعد
+  --       لا يخالف مهلةً أصلاً — ورفضُه هنا كان سيكسر مستدعياً قائماً لسببٍ
+  --       لا علاقة له بهذه القاعدة.
+  select * into v_res from public.create_booking(
+    '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار المهلة', '01000000000', null, null, 'TRIP_SWEEP_FIXTURE'
+  );
+  if v_res.public_token is null then
+    raise exception '(ع-٦) حجزٌ بلا موعد رُفض والمهلة ٢٤٠ — الحارس يتجاوز نطاقه';
+  end if;
+
+  raise notice '✔ (ع) الحارس في القاعدة: داخل النافذة مرفوض بـlead-time، وخارجها والحدُّ نفسه مقبولان، والإعداد هو الحاكم، وبلا موعدٍ يمرّ';
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ف) 🧬 **الطفرة** — هل للتأكيد (ع-٢) قوّة تمييز أصلاً؟
+--
+-- سؤال `handover/LESSONS.md` النمط ٥ حرفياً: «لو انعكس السلوك، هل يفشل؟».
+-- ولا يُجاب عنه بالقراءة — يُجاب بأن **نكسر الحارس ونرى**.
+--
+-- والطفرة تقع على `booking_min_pickup_at()` لا على جسم `create_booking`: هي
+-- **المصدر الوحيد** الذي يقرأ منه الحارس (وهو بالضبط عقد `booking_hold_until`
+-- في 0052)، فتحييدها = نزع الحارس بلا لمس أربعمئة سطر. والدالة تعود بـ`null`
+-- دائماً — وهو المعنى الحرفي لـ«لا قيد».
+--
+-- ثم يُعاد التعريف الأصلي **من `pg_get_functiondef`** (‏D-58: من الكتالوج الحيّ
+-- لا من ملف)، ويُفحص أن الطفرة لم تنجُ.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_class    text := nullif(current_setting('tours.test_class', true), '');
+  v_original text;
+  v_res      record;
+  v_survived boolean;
+begin
+  if v_class is null then
+    raise notice '  ↳ (ف) لا فئة سيارات نشطة — اختبار الطفرة يُتخطّى';
+    raise exception 'ROLLBACK_MARKER';
+  end if;
+
+  select pg_get_functiondef(p.oid) into v_original
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'booking_min_pickup_at';
+
+  if v_original is null then
+    raise exception '(ف-٠) booking_min_pickup_at غير موجودة — 0067 لم تُطبَّق';
+  end if;
+
+  update public.trip_settings set min_lead_minutes = 180 where id;
+
+  -- 🧬 نزع الحارس: المصدر يعود null دائماً ⇒ شرط `create_booking` يسقط كله
+  execute $mut$
+    create or replace function public.booking_min_pickup_at()
+    returns timestamptz
+    language sql
+    stable
+    security definer
+    set search_path = ''
+    as $mutant$ select null::timestamptz /* MUTANT_0067 */ $mutant$;
+  $mut$;
+
+  -- ونعيد **نفس** نداء (ع-٢) الذي كان يُرفض
+  v_survived := false;
+  begin
+    select * into v_res from public.create_booking(
+      '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+      '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+      1, false, 0, 220, 180, 'osrm', v_class, 'full',
+      'اختبار الطفرة', '01000000000', null,
+      now() + interval '10 minutes', 'TRIP_SWEEP_FIXTURE'
+    );
+    v_survived := v_res.public_token is not null;
+  exception when others then
+    v_survived := false;
+  end;
+
+  -- 🔴 المطلوب أن **تنجو الطفرة**: أي أن نزع الحارس يجعل الحجز يمرّ.
+  --    فلو بقي مرفوضاً لكان الرفض في (ع-٢) واقعاً لسببٍ آخر — تحقّقٍ في مكانٍ
+  --    ثانٍ، أو مصادفةٍ في المدخلات — و**تأكيدُ (ع-٢) كله زينة**.
+  if not v_survived then
+    raise exception
+      '(ف-١) 🧬 الطفرة قُتلت: نزعنا الحارس (booking_min_pickup_at ⇒ null) والحجز ما زال مرفوضاً. أي أن رفض (ع-٢) ليس من هذا الحارس — التأكيد لا يحرس ما نظنّه';
+  end if;
+
+  -- الاستعادة **من الكتالوج الحيّ** لا من نصٍّ مكتوب هنا (D-58)
+  execute v_original;
+
+  if position('MUTANT_0067' in (
+       select pg_get_functiondef(p.oid)
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = 'booking_min_pickup_at')) > 0 then
+    raise exception '(ف-٢) الطفرة نجت بعد الاستعادة — الدالة الحيّة ما زالت المُطفَّرة';
+  end if;
+
+  raise notice '✔ (ف) اختبار الطفرة: نزع الحارس يجعل الحجز يمرّ ⇒ تأكيد (ع-٢) يحرس الحارس نفسه لا شيئاً آخر';
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ص) رقم الرحلة الجوية (ج‑٣) — **يُخزَّن ولا يَحكم**
+--
+--   (ص-١) التطبيع: مسافات وشرطات وحروف صغيرة ⇒ شكلٌ واحد
+--   (ص-٢) شكلٌ غريب **لا يُرفض** — يُخزَّن كما وصل بعد التطبيع
+--   (ص-٣) الفارغ ⇒ `null` لا نصٌّ فارغ (فلا يُعرض حقلٌ خالٍ للمتعهد)
+--   (ص-٤) والمفتاح يصل لقطة الرحلة فعلاً — لا يُبتلع في الطريق
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_class text := nullif(current_setting('tours.test_class', true), '');
+  v_res   record;
+  v_got   text;
+begin
+  if v_class is null then
+    raise notice '  ↳ (ص) لا فئة سيارات نشطة — فحوص رقم الرحلة تُتخطّى';
+    raise exception 'ROLLBACK_MARKER';
+  end if;
+
+  update public.trip_settings set min_lead_minutes = 0 where id;
+
+  -- (ص-١) التطبيع — شاهدان سلوكيان على الدالة وحدها قبل أن تُنادى من الحجز
+  if public.normalize_flight_number(' ms-736 ') is distinct from 'MS736' then
+    raise exception '(ص-١أ) التطبيع: توقعنا MS736 وحصلنا «%»',
+      coalesce(public.normalize_flight_number(' ms-736 '), 'null');
+  end if;
+  if public.normalize_flight_number('   ') is not null then
+    raise exception '(ص-١ب) نصٌّ فارغ يجب أن يعود null لا نصاً فارغاً';
+  end if;
+  if length(coalesce(public.normalize_flight_number(repeat('A', 40)), '')) <> 12 then
+    raise exception '(ص-١ج) القصّ إلى ١٢ محرفاً لا يعمل — الطول %',
+      length(coalesce(public.normalize_flight_number(repeat('A', 40)), ''));
+  end if;
+
+  -- (ص-٢) 🔒 **شكلٌ غريب لا يُرفض.** هذا هو التأكيد الذي يحمل قرار البند:
+  --       «معلومةٌ للمتعهد لا بوّابة». ورفضُ الحجز بسبب رقم رحلةٍ خاطئ
+  --       خسارةُ العميل كله مقابل حقلٍ اختياري.
+  select * into v_res from public.create_booking(
+    '{"label": "مطار القاهرة", "lat": 30.1219, "lng": 31.4056}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار الرحلة', '01000000000', null,
+    now() + interval '2 days', 'TRIP_SWEEP_FIXTURE',
+    null, null, 0, null, 0, 'رحلتي غداً ؟؟'
+  );
+  if v_res.public_token is null then
+    raise exception '(ص-٢) 🔴 رقم رحلةٍ غير معتاد أسقط الحجز — الحقل صار بوّابة';
+  end if;
+
+  select b.trip ->> 'flightNumber' into v_got
+  from public.bookings b where b.id = v_res.id;
+
+  -- ما بقي بعد التطبيع من «رحلتي غداً ؟؟» لا شيء لاتيني ⇒ null، والحجز قائم
+  if v_got is not null then
+    raise exception '(ص-٢ب) توقعنا null بعد تطبيع نصٍّ بلا حروف لاتينية وحصلنا «%»', v_got;
+  end if;
+
+  -- (ص-٣) و(ص-٤) الرقم السليم يصل اللقطة بشكله المعياري
+  select * into v_res from public.create_booking(
+    '{"label": "مطار القاهرة", "lat": 30.1219, "lng": 31.4056}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار الرحلة', '01000000000', null,
+    now() + interval '2 days', 'TRIP_SWEEP_FIXTURE',
+    null, null, 0, null, 0, ' ms 736 '
+  );
+
+  select b.trip ->> 'flightNumber' into v_got
+  from public.bookings b where b.id = v_res.id;
+
+  if v_got is distinct from 'MS736' then
+    raise exception '(ص-٤) لقطة الرحلة تحمل «%» لا MS736 — الرقم يضيع بين المسار والتخزين',
+      coalesce(v_got, 'null');
+  end if;
+
+  -- وبلا رقم: المفتاح موجود بقيمة null (لا مفقود) — فالقارئ يفرّق بين
+  -- «لم يكتبه» و«حجزٌ سبق الهجرة»
+  select * into v_res from public.create_booking(
+    '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+    '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+    1, false, 0, 220, 180, 'osrm', v_class, 'full',
+    'اختبار الرحلة', '01000000000', null,
+    now() + interval '2 days', 'TRIP_SWEEP_FIXTURE'
+  );
+  if not ((select b.trip from public.bookings b where b.id = v_res.id) ? 'flightNumber') then
+    raise exception '(ص-٥) المفتاح flightNumber غائب من اللقطة — القارئ لا يفرّق بين «لم يُكتب» و«حجزٌ قديم»';
+  end if;
+
+  -- (ص-٦) ويصل المتعهد **حقلاً مستقلاً** لا مدسوساً في الملاحظات
+  if not exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace,
+         unnest(p.proargnames) as a(name)
+    where n.nspname = 'public' and p.proname = 'portal_trips' and a.name = 'flight_number'
+  ) then
+    raise exception '(ص-٦) portal_trips() بلا عمود flight_number — نقلُ الرقم من notes صار انحداراً للمتعهد';
+  end if;
+
+  raise notice '✔ (ص) رقم الرحلة: يُطبَّع ويُقصّ، ولا يرفض حجزاً بحال، ويصل اللقطة وبوابة المتعهد حقلاً مستقلاً';
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+end;
+$$;
+
 -- ----------------------------------------------------------------------------
 -- (ل) التنظيف — لا شيء من صفوف الاختبار يبقى، والجلسة تعود كما كانت
 --
@@ -1230,6 +1723,7 @@ begin
 
   v_before := nullif(current_setting('tours.settings_before', true), '');
   select t.unpaid_cancel_enabled::text || '/' || t.unpaid_timeout_minutes::text
+         || '/' || t.min_lead_minutes::text
     into v_after
   from public.trip_settings t;
 
@@ -1247,6 +1741,7 @@ begin
   perform set_config('tours.test_admin_fixture', '', false);
   perform set_config('tours.test_provider', '', false);
   perform set_config('tours.settings_before', '', false);
+  perform set_config('tours.test_class', '', false);
 
   raise notice '✔ (ل) التنظيف تم — لا صفوف اختبار، وإعدادات المالك كما كانت (%)', v_after;
 end;

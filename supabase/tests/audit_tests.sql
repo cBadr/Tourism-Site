@@ -24,11 +24,18 @@
 -- بل شرط بقاء. ويُختبر بشاهد **إيجابي أولاً** (الحجب لا يبتلع العمود العادي)
 -- ثم سلبي — وإلا كان فحصاً لا يمكن أن يفشل (النمط ٩).
 --
--- ── الحاجز الثالث: (و) السجل لا يمتلئ ضجيجاً ──────────────────────────────
+-- ── الحاجز الثالث: (د) السجل لا يمتلئ ضجيجاً ──────────────────────────────
 --
 -- `touch_updated_at` مربوط بستة عشر جدولاً، فكل `UPDATE` يغيّر `updated_at`
 -- حتماً. ولولا استثناؤه لكان كل حفظٍ بلا تغيير ينتج صفاً يقول «تغيّر
 -- updated_at» — سجلٌّ يمتلئ بما لا يعني شيئاً هو سجلٌّ لا يُقرأ.
+--
+-- ── الحاجز الرابع: (و) أرضية التقليم تُقاس بشاهدٍ لا بعدّاد ────────────────
+--
+-- التقليم هو المسار **الوحيد** الذي يُحذف به من سجلٍّ append-only، فأرضيته
+-- (سنةٌ كاملة مهما طُلب أقل) آخر ما يفصل بين «تنظيفٍ» و«محوِ الدليل». وتُقاس
+-- بصفَّين مزروعين بعمرين يفصلان بين النجاة والمحو — لا بعدّادٍ يمرّ على سجلٍّ
+-- فارغ (النمط ٩، والقاعدة الذهبية ١٥).
 --
 -- ── لماذا لا يلمس هذا الملف بيانات حقيقية ──────────────────────────────────
 --   • كل الفيكسترة بوسم `AUDIT_TESTS` أو `zz-audit-` وتُمسح في البداية والنهاية.
@@ -482,14 +489,29 @@ $$;
 -- ----------------------------------------------------------------------------
 -- (هـ) الربط: عمود `booking_id` يملأ نفسه فتُقرأ قصة الحجز الواحد
 -- ----------------------------------------------------------------------------
+-- ⚠ **وهنا كان النمط نفسه الذي أُصلح في (و)، بصورةٍ أخفّ:** التوكيدان يعدّان
+-- «كم صفاً **بلا** رابط؟» ويمرّان على الصفر — والصفرُ على سجلٍّ لا يحمل صفَّ
+-- حجزٍ واحد يعني **«لا شيء يُقاس»** لا «كل شيء مربوط». وحارسُه القديم كان
+-- يقرأ جدول `bookings` — أي **بديلاً** عن المقيس لا المقيسَ نفسه، ويخطئ في
+-- الاتجاهين: قاعدةٌ مُسحت حجوزاتها ويبقى تاريخها في السجل (وهي حال القاعدة
+-- اليوم: `bookings = 2` و**٣٬٠٦٦** صفَّ تدقيقٍ عليها) كان يتخطّاها بلا داعٍ،
+-- وحجوزاتٌ قائمة بلا مُشغّلٍ يعمل كانت تمرّ خضراء.
+-- فصار النطاق يُقاس ويُعلَن، ويُفرَّق فيه بين الثلاثة صراحةً.
 do $$
 declare
-  v_booking uuid;
-  v_n       integer;
+  v_scope integer;
+  v_n     integer;
 begin
-  select id into v_booking from public.bookings order by created_at desc limit 1;
-  if v_booking is null then
-    raise notice '  ↳ (هـ) لا حجوزات في القاعدة — الفحص متخطّى';
+  select count(*) into v_scope from public.audit_log
+   where entity in ('bookings', 'payments', 'booking_extras', 'dispatches');
+
+  if v_scope = 0 then
+    select count(*) into v_n from public.bookings;
+    if v_n > 0 then
+      raise exception
+        '(هـ) % حجزاً في القاعدة وصفرُ صفِّ تدقيقٍ عليها أو على تابعيها — المُشغّل لا يكتب، والمرور هنا كان سيقول «الربط سليم»', v_n;
+    end if;
+    raise notice '  ↳ (هـ) لا حجوزات ولا صفَّ تدقيقٍ عليها — لا موضوع للحكم، والفحص متخطّى صراحةً';
     return;
   end if;
 
@@ -507,34 +529,129 @@ begin
     raise exception '(هـ) % صفاً على جداول تابعة للحجز بلا رابط', v_n;
   end if;
 
-  raise notice '✔ (هـ) كل صفوف السجل المتعلقة بحجز تحمل رابطه';
+  raise notice '✔ (هـ) % صفَّ سجلٍّ على الحجز وتابعيه — وكلها تحمل رابطه', v_scope;
 end;
 $$;
 
 -- ----------------------------------------------------------------------------
--- (و) المُدخل المرفوض والتقليم المحروس
+-- (و) المُدخل المرفوض والتقليم المحروس — **بشاهدٍ إيجابي يُزرع قبل النداء**
+-- ----------------------------------------------------------------------------
+-- 🔴 العيب الذي أُصلح هنا، وهو من صنف «الفحص الذي لا يمكن أن يفشل» (النمط ٩):
+--
+-- كان التوكيد ينادي `prune_audit_log(1)` ثم يعدّ صفوف آخر ٣٠٠ يوم ويفشل على
+-- الصفر. وعلى سجلٍّ فارغ يكون الصفرُ **«لم يكن هناك ما يُحمى»** لا «الأرضية لم
+-- تحرس» — وهما شيئان، وخلطُهما هو القاعدة الذهبية ١٥ («لا نعرف» ليست «صفر»)
+-- منقوضةً **داخل اختبار**. وقد سقط فعلاً في تشغيلٍ ونجح في التالي، لأن مجموعات
+-- التشغيل الأول كتبت صفوفاً بينهما.
+--
+-- ⚠ **وأسوأ من التذبذب، مقيسٌ على القاعدة الحيّة (2026-08-16):** أقدم صفٍّ في
+-- `audit_log` عمره **ساعات** (١٢٬٩٣٤ صفاً، أقدمها 2026-08-15) — أي أن
+-- `prune_audit_log(1)` **بأرضيةٍ منزوعة تماماً** لا يحذف صفاً واحداً، فالتوكيد
+-- القديم يمرّ أخضر على حارسٍ غير موجود. لم يكن يتذبذب فحسب: كان قد **كفّ عن
+-- قياس الأرضية** أصلاً.
+--
+-- والعلاج شاهدان يُزرعان قبل النداء بعمرين **يفصلان** بين الحالتين:
+--   • **شاهد الأرضية** — عمره ٢٠٠ يوماً: أكبر من المطلوب (يوم) وأصغر من
+--     الأرضية (٣٦٥) ⇒ **يجب أن ينجو**، ويُمحى لحظة سقوط `greatest(…, 365)`.
+--   • **شاهد الحافة** — عمره ٤٠٠ يوم: خارج الأرضية ⇒ **يجب أن يُمحى**؛ وبدونه
+--     تمرّ «نجاةُ الأول» على تقليمٍ لا يحذف شيئاً أصلاً، فتصير النجاة بلا معنى.
+-- وتثبيتُ الشاهدين **يُتحقَّق منه ويرمي** قبل النداء: إن تعذّر إثبات الشرط
+-- المسبق فالفحص يصرخ ولا يمرّ.
+--
+-- وشاهدان مثلهما على `audit_attempts` لأن الدالة نفسها تقلّم الجدولين بالمهلة
+-- نفسها، ولم يكن أحدٌ يقيس نصفها الثاني.
 -- ----------------------------------------------------------------------------
 do $$
 declare
-  v_n integer;
+  v_n           integer;
+  v_planted     integer;
+  v_inside      integer;
+  v_log_floor   bigint;
+  v_log_edge    bigint;
+  v_att_floor   bigint;
+  v_att_edge    bigint;
 begin
-  -- الأرضية: لا يُقلَّم السجل بأقل من سنة مهما طُلب
-  perform public.prune_audit_log(1);
-  select count(*) into v_n from public.audit_log
-   where occurred_at > now() - interval '300 days';
-  if v_n = 0 then
-    raise exception '(و) التقليم بيوم واحد محا سجل آخر ٣٠٠ يوم — الأرضية لا تحرس';
+  -- ── زرع الشاهدين (والوسم `zz-audit-` يجعل التنظيف يبتلعهما مهما حدث) ──────
+  insert into public.audit_log (entity, action, actor_kind, entity_label, occurred_at)
+  values ('extra_services', 'update', 'system', 'zz-audit-prune-floor',
+          now() - interval '200 days')
+  returning id into v_log_floor;
+
+  insert into public.audit_log (entity, action, actor_kind, entity_label, occurred_at)
+  values ('extra_services', 'update', 'system', 'zz-audit-prune-edge',
+          now() - interval '400 days')
+  returning id into v_log_edge;
+
+  insert into public.audit_attempts (actor_kind, operation, reason, occurred_at)
+  values ('system', 'AUDIT_TESTS_floor', 'forbidden', now() - interval '200 days')
+  returning id into v_att_floor;
+
+  insert into public.audit_attempts (actor_kind, operation, reason, occurred_at)
+  values ('system', 'AUDIT_TESTS_edge', 'forbidden', now() - interval '400 days')
+  returning id into v_att_edge;
+
+  -- ── الشرط المسبق يُثبَت صراحةً: لا حكم على أرضيةٍ بلا ما تحرسه ────────────
+  select (select count(*) from public.audit_log
+           where id in (v_log_floor, v_log_edge))
+       + (select count(*) from public.audit_attempts
+           where id in (v_att_floor, v_att_edge))
+    into v_planted;
+  if v_planted <> 4 then
+    raise exception
+      '(و) تعذّر تثبيت شواهد التقليم (% من ٤) — لا يمكن الحكم على الأرضية، والمرور هنا أسوأ من الفشل',
+      v_planted;
   end if;
 
-  -- وتسجيل محاولة مرفوضة يعمل
+  -- وحجم ما **داخل** الأرضية قبل النداء: التقليم لا يجوز أن ينقص منه شيئاً
+  select count(*) into v_inside from public.audit_log
+   where occurred_at >= now() - interval '365 days';
+
+  -- ── النداء: يوم واحد مطلوباً، وسنةٌ هي الأرضية ────────────────────────────
+  perform public.prune_audit_log(1);
+
+  -- (و-١) شاهد الأرضية نجا — وهو الادّعاء الذي كُتب القسم لأجله
+  select count(*) into v_n from public.audit_log where id = v_log_floor;
+  if v_n <> 1 then
+    raise exception
+      '(و-١) صفٌّ عمره ٢٠٠ يوماً مُحي بـprune_audit_log(1) — أرضية السنة لا تحرس';
+  end if;
+  select count(*) into v_n from public.audit_attempts where id = v_att_floor;
+  if v_n <> 1 then
+    raise exception
+      '(و-١) محاولةٌ عمرها ٢٠٠ يوماً مُحيت — الأرضية لا تحرس audit_attempts، والدالة تقلّم الجدولين';
+  end if;
+
+  -- (و-٢) وشاهد الحافة مُحي — وإلا فالتقليم لا يقلّم، فنجاة الأول بلا دلالة
+  select count(*) into v_n from public.audit_log where id = v_log_edge;
+  if v_n <> 0 then
+    raise exception
+      '(و-٢) صفٌّ عمره ٤٠٠ يوم نجا التقليم — الدالة لا تحذف شيئاً، فنجاة شاهد الأرضية لا تُثبت أرضية';
+  end if;
+  select count(*) into v_n from public.audit_attempts where id = v_att_edge;
+  if v_n <> 0 then
+    raise exception
+      '(و-٢) محاولةٌ عمرها ٤٠٠ يوم نجت التقليم — نصف الدالة الثاني لا يعمل';
+  end if;
+
+  -- (و-٣) ولا صفَّ واحد من داخل الأرضية نقص (‏`now()` ثابتة داخل المعاملة)
+  select count(*) into v_n from public.audit_log
+   where occurred_at >= now() - interval '365 days';
+  if v_n <> v_inside then
+    raise exception
+      '(و-٣) التقليم أنقص % صفاً من داخل الأرضية (% ⇐ %) — الحذف يتجاوز حدّه',
+      v_inside - v_n, v_inside, v_n;
+  end if;
+
+  -- ── وتسجيل محاولة مرفوضة يعمل ─────────────────────────────────────────────
   perform public.record_audit_attempt('AUDIT_TESTS_op', 'forbidden', 'bookings', null, 'تفصيل اختباري');
   select count(*) into v_n from public.audit_attempts where operation = 'AUDIT_TESTS_op';
   if v_n <> 1 then
     raise exception '(و) record_audit_attempt لم تكتب صفاً (% صفاً)', v_n;
   end if;
 
+  delete from public.audit_log      where id in (v_log_floor, v_log_edge);
   delete from public.audit_attempts where operation like 'AUDIT_TESTS%';
-  raise notice '✔ (و) أرضية التقليم تحرس سنةً كاملة، وتسجيل المحاولة المرفوضة يعمل';
+  raise notice '✔ (و) شاهدٌ عمره ٢٠٠ يوماً نجا وآخرُ ٤٠٠ مُحي في الجدولين — الأرضية تحرس سنةً كاملة والتقليم يقلّم، وتسجيل المحاولة المرفوضة يعمل';
 end;
 $$;
 
@@ -757,6 +874,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — نظام السجلات: ٣٤ جدولاً مرصوداً بمُشغّل واحد وكل عمود لقطة متحقَّق من الكتالوج ولا سجل أحداث فيها، وقائمة الحجب مصدرها القاعدة فتحجب المعرِّفات وتُبقي الأوصاف، والدورة الثلاثية بشكلها الصحيح مع لقطة عند الحذف وحده، ولمسة updated_at لا تُسجَّل، والربط بالحجز كامل، والسجل append-only بلا كتابة ولا تفريغ لأي دور، ولا المتعهد ولا الزائر يقرأ سطراً واحداً';
+  raise notice 'ALL PASSED — نظام السجلات: ٣٤ جدولاً فأكثر مرصودة بمُشغّل واحد وكل عمود لقطة متحقَّق من الكتالوج ولا سجل أحداث فيها، وقائمة الحجب مصدرها القاعدة فتحجب المعرِّفات وتُبقي الأوصاف، والدورة الثلاثية بشكلها الصحيح مع لقطة عند الحذف وحده، ولمسة updated_at لا تُسجَّل، والربط بالحجز كامل، وأرضية التقليم مُثبَتة بشاهدٍ ينجو وآخرَ يُمحى في الجدولين، والسجل append-only بلا كتابة ولا تفريغ لأي دور، ولا المتعهد ولا الزائر يقرأ سطراً واحداً';
 end;
 $$;

@@ -9,11 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea, fieldControlClass } from "@/app/admin/content/_components/fields";
 import { ITEMS_FIELD, STYLE_FIELD, type BlockDef, type BlockStyle } from "@/lib/page-builder-types";
+import { ITEM_ICON_NAMES, fieldWidget } from "@/lib/item-fields-types";
 import {
+  CALLOUT_TONE_LABELS,
+  CALLOUT_TONE_OPTIONS,
+  ICON_LABELS,
+  MEDIA_SUGGESTIONS,
   SPACING_LABELS,
   SPACING_OPTIONS,
   THEME_COLOR_LABELS,
   THEME_COLOR_OPTIONS,
+  VIDEO_SUGGESTIONS,
   fieldLabel,
 } from "@/lib/page-builder/registry";
 import {
@@ -38,6 +44,138 @@ export type ContentPatch = (next: Record<string, unknown>) => void;
 
 type Item = Record<string, unknown>;
 
+/* -------------------------------------------------------------------------- */
+/* إدخالٌ واحد لكل حقل — و**نوعه يُشتق من السجل لا يُخمَّن** (م‑٧)               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 🔴 **العيب الذي يُعالَج هنا مقيس:** كانت هذه الشاشة تكتشف الحقول غير النصّية
+ * من `def.requiredFields` — فحقلٌ غير نصّي **اختياري** لا يظهر له إدخالٌ أصلاً.
+ * وهو سبب أن وسائط البطل (`poster` و`video`) كانت موجودةً في القاعدة **وغير
+ * قابلة للتحرير من المنشئ**، أي أن تبديل صورةٍ كان يستلزم محرر SQL.
+ *
+ * والاكتشاف اليوم **إعلانٌ في السجل**: `nonTextFields`/`nonTextItemFields`،
+ * و`fieldWidget` تختار عنصر الواجهة من اسم الحقل وحده (`lib/item-fields-types.ts` §٩).
+ */
+function FieldInput({
+  field,
+  value,
+  onChange,
+  disabled,
+  controlId,
+  compact,
+}: {
+  field: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+  controlId: string;
+  compact?: boolean;
+}) {
+  const info = fieldLabel(field);
+  const widget = fieldWidget(field, info.multiline === true);
+
+  if (widget === "icon") {
+    /**
+     * قائمة مغلقة لا حقل نصّ حرّ (العقد §٤): من يكتب `Plane` أو «طائرة» لا
+     * يقول له شيءٌ إن الاثنين لا يعملان، فيظنّ العيب في الصورة لا في القيمة.
+     * و«بلا أيقونة» خيارٌ صريح لأن الغياب معنى (الذهبية ١٥).
+     */
+    return (
+      <select
+        id={controlId}
+        className={fieldControlClass}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">بلا أيقونة</option>
+        {ITEM_ICON_NAMES.map((name) => (
+          <option key={name} value={name}>
+            {ICON_LABELS[name] ?? name}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (widget === "media") {
+    /**
+     * منتقي الوسائط الكامل مؤجَّل (`PHASE_M7_OUT_OF_SCOPE`)، **لكن لا حقل
+     * مسارٍ عارٍ**: `<datalist>` يعرض الأصول القائمة فيختار المالك بدل أن
+     * يكتب ويكتشف خطأه صورةً غائبة. والحقل يبقى قابلاً للكتابة لأن دلو
+     * `media` سيصير مصدراً ثانياً، و`safeMediaSrc` هي الحارس لا هذه القائمة.
+     */
+    const listId = `${controlId}-options`;
+    const options = field === "video" ? VIDEO_SUGGESTIONS : MEDIA_SUGGESTIONS;
+    return (
+      <>
+        <Input
+          id={controlId}
+          dir="ltr"
+          list={listId}
+          placeholder="/img/…"
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <datalist id={listId}>
+          {options.map((path) => (
+            <option key={path} value={path} />
+          ))}
+        </datalist>
+      </>
+    );
+  }
+
+  if (widget === "id") {
+    /**
+     * 🆕 م‑١٠ — حقل **معرّف** لا حقل نصّ: مرساة البند تُكتب لاتينيةً صغيرة
+     * بشرطات، وتُقرأ في الرابط. و`dir="ltr"` ليس تجميلاً — الحقل RTL يعرض
+     * `terms-2` معكوساً فيظن كاتبه أنه أخطأ.
+     *
+     * والنمط على الحقل نفسه (`pattern`) فيمنعه المتصفح عند الإرسال: الرفض
+     * **عند الكتابة** يراه من كتب القيمة، والرفض عند التصيير لا يراه أحد
+     * (نفس مذهب القائمة المغلقة للأيقونات).
+     */
+    return (
+      <Input
+        id={controlId}
+        dir="ltr"
+        spellCheck={false}
+        placeholder="cancellation"
+        pattern="[a-z][a-z0-9-]{0,39}"
+        title="حروف لاتينية صغيرة وأرقام وشرطات، تبدأ بحرف"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+
+  if (widget === "textarea") {
+    return (
+      <Textarea
+        id={controlId}
+        rows={compact ? 2 : 4}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+
+  return (
+    <Input
+      id={controlId}
+      dir={info.dir ?? "rtl"}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
 function readItems(content: Record<string, unknown>): Item[] {
   const raw = content[ITEMS_FIELD];
   return isItemArray(raw) ? raw : [];
@@ -61,9 +199,15 @@ export function BlockFields({
   disabled: boolean;
   idPrefix: string;
 }) {
-  /** الحقول المعروضة: النصوص + `src` غير النصّي حين تشترطه الكتلة (العقد §١٠) */
+  /**
+   * الحقول المعروضة: النصوص العليا + **كل** حقلٍ غير نصّي تعلنه الكتلة.
+   *
+   * ⚠ والحلقة على `requiredFields` تبقى شبكةً ثانية لا مصدراً: صفٌّ قديم قد
+   * يعلن حقلاً إلزامياً لا يذكره أيٌّ من القائمتين (وهي حالةٌ يرفضها
+   * `block_registry_check` اليوم، لكن الشاشة لا تفترض أن القاعدة نُظّفت).
+   */
   const shownFields = React.useMemo(() => {
-    const fields = [...def.textFields];
+    const fields: string[] = [...def.textFields, ...(def.nonTextFields ?? [])];
     for (const required of def.requiredFields) {
       if (required !== ITEMS_FIELD && !fields.includes(required)) fields.unshift(required);
     }
@@ -87,23 +231,13 @@ export function BlockFields({
               {required && <span className="text-xs text-muted-foreground">(إلزامي)</span>}
               {info.help ? <HelpTip>{info.help}</HelpTip> : null}
             </Label>
-            {info.multiline ? (
-              <Textarea
-                id={controlId}
-                rows={4}
-                value={value}
-                disabled={disabled}
-                onChange={(e) => setField(field, e.target.value)}
-              />
-            ) : (
-              <Input
-                id={controlId}
-                dir={info.dir ?? "rtl"}
-                value={value}
-                disabled={disabled}
-                onChange={(e) => setField(field, e.target.value)}
-              />
-            )}
+            <FieldInput
+              field={field}
+              value={value}
+              disabled={disabled}
+              controlId={controlId}
+              onChange={(next) => setField(field, next)}
+            />
           </div>
         );
       })}
@@ -111,6 +245,7 @@ export function BlockFields({
       {def.itemFields && (
         <ItemsField
           fields={def.itemFields}
+          nonTextFields={def.nonTextItemFields ?? []}
           content={content}
           onChange={onChange}
           disabled={disabled}
@@ -137,18 +272,26 @@ export function BlockFields({
 
 function ItemsField({
   fields,
+  nonTextFields,
   content,
   onChange,
   disabled,
   idPrefix,
 }: {
   fields: readonly string[];
+  /** حقول العنصر غير النصّية — صورةٌ أو أيقونة، وتُعرض بعد النصوص */
+  nonTextFields: readonly string[];
   content: Record<string, unknown>;
   onChange: ContentPatch;
   disabled: boolean;
   idPrefix: string;
 }) {
   const items = readItems(content);
+  /** ترتيب العرض: النصّ أولاً ثم الوسائط — والمالك يقرأ ما يكتبه قبل ما يختاره */
+  const allFields = React.useMemo(
+    () => [...fields, ...nonTextFields],
+    [fields, nonTextFields]
+  );
   /**
    * البوابة الحقيقية للسحب: **كل** عنصرٍ يحمل مفتاحاً صالحاً وفريداً (‏العقد §٤)
    * — وهي الضمانة التي صارت حقيقيةً بالهجرة `0059`، إذ صار عنوان الترجمة مبنياً
@@ -181,7 +324,7 @@ function ItemsField({
       if (typeof k === "string") taken.add(k);
     }
     const fresh: Item = { [ITEM_KEY_FIELD]: mintItemKey(taken) };
-    for (const f of fields) fresh[f] = "";
+    for (const f of allFields) fresh[f] = "";
     write([...items, fresh]);
   };
 
@@ -324,31 +467,27 @@ function ItemsField({
               </span>
             </div>
 
-            {fields.map((field) => {
+            {allFields.map((field) => {
               const info = fieldLabel(field);
               const controlId = `${idPrefix}-item-${index}-${field}`;
               const value = typeof item[field] === "string" ? (item[field] as string) : "";
               return (
                 <div key={field} className="space-y-1">
-                  <Label htmlFor={controlId} className="text-xs text-muted-foreground">
+                  <Label
+                    htmlFor={controlId}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                  >
                     {info.label}
+                    {info.help ? <HelpTip>{info.help}</HelpTip> : null}
                   </Label>
-                  {info.multiline ? (
-                    <Textarea
-                      id={controlId}
-                      rows={2}
-                      value={value}
-                      disabled={disabled}
-                      onChange={(e) => setValue(index, field, e.target.value)}
-                    />
-                  ) : (
-                    <Input
-                      id={controlId}
-                      value={value}
-                      disabled={disabled}
-                      onChange={(e) => setValue(index, field, e.target.value)}
-                    />
-                  )}
+                  <FieldInput
+                    field={field}
+                    value={value}
+                    disabled={disabled}
+                    controlId={controlId}
+                    compact
+                    onChange={(next) => setValue(index, field, next)}
+                  />
                 </div>
               );
             })}
@@ -401,6 +540,36 @@ function StyleFields({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
+        {keys.includes("tone") && (
+          /**
+           * 🆕 م‑١٠ — نبرة التنبيه: **قائمة مغلقة لا لونٌ يُكتب**. الرمزان
+           * يقرآن `--tone-*` من الثيم فينقلبان مع الأرضية وحدهما، ولونٌ مكتوب
+           * في المحتوى كان يُصدَّر مع القالب فيُطلق العلامة الثانية بلون
+           * الأولى (العقد §٥ · D-01).
+           *
+           * ولا خيار «بلا نبرة»: الغياب يعني «معلومة» لا الحياد — صندوقٌ
+           * منبّه بلا نبرة صندوقٌ بلا سبب.
+           */
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-tone`} className="text-xs text-muted-foreground">
+              نبرة التنبيه
+            </Label>
+            <select
+              id={`${idPrefix}-tone`}
+              className={fieldControlClass}
+              value={style.tone ?? "info"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ tone: e.target.value as never })}
+            >
+              {CALLOUT_TONE_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {CALLOUT_TONE_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {keys.includes("background") && (
           <div className="space-y-1.5">
             <Label htmlFor={`${idPrefix}-bg`} className="text-xs text-muted-foreground">

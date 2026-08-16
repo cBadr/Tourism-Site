@@ -42,6 +42,7 @@ export const TRIP_SETTINGS_TABLE = "trip_settings";
 export const TRIP_SETTINGS_COLUMNS = {
   unpaidCancelEnabled: "unpaid_cancel_enabled",
   unpaidTimeoutMinutes: "unpaid_timeout_minutes",
+  minLeadMinutes: "min_lead_minutes",
 } as const;
 
 /**
@@ -51,6 +52,16 @@ export const TRIP_SETTINGS_COLUMNS = {
  */
 export const MIN_UNPAID_TIMEOUT_MINUTES = 15;
 export const MAX_UNPAID_TIMEOUT_MINUTES = 43_200;
+
+/**
+ * حدّا أدنى مهلة قبل الانطلاق — **مرآة لقيد `check` في 0067**:
+ * `check (min_lead_minutes between 0 and 10080)`.
+ *
+ * الصفر مقبول ومعناه **مطفأة**؛ والسقف أسبوعٌ صمّامَ أمان لا خياراً — مهلةٌ
+ * أطول منه ترفض كل حجزٍ عملي، ورقمٌ كهذا في الحقل خطأٌ مطبعي لا سياسة.
+ */
+export const MIN_LEAD_MINUTES_FLOOR = 0;
+export const MAX_LEAD_MINUTES = 10_080;
 
 export type TripSettingsResult = {
   settings: TripSettings;
@@ -133,6 +144,9 @@ export async function readTripSettings(supabase: SupabaseClient): Promise<TripSe
     if (!row) return fallbackResult("empty");
 
     const minutes = counter(row, ["unpaid_timeout_minutes", "unpaidTimeoutMinutes"]);
+    // 0067 — عمودٌ قد لا يكون موجوداً على قاعدةٍ لم تصلها الهجرة بعد، فغيابه
+    // يسقط إلى افتراضي العقد (صفر = مطفأة) لا إلى رقمٍ يُخترع.
+    const lead = counter(row, ["min_lead_minutes", "minLeadMinutes"]);
 
     return {
       loaded: true,
@@ -146,6 +160,10 @@ export async function readTripSettings(supabase: SupabaseClient): Promise<TripSe
           minutes === null
             ? DEFAULT_TRIP_SETTINGS.unpaidTimeoutMinutes
             : Math.max(MIN_UNPAID_TIMEOUT_MINUTES, Math.round(minutes)),
+        minLeadMinutes:
+          lead === null
+            ? DEFAULT_TRIP_SETTINGS.minLeadMinutes
+            : Math.min(MAX_LEAD_MINUTES, Math.max(MIN_LEAD_MINUTES_FLOOR, Math.round(lead))),
       },
     };
   } catch {

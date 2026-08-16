@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { Bus, BusFront, Car, CarFront, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -6,13 +7,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { VehicleClassDef } from "@/lib/site-config";
+import { cn } from "@/lib/utils";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getLocalizedVehicleClasses, getT } from "@/lib/i18n/content";
+import { safeMediaSrc } from "@/components/sections/image";
+import type { IconComponent } from "@/components/sections/icons";
 import { SectionHeading } from "./section-heading";
 
-/** أيقونة مناسبة لكل فئة سيارات */
-const FLEET_ICONS: Record<VehicleClassDef["slug"], typeof Car> = {
+/**
+ * أيقونة احتياطية لكل فئة — تظهر حين **لا صورة** للفئة وحدها.
+ *
+ * ⚠ ومفاتيحها `string` لا اتحادٌ من أربعة: `/admin/fleet` يسمح بإنشاء فئة
+ * خامسة بأي slug، وخريطةٌ مقفلة كانت ستجعل الفئة الجديدة `undefined` عنصراً في
+ * JSX ⇒ **صفحة عامة ساقطة**. فالمجهول يأخذ `Car` ولا يُسقط شيئاً.
+ */
+const FLEET_ICONS: Record<string, IconComponent> = {
   sedan: CarFront,
   suv: Car,
   minibus: Bus,
@@ -20,11 +29,24 @@ const FLEET_ICONS: Record<VehicleClassDef["slug"], typeof Car> = {
 };
 
 /**
- * قسم الأسطول: فئات السيارات الأربع مع شارة عدد الركاب.
+ * قسم الأسطول: فئات السيارات مع شارة عدد الركاب وصورة الفئة.
  * `content` اختياري من نظام الأقسام — عند غيابه تُستخدم نصوص `site.fleet`.
  *
- * المرحلة ٨: أسماء الفئات وسعتها ووصفها تأتي من مساحة `vehicle` في جدول
- * الترجمات (`getLocalizedVehicleClasses`)، والحقل غير المترجم يبقى عربياً.
+ * المرحلة ٨: أسماء الفئات وسعتها ووصفها تصل مترجمة من مساحة `vehicle`.
+ *
+ * ── م‑٧: المصدر صار **الجدول**، والصورة صارت تُقرأ ────────────────────────────
+ *
+ * 🔴 كان `getLocalizedVehicleClasses` يقرأ ثابت `VEHICLE_CLASSES` من
+ * `lib/site-config.ts` — أي أن شاشة `/admin/fleet` تكتب في `vehicle_classes`
+ * والموقع يعرض أرقاماً أخرى **مكتوبةً في الكود**. والفارق ليس تجميلياً:
+ * الأهلية تُحسم في SQL بأرقام الجدول (D-12). فصار المصدر واحداً.
+ *
+ * والعمود `image_url` كان موجوداً منذ `0005`، و`null` في الصفوف الأربع، **ولا
+ * شاشة تكتبه ولا عارضة تقرؤه**. الثلاثة عولجت: الهجرة `0065` تملؤه، وهذا
+ * الملف يقرؤه، و`/admin/fleet` يحمل حقله.
+ *
+ * وبلا صورة تعود البطاقة إلى شكلها السابق **حرفاً**: أيقونة في مربّع بلون
+ * العلامة، وعنوان، وشارة سعة، ووصف.
  */
 export async function FleetSection({
   content,
@@ -55,29 +77,70 @@ export async function FleetSection({
 
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4 md:mt-16">
           {vehicles.map((vehicle) => {
-            const Icon = FLEET_ICONS[vehicle.slug];
+            const Icon = FLEET_ICONS[vehicle.slug] ?? Car;
+            /**
+             * الصورة تمرّ من `safeMediaSrc` كأي مسارٍ من القاعدة: مسارٌ داخلي
+             * أو أصل مضيف الوسائط وحده — فصفٌّ يكتبه مشرف لا يجلب طلباً من
+             * نطاق غريب إلى صفحةٍ عامة.
+             */
+            const src = safeMediaSrc(vehicle.imageUrl);
+
             return (
               <Card
                 key={vehicle.slug}
-                className="items-center rounded-2xl text-center ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]"
+                className={cn(
+                  "overflow-hidden rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]",
+                  src === null && "items-center text-center"
+                )}
               >
-                <CardHeader className="w-full justify-items-center">
-                  <div className="mb-3 grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary transition-colors duration-300 group-hover/card:bg-primary group-hover/card:text-primary-foreground">
-                    <Icon className="size-7" aria-hidden="true" />
+                {src !== null ? (
+                  /**
+                   * نسبةٌ ثابتة (١٦:١٠) كي تبقى البطاقات متساوية مهما اختلفت
+                   * أبعاد الملف الذي يرفعه المالك — وهو أول ما يلفت النظر لو
+                   * تُرك للصورة أن تفرض ارتفاعها.
+                   *
+                   * و`alt=""`: اسم الفئة مكتوبٌ تحتها مباشرةً، فالصورة **زخرفة
+                   * معلنة** لا صورةٌ صمّاء. ولا حقل نصٍّ بديل في `vehicle_classes`
+                   * أصلاً — وإضافةُ عمودٍ له بندٌ لشاشة الأسطول لا لهذه المرحلة.
+                   */
+                  <div className="relative -m-[--card-spacing] mb-0 aspect-[16/10] w-[calc(100%+2*var(--card-spacing))]">
+                    <Image
+                      src={src}
+                      alt=""
+                      fill
+                      sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 288px"
+                      quality={55}
+                      className="object-cover"
+                    />
                   </div>
+                ) : null}
+
+                <CardHeader className={cn("w-full", src === null && "justify-items-center")}>
+                  {src === null ? (
+                    <div className="mb-3 grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary transition-colors duration-300 group-hover/card:bg-primary group-hover/card:text-primary-foreground">
+                      <Icon className="size-7" aria-hidden="true" />
+                    </div>
+                  ) : null}
                   <CardTitle className="text-lg font-bold">
                     {vehicle.title}
                   </CardTitle>
-                  <Badge
-                    variant="secondary"
-                    className="mx-auto mt-1 h-6 gap-1.5 bg-primary/10 px-3 text-primary"
-                  >
-                    <Users className="size-3.5" aria-hidden="true" />
-                    {vehicle.seats}
-                  </Badge>
-                  <CardDescription className="mt-2 leading-7">
-                    {vehicle.short}
-                  </CardDescription>
+                  {vehicle.seats ? (
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "mt-1 h-6 gap-1.5 bg-primary/10 px-3 text-primary",
+                        src === null && "mx-auto"
+                      )}
+                    >
+                      <Users className="size-3.5" aria-hidden="true" />
+                      {vehicle.seats}
+                    </Badge>
+                  ) : null}
+                  {vehicle.short ? (
+                    <CardDescription className="mt-2 leading-7">
+                      {vehicle.short}
+                    </CardDescription>
+                  ) : null}
                 </CardHeader>
               </Card>
             );

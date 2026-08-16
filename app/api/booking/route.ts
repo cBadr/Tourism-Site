@@ -103,6 +103,15 @@ const MAX_AHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** أحرف الهاتف المسموحة — تحقق فضفاض عمداً: الأرقام المصرية تُكتب بصيغ كثيرة */
 const PHONE_PATTERN = /^[+\d\s()-]{8,20}$/;
+/**
+ * أقصى طول لرقم الرحلة الجوية قبل التطبيع — **قصٌّ لا رفض** (ج‑٣، هجرة 0067).
+ *
+ * 🔒 ولا نمط شكلٍ هنا بحال: «رمز شركة + أرقام» تلميحٌ في الشاشة لا حاجز في
+ * المسار. رقمُ رحلةٍ خاطئ معلومةٌ ناقصة للمتعهد، ورفضُ الحجز بسببه خسارةُ
+ * العميل كله — وهو نقيض ما وُجد الحقل لأجله. والقاعدة تُطبّع بنفسها
+ * (`normalize_flight_number`) وتقصّ إلى ١٢، وهذا السقف يمنع حمولةً سخيفة فقط.
+ */
+const MAX_FLIGHT_LENGTH = 24;
 
 /**
  * صف create_booking كما يرجع من rpc (أسماء snake_case حسب توقيع SQL في العقد).
@@ -310,6 +319,9 @@ function parseBody(body: unknown): ParseResult {
 
   const notes = cleanBlock(body.notes, MAX_NOTES_LENGTH);
 
+  // رقم الرحلة الجوية (ج‑٣): يُنظَّف شكلياً ويُقصّ، **ولا يُرفض أبداً**.
+  const flightNumber = cleanLine(body.flightNumber, MAX_FLIGHT_LENGTH);
+
   // رمز الكوبون: يُنظَّف ولا يُتحقق منه هنا. التحقق والحساب والحجز الذرّي
   // للاستخدام كلها داخل `create_booking` (المرحلة ١٢أ) — ورمز غير صالح لا يُفشل
   // الحجز بل يمرّ بلا خصم، فلا يخسر العميل رحلته بسبب حرف مكتوب خطأ.
@@ -341,6 +353,7 @@ function parseBody(body: unknown): ParseResult {
       returnAt: back.value,
       luggage,
       extras,
+      flightNumber: flightNumber.length > 0 ? flightNumber : null,
     },
   };
 }
@@ -364,6 +377,32 @@ function mapDbError(error: { code?: string; message?: string; details?: string; 
       code: "invalid-input",
       message: "بيانات الرحلة غير مكتملة أو خارج الحدود المقبولة. راجع الحقول وأعد المحاولة.",
       status: 400,
+    };
+  }
+
+  /**
+   * ── أدنى مهلة قبل الانطلاق (أ‑٢، هجرة 0067) ─────────────────────────────
+   *
+   * `create_booking` ترفع `lead-time` حين يكون الموعد أقرب من
+   * `booking_min_pickup_at()`. و**رمزٌ مستقل لا `invalid-input`** لسببٍ عملي:
+   * العلاج مختلف تماماً. رسالةُ «راجع الحقول» تدفع العميل يفتّش في نموذجٍ كل
+   * ما فيه صحيح؛ والصواب أن يعود إلى الخطوة الأولى ويختار موعداً أبعد —
+   * و`Checkout` تفعل ذلك بنفسها عند رؤية هذا الرمز وتُحدّث أرضية المنتقي.
+   *
+   * والحالة ٤٠٩ لا ٤٠٠: لا شيء في الطلب مشوَّه — الحالة تغيّرت تحته (زحف
+   * «الآن» على موعدٍ اختير قبل دقائق)، وهو بعينه معنى «تعارض».
+   *
+   * 🔒 و**نصّ القاعدة يُعرض كما هو** استثناءً من قاعدة هذا الملف: هو الموضع
+   * الوحيد الذي يعرف أقرب موعدٍ متاح بالضبط، وإعادةُ صياغته هنا تعني حساب
+   * التاريخ مرتين — بينما بقية الرموز تصف أعطالاً لا أرقاماً فيها.
+   */
+  if (hint === "lead-time") {
+    return {
+      code: "lead-time",
+      message:
+        (error.message ?? "").trim() ||
+        "موعد الانطلاق أقرب من مهلة التجهيز. اختر موعداً أبعد وأعد التأكيد.",
+      status: 409,
     };
   }
 
@@ -555,8 +594,16 @@ export async function POST(request: Request) {
   // ولا خدمات يبقى نداءً بالتوقيع القائم فينجح على قاعدة لم تصلها الهجرة بعد.
   const extrasSelection = input.extras ?? [];
   const luggage = input.luggage ?? 0;
-  const hasBatchThreeFields =
-    input.returnAt !== null || luggage > 0 || extrasSelection.length > 0;
+  const flightNumber = input.flightNumber ?? null;
+  /**
+   * حقولٌ **لا يجوز إسقاطها** عند فقدان التوقيع — انظر التعليق أسفل النداء.
+   * ورقم الرحلة منها: إسقاطه يعني حجز مطارٍ يظن صاحبه أن السائق يعرف رحلته.
+   */
+  const hasNewSignatureFields =
+    input.returnAt !== null ||
+    luggage > 0 ||
+    extrasSelection.length > 0 ||
+    flightNumber !== null;
 
   const args = {
     ...baseArgs,
@@ -564,6 +611,9 @@ export async function POST(request: Request) {
     ...(input.returnAt ? { p_return_at: input.returnAt } : {}),
     ...(luggage > 0 ? { p_luggage: luggage } : {}),
     ...(extrasSelection.length > 0 ? { p_extras: extrasSelection } : {}),
+    // ج‑٣: يُلحق **بالشرط** كإخوته — حجزٌ بلا رقم رحلة يبقى نداءً بالتوقيع
+    // الذي تعرفه أي قاعدة لم تصلها 0067 بعد، فلا ينكسر مسار الحجز أثناء النشر.
+    ...(flightNumber ? { p_flight_number: flightNumber } : {}),
     // 🔒 ولا `p_redeem_points` هنا: كل مسارٍ يطلب الاستبدال رُفض أعلاه، فلا
     // يصل هذا السطر إلا حجزٌ بلا نقاط. وحذفُ المعامل يبقي النداء على التوقيع
     // الذي تعرفه القواعد التي لم تصلها 0047 بعد.
@@ -578,7 +628,7 @@ export async function POST(request: Request) {
   // **مغلقاً**: ٥٠٣ ورسالة تدعو للتواصل، لا حجزاً ناقصاً بصمت.
   const missingSignature = (code?: string) => code === "PGRST202" || code === "42883";
 
-  if (error && missingSignature(error.code) && !hasBatchThreeFields && input.couponCode) {
+  if (error && missingSignature(error.code) && !hasNewSignatureFields && input.couponCode) {
     ({ data, error } = await supabase.rpc("create_booking", baseArgs));
   }
 

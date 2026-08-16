@@ -184,6 +184,48 @@ export function toIsoFromCairoInputs(date: string, time: string): string | null 
 export const toIsoFromLocalInputs = toIsoFromCairoInputs;
 
 /**
+ * أرضية منتقي التاريخ والوقت من **لحظةٍ مطلقة**، مقروءةً على ساعة القاهرة.
+ *
+ * ── لماذا تعيش هنا ────────────────────────────────────────────────────────
+ * هذا الملف هو **مسار التحويل الوحيد** بين حقلَي النموذج واللحظة المطلقة
+ * (انظر الترويسة: «ومسارا تحويلٍ لقيمةٍ واحدة هو صنف العيب الذي يتكرر في هذا
+ * المشروع، فلا يُفتح ثانٍ»). وأرضيةُ المنتقي هي **الاتجاه المعاكس** للتحويل
+ * نفسه، فمكانها بجواره لا في مكوّن.
+ *
+ * ── 🔴 والتقريب **لأعلى** شرطُ صحة لا تجميل ───────────────────────────────
+ * الحدّ الذي تُنتجه `booking_min_pickup_at()` لحظةٌ بالثواني (‏١١:٤٢:٠٣)،
+ * ومنتقي الوقت لا يعرض إلا الدقائق. فتقريبٌ لأسفل (‏١١:٤٢) يعرض على العميل
+ * موعداً **يرفضه الحارس** لأنه أسبق من الحدّ بثلاث ثوانٍ — أي شاشةٌ تقدّم
+ * الرقم المستحيل بنفسها، وهو نمطٌ موثَّق في هذا المستودع (سقف عدّاد الركاب).
+ * فالثواني تُطوى إلى الدقيقة **التالية** دائماً.
+ *
+ * @returns `{ date, time }` بصيغتَي حقلَي `date` و`time`، أو `null` لِما ليس
+ *   طابعاً زمنياً — والمنادي يُبقي أرضيته السابقة بلا تشديد مخترَع.
+ */
+export function minInputValues(iso: string | null | undefined): {
+  date: string;
+  time: string;
+} | null {
+  if (typeof iso !== "string" || iso.trim() === "") return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+
+  // إلى الدقيقة التالية ما لم تكن اللحظة على رأس الدقيقة تماماً
+  const ceiled = Math.ceil(ms / 60_000) * 60_000;
+
+  const wall = cairoWallClockAsUtc(ceiled);
+  // بيئة بلا بيانات مناطق زمنية: لا أرضية مخترَعة (نفس سقوط `todayInputValue`)
+  if (wall === null) return null;
+
+  const at = new Date(wall);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    date: `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`,
+    time: `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`,
+  };
+}
+
+/**
  * تاريخ اليوم بصيغة yyyy-mm-dd **بتوقيت القاهرة** — لخاصية `min` في حقل التاريخ.
  *
  * وليس بتوقيت الجهاز: من يحجز من نيويورك مساءً يكون في القاهرة قد دخل اليوم

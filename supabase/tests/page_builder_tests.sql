@@ -35,7 +35,7 @@
 --
 -- ما يغطيه الملف:
 --   (٠)   الشروط المسبقة · تنظيف بقايا · (٠-ب) هوية مشرف
---   (أ)   `block_registry` = `BLOCK_CATALOGUE` صفاً صفاً (١٢ كتلة)
+--   (أ)   `block_registry` = `BLOCK_CATALOGUE` صفاً صفاً (١٥ كتلة × ١٠ حقول)
 --   (ب)   `reserved_slugs` = قائمتا `lib/seo/site-paths.ts` و`app/[slug]/page.tsx`
 --   (ج)   حارس الـslug: محجوز · بادئة · مأخوذ · صيغة · تحويل · واستثناء `about`
 --   (د)   حارس العمق: الابن يمرّ · الحفيد يُرفض من الطرفين · سقف الأبناء · صفحةٌ أخرى
@@ -46,9 +46,12 @@
 --   (ط)   المنح: `anon` صفر · لا `TRUNCATE` لأحد · والأعمدة الجديدة ممنوحة
 --   (ي)   أدوار حيّة: المتعهد صفر مسودة · `ops` قراءةٌ فقط · المشرف يبني
 --   (ك)   الابن لا يُرى إن كانت أمُّه مخفيّة (فحص حيّ بدور `anon`)
+--   (م)   🔴 م‑٧: صورةُ العنصر وأيقونتُه **خارج** الفهرس وخارج `i18n_apply`،
+--         و`alt` و`href` **داخلهما** · والحارس يرفض ثمانية أشكال · والأيقونات مغلقة
 --   (ل)   صفر أثر
 --
--- المرجع: supabase/migrations/0058_page_builder.sql · lib/page-builder-types.ts
+-- المرجع: supabase/migrations/0058_page_builder.sql · 0065_item_non_text_fields.sql
+--         · lib/page-builder-types.ts · lib/item-fields-types.ts
 --         · docs/phase-briefs/PAGE-BUILDER.md
 -- ============================================================================
 
@@ -79,7 +82,13 @@ begin
     ('public.page_slug_conflict(text, text, uuid)'),
     ('public.page_public_path(text, text)'),
     ('public.block_renders(text, jsonb)'),
-    ('public.block_registry_check(text, text, text, boolean, integer, text[], text[], text[])'),
+    -- 🔴 **بعشرة وسائط لا ثمانية** (م‑٧ · `0065`): العمودان الجديدان يمرّان
+    --    إلى الحارس، والتوقيع القديم أُسقط صراحةً — الشاهد على إسقاطه أدناه.
+    ('public.block_registry_check(text, text, text, boolean, integer, text[], text[], text[], text[], text[])'),
+    ('public.i18n_non_text_field(text)'),
+    ('public.i18n_reserved_content_key(text)'),
+    ('public.i18n_item_address(jsonb, bigint)'),
+    ('public.item_icon_allowed(text)'),
     ('public.builder_access()'),
     ('public.builder_revisions(uuid)'),
     ('public.builder_revision_snapshot(uuid)'),
@@ -91,6 +100,25 @@ begin
   where to_regprocedure(x.sig) is null;
   if v_missing is not null then
     raise exception 'شرط مسبق: دوال مفقودة: %', v_missing;
+  end if;
+
+  -- 🔒 والتوقيع القديم **يجب ألا يبقى حيّاً**: توقيعان لدالةٍ واحدة يعني أن
+  --    أحدهما يُنادى ولا أحد يعرف أيّهما — وهي العلّة التي أسقطت لأجلها `0031`
+  --    تواقيع `quote_price` القديمة. والمُشغّل يُنادي العشرة، فبقاء الثمانية
+  --    يترك حارساً ميتاً يُظنّ حيّاً.
+  if to_regprocedure(
+       'public.block_registry_check(text, text, text, boolean, integer, text[], text[], text[])'
+     ) is not null then
+    raise exception 'شرط مسبق: توقيع block_registry_check القديم (٨ وسائط) ما زال حيّاً بجانب الجديد';
+  end if;
+
+  -- والعمودان الجديدان على `block_registry` — بلاهما كل ما في القسم (أ) بلا معنى
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'block_registry'
+      and column_name in ('non_text_fields', 'non_text_item_fields')
+    having count(*) = 2) then
+    raise exception 'شرط مسبق: عمودا م‑٧ غير موجودين على block_registry — نفّذ الهجرة 0065';
   end if;
 
   -- الأعمدة الجديدة على `sections` — بلاها كل ما بعده بلا معنى
@@ -172,25 +200,63 @@ declare
   v_n   integer;
 begin
   select count(*) into v_n from public.block_registry;
-  if v_n <> 12 then
-    raise exception '(أ-١) الكتالوج فيه % كتلة لا ١٢', v_n;
+  if v_n <> 19 then
+    raise exception '(أ-١) الكتالوج فيه % كتلة لا ١٩', v_n;
   end if;
 
+  -- ⚠ **العمودان الجديدان (م‑٧ · `0065`) جزءٌ من العقد كبقيته**: إغفالهما هنا
+  --    أو — وهو الأخطر — إغفالهما في شرطَي الـ`join` أدناه يجعل هذا الفحص يمرّ
+  --    على انحرافٍ حقيقي. و`null` تعني «لا حقل غير نصّي» لا `{}`.
   with expected(type, role, placement, accepts_children, max_children,
-                text_fields, item_fields, required_fields) as (
+                text_fields, item_fields, required_fields,
+                non_text_fields, non_text_item_fields) as (
     values
-      ('rich-text',     'content', 'any',           false, null::integer, array['title','body'],           null::text[],           array['body']),
-      ('page-hero',     'content', 'any',           false, null,          array['title','sub','ctaLabel'], null,                   array['title']),
-      ('features',      'content', 'any',           false, null,          array['title','sub'],            array['title','text'],  array['items']),
-      ('faq',           'content', 'any',           false, null,          array['title'],                  array['q','a'],         array['items']),
-      ('cta-band',      'content', 'any',           false, null,          array['title','note'],           null,                   '{}'::text[]),
-      ('services-grid', 'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[]),
-      ('fleet',         'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[]),
-      ('why-us',        'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[]),
-      ('contact',       'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[]),
-      ('hero',          'system',  'home-only',     false, null,          array['headline','sub'],         null,                   '{}'::text[]),
-      ('columns',       'layout',  'any',           true,  4,             '{}'::text[],                    null,                   '{}'::text[]),
-      ('image',         'content', 'any',           false, null,          array['alt','caption'],          null,                   array['src','alt'])
+      ('rich-text',     'content', 'any',           false, null::integer, array['title','body'],           null::text[],           array['body'],   null::text[],                    null::text[]),
+      ('page-hero',     'content', 'any',           false, null,          array['title','sub','ctaLabel'], null,                   array['title'],  null,                            null),
+      -- `icon` داخل العنصر (م‑٧): الرمز كان محفوراً `CircleCheck` لكل بطاقة
+      ('features',      'content', 'any',           false, null,          array['title','sub'],            array['title','text'],  array['items'],  null,                            array['icon']),
+      ('faq',           'content', 'any',           false, null,          array['title'],                  array['q','a'],         array['items'],  null,                            null),
+      ('cta-band',      'content', 'any',           false, null,          array['title','note'],           null,                   '{}'::text[],    null,                            null),
+      -- 🆕 م‑٧: `items` **اختيارية** تتجاوز `SERVICES` — و`required_fields` تبقى
+      --    فارغة، فبلا عنصرٍ واحد يعود القسم إلى بيانات النظام حرفاً.
+      ('services-grid', 'system',  'once-per-page', false, null,          array['title','sub'],            array['title','text','href','alt'], '{}'::text[], null,               array['src','icon']),
+      -- بلا `items` بقصد: صور الفئات وسعتها في `vehicle_classes` لا في المحتوى
+      ('fleet',         'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[],    null,                            null),
+      ('why-us',        'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[],    null,                            null),
+      ('contact',       'system',  'once-per-page', false, null,          array['title','sub'],            null,                   '{}'::text[],    null,                            null),
+      -- `hero` وسّعتها `0061`: شارة ونصّ سهم وضمانات في `items` — ولا كتلة ثانية.
+      -- و`0064` أضافت `imageAlt` وحدها: وصفُ صورة البطل نصٌّ يقرؤه قارئ الشاشة
+      -- فيُترجَم. أما `src` و`poster` و`video` فحقولٌ **غير نصّية** لا تدخل هذه
+      -- القائمة — وإلا دخل «‎/img/hero-chauffeur.avif» طابور المترجم، ومترجمٌ
+      -- مجتهد قد «يعرّبه» فتختفي الصورة.
+      ('hero',          'system',  'home-only',     false, null,          array['badge','headline','sub','scrollLabel','imageAlt'], array['title'], '{}'::text[], array['src','poster','video'], null),
+      ('columns',       'layout',  'any',           true,  4,             '{}'::text[],                    null,                   '{}'::text[],    null,                            null),
+      -- `src` في `non_text_fields` شرطٌ لا زينة بعد `0065`: القاعدة (د) في
+      -- `block_registry_check` تقرأ `required_fields` على اتحاد القوائم.
+      ('image',         'content', 'any',           false, null,          array['alt','caption'],          null,                   array['src','alt'], array['src'],                 null),
+      -- ── كتل م‑٢ الثلاث (‏`0061`) ──────────────────────────────────────
+      -- الشعارات بيانات نظام لا `items` — والمبرر تغيّر في م‑٧: الشكل صار
+      -- مقنَّناً، وبقاؤها في الإعدادات نطاقٌ (قائمةٌ واحدة للموقع) لا بنية.
+      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','note'],           null,                   '{}'::text[],    null,                            null),
+      -- 🔴 `{items}` إلزاميةً = «الكتلة تُشحن والأرقام لا» (قرار بدر ٣)
+      ('stat-band',     'content', 'any',           false, null,          array['title'],                  array['value','suffix','label'], array['items'], null,             null),
+      -- بلا سعر (قرار بدر ١) — **قائم**. أمّا «بلا صورة» فنُقض بأمر بدر
+      -- 2026-08-16: «التحكم في كل شيء من لوحة التحكم بما فيها الصور
+      -- والأيكونات». فالبطاقة تحمل `src`+`alt`+`icon`، و`alt` نصٌّ يُترجَم.
+      ('route-rail',    'content', 'any',           false, null,          array['title','sub','note'],     array['name','href','duration','distance','alt'], array['items'], null, array['src','icon']),
+      -- ── كتل المستندات (م‑١٠ · `0068`) ─────────────────────────────────
+      -- فهرس الصفحة **بلا `items` بقصد**: قائمته تُبنى من كتل `clause` على
+      -- الصفحة نفسها، فمصدر عنوان البند واحد. و`required_fields` فارغة لأن
+      -- شرط ظهوره يقع **خارج محتواه** — والحكم عليه في العارضة لا في البوابة.
+      ('page-toc',      'content', 'once-per-page', false, null,          array['title'],                  null,                   '{}'::text[],    null,                            null),
+      -- 🔴 `anchor` غير نصّي: معرّفٌ في الرابط لا نثر. ولو دخل الفهرس لترجمه
+      --    مترجمٌ مجتهد فهبط كل رابطٍ أُرسل في أول الصفحة، بلا خطأ ولا سجل.
+      --    و`num` يبقى نصّاً يُترجَم: «٤» و«4» صيغتان تختلفان باللغة.
+      ('clause',        'content', 'any',           false, null,          array['num','title','body'],     null,                   array['title'],  array['anchor'],                 null),
+      -- الترويسة أعلى والخلايا داخل العنصر — فكل خليةٍ نصٌّ مستقلٌّ في الفهرس
+      ('table',         'content', 'any',           false, null,          array['title','note','h1','h2','h3','h4'], array['c1','c2','c3','c4'], array['items'], null,     null),
+      -- النبرة رمزٌ في `style` لا حقلٌ نصّي، فلا أثر لها في هذا الصفّ
+      ('callout',       'content', 'any',           false, null,          array['title','body'],           null,                   array['body'],   null,                            null)
   )
   select string_agg(msg, ' | ') into v_bad
   from (
@@ -210,6 +276,9 @@ begin
      and b.text_fields = e.text_fields
      and b.item_fields is not distinct from e.item_fields
      and b.required_fields = e.required_fields
+     -- 🔴 م‑٧: بلا هذين الشرطين يمرّ الفحص على انحرافٍ حقيقي في العمودين
+     and b.non_text_fields is not distinct from e.non_text_fields
+     and b.non_text_item_fields is not distinct from e.non_text_item_fields
      and b.enabled
     where e.type is null or b.type is null
   ) d;
@@ -218,7 +287,7 @@ begin
     raise exception '(أ-٢) الكتالوج انحرف عن BLOCK_CATALOGUE: %', v_bad;
   end if;
 
-  raise notice '✔ (أ) block_registry = BLOCK_CATALOGUE: ١٢ كتلة بحقولها وترتيبها';
+  raise notice '✔ (أ) block_registry = BLOCK_CATALOGUE: ١٩ كتلة بحقولها وترتيبها';
 end;
 $$;
 
@@ -1076,6 +1145,15 @@ begin
     end loop;
   end loop;
 
+  -- (ط-٥ب) ونفس القاعدة على عمودَي م‑٧: المنشئ يقرأ `block_registry` بـ`*`،
+  --        فعمودٌ غير ممنوح كان سيُسقط قراءة الكتالوج كلها ⇒ صفر كتلة في الشاشة
+  foreach v_col in array array['non_text_fields', 'non_text_item_fields'] loop
+    if not has_column_privilege('authenticated', 'public.block_registry', v_col, 'SELECT') then
+      raise exception
+        '(ط-٥ب) العمود block_registry.% غير ممنوح لـauthenticated — الكتالوج لا يُقرأ', v_col;
+    end if;
+  end loop;
+
   -- (ط-٦) الدوال الإدارية ممنوعة على الزائر، والدالة العامة الوحيدة متاحة
   if has_function_privilege('anon', 'public.publish_page_revision(uuid, uuid)', 'EXECUTE')
      or has_function_privilege('anon', 'public.page_publish_blockers(uuid, uuid)', 'EXECUTE')
@@ -1221,7 +1299,7 @@ begin
     -- (ي-٦) شاهد إيجابي: الكتالوج مقروءٌ له — وهذا مقصود، محتواه يُشحن في
     --       حزمة المتصفح أصلاً، وحجبُه يقتل شاشة `ops` بصفر صفٍّ بلا خطأ
     execute 'select count(*) from public.block_registry' into v_n;
-    if v_n <> 12 then
+    if v_n <> 19 then
       raise exception '(ي-٦) الكتالوج غير مقروء للمسجَّل (% صفاً) — شاشة ops تموت صامتة', v_n;
     end if;
 
@@ -1373,6 +1451,330 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (م) 🔴 م‑٧ — وسائط العنصر **خارج** فهرس الترجمة، و`alt` و`href` **داخله**
+--
+-- هذا هو الفحص الذي تقوم عليه المرحلة كلها. وسببه مقيس: بعد `0064` كان
+-- «‎/img/hero-chauffeur.avif» صفّاً حيّاً في طابور المترجم، لأن الفهرس لا يقرأ
+-- `block_registry` ولا `text_fields` — يقرأ **كل مفتاحٍ قيمتُه نصّ**. وترجمة
+-- المسار تُطبَّق فعلاً (‏`i18n_apply` تستبدل بالاسم)، فتختفي الصورة بلا خطأ
+-- ولا سجل، و`safeMediaSrc` لا تنقذ: «‎/img/سائق.avif» مسارٌ داخلي سليم.
+--
+-- ⚠ **ونصفُه الثاني هو الذي يُنسى:** إغلاقُ الباب على المسارات يجب ألا يبتلع
+--   `alt` — نصٌّ يُقرأ بصوتٍ عالٍ لمن لا يرى ويفهرسه جوجل. فالفحص في اتجاهين.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_page constant uuid := '0b580000-0000-4000-8000-000000000601';
+  v_sec  constant uuid := '0b580000-0000-4000-8000-000000000602';
+  v_f       text;
+  v_bad     text;
+  v_n       integer;
+  v_applied jsonb;
+begin
+  -- (م-١) `i18n_non_text_field` = `NON_TEXT_FIELD_NAMES` — **بالنداء الحيّ**
+  --       لا بمطابقة نصّ الدالة (القاعدة الذهبية ١٩)
+  -- ⚠ و`anchor` خامسها منذ م‑١٠ (`0068`): مرساة البند معرّفٌ يُكتب في الرابط،
+  --   و«ترجمتها» تُطبَّق فعلاً — فيصير `#cancellation` عربياً على `/en` وحدها،
+  --   **وكل رابطٍ أُرسل يهبط في أول الصفحة** بلا ٤٠٤ ولا خطأ ولا سطرٍ في سجل.
+  foreach v_f in array array['src', 'poster', 'video', 'icon', 'anchor'] loop
+    if not public.i18n_non_text_field(v_f) then
+      raise exception '(م-١) «%» في NON_TEXT_FIELD_NAMES ولا تحجبه القاعدة', v_f;
+    end if;
+    if not public.i18n_reserved_content_key(v_f) then
+      raise exception '(م-١) «%» محجوب في الورقة ولا يصل الاتحاد — الفهرس ما زال يفهرسه', v_f;
+    end if;
+  end loop;
+
+  -- والاتجاه الآخر — وهو ما يمنع أن يتوسّع الحجز على نثرٍ يقوله إنسان.
+  -- و`num` و`c1` و`h1` من م‑١٠ فيه: رقم البند وخلايا الجدول وعناوين أعمدته
+  -- **نصوصٌ تُقرأ وتختلف صيغتها باللغة** («٤» ⇐ «4»)، فحجزُها يجمّد الجدول
+  -- كله على لغةٍ واحدة في اللغتين.
+  foreach v_f in array array['alt', 'imageAlt', 'href', 'name', 'label', 'value', 'title', 'text',
+                             'num', 'c1', 'h1', 'body', 'note'] loop
+    if public.i18n_non_text_field(v_f) then
+      raise exception '(م-١) «%» حُجز وهو جملةٌ تُقال أو وجهةٌ تختلف باللغة', v_f;
+    end if;
+  end loop;
+
+  -- والمحجوزان القديمان لم يسقطا مع التوسعة (`_k` عنوانُ العنصر · `style` تنسيق)
+  if not (public.i18n_reserved_content_key('_k') and public.i18n_reserved_content_key('style')) then
+    raise exception '(م-١) `_k`/`style` سقطا من المفاتيح المحجوزة بعد التوسعة';
+  end if;
+
+  -- (م-٢) 🔴 الشاهد **الحيّ**: عنصرٌ على صفحةٍ منشورة يحمل صورةً وأيقونة ونصّاً بديلاً
+  insert into public.pages (id, slug, kind, title, meta, published, sort)
+  values (v_page, '0b58-item-media', 'landing', 'فحص وسائط العنصر',
+          '{"title":null,"description":"فحص وسائط العنصر"}'::jsonb, true, 994);
+
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values (v_sec, v_page, 'route-rail', jsonb_build_object(
+    'title', 'مسارات الفحص',
+    'items', jsonb_build_array(jsonb_build_object(
+      '_k',   'm7prb1',
+      'name', 'القاهرة ← الفحص',
+      'href', '/routes/0b58-probe',
+      'src',  '/img/0b58-probe.avif',
+      'alt',  'وصفٌ عربي لصورة بطاقة الفحص',
+      'icon', 'route'))
+  ), 0, true);
+
+  -- (أ) ولا واحدٌ من الوسائط في الفهرس
+  select string_agg(c.k, ', ') into v_bad
+  from public.i18n_corpus_rows() c
+  where c.k like v_sec::text || '.%'
+    and public.i18n_non_text_field(
+          split_part(c.k, '.', array_length(string_to_array(c.k, '.'), 1)));
+  if v_bad is not null then
+    raise exception '(م-٢أ) صورةُ عنصرٍ أو أيقونتُه دخلت فهرس الترجمة: %', v_bad;
+  end if;
+
+  -- (ب) و`alt` **داخله بقيمته** — لا وجودُ المفتاح وحده
+  select count(*) into v_n
+  from public.i18n_corpus_rows() c
+  where c.k = v_sec::text || '.items.m7prb1.alt'
+    and c.src = 'وصفٌ عربي لصورة بطاقة الفحص';
+  if v_n <> 1 then
+    raise exception '(م-٢ب) نصّ العنصر البديل ليس في الفهرس — الحجب ابتلع نصّاً يُقرأ بصوتٍ عالٍ';
+  end if;
+
+  -- (ج) و`href` باقٍ بقرارٍ مكتوب: الوجهة تختلف بالفعل باختلاف اللغة (D-24)
+  if not exists (
+    select 1 from public.i18n_corpus_rows() c
+    where c.k = v_sec::text || '.items.m7prb1.href') then
+    raise exception '(م-٢ج) `href` سقط من الفهرس — وهو قرارٌ مكتوب لا عرَض';
+  end if;
+
+  -- (م-٣) والحجب في **التطبيق** كما في الفهرس — بابان، وإغلاق أحدهما لا يغلق الآخر
+  select public.i18n_apply(s.content, v_sec::text, jsonb_build_object(
+           v_sec::text || '.items.m7prb1.src',  '/img/HIJACKED.avif',
+           v_sec::text || '.items.m7prb1.icon', 'plane',
+           v_sec::text || '.items.m7prb1.alt',  'english alt'))
+    into v_applied
+  from public.sections s where s.id = v_sec;
+
+  if v_applied -> 'items' -> 0 ->> 'src' <> '/img/0b58-probe.avif' then
+    raise exception '(م-٣) i18n_apply استبدلت صورة العنصر — %',
+      v_applied -> 'items' -> 0 ->> 'src';
+  end if;
+  if v_applied -> 'items' -> 0 ->> 'icon' <> 'route' then
+    raise exception '(م-٣) i18n_apply استبدلت أيقونة العنصر';
+  end if;
+  if v_applied -> 'items' -> 0 ->> 'alt' <> 'english alt' then
+    raise exception '(م-٣) نصّ العنصر البديل لم يُترجَم — والإتاحة سقطت مع المسارات';
+  end if;
+
+  delete from public.pages where id = v_page;
+
+  raise notice '✔ (م-١..٣) وسائط العنصر خارج الفهرس وخارج التطبيق، و`alt` و`href` داخلهما';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن) 🔴 م‑١٠ — المرساة **خارج** الفهرس، ورقمُ البند وخلايا الجدول **داخله**
+--
+-- هذا هو الفحص الذي يقوم عليه قرار المرساة. وعلّته من جنس علّة (م) نفسها:
+-- الفهرس لا يقرأ `block_registry` ولا `text_fields` — يفهرس **كل مفتاحٍ قيمتُه
+-- نصّ** — و`i18n_apply` تستبدل بالاسم. فلو بقي `anchor` نصّاً عادياً لرآه
+-- المترجم `cancellation` فكتب «الإلغاء»، ولصار `id` البند على `/en` عربياً:
+-- **كل رابطٍ أرسله المالك أو فريقه لعميل يهبط في أول الصفحة**، بلا ٤٠٤ ولا
+-- خطأ ولا سطرٍ في أي سجل — وهو النمط ٣ في `LESSONS.md`.
+--
+-- ⚠ **والنصف الثاني هو الذي يُنسى** (كما في `alt` هناك): إغلاق الباب على
+--   المرساة يجب ألا يبتلع `num` ولا خلايا `c1..c4` — «٤ ⇐ 4» و«قبل ٤٨ ساعة ⇐
+--   48h or more» نصوصٌ تُقرأ وتختلف صيغتها باللغة. فالفحص في اتجاهين.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_page    constant uuid := '0b580000-0000-4000-8000-000000000701';
+  v_clause  constant uuid := '0b580000-0000-4000-8000-000000000702';
+  v_table   constant uuid := '0b580000-0000-4000-8000-000000000703';
+  v_bad     text;
+  v_f       text;
+  v_n       integer;
+  v_applied jsonb;
+begin
+  insert into public.pages (id, slug, kind, title, meta, published, sort)
+  values (v_page, '0b58-doc-blocks', 'landing', 'فحص كتل المستندات',
+          '{"title":null,"description":"فحص كتل المستندات"}'::jsonb, true, 993);
+
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values
+    (v_clause, v_page, 'clause', jsonb_build_object(
+      'num',    '٤',
+      'title',  'الإلغاء والاسترداد',
+      'body',   'يُستردّ كامل المبلغ قبل ٤٨ ساعة من موعد التحرك.',
+      'anchor', 'cancellation'
+    ), 0, true),
+    (v_table, v_page, 'table', jsonb_build_object(
+      'title', 'نوافذ الإلغاء',
+      'h1',    'موعد الإلغاء',
+      'h2',    'ما يُستردّ',
+      'items', jsonb_build_array(jsonb_build_object(
+        '_k', 'm10tb1', 'c1', 'قبل ٤٨ ساعة', 'c2', 'المبلغ كاملاً'))
+    ), 1, true);
+
+  -- (ن-١) المرساة ليست في الفهرس — بأي صيغةٍ من صيغتيه
+  select string_agg(c.k, ', ') into v_bad
+  from public.i18n_corpus_rows() c
+  where c.k like v_clause::text || '.%'
+    and split_part(c.k, '.', array_length(string_to_array(c.k, '.'), 1)) = 'anchor';
+  if v_bad is not null then
+    raise exception '(ن-١) مرساة البند دخلت فهرس الترجمة: % — الروابط المرسلة تنكسر على /en', v_bad;
+  end if;
+
+  -- (ن-٢) 🔴 شاهدٌ **إيجابي**: الصفّ يحمل المفتاح فعلاً وقيمتُه نصّ. وبلا هذا
+  --       يكون «صفر صفوف» إثباتَ فراغٍ لا إثباتَ حراسة (الذهبية ١٩).
+  select count(*) into v_n
+  from public.sections s
+  where s.id = v_clause
+    and jsonb_typeof(s.content -> 'anchor') = 'string'
+    and s.content ->> 'anchor' = 'cancellation';
+  if v_n <> 1 then
+    raise exception '(ن-٢) لا شاهد حيّ على الحجب — الصفّ لا يحمل مرساةً نصّية أصلاً';
+  end if;
+
+  -- (ن-٣) ورقمُ البند وعنوانه ونصّه **داخل الفهرس بقيمها**
+  foreach v_f in array array['num', 'title', 'body'] loop
+    if not exists (
+      select 1 from public.i18n_corpus_rows() c
+      where c.k = v_clause::text || '.' || v_f) then
+      raise exception '(ن-٣) «%» سقط من فهرس البند — الحجب ابتلع نصّاً يُقرأ', v_f;
+    end if;
+  end loop;
+
+  -- (ن-٤) وخلايا الجدول مفهرسةٌ **خليةً خليةً** بمفتاح العنصر الثابت — وهو ما
+  --       يجعل جدولاً مترجَماً ممكناً أصلاً: صفٌّ في حقلٍ واحد بفواصل يُترجَم
+  --       كتلةً واحدة ويعود بأعمدةٍ مبعثرة.
+  select count(*) into v_n
+  from public.i18n_corpus_rows() c
+  where c.k in (v_table::text || '.items.m10tb1.c1',
+                v_table::text || '.items.m10tb1.c2',
+                v_table::text || '.h1',
+                v_table::text || '.h2');
+  if v_n <> 4 then
+    raise exception '(ن-٤) خلايا الجدول وعناوين أعمدته في الفهرس % لا ٤', v_n;
+  end if;
+
+  -- (ن-٥) والحجب في **التطبيق** كما في الفهرس — بابان، وإغلاق أحدهما لا يغلق الآخر
+  select public.i18n_apply(s.content, v_clause::text, jsonb_build_object(
+           v_clause::text || '.anchor', 'الإلغاء',
+           v_clause::text || '.num',    '4',
+           v_clause::text || '.title',  'Cancellation & refunds'))
+    into v_applied
+  from public.sections s where s.id = v_clause;
+
+  if v_applied ->> 'anchor' <> 'cancellation' then
+    raise exception '(ن-٥) i18n_apply استبدلت المرساة — %', v_applied ->> 'anchor';
+  end if;
+  if v_applied ->> 'num' <> '4' or v_applied ->> 'title' <> 'Cancellation & refunds' then
+    raise exception '(ن-٥) رقم البند أو عنوانه لم يُترجَم';
+  end if;
+
+  -- (ن-٦) والبوابة تفرز الأربع كما تفرزها العارضة (‏`blockRenders` مرآتها)
+  if public.block_renders('clause', jsonb_build_object('num', '٤'))
+     or public.block_renders('table', jsonb_build_object('items', '[]'::jsonb))
+     or public.block_renders('callout', jsonb_build_object('title', 'تنبيه')) then
+    raise exception '(ن-٦) كتلةٌ ناقصة تمرّ البوابة — ستُنشر صفحةٌ فيها إطارٌ فارغ';
+  end if;
+  if not (public.block_renders('clause', jsonb_build_object('title', 'الإلغاء'))
+          and public.block_renders('page-toc', '{}'::jsonb)) then
+    raise exception '(ن-٦) البوابة ترفض شكلاً قانونياً — الحارس يرفض كل شيء';
+  end if;
+
+  delete from public.pages where id = v_page;
+
+  raise notice '✔ (ن-١..٦) المرساة خارج الفهرس والتطبيق، ورقم البند وخلايا الجدول داخلهما';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (م-٤) الحارس البنيوي بعد التوسعة — خمس قواعد جديدة، **كتابةً حقيقية**
+--
+-- ⚠ وشاهدٌ إيجابي في آخره شرطٌ لا زينة: بلاه أثبتنا أن الجدول مغلق لا محروس.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_case record;
+  v_ok   boolean;
+  v_hint text;
+  v_f    text;
+begin
+  for v_case in
+    select * from (values
+      ('اسمٌ غير نصّي خارج القائمة العالمية',
+        'content', false, null::integer, array['title']::text[], null::text[], '{}'::text[], array['photo']::text[], null::text[]),
+      ('اسمٌ نصّيٌّ وغيرُ نصّي معاً (عليا)',
+        'content', false, null, array['src'], null, '{}'::text[], null, null),
+      ('اسمٌ نصّيٌّ وغيرُ نصّي معاً (عنصر)',
+        'content', false, null, array['title'], array['icon'], '{}'::text[], null, null),
+      ('حقلُ عنصرٍ غير نصّي بلا عناصر',
+        'content', false, null, array['title'], null, '{}'::text[], null, array['icon']),
+      ('صورةُ عنصرٍ بلا موضعٍ لنصّها البديل',
+        'content', false, null, array['title'], array['name'], '{}'::text[], null, array['src']),
+      ('قائمةٌ غير نصّية فارغة لا null',
+        'content', false, null, array['title'], null, '{}'::text[], '{}'::text[], null),
+      ('إلزاميٌّ غير نصّي لا تعلنه الكتلة',
+        'content', false, null, array['title'], null, array['src'], null, null),
+      ('تخطيطٌ يحمل وسائط',
+        'layout',  true,  3,    '{}'::text[],   null, '{}'::text[], array['src'], null)
+    ) as t(label, role, accepts, maxc, tf, itf, rf, ntf, ntif)
+  loop
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.block_registry
+        (type, role, placement, accepts_children, max_children,
+         text_fields, item_fields, required_fields, non_text_fields, non_text_item_fields)
+      values ('0b58-m7probe', v_case.role, 'any', v_case.accepts, v_case.maxc,
+              v_case.tf, v_case.itf, v_case.rf, v_case.ntf, v_case.ntif);
+      v_ok := true;
+    exception when others then get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+
+    if v_ok then
+      delete from public.block_registry where type = '0b58-m7probe';
+      raise exception '(م-٤) قُبل شكلٌ غير قانوني في الكتالوج: %', v_case.label;
+    end if;
+    if v_hint is distinct from 'block-registry-shape' then
+      raise exception '(م-٤) «%» رُفض بـ[%] لا بـblock-registry-shape',
+        v_case.label, coalesce(v_hint, '∅');
+    end if;
+  end loop;
+
+  -- شاهدٌ إيجابي: صورةُ عنصرٍ **بنصّها البديل** تُكتب فعلاً
+  insert into public.block_registry
+    (type, role, placement, accepts_children, max_children,
+     text_fields, item_fields, required_fields, non_text_fields, non_text_item_fields)
+  values ('0b58-m7probe', 'content', 'any', false, null,
+          array['title'], array['name', 'alt'], array['items'], null, array['src', 'icon']);
+  if not exists (select 1 from public.block_registry where type = '0b58-m7probe') then
+    raise exception '(م-٤) الشكل القانوني لم يُكتب — الحارس يرفض كل شيء';
+  end if;
+  delete from public.block_registry where type = '0b58-m7probe';
+
+  -- (م-٥) قائمة الأيقونات في القاعدة = `ITEM_ICON_NAMES` في العقد §٤
+  foreach v_f in array array['plane', 'building', 'route', 'landmark', 'party', 'mic',
+                             'shield', 'check', 'clock', 'wallet', 'star', 'headset',
+                             'car', 'bus', 'users', 'luggage', 'mapPin', 'phone'] loop
+    if not public.item_icon_allowed(v_f) then
+      raise exception '(م-٥) الأيقونة «%» في العقد ولا تقبلها القاعدة', v_f;
+    end if;
+  end loop;
+
+  -- والاتجاه الآخر: ما يكتبه مالكٌ بيده يُرفض — وهو سبب القائمة المغلقة أصلاً
+  foreach v_f in array array['Plane', 'plane-takeoff', 'طائرة', '', 'ghost'] loop
+    if public.item_icon_allowed(v_f) then
+      raise exception '(م-٥) القاعدة قبلت اسم أيقونة خارج القائمة: «%»', v_f;
+    end if;
+  end loop;
+  if public.item_icon_allowed(null) then
+    raise exception '(م-٥) القاعدة قبلت null أيقونةً';
+  end if;
+
+  raise notice '✔ (م-٤..٥) الحارس يرفض ثمانية أشكالٍ غير مقنَّنة ويقبل القانوني، وقائمة الأيقونات مغلقة';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ل) التنظيف — صفر أثر، والقاعدة كما وُجدت
 -- ----------------------------------------------------------------------------
 do $$
@@ -1414,8 +1816,8 @@ begin
     raise exception '(ل) بقيت % لقطة فيكسترة — الحذف بـcascade لم يعمل', v_n;
   end if;
   select count(*) into v_n from public.block_registry;
-  if v_n <> 12 then
-    raise exception '(ل) الكتالوج فيه % كتلة لا ١٢ — الفحص لوّثه', v_n;
+  if v_n <> 19 then
+    raise exception '(ل) الكتالوج فيه % كتلة لا ١٩ — الفحص لوّثه', v_n;
   end if;
   select count(*) into v_n from public.translations where locale = 'zx';
   if v_n <> 0 then
@@ -1427,7 +1829,7 @@ begin
     raise exception '(ل) بقي مفتاح فيكسترة في فهرس الترجمة';
   end if;
 
-  raise notice '✔ (ل) التنظيف تام — لا أثر للفيكسترة، والكتالوج ١٢ كتلة كما بدأ';
+  raise notice '✔ (ل) التنظيف تام — لا أثر للفيكسترة، والكتالوج ١٩ كتلة كما بدأ';
 end;
 $$;
 
@@ -1436,6 +1838,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — منشئ الصفحات: النشر فرقٌ بالمعرّف فتنجو الترجمات (وطفرة «احذف ثم أدرج» تُبيدها) · العمق مستوى واحد من الطرفين · محجوزات المسار تُرفض برمزها · الكتالوج = BLOCK_CATALOGUE ولا يقبل شكلاً غير معنوَن · بوابة النشر ترجع كل رمز في حالته وتقرأ الكتالوج فعلاً · anon صفر منحة ولا TRUNCATE لأحد · والمتعهد صفر مسودة وops قراءةٌ فقط';
+  raise notice 'ALL PASSED — منشئ الصفحات: مرساةُ البند خارج فهرس الترجمة وخارج التطبيق ورقمُه وخلايا الجدول داخلهما · صورةُ العنصر وأيقونتُه خارج فهرس الترجمة وخارج التطبيق و`alt` داخلهما · النشر فرقٌ بالمعرّف فتنجو الترجمات (وطفرة «احذف ثم أدرج» تُبيدها) · العمق مستوى واحد من الطرفين · محجوزات المسار تُرفض برمزها · الكتالوج = BLOCK_CATALOGUE ولا يقبل شكلاً غير معنوَن · بوابة النشر ترجع كل رمز في حالته وتقرأ الكتالوج فعلاً · anon صفر منحة ولا TRUNCATE لأحد · والمتعهد صفر مسودة وops قراءةٌ فقط';
 end;
 $$;

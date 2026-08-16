@@ -239,21 +239,114 @@ export const getLocalizedServices = cache(async (locale?: string): Promise<Servi
   }));
 });
 
-/** فئات السيارات الأربع بلغة الزائر — الحقل غير المترجم يبقى عربياً */
+/**
+ * ── فئات السيارات — **من الجدول لا من الثابت** (م‑٧) ────────────────────────
+ *
+ * 🔴 **العيب الذي يُعالَج هنا مقيس:** كان هذا المُحمّل يقرأ `VEHICLE_CLASSES`
+ * من `lib/site-config.ts` — أي **من الكود**. فشاشة `/admin/fleet` تكتب في
+ * `vehicle_classes` (سعةً وحقائبَ ووصفاً وترتيباً وتفعيلاً)، والموقع العام يعرض
+ * أرقاماً أخرى مكتوبة في ملف TS. ونتيجتُه ليست تجميلية: **الأهلية تُحسم في SQL
+ * بأرقام الجدول** (D-12)، فمن قرأ «حتى ٦ ركاب» في بطاقة SUV وحجز لسبعة رأى
+ * نصّين متناقضين من نفس الموقع في دقيقة واحدة. والعمود `image_url` كان
+ * موجوداً و`null` **ولا عارضة تقرؤه** — وهو موضع صورة الفئة في التصميم.
+ *
+ * **و`seats` تُشتق من `capacity` ولا تُكتب:** الجدول لا يحمل جملةً بل رقماً،
+ * واشتقاقُها هنا يجعل السطر المعروض والقرار المحسوب **من مصدرٍ واحد**. والصيغة
+ * بالأرقام العربية الهندية لأنها لغة الصفحة، وبالإنجليزية `Up to N` حين تُطلب.
+ *
+ * ⚠ **والاحتياطي يبقى**: تعذّرُ القراءة يعيد `VEHICLE_CLASSES` — فالقسم يظهر
+ * ناقصَ صورةٍ ولا يختفي. «صفر فئة» و«لم نستطع القراءة» ليسا شيئاً واحداً.
+ */
+const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+
+function localizedNumber(value: number, locale: string): string {
+  const raw = String(Math.trunc(value));
+  return locale === DEFAULT_LOCALE
+    ? raw.replace(/[0-9]/g, (d) => AR_DIGITS[Number(d)])
+    : raw;
+}
+
+/**
+ * «حتى N راكباً» بتمييزٍ عربيٍّ صحيح — والقاعدة ليست تنميقاً: السطر يظهر في
+ * بطاقة كل فئة على الرئيسية، و«حتى ١٤ ركاب» خطأٌ يقرؤه كل زائر عربي.
+ *   ٣–١٠ ⇒ جمع قِلّة مجرور (ركاب) · ١١ فأكثر ⇒ مفرد منصوب تمييزاً (راكباً).
+ */
+function seatsLabel(capacity: number, locale: string): string {
+  const n = localizedNumber(capacity, locale);
+  if (locale !== DEFAULT_LOCALE) {
+    return `Up to ${n} ${capacity === 1 ? "passenger" : "passengers"}`;
+  }
+  if (capacity === 1) return "راكب واحد";
+  if (capacity === 2) return "راكبان";
+  return capacity <= 10 ? `حتى ${n} ركاب` : `حتى ${n} راكباً`;
+}
+
+type VehicleRow = {
+  slug?: unknown;
+  title?: unknown;
+  short?: unknown;
+  capacity?: unknown;
+  image_url?: unknown;
+};
+
+/** الصفوف النشطة مرتّبة — أو `null` حين تتعذّر القراءة (لا `[]`، الذهبية ١٥) */
+async function fetchVehicleClasses(): Promise<VehicleRow[] | null> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return null;
+  }
+  try {
+    const { createServerSupabase } = await import("@/lib/supabase/server");
+    const supabase = await createServerSupabase();
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from("vehicle_classes")
+      .select("slug, title, short, capacity, image_url")
+      .eq("active", true)
+      .order("sort", { ascending: true });
+    if (error || !Array.isArray(data) || data.length === 0) return null;
+    return data as VehicleRow[];
+  } catch (error) {
+    rethrowControlFlow(error);
+    return null;
+  }
+}
+
+/** فئات السيارات النشطة بلغة الزائر — الحقل غير المترجم يبقى عربياً */
 export const getLocalizedVehicleClasses = cache(
   async (locale?: string): Promise<VehicleClassDef[]> => {
     const resolved = normalizeLocale(locale);
-    if (resolved === DEFAULT_LOCALE) return VEHICLE_CLASSES;
+    const rows = await fetchVehicleClasses();
 
-    const keys = VEHICLE_CLASSES.flatMap((vehicle) => [
+    const base: VehicleClassDef[] =
+      rows === null
+        ? VEHICLE_CLASSES
+        : rows.flatMap((row) => {
+            const slug = typeof row.slug === "string" ? row.slug : null;
+            const title = typeof row.title === "string" ? row.title : null;
+            if (!slug || !title) return [];
+            const capacity = typeof row.capacity === "number" ? row.capacity : null;
+            return [
+              {
+                slug,
+                title,
+                seats: capacity === null ? "" : seatsLabel(capacity, resolved),
+                short: typeof row.short === "string" ? row.short : "",
+                imageUrl: typeof row.image_url === "string" ? row.image_url : null,
+              },
+            ];
+          });
+
+    if (resolved === DEFAULT_LOCALE || base.length === 0) return base;
+
+    const keys = base.flatMap((vehicle) => [
       `${vehicle.slug}.title`,
       `${vehicle.slug}.seats`,
       `${vehicle.slug}.short`,
     ]);
     const values = await readNamespace(resolved, "vehicle", keys);
-    if (values.size === 0) return VEHICLE_CLASSES;
+    if (values.size === 0) return base;
 
-    return VEHICLE_CLASSES.map((vehicle) => ({
+    return base.map((vehicle) => ({
       ...vehicle,
       title: mergeLocalized(vehicle.title, values.get(`${vehicle.slug}.title`)),
       seats: mergeLocalized(vehicle.seats, values.get(`${vehicle.slug}.seats`)),

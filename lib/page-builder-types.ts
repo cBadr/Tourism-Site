@@ -1,4 +1,5 @@
 import type { PageKind, SectionType } from "@/lib/content-types";
+import type { NonTextFieldName } from "@/lib/item-fields-types";
 
 /**
  * عقد منشئ الصفحات (المرحلة ١٣) — المرجع الأوحد. يُقرأ **قبل** أول سطر SQL
@@ -227,6 +228,25 @@ export const SPACING_TOKENS = ["compact", "default", "roomy"] as const;
 export type SpacingToken = (typeof SPACING_TOKENS)[number];
 
 /**
+ * 🆕 **م‑١٠ — نبرة التنبيه البارز.** رمزان مغلقان، **ومكانهما `style` بعينه**:
+ * النبرة ليست نصّاً للزائر (فلا تدخل الفهرس)، وليست لوناً خاماً (فلا تكسر
+ * العلامة الثانية) — وهو تعريف §٥ حرفاً.
+ *
+ * **ولماذا اثنان لا خمسة؟** `components/ui/card.tsx` يعرف خمس نبرات
+ * (`success`/`warning`/`danger`/`info`)، ومفرداتُ الصفحة العامة أضيق من
+ * مفردات اللوحة بقصد: «نجاح» حالةُ عمليةٍ يراها مشغّل، و«خطر» تكرارٌ لمعنى
+ * «تحذير» على صفحة سياسات. وثلاثة رموزٍ متقاربة على شاشةٍ واحدة تعني أن أياً
+ * منها لا يقول شيئاً — وهي نفس علّة «كل البطاقات ملوّنة» المكتوبة هناك.
+ *
+ * 🔒 **والنبرتان تُصيَّران عبر `Card` نفسه لا بجانبه** (القاعدة الذهبية ١٢):
+ * `--tone-info`/`--tone-warning` معرَّفان في `app/globals.css` في الكتل
+ * الثلاث (فاتح · داكن · قسمٌ رمليٌّ داخل داكن)، فالتنبيه يتبع الأرضية وحدَه
+ * ويوم يأتي مبدّل م‑٩ لا يحتاج سطراً — **وصفر لونٍ مكتوب في هذا المكوّن**.
+ */
+export const CALLOUT_TONE_TOKENS = ["info", "warning"] as const;
+export type CalloutToneToken = (typeof CALLOUT_TONE_TOKENS)[number];
+
+/**
  * شكل `content.style`. كل حقوله اختيارية، **والغياب يعني «الافتراضي»** لا
  * «صفر» — نفس تمييز القاعدة الذهبية ١٥.
  */
@@ -237,6 +257,16 @@ export type BlockStyle = {
   spacing?: SpacingToken;
   /** إخفاء الكتلة على الجوال — تخطيط لا محتوى */
   hideOnMobile?: boolean;
+  /**
+   * 🆕 م‑١٠ — نبرة `callout` وحدها (‏`styleKeys` هي الحدّ: ما ليس فيها لا
+   * يُعرض في المحرر). والغياب يعني `info` لا «بلا نبرة».
+   *
+   * ⚠ **وهي المقبض الوحيد في `BlockStyle` الذي يصل إلى مكوّن الكتلة نفسه** —
+   * لأن `sanitizeContent` تُسقط `style` قبل العارضة بقصد (فلا يُصيَّر رمزُ
+   * تنسيقٍ نصّاً بالخطأ). فيُمرَّر **مطهَّراً** عبر `SectionProps.style`، ولا
+   * يقرأ أي مكوّن `content.style` بنفسه.
+   */
+  tone?: CalloutToneToken;
 };
 
 // ---------------------------------------------------------------------------
@@ -273,8 +303,20 @@ export type BlockDef = {
   /** حقول العنصر داخل `items` — `null` = لا قائمة في هذه الكتلة */
   itemFields: readonly string[] | null;
   /**
+   * 🆕 **م‑٧** — حقولٌ عليا **غير نصّية** (مسارٌ أو اسم أيقونة): لا تدخل فهرس
+   * الترجمة ولا يستبدلها `i18n_apply`. `null` = لا شيء (لا `{}`).
+   *
+   * وظيفتها **الإعلان والتحقق لا الترشيح**: الترشيح بالاسم في
+   * `public.i18n_non_text_field` (‏`lib/item-fields-types.ts` §١)، وهذه تقول
+   * للمحرر أي عنصر واجهة يعرض، وتجعل `requiredFields` مقروءةً على اتحاد
+   * القوائم الأربع، وتجعل الكتلة تصف نفسها كاملةً في صفٍّ واحد.
+   */
+  nonTextFields: readonly NonTextFieldName[] | null;
+  /** نفسها داخل عنصر `items` — يلزمها `itemFields`، و`src` منها يلزمه `alt` */
+  nonTextItemFields: readonly NonTextFieldName[] | null;
+  /**
    * ما بدونه لا تُصيَّر الكتلة إطلاقاً (تُرجع `null`).
-   * حقلٌ في `requiredFields` ولا في `textFields`/`itemFields` = خطأ تسجيل.
+   * حقلٌ في `requiredFields` ولا في `textFields`/`nonTextFields` = خطأ تسجيل.
    */
   requiredFields: readonly string[];
   /** مقابض التنسيق المتاحة لهذه الكتلة — ما ليس هنا لا يُعرض في المحرر */
@@ -473,6 +515,8 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "body"],
     itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
     requiredFields: ["body"],
     styleKeys: ["background", "spacing", "hideOnMobile"],
   },
@@ -484,11 +528,22 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "sub", "ctaLabel"],
     itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
     /** 🔴 الإلزام هنا هو الإصلاح: بلا عنوان لا تُصيَّر — لا `<h1>` فارغ */
     requiredFields: ["title"],
     styleKeys: ["background", "spacing"],
   },
   {
+    /**
+     * ⚠ **م‑٧ أضافت `icon` داخل العنصر ولا شيء غيره.** القسم يحمل اليوم «كيف
+     * نعمل» و«الضمانات الست» معاً (١٩ صفاً حيّاً)، وكلاهما في التصميم بأيقونة
+     * لكل بطاقة — وكانت `CircleCheck` محفورةً في العارضة لكل عنصر.
+     * والغياب يرجع إليها حرفاً، فصفحةٌ قائمة لا تتغيّر ببايت.
+     *
+     * وبلا صورة: بطاقةُ ميزةٍ نصٌّ ورمز، وصورةٌ فيها زخرفةٌ تزيد الوزن ولا
+     * تضيف معنى — والقرار قابلٌ للنقض بسطرٍ هنا يوم يطلبه تخطيط.
+     */
     type: "features",
     role: "content",
     placement: "any",
@@ -496,6 +551,8 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "sub"],
     itemFields: ["title", "text"],
+    nonTextFields: null,
+    nonTextItemFields: ["icon"],
     requiredFields: ["items"],
     styleKeys: ["background", "spacing", "hideOnMobile"],
   },
@@ -507,6 +564,8 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title"],
     itemFields: ["q", "a"],
+    nonTextFields: null,
+    nonTextItemFields: null,
     requiredFields: ["items"],
     styleKeys: ["background", "spacing"],
   },
@@ -518,6 +577,8 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "note"],
     itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
     /** بلا حقلٍ إلزامي: نصوصها الافتراضية من الإعدادات، فهي تُصيَّر دائماً */
     requiredFields: [],
     styleKeys: ["background", "spacing", "hideOnMobile"],
@@ -525,17 +586,37 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
 
   // ── كتل النظام: بياناتها من الإعدادات، والنصّ تجاوزٌ اختياري ─────────────
   {
+    /**
+     * 🆕 **م‑٧: `items` اختيارية تتجاوز `SERVICES`.**
+     *
+     * التصميم يعطي كل خدمة صورةً، والبيانات كانت **في ملف TS** —
+     * `lib/site-config.ts` — أي خارج ما تصله اللوحة إطلاقاً. و`requiredFields`
+     * تبقى **فارغة** بقصد: بلا عنصرٍ واحد يعود القسم إلى `SERVICES` حرفاً
+     * (نفس مذهب `hero.items` مع نقاط الثقة الأربع)، فلا صفحة قائمة تتغيّر.
+     *
+     * و`href` يدخل الفهرس كما في `route-rail` وللسبب نفسه (D-24). وثمنُه
+     * مكتوبٌ في رأس `components/site/services.tsx`: البطاقة المتجاوَزة تفقد
+     * ربطَ «إلغاء النشر يُطفئ الرابط» — وحدُّ خطرها ٤٠٤ داخلي.
+     */
     type: "services-grid",
     role: "system",
     placement: "once-per-page",
     acceptsChildren: false,
     maxChildren: null,
     textFields: ["title", "sub"],
-    itemFields: null,
+    itemFields: ["title", "text", "href", "alt"],
+    nonTextFields: null,
+    nonTextItemFields: ["src", "icon"],
     requiredFields: [],
     styleKeys: ["background", "spacing"],
   },
   {
+    /**
+     * ⚠ **بلا `items` بقصد، وصورُها ليست نقصاً:** فئات الأسطول صفوفٌ في
+     * `vehicle_classes` تُحرَّر من `/admin/fleet`، وصورتها العمود `image_url`
+     * (موجودٌ منذ `0005`، ومُلئ في `0065`). فنسخُها إلى `items` كان سيخلق
+     * مصدرين للسعة نفسها — والسعة تقرّر الأهلية في SQL (D-12).
+     */
     type: "fleet",
     role: "system",
     placement: "once-per-page",
@@ -543,6 +624,8 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "sub"],
     itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
     requiredFields: [],
     styleKeys: ["background", "spacing"],
   },
@@ -554,6 +637,8 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "sub"],
     itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
     requiredFields: [],
     styleKeys: ["background", "spacing"],
   },
@@ -565,17 +650,40 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["title", "sub"],
     itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
     requiredFields: [],
     styleKeys: ["background", "spacing"],
   },
   {
+    /**
+     * ⚠ **م‑٢ وسّعتها ولم تخترع بجانبها**: هي الكتلة الوحيدة التي تركّب
+     * `BookingWidget`، ونسختان منها = ويدجتان على صفحة واحدة — فالشارة ونصّ
+     * السهم وضمانات البطل حقولٌ فيها لا كتلةٌ ثانية.
+     *
+     * و`requiredFields` تبقى فارغة: البطل يُصيَّر دائماً لأن نصوصه الافتراضية
+     * من الإعدادات، وإخفاؤه بحقلٍ ناقص كان سيُسقط الويدجت من الرئيسية.
+     */
     type: "hero",
     role: "system",
     placement: "home-only",
     acceptsChildren: false,
     maxChildren: null,
-    textFields: ["headline", "sub"],
-    itemFields: null,
+    /**
+     * `imageAlt` نصٌّ يُقرأ بقارئ الشاشة فيُترجم كأي نصّ — ولهذا هو هنا.
+     *
+     * 🔴 **وتصحيحٌ لما كان مكتوباً هنا (م‑٧، 2026-08-16):** كان السطر يقول إن
+     * `src`/`poster`/`video` «حقولٌ اختيارية غير نصّية و`block_registry_check`
+     * لا تعترضها» — وهو صحيحٌ في نصفه وكاذبٌ في نتيجته. القياس الحيّ بعد
+     * `0064` أخرج **ثلاثة صفوف** لها في طابور الترجمة، لأن الفهرس لا يقرأ
+     * `text_fields` ولا `block_registry` أصلاً: يقرأ كل مفتاحٍ قيمتُه نصّ.
+     * الحجب الحقيقي صار **بالاسم** في `public.i18n_non_text_field` (‏`0065`)،
+     * وإعلانُها هنا في `nonTextFields` هو ما يجعل المحرر يعرض لها منتقي وسائط.
+     */
+    textFields: ["badge", "headline", "sub", "scrollLabel", "imageAlt"],
+    itemFields: ["title"],
+    nonTextFields: ["src", "poster", "video"],
+    nonTextItemFields: null,
     requiredFields: [],
     styleKeys: [],
   },
@@ -590,6 +698,9 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: 4,
     textFields: [],
     itemFields: null,
+    /** كتلة تخطيط لا تحمل وسائط كما لا تحمل نصّاً — يفرضه `layout-carries-media` */
+    nonTextFields: null,
+    nonTextItemFields: null,
     requiredFields: [],
     styleKeys: ["background", "spacing", "hideOnMobile"],
   },
@@ -597,6 +708,10 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     /**
      * `alt` **نصٌّ قابل للترجمة** لا سمةٌ تقنية — وإغفاله هو الخطأ المعتاد.
      * و`src` مسارٌ في دلو `media` (قائمٌ منذ `0003`)، ولا يقبل نطاقاً خارجياً.
+     *
+     * ⚠ وإعلانه في `nonTextFields` **شرطٌ لا زينة** بعد `0065`: القاعدة (د) في
+     * `block_registry_check` تقرأ `requiredFields` على اتحاد القوائم، فحذفُه
+     * من هنا يجعل الكتلة تُرفض بـ`required-field-unfillable:src`.
      */
     type: "image",
     role: "content",
@@ -605,13 +720,205 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     maxChildren: null,
     textFields: ["alt", "caption"],
     itemFields: null,
+    nonTextFields: ["src"],
+    nonTextItemFields: null,
     requiredFields: ["src", "alt"],
     styleKeys: ["spacing", "hideOnMobile"],
   },
+
+  // ── كتل م‑٢ الثلاث — تركيب التصميم، ولا رابعة ─────────────────────────
+  {
+    /**
+     * **نظامية لا `items`** (قرار بدر ٤): الشعارات قائمةٌ في
+     * `site_settings.fleetBrands`، والكتلة تحمل نصَّيها وحدهما.
+     *
+     * 🔴 **وتصحيحٌ على المبرر (م‑٧، 2026-08-16):** كان مكتوباً هنا أن «`src`
+     * داخل عنصر قائمة شكلٌ لم يُقنَّن، والباب بقي مغلقاً». **الشكل صار
+     * مقنَّناً** (‏`0065` + `lib/item-fields-types.ts`)، فالباب مفتوح.
+     * وبقاءُ الشعارات في الإعدادات صار **اختياراً** لا قيداً: قائمةٌ واحدة
+     * تخدم كل صفحةٍ تحمل الشريط، فنقلُها إلى `items` كان سيجعل ماركةً تُضاف
+     * في صفحةٍ وتغيب في أخرى. ونقضُه سطرٌ هنا يوم يطلبه المالك.
+     *
+     * و`requiredFields` فارغة كأخواتها النظاميات: بياناتها من الإعدادات
+     * فتُصيَّر دائماً، وتغيب وحدها حين تفرغ القائمة.
+     */
+    type: "logo-strip",
+    role: "system",
+    placement: "once-per-page",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["title", "note"],
+    itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
+    requiredFields: [],
+    styleKeys: ["background", "spacing", "hideOnMobile"],
+  },
+  {
+    /**
+     * 🔴 **`requiredFields: ["items"]` هو تنفيذ قرار بدر ٣ حرفياً:** الكتلة
+     * تُشحن والأرقام لا. شريطٌ بلا عنصر واحد **لا يُصيَّر إطلاقاً** بدل أن
+     * يعرض إطاراً فارغاً — فالمالك يملؤه بما يملك أو يتركه فيغيب.
+     *
+     * و`value` حقلٌ نصّي **بقصد** لا رقمٌ في `style`: الرقم يُكتب ١٢٬٤٠٠
+     * بالعربية و12,400 بالإنجليزية، فوضعُه خارج الفهرس يجمّده على صيغة لغةٍ
+     * واحدة في اللغتين. والثمن سطرٌ في طابور الترجمة.
+     */
+    type: "stat-band",
+    role: "content",
+    placement: "any",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["title"],
+    itemFields: ["value", "suffix", "label"],
+    nonTextFields: null,
+    nonTextItemFields: null,
+    requiredFields: ["items"],
+    styleKeys: ["background", "spacing", "hideOnMobile"],
+  },
+  {
+    /**
+     * **بلا سعر** (قرار بدر ١): لا حقل سعر في `pages` أصلاً، والسعر المعروض
+     * الذي تخالفه الحاسبة بعد ثانيتين يهدم الجملة التي بُني عليها المنتج.
+     * **وهذا القرار قائمٌ ولم يُنقَض.**
+     *
+     * 🔴 **وقرار «بلا صورة» نُقض صراحةً — 2026-08-16، بأمر بدر:**
+     * «ضيف الأعمدة المطلوبة بحيث يمكن التحكم في كل شيء من خلال لوحة التحكم
+     * بما فيها الصور والأيكونات». وكان مكتوباً هنا أن الصورة «قيدُ عقدٍ لا
+     * نقصُ تنفيذ» لأن `src` داخل عنصر قائمة شكلٌ لم يُقنَّن — **فقُنِّن**:
+     * `nonTextItemFields` أعلاه، و`i18n_non_text_field` في `0065`، والعقد
+     * كاملاً في `lib/item-fields-types.ts`. فالبطاقة تحمل اليوم صورةً
+     * ونصَّها البديل وأيقونة، وكلها من اللوحة.
+     *
+     * و`alt` **نصٌّ يدخل الفهرس** ولا يلحق بالثلاثة: من لا يرى الصورة يسمعه،
+     * وجوجل يفهرسه — وضمُّه إلى حزمة الوسائط هو الخطأ المعتاد.
+     *
+     * و`href` يدخل الفهرس مع بقية حقول العنصر، وهذا **صحيح لا عرَض**: المسار
+     * العربي بلا بادئة والإنجليزي تحت `/en` (D-24)، فالوجهة تختلف بالفعل
+     * باختلاف اللغة.
+     */
+    type: "route-rail",
+    role: "content",
+    placement: "any",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["title", "sub", "note"],
+    itemFields: ["name", "href", "duration", "distance", "alt"],
+    nonTextFields: null,
+    nonTextItemFields: ["src", "icon"],
+    requiredFields: ["items"],
+    styleKeys: ["background", "spacing", "hideOnMobile"],
+  },
+
+  // ── كتل المستندات (م‑١٠) — أربعٌ تعالج عيباً بنيوياً لا تحريرياً ────────
+  {
+    /**
+     * **`requiredFields` فارغة و«لا يُصيَّر بلا بنود» في العارضة لا في السجل.**
+     *
+     * والفرق ليس أسلوبياً: البوابة `blockRenders` تحكم على **محتوى الكتلة
+     * وحدها**، وفهرسُ الصفحة لا محتوى له أصلاً — شرطُ ظهوره هو وجود كتل `clause`
+     * **أخرى** على الصفحة. فحقلٌ إلزامي هنا كان سيَعِد بما لا يقيسه: كتلةٌ
+     * فيها `title` تمرّ البوابة ثم تُصيَّر فارغة. والحكم الصحيح مكانه العارضة
+     * التي ترى الصفحة كلها، وهي ترجع `null` — لا صندوق فهرسٍ بلا سطر.
+     *
+     * و`once-per-page`: فهرسان على صفحةٍ واحدة تنقّلٌ مكرَّر يقول للقارئ إن
+     * أحدهما ناقص.
+     */
+    type: "page-toc",
+    role: "content",
+    placement: "once-per-page",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["title"],
+    itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
+    requiredFields: [],
+    styleKeys: ["background", "spacing", "hideOnMobile"],
+  },
+  {
+    /**
+     * 🔴 **`anchor` في `nonTextFields` هو تنفيذ قرار المرساة** (‏العقد الثاني
+     * `lib/item-fields-types.ts` §١٠): معرّفٌ لا نثر، فلا يدخل الفهرس ولا
+     * تستبدله `i18n_apply` — ولولا ذلك لكان مترجمٌ مجتهد يعرّب `cancellation`
+     * فتنكسر كل الروابط المرسلة على `/en` وحدها، بلا خطأ ولا سجل.
+     *
+     * و`requiredFields: ["title"]` لا `["title","anchor"]`: المرساة **لا تكون
+     * ناقصة أبداً** (الغياب يعني معرّف الصفّ)، وإلزامُها كان سيُخفي بنداً
+     * كاملاً من صفحة سياسات لأن حقلاً تقنياً فارغ — وهو أسوأ ما يمكن أن يفعله
+     * حقلٌ اختياري بطبيعته.
+     *
+     * ⚠ و`num` **نصٌّ يُترجَم** ولا يلحق بالمرساة: «٤» و«4» صيغتان تختلفان
+     * باللغة — نفس مبرر `stat-band.value` حرفاً.
+     */
+    type: "clause",
+    role: "content",
+    placement: "any",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["num", "title", "body"],
+    itemFields: null,
+    nonTextFields: ["anchor"],
+    nonTextItemFields: null,
+    requiredFields: ["title"],
+    styleKeys: ["background", "spacing"],
+  },
+  {
+    /**
+     * **الترويسة أعلى والخلايا داخل العنصر** — وهو ما يجعل الجدول قابلاً
+     * للعنونة أصلاً: `<sectionId>.h2` لعنوان العمود، و
+     * `<sectionId>.items.<_k>.c2` للخلية. ولو كان الصفّ نصّاً واحداً بفواصل
+     * لصار عموداً واحداً في الفهرس، ولعاد من المترجم بفواصل في غير مواضعها.
+     *
+     * ولا `hideOnMobile` في مقابضه: جدولُ نوافذ الإلغاء هو المعلومة التي
+     * يفتحها الزائر من هاتفه بعينها، وإخفاؤه على الجوال يعني إخفاءها عن
+     * أغلبية القرّاء. والتمرير الأفقي **داخل حاويته** هو الجواب لا الإخفاء.
+     */
+    type: "table",
+    role: "content",
+    placement: "any",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["title", "note", "h1", "h2", "h3", "h4"],
+    itemFields: ["c1", "c2", "c3", "c4"],
+    nonTextFields: null,
+    nonTextItemFields: null,
+    requiredFields: ["items"],
+    styleKeys: ["background", "spacing"],
+  },
+  {
+    /**
+     * `body` إلزامي: تنبيهٌ بلا نصّ صندوقٌ ملوّن فارغ — والتلوين بلا رسالة
+     * ضجيجٌ يعلّم القارئ أن يتخطى الصناديق الملوّنة كلها.
+     *
+     * ولا `background` في مقابضه (‏`tone` مكانها): خلفيةٌ مختارة تحارب تلوين
+     * النبرة في العنصر نفسه، فيخرج صندوقٌ لونُه يقول شيئاً وحدُّه يقول غيره.
+     */
+    type: "callout",
+    role: "content",
+    placement: "any",
+    acceptsChildren: false,
+    maxChildren: null,
+    textFields: ["title", "body"],
+    itemFields: null,
+    nonTextFields: null,
+    nonTextItemFields: null,
+    requiredFields: ["body"],
+    styleKeys: ["tone", "spacing", "hideOnMobile"],
+  },
 ] as const;
 
-/** المفتاح غير النصّي الوحيد المسموح خارج `style` — مسار الصورة */
-export const NON_TEXT_CONTENT_FIELDS = ["src"] as const;
+/**
+ * 🔴 **`NON_TEXT_CONTENT_FIELDS` حُذف في م‑٧ ولم يُترك بجانب خلفه.**
+ *
+ * كان يقول نصّاً إن `src` «المفتاح غير النصّي **الوحيد**» — وهو وصفٌ خاطئ منذ
+ * `0064` (‏`poster` و`video` موجودان)، وكاذبٌ في اتجاهه الآخر: **لا أثر له على
+ * الفهرس إطلاقاً** (مستهلكه الوحيد كان حيلةً في `block_registry_check`).
+ * وخلفُه `NON_TEXT_FIELD_NAMES` في `lib/item-fields-types.ts` §١ — ومعه
+ * مرآتُه الحيّة `public.i18n_non_text_field`. قائمتان تنحرفان، والنمط ٤ في
+ * `LESSONS.md` مكتوبٌ في هذا الملف بالذات.
+ */
+export { NON_TEXT_FIELD_NAMES, type NonTextFieldName } from "@/lib/item-fields-types";
 
 // ---------------------------------------------------------------------------
 // (١١) بوابة النشر — رموزٌ من القاعدة، لا فحصٌ في المتصفح
@@ -743,6 +1050,9 @@ export type BlockRegistryRow = {
   text_fields: string[];
   item_fields: string[] | null;
   required_fields: string[];
+  /** 🆕 م‑٧ (‏`0065`) — مرآة `nonTextFields`/`nonTextItemFields` أعلاه */
+  non_text_fields: string[] | null;
+  non_text_item_fields: string[] | null;
   enabled: boolean;
 };
 

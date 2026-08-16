@@ -90,7 +90,7 @@ begin
     ('public.dispatch_pool(uuid, integer)'),
     ('public.portal_offers()'),
     ('public.coverage_matches(numeric, numeric, numeric, numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

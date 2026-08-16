@@ -13,7 +13,9 @@ import { DEFAULT_TRIP_SETTINGS } from "@/lib/booking-types";
 import { readDispatchSettings } from "@/lib/dispatch/settings";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
+  MAX_LEAD_MINUTES,
   MAX_UNPAID_TIMEOUT_MINUTES,
+  MIN_LEAD_MINUTES_FLOOR,
   MIN_UNPAID_TIMEOUT_MINUTES,
   readTripSettings,
   TRIP_SETTINGS_COLUMNS,
@@ -88,13 +90,30 @@ type Mirrors = {
   groups: MirrorGroup[];
   fleet: FleetRow[];
   fleetNote: string | null;
+  /**
+   * الحدّ الأدنى الذي **تحتاجه المنظومة نفسها** قبل أن يتحرّك أحد، بالدقائق:
+   * `window_minutes × max_rounds` — أي زمن موجات البثّ كاملةً قبل أن يهبط
+   * الطلب إلى الطابور اليدوي، وقبل أن يبدأ المتعهد التحرّك أصلاً.
+   *
+   * ولماذا يُعرض في نصّ الإرشاد بدل أن يصير قيمةً افتراضية: **لأنه أرضيةٌ
+   * تقنية لا سياسةُ عمل.** زمن وصول المتعهد وسياسة القبول قرارُ المالك وحده
+   * (`docs/STANDING-ORDERS.md` §٣)، فنعرض عليه الرقم الذي يعرفه النظام
+   * ونتركه يضيف إليه ما يعرفه هو. و`null` حين تتعذّر قراءة إعدادات البثّ —
+   * فلا يُقترح رقمٌ مبنيٌّ على افتراض.
+   */
+  dispatchFloorMinutes: number | null;
 };
 
 const NO_ROW_NOTE = "لا صف محفوظ في هذه الشاشة بعد — افتحها واحفظ القيم لتظهر هنا.";
 const READ_FAILED_NOTE =
   "تعذّرت قراءة هذه القيم — إما أن هجرتها لم تُنفَّذ بعد أو أن حسابك لا يملك صلاحية قراءتها.";
 
-const EMPTY_MIRRORS: Mirrors = { groups: [], fleet: [], fleetNote: READ_FAILED_NOTE };
+const EMPTY_MIRRORS: Mirrors = {
+  groups: [],
+  fleet: [],
+  fleetNote: READ_FAILED_NOTE,
+  dispatchFloorMinutes: null,
+};
 
 /**
  * قراءة القيم السارية من مالكيها. كل قراءة مستقلة: فشل واحدة لا يُفرغ الباقي،
@@ -315,6 +334,12 @@ async function readMirrors(supabase: SupabaseClient): Promise<Mirrors> {
       groups: [dispatchGroup, pricingGroup, paymentGroup, discountGroup],
       fleet,
       fleetNote,
+      // ⚠ ضربٌ لعرض إرشادي محض — لا مال ولا سعر (D-05 يخصّ الحساب المالي)،
+      //   والقيمتان مقروءتان من مالكهما لا مكتوبتان هنا.
+      dispatchFloorMinutes:
+        dispatch.loaded && d.windowMinutes > 0 && d.maxRounds > 0
+          ? d.windowMinutes * d.maxRounds
+          : null,
     };
   } catch {
     return EMPTY_MIRRORS;
@@ -430,12 +455,64 @@ export async function TripSettingsSection({ wired }: { wired: boolean }) {
           ) : null}
         </div>
 
+        {/* ── أدنى مهلة قبل الانطلاق (هجرة 0067) ── */}
+        <div className="space-y-1.5">
+          <Label htmlFor={TRIP_SETTINGS_COLUMNS.minLeadMinutes} className="flex items-center gap-1.5">
+            أدنى مهلة قبل الانطلاق (بالدقائق)
+            <HelpTip>
+              أقرب موعد انطلاق يقبله الموقع، محسوباً من لحظة الحجز. حجزٌ لموعدٍ أقرب من
+              ذلك <strong>ترفضه قاعدة البيانات</strong> لا الشاشة — فلا يمرّ من أي طريق،
+              ومنتقي التاريخ في الحاسبة يمنع اختياره أصلاً بدل أن يقبله ثم يعتذر.
+              <br />
+              <strong>صفر يعني: مطفأة</strong> — يُقبل أي موعد في المستقبل، وهو الوضع
+              الحالي. المدى المقبول من ٠ إلى ١٠٠٨٠ (سبعة أيام)، وهو نفس القيد المفروض في
+              قاعدة البيانات.
+              <br />
+              وانتبه: الرقم يُقاس من <em>لحظة الحجز</em> لا من لحظة تأكيد الدفع. فمن يحجز
+              الآن لموعدٍ بعد ساعة يُرفض إن كانت المهلة ٩٠ دقيقة.
+            </HelpTip>
+          </Label>
+          <Input
+            id={TRIP_SETTINGS_COLUMNS.minLeadMinutes}
+            name={TRIP_SETTINGS_COLUMNS.minLeadMinutes}
+            type="number"
+            inputMode="numeric"
+            dir="ltr"
+            step="1"
+            min={MIN_LEAD_MINUTES_FLOOR}
+            max={MAX_LEAD_MINUTES}
+            defaultValue={trip.settings.minLeadMinutes}
+            disabled={!canEdit}
+            required
+            className="sm:max-w-48"
+          />
+          {/*
+            🔒 رقمٌ **يعرفه النظام** لا اقتراحٌ مخترَع: موجات البثّ وحدها تستغرق
+            هذا الزمن قبل أن يتحرّك أي متعهد. وزمن الوصول وسياسة القبول فوقه
+            قرارُ المالك — فلا يُضاف هنا رقمٌ من عندنا.
+            وتعذُّر القراءة ⇒ لا سطر: «لا نعرف» و«صفر» ليسا شيئاً واحداً.
+          */}
+          {mirrors.dispatchFloorMinutes !== null ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              للعلم: موجات البثّ وحدها تستغرق{" "}
+              <strong>{minutesText(mirrors.dispatchFloorMinutes)}</strong> (مهلة الموجة ×
+              عدد الموجات) قبل أن يهبط الطلب إلى الطابور اليدوي — وهذا قبل زمن وصول
+              المتعهد. اختر رقماً فوقه بما يناسب تشغيلك.
+            </p>
+          ) : null}
+          {trip.settings.minLeadMinutes === 0 ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              مطفأة الآن: يُقبل أي موعد في المستقبل، بما فيه موعدٌ بعد عشر دقائق.
+            </p>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!canEdit}>
             حفظ إعدادات الرحلات
           </Button>
           <span className="text-xs text-muted-foreground">
-            يُحفظ هذان المفتاحان وحدهما — بقية إعدادات الصفحة لها زر حفظ مستقل.
+            تُحفظ مفاتيح هذا القسم وحدها — بقية إعدادات الصفحة لها زر حفظ مستقل.
           </span>
         </div>
       </form>

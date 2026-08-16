@@ -23,6 +23,11 @@ export type ReceiptAccountOption = {
   id: string;
   label: string;
   handle: string;
+  /**
+   * المطلوب تحويله إلى **هذا** الحساب = المستحق + عمولته المجمَّدة (ن‑١).
+   * يصل محسوباً من `available_payment_accounts` ولا يُجمع هنا (**D-05**).
+   */
+  due: number;
 };
 
 export function ReceiptUpload({
@@ -45,6 +50,15 @@ export function ReceiptUpload({
   const uid = React.useId();
 
   const [accountId, setAccountId] = React.useState<string>(accounts[0]?.id ?? "");
+
+  /**
+   * المبلغ المتوقَّع يتبع الحساب المختار: عمولة التحويل تختلف بينها (ن‑١)، ورقمٌ
+   * ثابت هنا كان يطلب من عميلٍ اختار انستا باي مبلغَ فودافون كاش.
+   *
+   * ⚠ **وهو للعرض وحده.** المبلغ المسجَّل يحسبه Postgres داخل `attach_receipt`
+   * من الحجز ومن اللقطة المجمَّدة، ولا يُرسَل من هنا إطلاقاً (**D-09**).
+   */
+  const expected = accounts.find((account) => account.id === accountId)?.due ?? amountDue;
   const [file, setFile] = React.useState<File | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -86,7 +100,8 @@ export function ReceiptUpload({
     const body = new FormData();
     body.set("token", token);
     body.set("file", file);
-    body.set("amount", String(amountDue));
+    // ولا حقل `amount`: المبلغ من القاعدة لا من هنا (**D-09**)، وحقلٌ يُرسَل
+    // ويُتجاهَل يوحي بعكس ذلك لمن يقرأ. الحساب وحده مُدخَل — «إلى أين حوّلتُ».
     if (accountId) body.set("accountId", accountId);
 
     setSubmitting(true);
@@ -154,7 +169,7 @@ export function ReceiptUpload({
         />
         <p id={`${uid}-file-note`} className="text-xs leading-5 text-muted-foreground">
           {t("fileNote", "صورة أو PDF بحد أقصى ٥ ميجابايت. المبلغ المتوقع: {amount}.", {
-            amount: fmt.money(amountDue, currency),
+            amount: fmt.money(expected, currency),
           })}
         </p>
       </div>

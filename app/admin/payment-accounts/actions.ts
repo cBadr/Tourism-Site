@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import type { TreasuryAccountKind } from "@/lib/finance-types";
+import {
+  PAYMENT_FEE_MAX_FIXED,
+  PAYMENT_FEE_MAX_PERCENT,
+  type PaymentFeeKind,
+} from "@/lib/payment-fee-types";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 /**
@@ -16,6 +21,9 @@ import { createServerSupabase } from "@/lib/supabase/server";
  *   تحقق من المدخلات وكتابة فقط، ولا يُقرَّر في TypeScript أي حساب يُعرض على العميل.
  * - `customer_facing` مُدخَل لا قرار: الدالة نفسها هي التي ترشِّح به، وهذه الشاشة
  *   تكتب قيمته فقط.
+ * - **عمولة التحويل كذلك** (‏`0066`): تُكتب هنا `fee_kind`/`fee_value`، ويُحسب
+ *   مبلغها في Postgres وتُجمَّد مع الحجز بمُشغّل على `bookings`. ولا جنيه منها
+ *   يدخل `bookings.total` — العقد في `lib/payment-fee-types.ts` §١.
  * - العربون كذلك **يُحسب في SQL** داخل `create_booking` من نفس المفتاح المكتوب هنا؛
  *   هذه الشاشة تضبط القيم فقط ولا تحسب مبلغاً واحداً.
  * - اتفاقية «إعادة التوجيه بعد العملية»: النجاح والفشل كلاهما redirect برمز في الرابط.
@@ -40,10 +48,46 @@ const isMissingColumn = (code: string | undefined) =>
 /** 23514 = check_violation — قيد `kind` لم يتوسّع بعد ليقبل النقدية والبنك */
 const isKindRejected = (code: string | undefined) => code === "23514";
 
-/** نسخة الحقول بلا ما تضيفه هجرة المرحلة ٧ — للمحاولة الثانية وحدها */
-function withoutTreasuryFields(fields: AccountFields): Record<string, unknown> {
+/**
+ * `TR001` — رمز مخصص يرفعه مُشغّل `payment_accounts_block_gateway_exposure`
+ * (الهجرة `0060`) حين يُطلب عرضُ حساب تسوية بوابة على العملاء. رمز مستقل كي
+ * تقول الشاشة السبب بعينه بدل «تعذّر الحفظ».
+ */
+const isGatewayExposure = (code: string | undefined) => code === "TR001";
+
+/**
+ * `TR002` — رمز مُشغّل `payment_accounts_block_dead_fee` (الهجرة `0066`) حين
+ * تُضبط عمولة على وعاءٍ لا يصلح وجهةَ تحويل. رمز مستقل للسبب نفسه: **رفضٌ
+ * مشروح لا «تعذّر الحفظ»**.
+ */
+const isDeadFee = (code: string | undefined) => code === "TR002";
+
+/**
+ * قيد `payment_accounts_fee_chk` (الهجرة `0066`) يُبلَّغ بـ23514 كقيد `kind`
+ * القديم — فيُفرَّق بينهما **باسم القيد في نصّ الخطأ**، وإلا قال النظام «نفِّذ
+ * هجرة المرحلة ٧» لمن كتب نسبةً فوق المئة.
+ */
+const isFeeBound = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "23514" && (error.message ?? "").includes("payment_accounts_fee_chk");
+
+/**
+ * نسخة الحقول بلا ما تضيفه هجرة المرحلة ٧ — **للمحاولة الثانية وحدها**.
+ *
+ * ⚠ ولا تُتَّهم هذه الدالة بابتلاع المفتاح: مناداتها مشروطة بـ`isMissingColumn`
+ * على خطأ المحاولة الأولى (‏42703 / PGRST204)، أي قاعدةٌ لا عمود `customer_facing`
+ * فيها أصلاً. على قاعدة بدر — والعمود موجود منذ `0015` — لا تُنفَّذ ولا مرة.
+ */
+function withoutTreasuryFields(fields: Record<string, unknown>): Record<string, unknown> {
   const legacy: Record<string, unknown> = { ...fields };
   delete legacy.customer_facing;
+  return legacy;
+}
+
+/** ونظيرتها لعمودَي العمولة (الهجرة `0066`) — بالشرط نفسه حرفياً */
+function withoutFeeFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const legacy: Record<string, unknown> = { ...fields };
+  delete legacy.fee_kind;
+  delete legacy.fee_value;
   return legacy;
 }
 
@@ -82,7 +126,12 @@ type AccountFields = {
   sort: number;
   /** يُعرض في صفحة التحويل — ترشيح `available_payment_accounts` يعتمد عليه */
   customer_facing: boolean;
+  /** عمولة التحويل (الهجرة `0066`) — تُضاف لفاتورة العميل ولا تدخل سعر الرحلة */
+  fee_kind: PaymentFeeKind;
+  fee_value: number;
 };
+
+const FEE_KINDS: PaymentFeeKind[] = ["none", "fixed", "percent"];
 
 /**
  * قراءة حقول الحساب والتحقق منها — يعيد رمز خطأ نصياً بدل الرمي،
@@ -114,11 +163,45 @@ function readAccount(formData: FormData, prefix = ""): AccountFields | string {
   if (!Number.isInteger(sort) || sort < 0 || sort > MAX_SORT) return "sort";
 
   /**
-   * الأنواع الداخلية لا تُعرض على عميل مهما كان المفتاح — الشاشة تعطّل خانة
-   * الاختيار على الحساب الداخلي، والخانة المعطّلة لا تُرسَل أصلاً. هذا السطر
-   * يحسم الحالة على الخادم أيضاً فلا يفتحها نموذج مُلفَّق يدوياً.
+   * 🔴 **ضاقت هذه القاعدة إلى النقدية وحدها (2026-08-16).**
+   *
+   * كانت `cash || bank`، وكان مبرَّراً يوم كُتبت: التحويل البنكي لم يكن وسيلة
+   * دفع في المنتج أصلاً، فالحساب البنكي وعاءُ خزينة لا غير. ثم قرّر بدر أن
+   * **اللوحة وحدها تحدّد ما يظهر في صفحة التحويل — محافظَ كانت أو حسابات بنوك**،
+   * فسقط المبرر وبقي السطر: خانةُ الاختيار على الحساب البنكي **معروضة وقابلة
+   * للنقر**، والخادم يقسر قيمتها إلى `false` قبل الكتابة، فيُحفظ الصف «بنجاح»
+   * ويعود المفتاح مطفأً بعد أول تحديث للصفحة. عيبٌ صامت لا يمسكه قارئ الشاشة.
+   *
+   * والنقدية وحدها بقيت: المال النقدي يُسلَّم يداً بيد، فلا معنى لعرض «خزنة
+   * المكتب» وجهةَ تحويل على عميل يحوّل من تطبيقه. ولأن القسر الصامت هو العيب
+   * نفسه، **فالشاشة تعطّل الخانة على النقدية** (‏`CustomerFacingField`) — النصفان
+   * معاً أو لا أحد منهما، وهذا السطر يحسمها على الخادم أيضاً فلا يفتحها نموذج
+   * مُلفَّق يدوياً.
+   *
+   * أما حساب تسوية بوابات الدفع فمحجوب **بنيوياً في القاعدة** لا هنا: مُشغّل
+   * `payment_accounts_block_gateway_exposure` في الهجرة `0060` يرفض المفتاح على
+   * أي صف تشير إليه `payment_providers.account_id`، والرفض يصل هذه الشاشة برمز
+   * `TR001` فرسالةً عربية بعينها.
    */
-  const internalKind = kind === "cash" || kind === "bank";
+  const internalKind = kind === "cash";
+
+  /**
+   * عمولة التحويل (`0066`). **الحدّ الحقيقي قيد `payment_accounts_fee_chk`** في
+   * القاعدة — نسبةٌ فوق المئة أو مبلغٌ سالب مستحيلان على مستوى الصف. والتحقق
+   * هنا لا يحرس بل **يسمّي السبب**: من يقع على القيد يقرأ رسالة Postgres لا
+   * جملةً عربية، ومن يكتب من محرر SQL يقع على القيد نفسه.
+   *
+   * والتطبيع الوحيد المسموح: `none ⇒ 0` — لأنه معنى النوع لا قسرٌ لقيمة كتبها
+   * المالك (خانةُ القيمة تصل مع «بلا عمولة» بما تركه فيها آخر تعديل).
+   */
+  const feeKindRaw = text(formData, p("fee_kind")) ?? "none";
+  if (!(FEE_KINDS as string[]).includes(feeKindRaw)) return "feekind";
+  const feeKind = feeKindRaw as PaymentFeeKind;
+
+  const feeValueRaw = num(formData, p("fee_value")) ?? 0;
+  if (!Number.isFinite(feeValueRaw) || feeValueRaw < 0) return "feevalue";
+  if (feeKind === "percent" && feeValueRaw > PAYMENT_FEE_MAX_PERCENT) return "feepercent";
+  if (feeKind === "fixed" && feeValueRaw > PAYMENT_FEE_MAX_FIXED) return "feevalue";
 
   return {
     kind: kind as TreasuryAccountKind,
@@ -131,6 +214,10 @@ function readAccount(formData: FormData, prefix = ""): AccountFields | string {
     active: checked(formData, p("active")),
     sort,
     customer_facing: internalKind ? false : checked(formData, p("customer_facing")),
+    fee_kind: feeKind,
+    // القيمة تُقرَّب إلى قرشين كعمود `numeric(12,2)` نفسه — لا تقريبَ مالٍ هنا،
+    // بل مطابقةُ دقةِ العمود كي لا يُحفظ ما لا يُخزَّن
+    fee_value: feeKind === "none" ? 0 : Math.round(feeValueRaw * 100) / 100,
   };
 }
 
@@ -140,8 +227,44 @@ function readAccount(formData: FormData, prefix = ""): AccountFields | string {
  * 23514 = قيد `kind` لم يتوسّع بعد — رسالة تقول ما ينقص بالضبط لا «فشلت العملية».
  * وما عدا ذلك (ومنه صفر صفوف مع نجاح ظاهري) = RLS رفضت الكتابة أو خطأ غير متوقع.
  */
-const writeErrorCode = (code: string | undefined): string =>
-  code === "23505" ? "exists" : isKindRejected(code) ? "kindnew" : "save";
+const writeErrorCode = (error: { code?: string; message?: string } | null | undefined): string =>
+  error?.code === "23505"
+    ? "exists"
+    : isFeeBound(error)
+      ? "feebound"
+      : isKindRejected(error?.code)
+        ? "kindnew"
+        : isGatewayExposure(error?.code)
+          ? "gateway"
+          : isDeadFee(error?.code)
+            ? "feedead"
+            : "save";
+
+/**
+ * كتابةٌ بتدهور رشيق حول هجرتين: `0015` (‏`customer_facing`) و`0066` (عمودا
+ * العمولة). ترتيب التراجع من الأحدث إلى الأقدم — فقاعدةٌ بلا `0066` تحفظ بقية
+ * البيانات ومفتاح الظهور، وقاعدةٌ بلا `0015` تحفظ الأساسيات.
+ *
+ * ⚠ ومشروطٌ بـ`isMissingColumn` وحده (‏42703 / PGRST204): رفضُ قيدٍ أو مُشغّل
+ *   يخرج من هنا برمزه فيصل الشاشة رسالةً بعينها — **لا يُعاد بحقول أقل**، وإلا
+ *   صار الرفض المشروح حفظاً صامتاً ناقصاً، وهو العيب الذي أصلحته `0060`.
+ */
+async function writeWithFallbacks(
+  fields: AccountFields,
+  write: (values: Record<string, unknown>) => PromiseLike<{
+    data: unknown[] | null;
+    error: { code?: string; message?: string } | null;
+  }>
+) {
+  let res = await write(fields);
+  if (res.error && isMissingColumn(res.error.code)) {
+    res = await write(withoutFeeFields(fields));
+  }
+  if (res.error && isMissingColumn(res.error.code)) {
+    res = await write(withoutTreasuryFields(withoutFeeFields(fields)));
+  }
+  return res;
+}
 
 /** حفظ حساب قائم */
 export async function saveAccount(accountId: string, formData: FormData) {
@@ -151,18 +274,12 @@ export async function saveAccount(accountId: string, formData: FormData) {
   const fields = readAccount(formData);
   if (typeof fields === "string") redirect(url(`error=${fields}`));
 
-  const write = (values: Record<string, unknown>) =>
-    supabase.from("payment_accounts").update(values).eq("id", accountId).select("id");
-
-  let { data, error } = await write(fields);
-  // قاعدة قبل هجرة المرحلة ٧: أعد الكتابة بلا الحقول التي تضيفها، فتُحفظ بقية
-  // البيانات بدل أن يفشل الحفظ كله على عمود غائب
-  if (error && isMissingColumn(error.code)) {
-    ({ data, error } = await write(withoutTreasuryFields(fields)));
-  }
+  const { data, error } = await writeWithFallbacks(fields, (values) =>
+    supabase.from("payment_accounts").update(values).eq("id", accountId).select("id")
+  );
 
   if (error || !data || data.length === 0) {
-    redirect(url(`error=${writeErrorCode(error?.code)}`));
+    redirect(url(`error=${writeErrorCode(error)}`));
   }
 
   revalidatePath("/", "layout");
@@ -177,16 +294,12 @@ export async function createAccount(formData: FormData) {
   const fields = readAccount(formData, "new.");
   if (typeof fields === "string") redirect(url(`error=${fields}`));
 
-  const write = (values: Record<string, unknown>) =>
-    supabase.from("payment_accounts").insert(values).select("id");
-
-  let { data, error } = await write(fields);
-  if (error && isMissingColumn(error.code)) {
-    ({ data, error } = await write(withoutTreasuryFields(fields)));
-  }
+  const { data, error } = await writeWithFallbacks(fields, (values) =>
+    supabase.from("payment_accounts").insert(values).select("id")
+  );
 
   if (error || !data || data.length === 0) {
-    redirect(url(`error=${writeErrorCode(error?.code)}`));
+    redirect(url(`error=${writeErrorCode(error)}`));
   }
 
   revalidatePath("/", "layout");

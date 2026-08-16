@@ -14,18 +14,184 @@ import {
   type SeoSettings,
 } from "@/lib/seo-types";
 
+/**
+ * لوحة الألوان كاملةً — **سبعة عشر رمزاً، هي كتلة `:root` اللونية في التصميم
+ * حرفاً بحرف** (`Tours-02/landing/assets/css/style.css`).
+ *
+ * ── لماذا اللوحة كلها في القاعدة، ولماذا بقيمها الأصلية ──────────────────────
+ *
+ * كانت هنا ثلاثة مفاتيح، والباقي **يُشتقّ** منها في `globals.css` بصيغة
+ * `oklch(from var(--primary) L C h)`. والاشتقاق أنيق نظرياً وخاطئ عملياً:
+ * درجةُ لونِ العلامة كانت تفرض نفسها على **كل** أرضية ونصّ وحدّ في الموقع، فلمّا
+ * كان `--primary` أزرق (‏h 250) خرجت أرضيات التصميم الرملية زرقاء، ولم يكن في
+ * الطبقة أي مخرج: القيمة تُحقن سطرياً على `<html>` فتسبق `:root` دائماً. أي أن
+ * **هوية التصميم كانت تُمحى بلونٍ واحد في صفٍّ واحد**.
+ *
+ * والقسمة الصحيحة ليست «التصميم يملك السلّم والعلامة تملك الدرجة»، بل:
+ *
+ *   ┌─ **التصميم يملك القيم** — تُنقل كما هي، بلا اشتقاق ولا إعادة حساب.
+ *   └─ **القاعدة تملك المكان** — تُبذَر فيها تلك القيم نفسها، فتُحرَّر من اللوحة.
+ *
+ * فيجتمع الثلاثة الذي كان يبدو متعارضاً: الموقع يشبه التصميم لأن القيم قيمُه،
+ * والمالك يغيّرها من اللوحة لأنها صفٌّ في `site_settings`، ونسخة الـwhite-label
+ * تُعاد صبغتها بتبديل الصفّ لا بتفريع الكود (المرحلة ١٤).
+ *
+ * ⚠ **وما ليس هنا ليس سهواً.** أربعة رموز تبقى **مشتقّة** في `globals.css` لأنها
+ * قواعد قراءةٍ لا خيارات هوية: `--primary-on-sand` و`--brand-accent-on-sand`
+ * و`--danger-on-sand` و`--danger-on-ink` — درجاتٌ داكنة تفرضها نسبة التباين فوق
+ * الأرضية الفاتحة (وحزمة التصميم نفسها تنصّ عليها). ولو صارت مفاتيح لأمكن أن
+ * تُضبط على قيمةٍ تسقط دون AA بلا حارس.
+ */
+export type BrandPalette = {
+  /* ── الإشارتان: «فعل» و«معلومة» — أسماء المشروع التاريخية لهما تبقى ──────
+     `--amber` في التصميم هو `primary` هنا (زرّ · سعر · تركيز)، و`--nile` هو
+     `accent` (شارة · أيقونة). ولا يُعاد تسميتهما: كل مكوّن shadcn في المستودع
+     يقرأ `--primary` أصلاً، وإعادة التسمية تعني تعديل ٤٠+ شاشة بلا مقابل. */
+  /** `--amber` — لون الفعل. قيمة القاعدة أو hex أو oklch */
+  primary: string;
+  /** `--amber-ink` — نصّ فوق لون الفعل. داكنٌ لا أبيض: الكهرمان أرضية فاتحة */
+  primaryForeground: string;
+  /** `--amber-hi` — الدرجة الأفتح: hover وتوهّج وحلقة التركيز على الداكن */
+  primaryHi: string;
+  /** `--nile` — لون المعلومة */
+  accent: string;
+  /** `--nile-soft` — أرضية شارةٍ من لون المعلومة فوق الداكن */
+  accentSoft: string;
+
+  /* ── الأرضيات الداكنة — أربع رتب ───────────────────────────────────────── */
+  ink: string;
+  ink1: string;
+  ink2: string;
+  inkLine: string;
+
+  /* ── الأرضيات الفاتحة — ثلاث رتب ───────────────────────────────────────── */
+  sand: string;
+  sand2: string;
+  sandLine: string;
+
+  /* ── النصوص — رتبتان فوق كل أرضية ──────────────────────────────────────── */
+  onInk: string;
+  onInkMut: string;
+  onSand: string;
+  onSandMut: string;
+
+  /**
+   * `--danger` — الخطر. مفتاحٌ كالبقية **لكن معناه ليس هوية**: علامةٌ حمراء لا
+   * تجعل رسالة الخطأ خضراء. فيبقى على درجة التصميم، ودرجتاه فوق الأرضيتين
+   * تُشتقّان منه في `globals.css` بإضاءةٍ مقيسة لا منقولة.
+   */
+  danger: string;
+};
+
 export type BrandSettings = {
   /** اسم العلامة — placeholder حتى يحدد المالك الاسم النهائي */
   name: string;
   tagline: string;
   logoUrl: string | null;
-  colors: {
-    /** oklch/hex — تُحقن كمتغيرات CSS في الجذر */
-    primary: string;
-    primaryForeground: string;
-    accent: string;
-  };
+  /** oklch/hex — تُحقن كمتغيرات CSS في الجذر (`app/layout.tsx`) */
+  colors: BrandPalette;
 };
+
+/**
+ * لوحة التصميم الأصلية — **المصدر الواحد** لقيم الألوان في هذا المستودع.
+ *
+ * تُقرأ من هنا في ثلاثة مواضع ولا رابع: احتياطي `DEFAULT_SETTINGS` أدناه، وكتلة
+ * `:root` الثابتة في `app/globals.css` (نفس القيم حرفاً — كي لا تظهر الصفحة بلا
+ * تنسيق قبل وصول الإعدادات)، وبذرة الهجرة `0063`. وتغييرُ لونٍ في نسخةٍ أخرى
+ * يقع في صفّ `site_settings` لا هنا.
+ */
+export const DESIGN_PALETTE: BrandPalette = {
+  primary: "#D89A3E",
+  primaryForeground: "#1A1206",
+  primaryHi: "#EDB45B",
+  accent: "#2E9184",
+  accentSoft: "#1B4A45",
+  ink: "#08100F",
+  ink1: "#0D1917",
+  ink2: "#142522",
+  inkLine: "#21322E",
+  sand: "#F4F0E7",
+  sand2: "#FFFFFF",
+  sandLine: "#E0D8C8",
+  onInk: "#F3F1EB",
+  onInkMut: "#9FB2AC",
+  onSand: "#16201D",
+  onSandMut: "#55635E",
+  danger: "#D64545",
+};
+
+/**
+ * ترتيب حقن اللوحة في `<html style>` — الرمز في CSS مقابل مفتاحه في الإعدادات.
+ *
+ * **مصدرٌ واحد لا اثنان**: `app/layout.tsx` يبني منه السمة السطرية، وشاشة
+ * `/admin/settings` تبني منه حقول التحرير وإجراءُ الحفظ يبني منه الصفّ. فمفتاحٌ
+ * يُضاف هنا يظهر في الثلاثة معاً — ولا يبقى مفتاحٌ يُحرَّر ولا يُحقن، ولا مفتاحٌ
+ * يُحقن ولا يُحفظ (وهو بالضبط الفخّ الذي أطاح بمفتاح `seo` مرة).
+ */
+/**
+ * ترتيب حقن اللوحة في `<html style>` — الرمز في CSS مقابل مفتاحه في الإعدادات.
+ *
+ * **مصدرٌ واحد لا اثنان**: `app/layout.tsx` يبني منه السمة السطرية، وشاشة
+ * `/admin/settings` تبني منه حقول التحرير وإجراءُ الحفظ يبني منه الصفّ. فمفتاحٌ
+ * يُضاف هنا يظهر في الثلاثة معاً — ولا يبقى مفتاحٌ يُحرَّر ولا يُحقن، ولا مفتاحٌ
+ * يُحقن ولا يُحفظ (وهو بالضبط الفخّ الذي أطاح بمفتاح `seo` مرة).
+ */
+export const PALETTE_CSS_VARS: ReadonlyArray<readonly [keyof BrandPalette, string]> = [
+  ["primary", "--primary"],
+  ["primaryForeground", "--primary-foreground"],
+  ["primaryHi", "--primary-hi"],
+  ["accent", "--brand-accent"],
+  ["accentSoft", "--brand-accent-soft"],
+  ["ink", "--ink"],
+  ["ink1", "--ink-1"],
+  ["ink2", "--ink-2"],
+  ["inkLine", "--ink-line"],
+  ["sand", "--sand"],
+  ["sand2", "--sand-2"],
+  ["sandLine", "--sand-line"],
+  ["onInk", "--on-ink"],
+  ["onInkMut", "--on-ink-mut"],
+  ["onSand", "--on-sand"],
+  ["onSandMut", "--on-sand-mut"],
+  ["danger", "--danger"],
+] as const;
+
+/**
+ * ما يصلح **قيمةَ لون** — وهو حارسٌ أمني لا تجميل.
+ *
+ * القيم تُحقن سمةً سطرية على `<html>`، و`site_settings` صفٌّ يُكتب من اللوحة ومن
+ * PostgREST معاً. فقيمةٌ مثل `red;display:none` كانت ستطفئ الصفحة كلها لكل زائر
+ * بضربة صفٍّ واحد. والمسموح: خانات ست عشرية ودوالّ الألوان (`oklch` · `rgb` ·
+ * `color-mix` …) وأسماء CSS — أي حروف وأرقام و`#%.,()/+-` ومسافات، لا أكثر.
+ * فالفاصلة المنقوطة والقوس المعقوف والاقتباس خارج المجموعة أصلاً.
+ */
+const COLOR_VALUE = /^[A-Za-z0-9#%.,()/+\- ]{1,72}$/;
+
+/** القيمة إن كانت لوناً صالحاً، وإلا `null` فيسقط الرمز إلى قيمة `:root` */
+export function safeColorValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!COLOR_VALUE.test(trimmed)) return null;
+  // `url(` الوحيدة التي تمرّ من المجموعة أعلاه وتجلب طلباً خارجياً — تُمنع صراحةً
+  if (/url\s*\(/i.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * اللوحة سمةً سطرية جاهزة — يستدعيها `app/layout.tsx` وحده.
+ *
+ * الرمز الذي تسقط قيمته (غائبة أو مرفوضة) **لا يُكتب أصلاً**، فيرثه المتصفح من
+ * `:root` في `globals.css` — وهي نفس قيم التصميم. أي أن أسوأ حالة هي «الموقع
+ * يظهر بالتصميم الأصلي»، لا «الموقع بلا ألوان».
+ */
+export function paletteVars(colors: Partial<BrandPalette> | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, cssVar] of PALETTE_CSS_VARS) {
+    const value = safeColorValue(colors?.[key]);
+    if (value !== null) out[cssVar] = value;
+  }
+  return out;
+}
 
 export type ContactSettings = {
   phone: string | null;
@@ -140,11 +306,42 @@ export type NotificationSettings = {
   emailEnabled: boolean;
 };
 
+/**
+ * ماركة مركبة واحدة في شريط الماركات — مفتاح `fleetBrands` في `site_settings`.
+ *
+ * ── لماذا هنا لا داخل الكتلة (قرار بدر ٤) ───────────────────────────────────
+ * الشعارات **بيانات نظام** كفئات الأسطول تماماً، لا نصٌّ في قسم.
+ *
+ * 🔴 **وتصحيحٌ على المبرر — 2026-08-16 (م‑٧):** كان مكتوباً أن السبب بنيوي —
+ * «`src` داخل عنصر قائمة شكلٌ لم يُقنَّن في عقد المنشئ، وتوسيعُه بابٌ يُفتح لكل
+ * كتلة لاحقة». **والباب فُتح بأمر بدر** («التحكم في كل شيء من لوحة التحكم بما
+ * فيها الصور والأيكونات»)، والشكل مقنَّنٌ في `lib/item-fields-types.ts`
+ * والهجرة `0065`. فالسبب الباقي **نطاقٌ لا بنية**: قائمةٌ واحدة تخدم كل صفحةٍ
+ * تحمل الشريط، ووضعُها في `items` يجعل ماركةً تُضاف في صفحةٍ وتغيب في أخرى.
+ *
+ * ⚠ **وشرط استعمالها المكتوب في الاتفاق §٤:** وصفٌ للمركبات لا ادّعاء شراكة —
+ * فلا يقول نصُّ الكتلة «شركاؤنا» ولا «معتمدون من».
+ */
+export type FleetBrand = {
+  /** معرّف ثابت — مفتاح React ولا يُعرض */
+  slug: string;
+  /** اسم الماركة كما يُقرأ — يصير النصّ البديل للشعار */
+  name: string;
+  /** مسار الشعار. `null` ⇒ يُعرض الاسم نصّاً بدل أن تختفي الماركة */
+  logoUrl: string | null;
+};
+
 export type SiteSettings = {
   brand: BrandSettings;
   contact: ContactSettings;
   socials: SocialSettings;
   company: CompanyInfo;
+  /**
+   * ماركات الأسطول — تقرؤها كتلة `logo-strip` وحدها. قائمةٌ فارغة تُخفي
+   * الشريط كله بدل أن تعرض إطاراً بلا شعار (تمييز «صفر» عن «غير مضبوط»،
+   * القاعدة الذهبية ١٥).
+   */
+  fleetBrands: FleetBrand[];
   /**
    * إعدادات السيو الكاملة — النوع من عقد lib/seo-types.ts (مصدر واحد لا نسخة،
    * تماماً كـ PaymentSettings وIntegrationsSettings).
@@ -188,11 +385,25 @@ export type ServiceDef = {
   icon: "plane" | "building" | "route" | "landmark" | "party" | "mic";
 };
 
+/**
+ * فئة سيارة كما تعرضها الواجهة العامة.
+ *
+ * 🔴 **و`slug` صار `string` في م‑٧ ولم يعد اتحاداً من أربعة** — والسبب أن
+ * المصدر تغيّر: `getLocalizedVehicleClasses` تقرأ اليوم **جدول
+ * `vehicle_classes`** لا هذا الثابت، و`/admin/fleet` يسمح بإنشاء فئة خامسة
+ * بأي slug. فاتحادٌ من أربعة كان سيجعل الفئة التي ينشئها المالك **خطأ نوعٍ**
+ * لا بياناتٍ جديدة. والقائمة أدناه تبقى **احتياطياً** لا مصدراً.
+ */
 export type VehicleClassDef = {
-  slug: "sedan" | "suv" | "minibus" | "bus";
+  slug: string;
   title: string;
   seats: string;
   short: string;
+  /**
+   * صورة الفئة — العمود `vehicle_classes.image_url` (قائمٌ منذ `0005`، ومُلئ
+   * في `0065`). `null`/الغياب ⇒ بطاقةٌ بأيقونة كما كانت، لا إطارٌ مكسور.
+   */
+  imageUrl?: string | null;
 };
 
 /** الخدمات الست — من VISION.md (تصبح بيانات من قاعدة البيانات في المرحلة ٢) */
@@ -205,7 +416,13 @@ export const SERVICES: ServiceDef[] = [
   { slug: "conferences", title: "الحفلات والمؤتمرات", short: "أساطيل منسقة للحفلات والمؤتمرات والوفود.", icon: "mic" },
 ];
 
-/** فئات السيارات الأربع — من VISION.md (آلية تحديد السيارات) */
+/**
+ * فئات السيارات الأربع — **احتياطيٌّ لا مصدر** منذ م‑٧.
+ *
+ * المصدر الحيّ جدول `vehicle_classes` (سعةٌ وحقائبُ وصورةٌ وترتيب)، وهذه
+ * القائمة تظهر حين تتعذّر القراءة وحدها — فالصفحة تبقى معروضة ولا تصير فارغة.
+ * ⚠ ولا يُحرَّر هنا شيء: من أراد تغيير فئة يفتح `/admin/fleet`.
+ */
 export const VEHICLE_CLASSES: VehicleClassDef[] = [
   { slug: "sedan", title: "سيدان", seats: "حتى ٣ ركاب", short: "خيار اقتصادي أنيق للأفراد والرحلات الخفيفة." },
   { slug: "suv", title: "SUV", seats: "حتى ٦ ركاب", short: "مساحة وراحة أعلى للعائلات والحقائب." },
@@ -218,15 +435,29 @@ export const DEFAULT_SETTINGS: SiteSettings = {
     name: "منصة النقل السياحي", // placeholder — بانتظار اسم العلامة من المالك
     tagline: "خدمات نقل سياحي موثوقة في جميع أنحاء مصر",
     logoUrl: null,
-    colors: {
-      primary: "oklch(0.45 0.15 250)",
-      primaryForeground: "oklch(0.985 0 0)",
-      accent: "oklch(0.75 0.15 85)",
-    },
+    // الاحتياطي هو لوحة التصميم نفسها — فالموقع بلا قاعدة يظهر بهويته لا بأزرق قالب
+    colors: DESIGN_PALETTE,
   },
   contact: { phone: null, whatsapp: null, telegram: null, email: null },
   socials: { facebook: null, x: null, linkedin: null, github: null, instagram: null },
   company: { legalName: null, activity: "خدمات النقل السياحي داخل جمهورية مصر العربية" },
+  /**
+   * احتياطيٌّ لا مصدر — كالقيم كلها في هذا الملف. المصدر الحيّ صفُّ
+   * `fleetBrands` في `site_settings` (بذَرَته الهجرة `0061`)، ومن أراد ماركة
+   * أخرى بدّل الصفَّ لا هذا السطر.
+   */
+  fleetBrands: [
+    { slug: "mercedes", name: "مرسيدس", logoUrl: "/brands/mercedes.svg" },
+    { slug: "toyota", name: "تويوتا", logoUrl: "/brands/toyota.svg" },
+    { slug: "bmw", name: "بي إم دبليو", logoUrl: "/brands/bmw.svg" },
+    { slug: "hyundai", name: "هيونداي", logoUrl: "/brands/hyundai.svg" },
+    { slug: "nissan", name: "نيسان", logoUrl: "/brands/nissan.svg" },
+    { slug: "kia", name: "كيا", logoUrl: "/brands/kia.svg" },
+    { slug: "mg", name: "إم جي", logoUrl: "/brands/mg.svg" },
+    { slug: "jetour", name: "جيتور", logoUrl: "/brands/jetour.svg" },
+    { slug: "byd", name: "بي واي دي", logoUrl: "/brands/byd.svg" },
+    { slug: "honda", name: "هوندا", logoUrl: "/brands/honda.svg" },
+  ],
   /**
    * الافتراضي هنا مُعايَر على قاعدة واحدة: **قيمةٌ غير مضبوطة تُخرج نفس ما كان
    * الكود يخرجه حرفياً قبل هذه التوسعة.** بالترتيب:

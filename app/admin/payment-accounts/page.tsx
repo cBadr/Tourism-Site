@@ -23,6 +23,11 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import type { PaymentSettings } from "@/lib/booking-types";
 import type { TreasuryAccountKind } from "@/lib/finance-types";
+import {
+  PAYMENT_FEE_MAX_FIXED,
+  PAYMENT_FEE_MAX_PERCENT,
+  type PaymentFeeKind,
+} from "@/lib/payment-fee-types";
 import { getSettings } from "@/lib/settings";
 import { readPagePulse } from "@/lib/stats/pulse";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -46,16 +51,29 @@ import {
 
 /**
  * حسابات الخزينة — كل وعاء مال في المنصة صفٌّ واحد هنا: المحافظ وانستا باي
- * والبطاقات التي يُحوِّل إليها العملاء، **وكذلك** النقدية والبنك اللذان لا
- * يظهران للعميل إطلاقاً لكنهما يحملان رصيداً كباقي الحسابات (المرحلة ٧).
+ * والحسابات البنكية التي يُحوِّل إليها العملاء، **وكذلك** النقدية وحساب تسوية
+ * البوابات اللذان يحملان رصيداً بلا أن يكونا وجهةَ تحويل (المرحلة ٧).
  *
  * قاعدتان تحكمان الشاشة:
  * ١) **الحدود تُفرض في قاعدة البيانات لا هنا**: دالة `available_payment_accounts`
  *    هي التي تقرر أي حساب يظهر للعميل، والحساب الذي بلغ حده يختفي من صفحة
  *    التحويل تلقائياً. هذه الشاشة تعرض نفس أرقام القاعدة (المتبقي من الحد).
- * ٢) **الظهور للعميل مفتاح مستقل عن النوع**: `customer_facing` هو ما تقرأه
- *    `available_payment_accounts`. حساب داخلي (نقدية/بنك) لا يصل إليه العميل
- *    أبداً، لكن رصيده وقيوده جزء أصيل من الخزينة وكشف التدفق النقدي.
+ * ٢) **الظهور للعميل مفتاح مستقل عن النوع تماماً**: `customer_facing` وحده هو ما
+ *    ترشِّح به `payment_accounts_within_caps` — لا قائمةَ أنواع مسموحة في أي طبقة.
+ *    فأيّ وعاء يختاره بدر يظهر، وأيّ وعاء يطفئه يختفي، ورصيده وقيوده تبقى في
+ *    الخزينة وكشف التدفق النقدي كما هي في الحالين.
+ *
+ * والاستثناءان الوحيدان، وكلاهما مُعلَن لا صامت:
+ * - **النقدية**: تُسلَّم يداً بيد فلا معنى لها وجهةَ تحويل — الخانة **معطّلة**
+ *   في الشاشة والقيمة محسومة على الخادم (`actions.ts`)، والنصفان معاً.
+ * - **حساب تسوية بوابات الدفع**: محجوب **بنيوياً في القاعدة** (مُشغّل الهجرة
+ *   `0060`)، ومقبضه معرّف داخلي لا رقم يُحوَّل إليه.
+ *
+ * ٣) **عمولة التحويل طبقةٌ على الفاتورة لا على السعر** (ن‑١، الهجرة `0066`):
+ *    مبلغٌ ثابت أو نسبة تُضاف إلى ما يحوّله العميل، **ولا تدخل `bookings.total`
+ *    بحرف** — فمستحق المتعهد وهامش الصفقة وسقف موجات البث وكسب نقاط الولاء لا
+ *    يتحرك منها شيء، لا بانضباطٍ في أربعة مواضع بل لأن العمولة ليست هناك أصلاً.
+ *    وتُجمَّد مع الحجز، ومداها قيدٌ في الجدول. العقد: `lib/payment-fee-types.ts`.
  *
  * لا مبلغ واحد يُحسب في هذا الملف — كل رقم يصل جاهزاً من Postgres.
  */
@@ -79,14 +97,18 @@ const KIND_HANDLE_HINT: Record<TreasuryAccountKind, string> = {
   instapay: "عنوان انستا باي المستقبل (مثال: name@instapay).",
   card: "معرّف حساب البوابة أو آخر أرقام البطاقة — للتمييز الداخلي بين أكثر من حساب.",
   cash: "اسم مميّز للدرج النقدي (مثال: خزنة المكتب) — لا يراه عميل، فاكتب ما يفيدك أنت.",
-  bank: "رقم الحساب أو الآيبان — بيان داخلي للمطابقة مع كشف البنك، لا يُعرض لأحد.",
+  bank: "رقم الحساب أو الآيبان — يُعرض للعميل حرفياً إن فعّلت «يظهر للعملاء» على هذا الحساب.",
 };
 
-/** الأنواع التي يمكن أن تستقبل من العميل مباشرة — الباقي داخلي بطبعه */
-const CUSTOMER_CAPABLE: TreasuryAccountKind[] = ["wallet", "instapay", "card"];
+/**
+ * الأنواع التي تصلح وجهةَ تحويل يحوّل إليها العميل من تطبيقه — والنقدية وحدها
+ * خارجها لأنها تُسلَّم يداً بيد. **وهذه ليست قائمة ترشيح للعميل**: الترشيح
+ * `customer_facing` وحده في SQL، وهذه تحكم تعطيل الخانة في هذه الشاشة فقط.
+ */
+const TRANSFERABLE_KINDS: TreasuryAccountKind[] = ["wallet", "instapay", "card", "bank"];
 
-/** ترتيب عرض الأنواع في القائمة: ما يراه العميل أولاً ثم الداخلي */
-const KIND_ORDER: TreasuryAccountKind[] = ["wallet", "instapay", "card", "cash", "bank"];
+/** ترتيب عرض الأنواع في القائمة */
+const KIND_ORDER: TreasuryAccountKind[] = ["wallet", "instapay", "card", "bank", "cash"];
 
 const KIND_ICON: Record<TreasuryAccountKind, typeof Wallet> = {
   wallet: Wallet,
@@ -112,6 +134,14 @@ type AccountRow = {
   sort: number;
   /** يظهر للعميل في صفحة التحويل — المفتاح الذي تقرأه `available_payment_accounts` */
   customerFacing: boolean;
+  /** عمولة التحويل (الهجرة `0066`) — تُضاف لفاتورة العميل ولا تمسّ سعر الرحلة */
+  feeKind: PaymentFeeKind;
+  feeValue: number;
+  /**
+   * مرتبطٌ بمزوّد دفع (‏`payment_providers.account_id`) — وعاءُ تسويةٍ لا وجهةُ
+   * تحويل. يُقرأ من الجدول لا من مقبض محفور، كحارسَي `0060` و`0066` تماماً.
+   */
+  gatewayPot: boolean;
 };
 
 type Usage = { day: number | null; month: number | null };
@@ -214,8 +244,12 @@ async function loadUsage(
 const LEGACY_COLUMNS =
   "id, kind, label, handle, holder_name, opening_balance, daily_cap, monthly_cap, active, sort";
 /** نفسها + مفتاح الظهور للعميل الذي تضيفه هجرة المرحلة ٧ */
-const TREASURY_COLUMNS =
-  "id, kind, label, handle, holder_name, opening_balance, daily_cap, monthly_cap, active, sort, customer_facing";
+const TREASURY_COLUMNS = `${LEGACY_COLUMNS}, customer_facing`;
+/** ونفسها + عمودا العمولة اللذان تضيفهما هجرة `0066` */
+const FEE_COLUMNS = `${TREASURY_COLUMNS}, fee_kind, fee_value`;
+
+const isFeeKind = (v: unknown): v is PaymentFeeKind =>
+  v === "none" || v === "fixed" || v === "percent";
 
 async function loadAccounts(): Promise<{
   accounts: AccountRow[];
@@ -225,6 +259,8 @@ async function loadAccounts(): Promise<{
   ready: boolean;
   /** عمود `customer_facing` موجود — أي أن هجرة الخزينة (المرحلة ٧) مطبَّقة */
   treasuryReady: boolean;
+  /** عمودا العمولة موجودان — أي أن هجرة `0066` مطبَّقة */
+  feeReady: boolean;
 }> {
   const blank = {
     accounts: [] as AccountRow[],
@@ -233,45 +269,59 @@ async function loadAccounts(): Promise<{
     currency: "EGP",
     ready: false,
     treasuryReady: false,
+    feeReady: false,
   };
 
   const supabase = await createServerSupabase();
   if (!supabase) return blank;
 
-  // رمز العملة من قاعدة البيانات لا من الكود — نفس مصدر بقية أسعار الموقع
-  const [treasuryRes, currencyRes] = await Promise.all([
-    supabase
-      .from("payment_accounts")
-      .select(TREASURY_COLUMNS)
-      .order("sort", { ascending: true })
-      .order("label", { ascending: true }),
+  const order = (q: ReturnType<ReturnType<typeof supabase.from>["select"]>) =>
+    q.order("sort", { ascending: true }).order("label", { ascending: true });
+
+  // رمز العملة من قاعدة البيانات لا من الكود — نفس مصدر بقية أسعار الموقع.
+  // وحسابات تسوية المزوّدين تُقرأ من `payment_providers` لا من مقبض محفور:
+  // بها تُعطَّل خانة العمولة على الوعاء الذي يرفضها المُشغّل أصلاً، فلا يقع
+  // المالك على رفضٍ لم تحذّره منه الشاشة.
+  const [feeRes, currencyRes, providerRes] = await Promise.all([
+    order(supabase.from("payment_accounts").select(FEE_COLUMNS)),
     supabase.from("pricing_settings").select("currency").limit(1).maybeSingle(),
+    supabase.from("payment_providers").select("account_id"),
   ]);
 
   const currency =
     (!currencyRes.error && asText(currencyRes.data?.currency)) || blank.currency;
 
+  const gatewayPots = new Set<string>();
+  if (!providerRes.error && Array.isArray(providerRes.data)) {
+    for (const row of providerRes.data as Record<string, unknown>[]) {
+      const id = asText(row.account_id);
+      if (id) gatewayPots.add(id);
+    }
+  }
+
   /**
-   * تدهور رشيق حول هجرة ٠٠١٥: طلب عمود غير موجود يُفشل الاستعلام كله، فتصير
-   * الشاشة للقراءة فقط بلا سبب. لذلك نُعيد المحاولة بأعمدة ما قبل المرحلة ٧
-   * ونكتفي بإطفاء ما يخصها وحده.
+   * تدهور رشيق حول هجرتين (‏`0015` ثم `0066`): طلب عمود غير موجود يُفشل
+   * الاستعلام كله، فتصير الشاشة للقراءة فقط بلا سبب. نتراجع من الأحدث إلى
+   * الأقدم ونطفئ ما يخصّ كل هجرة وحدها.
    */
+  const feeReady = !feeRes.error;
+  const treasuryRes = feeReady
+    ? feeRes
+    : await order(supabase.from("payment_accounts").select(TREASURY_COLUMNS));
   const treasuryReady = !treasuryRes.error;
   const res = treasuryReady
     ? treasuryRes
-    : await supabase
-        .from("payment_accounts")
-        .select(LEGACY_COLUMNS)
-        .order("sort", { ascending: true })
-        .order("label", { ascending: true });
+    : await order(supabase.from("payment_accounts").select(LEGACY_COLUMNS));
 
   if (res.error) return { ...blank, currency };
 
   const accounts = ((res.data ?? []) as Record<string, unknown>[]).map((row) => {
     const kind: TreasuryAccountKind = isKind(row.kind) ? row.kind : "wallet";
     const flag = pick(row, ["customer_facing", "customerFacing"]);
+    const feeKind = pick(row, ["fee_kind", "feeKind"]);
+    const id = String(row.id);
     return {
-      id: String(row.id),
+      id,
       kind,
       label: asText(row.label) ?? "—",
       handle: asText(row.handle) ?? "",
@@ -281,9 +331,16 @@ async function loadAccounts(): Promise<{
       monthlyCap: asNumber(row.monthly_cap),
       active: row.active === true,
       sort: asNumber(row.sort) ?? 0,
-      // قبل الهجرة لا مفتاح أصلاً: كل حساب قديم كان يظهر للعميل بحكم نوعه
-      customerFacing:
-        typeof flag === "boolean" ? flag : CUSTOMER_CAPABLE.includes(kind),
+      // قبل هجرة `0015` لا عمود ولا دالةَ ترشيح به، وقيدُ `kind` يومها لا يقبل
+      // إلا `wallet`/`instapay` — أي أن كل صف قائم كان معروضاً للعميل فعلاً.
+      // فالاحتياطي `true` وصفٌ لتلك القاعدة لا حكمٌ بالنوع، ولا يُنفَّذ على قاعدة
+      // فيها العمود (وهي كل قاعدة منذ المرحلة ٧).
+      customerFacing: typeof flag === "boolean" ? flag : true,
+      // واحتياطي العمولة `none` لأن القاعدة بلا العمود قاعدةٌ **بلا عمولات**
+      // أصلاً — لا حساب يحملها ولا لقطةَ حجز تعرفها
+      feeKind: isFeeKind(feeKind) ? feeKind : ("none" as PaymentFeeKind),
+      feeValue: asNumber(pick(row, ["fee_value", "feeValue"])) ?? 0,
+      gatewayPot: gatewayPots.has(id),
     };
   });
 
@@ -295,6 +352,7 @@ async function loadAccounts(): Promise<{
     currency,
     ready: true,
     treasuryReady,
+    feeReady,
   };
 }
 
@@ -309,6 +367,15 @@ const ERROR_MESSAGES: Record<string, string> = {
   inuse: "لا يمكن حذف حساب استُقبلت عليه مدفوعات — أوقفه بدل حذفه حتى يبقى سجله المالي سليماً.",
   kindnew:
     "نوعا «نقدية» و«حساب بنكي» (و«بطاقة») يحتاجان هجرة المرحلة ٧ — نفِّذ 0015 من supabase/migrations ثم أعد المحاولة. الحساب لم يُحفظ ولم يتغير شيء.",
+  gateway:
+    "حساب تسوية بوابات الدفع لا يُعرض على العملاء: مقبضه معرّف داخلي لا رقم يُحوَّل إليه، وكل المزوّدين مرتبطون به. لعرض وجهة تحويل جديدة أضف حساباً مستقلاً — محفظة أو انستا باي أو حساب بنكي — وفعّل «يظهر للعملاء» عليه. لم يتغير شيء.",
+  feekind: "نوع العمولة غير معروف — اختر «بلا عمولة» أو «مبلغ ثابت» أو «نسبة».",
+  feevalue: `قيمة العمولة يجب أن تكون رقماً غير سالب، والمبلغ الثابت لا يتجاوز ${PAYMENT_FEE_MAX_FIXED}.`,
+  feepercent: `نسبة العمولة لا تتجاوز ${PAYMENT_FEE_MAX_PERCENT}٪ — النسبة تُحسب من إجمالي الرحلة.`,
+  feebound:
+    "قاعدة البيانات رفضت قيمة العمولة: النسبة بين صفر ومئة، والمبلغ الثابت غير سالب، و«بلا عمولة» قيمتها صفر. لم يتغير شيء.",
+  feedead:
+    "لا تُضبط عمولة على هذا الحساب: النقدية تُسلَّم يداً بيد، وحساب تسوية بوابات الدفع مقبضه معرّف داخلي — وكلاهما لا يظهر للعميل في صفحة التحويل، فالعمولة عليه لن تصل أحداً. اضبطها على حساب يظهر للعملاء. لم يتغير شيء.",
 };
 
 /** شريط استهلاك حد واحد — الأرقام تصل محسوبة من القاعدة والعرض فقط هنا */
@@ -490,10 +557,12 @@ function KindField({
       <Label htmlFor={id} className="flex items-center gap-1.5">
         نوع الحساب
         <HelpTip>
-          النوع يصف الوعاء نفسه ويحدد التعليمات التي يقرأها العميل عند التحويل: المحفظة
-          برقم موبايل، وانستا باي بعنوان حساب، والبطاقة عبر بوابة. أما{" "}
-          <span className="font-semibold">«نقدية» و«حساب بنكي» فوعاءان داخليان</span>: يحملان
-          رصيداً وتُقيَّد عليهما الحركات، ولا يُعرضان على عميل إطلاقاً.
+          النوع يصف <span className="font-semibold">الوعاء</span> ويحدد التعليمات التي يقرأها
+          العميل عند التحويل: المحفظة برقم موبايل، وانستا باي بعنوان حساب، والحساب البنكي
+          برقم حساب أو آيبان، والبطاقة عبر بوابة. أما{" "}
+          <span className="font-semibold">ظهوره أمام العميل فيقرره مفتاح «يظهر للعملاء» أدناه لا النوع</span>
+          . والنقدية وحدها خارج ذلك: تُسلَّم يداً بيد فلا تصلح وجهةَ تحويل، وتبقى مع ذلك
+          حساباً كامل الأثر في الخزينة.
         </HelpTip>
       </Label>
       <select
@@ -503,17 +572,17 @@ function KindField({
         disabled={disabled}
         className={controlClass}
       >
-        <optgroup label="يستقبل من العملاء">
-          {KIND_ORDER.filter((k) => CUSTOMER_CAPABLE.includes(k)).map((k) => (
-            <option key={k} value={k}>
+        <optgroup label="يصلح وجهةَ تحويل — تقرر ظهوره بالمفتاح أدناه">
+          {KIND_ORDER.filter((k) => TRANSFERABLE_KINDS.includes(k)).map((k) => (
+            <option key={k} value={k} disabled={!treasuryReady && k !== "wallet" && k !== "instapay"}>
               {KIND_LABELS[k]}
             </option>
           ))}
         </optgroup>
         <optgroup
-          label={treasuryReady ? "خزينة داخلية" : "خزينة داخلية (تحتاج هجرة المرحلة ٧)"}
+          label={treasuryReady ? "نقدية — لا تُعرض على عميل" : "نقدية (تحتاج هجرة المرحلة ٧)"}
         >
-          {KIND_ORDER.filter((k) => !CUSTOMER_CAPABLE.includes(k)).map((k) => (
+          {KIND_ORDER.filter((k) => !TRANSFERABLE_KINDS.includes(k)).map((k) => (
             <option key={k} value={k} disabled={!treasuryReady}>
               {KIND_LABELS[k]}
             </option>
@@ -525,11 +594,16 @@ function KindField({
 }
 
 /**
- * مفتاح «يظهر للعملاء» — الحقل الوحيد في الشاشة الذي يقرأه العميل غير مباشرة.
+ * مفتاح «يظهر للعملاء» — الحقل الوحيد في الشاشة الذي يقرأه العميل غير مباشرة،
+ * و**هو وحده** ما ترشّح به `payment_accounts_within_caps` في القاعدة. لا قائمة
+ * أنواع مسموحة في أي طبقة: محفظةً كان الحساب أو انستا باي أو بنكاً، تشغيلُ
+ * المفتاح يُظهره في صفحة التحويل وإطفاؤه يخفيه — والرصيد والقيود والكشوف كما
+ * هي في الحالين. ولا علاقة له بـ«نشط»: المتوقف خارج الخدمة كلها.
  *
- * `available_payment_accounts` تُرشِّح به، فإطفاؤه يخفي الحساب عن صفحة التحويل
- * فوراً بينما يبقى الرصيد والقيود والكشوف كما هي. لا علاقة له بـ«نشط»: المتوقف
- * خارج الخدمة كلها، وغير الظاهر داخلي يعمل بكامل طاقته المحاسبية.
+ * والنقدية وحدها تصل بخانة **معطّلة** — لأن المال النقدي يُسلَّم يداً بيد فلا
+ * يُحوَّل إليه من تطبيق. والتعطيل هنا نصفٌ، ونصفه الثاني في `actions.ts`؛
+ * ⚠ **لا يُنقض أحد النصفين وحده**: خانةٌ يقبلها المتصفح ويقسرها الخادم بصمت
+ * هي بعينها العيب الذي صار الحساب البنكي ضحيته حتى 2026-08-16.
  */
 function CustomerFacingField({
   id,
@@ -537,39 +611,164 @@ function CustomerFacingField({
   defaultChecked,
   disabled,
   treasuryReady,
+  /** نوع الحساب — النقدية وحدها تُعطَّل، وغيابه يعني نموذج «إضافة حساب» (يبدأ محفظةً) */
+  kind = "wallet",
 }: {
   id: string;
   name: string;
   defaultChecked: boolean;
   disabled?: boolean;
   treasuryReady: boolean;
+  kind?: TreasuryAccountKind;
 }) {
+  const cashOnly = !TRANSFERABLE_KINDS.includes(kind);
+
   return (
     <div className="space-y-1">
       <Label
         htmlFor={id}
-        className="flex w-fit cursor-pointer items-center gap-2 text-sm font-normal"
+        className={cn(
+          "flex w-fit items-center gap-2 text-sm font-normal",
+          cashOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+        )}
       >
         <input
           id={id}
           type="checkbox"
           name={name}
+          // ⚠ يُعرض **الواقع** لا ما نتمناه: صفُّ نقدية بمفتاح مشغَّل (لا يصنعه
+          // هذا النموذج، لكن SQL مباشرة تصنعه) **يظهر للعميل فعلاً** لأن الترشيح
+          // في القاعدة لا يعرف النوع. فإخفاؤه هنا كذبةٌ في الاتجاه الخطر، وحفظُ
+          // البطاقة هو ما يصحّحه.
           defaultChecked={defaultChecked}
-          disabled={disabled || !treasuryReady}
+          disabled={disabled || !treasuryReady || cashOnly}
           className="size-4 accent-primary"
         />
         يظهر للعملاء في صفحة التحويل
         <HelpTip>
-          الحسابات الداخلية (النقدية والبنك) <span className="font-semibold">لا تظهر أبداً</span>{" "}
-          في خطوة الدفع أمام العميل، لكنها تحمل أرصدة كاملة: تُقيَّد عليها المصروفات ودفعات
-          المتعهدين والتسويات، وتدخل في التدفق النقدي وكشف الخزينة كأي حساب آخر. أطفئ هذا
-          المفتاح على أي حساب تريد إخفاءه عن الدفع مع إبقاء حركته المالية مسجَّلة.
+          هذا المفتاح — <span className="font-semibold">لا نوع الحساب</span> — هو ما يقرر ظهور
+          الحساب في صفحة التحويل أمام العميل. فعّله على أي حساب تريد أن يحوّل إليه العملاء:
+          محفظة أو انستا باي أو{" "}
+          <span className="font-semibold">حساب بنكي</span>. وأطفئه على ما تريد إخفاءه مع إبقاء
+          حركته المالية مسجَّلة: تُقيَّد عليه المصروفات ودفعات المتعهدين والتسويات، ويدخل في
+          التدفق النقدي وكشف الخزينة كأي حساب آخر.
         </HelpTip>
       </Label>
+      {cashOnly && (
+        <p className="text-xs text-muted-foreground">
+          النقدية تُسلَّم يداً بيد فلا تصلح وجهةَ تحويل — ورصيدها وحركاتها تعمل بالكامل في
+          شاشة الخزينة.
+        </p>
+      )}
       {!treasuryReady && (
         <p className="text-xs text-muted-foreground">
           يُفعَّل بعد تنفيذ هجرة المرحلة ٧ (<code dir="ltr">0015</code>) التي تضيف عمود{" "}
           <code dir="ltr">customer_facing</code>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * عمولة التحويل على هذا الحساب (ن‑١، الهجرة `0066`) — **الحقل الثاني في هذه
+ * الشاشة الذي يصل جيب العميل**، وأول ما يجب أن يُفهم عنه أنه **ليس سعراً**:
+ *
+ * - العمولة **تُضاف إلى فاتورة العميل** ولا تدخل `bookings.total` بحرف. فسعر
+ *   الرحلة الذي يراه في نتائج البحث، ومستحق المتعهد، وسقف موجة البث، وهامش
+ *   الصفقة، وكسب نقاط الولاء — **كلها لا تتحرك** مهما بلغت العمولة.
+ * - وتُجمَّد مع الحجز: رفعُها غداً لا يغيّر ما رآه عميلٌ حجز اليوم ولم يدفع بعد.
+ * - والحساب في Postgres لا هنا (**D-05**): هذه الشاشة تكتب النوع والقيمة فقط.
+ *
+ * والحدّ الحقيقي قيدٌ في الجدول لا تحقق نموذج: نسبةٌ فوق المئة أو مبلغٌ سالب
+ * **مستحيلان** على مستوى الصف، ومن يكتب من محرر SQL يقع على القيد نفسه.
+ *
+ * ⚠ والنقدية ووعاء تسوية البوابات يصلان **معطَّلَين مع سطر يقول لماذا** —
+ * والقاعدة ترفضهما برمز `TR002` لو التفّ عليهما نموذجٌ مُلفَّق. النصفان معاً،
+ * كخانة «يظهر للعملاء» حرفياً: خانةٌ يقبلها المتصفح ويقسرها الخادم بصمت هي
+ * العيب الذي عاش عليه الحساب البنكي حتى 2026-08-16.
+ */
+function FeeField({
+  idBase,
+  namePrefix,
+  kind,
+  value,
+  currency,
+  disabled,
+  feeReady,
+  accountKind = "wallet",
+  gatewayPot = false,
+}: {
+  idBase: string;
+  namePrefix: string;
+  kind: PaymentFeeKind;
+  value: number;
+  currency: string;
+  disabled?: boolean;
+  /** هجرة `0066` مطبَّقة — وإلا فالحقلان معطَّلان مع سبب مكتوب */
+  feeReady: boolean;
+  accountKind?: TreasuryAccountKind;
+  gatewayPot?: boolean;
+}) {
+  const dead = accountKind === "cash" || gatewayPot;
+  const off = disabled || !feeReady || dead;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/30 p-3">
+      <p className="flex items-center gap-1.5 text-sm font-medium">
+        <Percent className="size-4 text-primary" />
+        عمولة التحويل على هذا الحساب
+        <HelpTip>
+          مبلغ ثابت أو نسبة من إجمالي الرحلة،{" "}
+          <span className="font-semibold">تُضاف إلى ما يحوّله العميل</span> ويراها سطراً مستقلاً
+          في صفحة حجزه قبل أن يدفع. مثال: فودافون كاش <span dir="ltr">+١</span> وانستا باي{" "}
+          <span dir="ltr">+٢٠</span>.
+          <br />
+          <span className="font-semibold">ولا تمسّ سعر الرحلة</span>: مستحق المتعهد وهامش الصفقة
+          وسقف عروض البث ونقاط الولاء تبقى كما هي بالضبط — العمولة على الفاتورة لا على السعر.
+          <br />
+          وتُجمَّد مع الحجز: تعديلها اليوم لا يغيّر حجزاً قائماً لم يُدفع بعد.
+        </HelpTip>
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idBase}-fee-kind`}>نوع العمولة</Label>
+          <select
+            id={`${idBase}-fee-kind`}
+            name={`${namePrefix}fee_kind`}
+            defaultValue={kind}
+            disabled={off}
+            className={controlClass}
+          >
+            <option value="none">بلا عمولة</option>
+            <option value="fixed">مبلغ ثابت ({currency})</option>
+            <option value="percent">نسبة من إجمالي الرحلة (٪)</option>
+          </select>
+        </div>
+        <NumberField
+          id={`${idBase}-fee-value`}
+          label="القيمة"
+          name={`${namePrefix}fee_value`}
+          defaultValue={value}
+          disabled={off}
+          step="0.01"
+          placeholder="0"
+          help={`مع «مبلغ ثابت» اكتبها بالـ${currency}، ومع «نسبة» اكتبها رقماً مئوياً (٢ تعني ٢٪، وأقصاها ${PAYMENT_FEE_MAX_PERCENT}). ومع «بلا عمولة» تُحفظ صفراً مهما كتبت.`}
+        />
+      </div>
+
+      {dead && feeReady && (
+        <p className="text-xs leading-5 text-muted-foreground">
+          {accountKind === "cash"
+            ? "النقدية لا تظهر في صفحة التحويل، فعمولتها لن تصل عميلاً — والقاعدة ترفضها."
+            : "هذا حساب تسوية بوابات الدفع: العميل لا يحوّل إليه ولا يراه، فعمولته لن تصل أحداً — والقاعدة ترفضها."}
+        </p>
+      )}
+      {!feeReady && (
+        <p className="text-xs leading-5 text-muted-foreground">
+          يُفعَّل بعد تنفيذ هجرة <code dir="ltr">0066</code> التي تضيف عمودَي{" "}
+          <code dir="ltr">fee_kind</code> و<code dir="ltr">fee_value</code>.
         </p>
       )}
     </div>
@@ -671,6 +870,7 @@ function AccountCard({
   readOnly,
   confirmingDelete,
   treasuryReady,
+  feeReady,
 }: {
   account: AccountRow;
   usage: Usage | undefined;
@@ -679,6 +879,7 @@ function AccountCard({
   readOnly: boolean;
   confirmingDelete: boolean;
   treasuryReady: boolean;
+  feeReady: boolean;
 }) {
   const f = (field: string) => `acc-${account.id}-${field}`;
   const KindIcon = KIND_ICON[account.kind];
@@ -701,7 +902,7 @@ function AccountCard({
             className="gap-1 border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
           >
             <EyeOff className="size-3" />
-            داخلي
+            لا يظهر للعملاء
           </Badge>
         )}
         <form action={readOnly ? undefined : toggleAccountActive.bind(null, account.id)} className="ms-auto">
@@ -725,8 +926,8 @@ function AccountCard({
       {/* استهلاك الحدود — أرقام قادمة من قاعدة البيانات */}
       {!account.customerFacing && (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          حساب داخلي: الحدود أدناه لا أثر لها عليه لأنها تحكم ظهوره أمام العميل وهو لا يُعرض
-          أصلاً. رصيده وحركاته تظهر كاملة في شاشة الخزينة.
+          هذا الحساب لا يظهر للعملاء، فالحدود أدناه لا أثر لها عليه — وظيفتها إخفاؤه من صفحة
+          التحويل عند بلوغها وهو مخفيٌّ أصلاً. رصيده وحركاته تظهر كاملة في شاشة الخزينة.
         </p>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -844,8 +1045,21 @@ function AccountCard({
             defaultChecked={account.customerFacing}
             disabled={readOnly}
             treasuryReady={treasuryReady}
+            kind={account.kind}
           />
         </div>
+
+        <FeeField
+          idBase={`acc-${account.id}`}
+          namePrefix=""
+          kind={account.feeKind}
+          value={account.feeValue}
+          currency={currency}
+          disabled={readOnly}
+          feeReady={feeReady}
+          accountKind={account.kind}
+          gatewayPot={account.gatewayPot}
+        />
 
         <div className="flex flex-wrap items-center justify-end gap-3">
           {confirmingDelete ? null : (
@@ -902,7 +1116,7 @@ export default async function PaymentAccountsPage({
 }: PageProps<"/admin/payment-accounts">) {
   const [
     params,
-    { accounts, usage, usageReady, currency, ready, treasuryReady },
+    { accounts, usage, usageReady, currency, ready, treasuryReady, feeReady },
     settings,
     pulse,
   ] = await Promise.all([
@@ -927,12 +1141,12 @@ export default async function PaymentAccountsPage({
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-heading text-lg font-bold">حسابات الدفع والخزينة</h2>
         <HelpTip>
-          كل صف هنا وعاء مال. الحسابات التي <span className="font-semibold">تظهر للعملاء</span>{" "}
-          هي ما يحوّل إليه العميل عند الحجز، والنظام يعرض عليه المتاح منها فقط: المتوقف أو الذي
-          بلغ حده اليومي أو الشهري{" "}
+          كل صف هنا وعاء مال، و<span className="font-semibold">أنت من يحدد ما يظهر منه في صفحة
+          التحويل</span> بمفتاح «يظهر للعملاء» — محافظَ كانت أو حسابات بنوك، لا فرق في النوع.
+          والنظام يعرض على العميل المتاح منها فقط: المتوقف أو الذي بلغ حده اليومي أو الشهري{" "}
           <span className="font-semibold">يختفي من صفحة التحويل تلقائياً</span> بلا تدخل منك،
-          فوزّع الحدود على أكثر من حساب حتى لا تتوقف الحجوزات. أما الحسابات الداخلية (نقدية/بنك)
-          فلا يراها عميل أبداً، وتحمل مع ذلك أرصدة وقيوداً كاملة في الخزينة.
+          فوزّع الحدود على أكثر من حساب حتى لا تتوقف الحجوزات. وما تطفئ مفتاحه يبقى بأرصدته
+          وقيوده كاملةً في الخزينة.
         </HelpTip>
         <Link
           href="/admin/finance/treasury"
@@ -1008,6 +1222,7 @@ export default async function PaymentAccountsPage({
           readOnly={readOnly}
           confirmingDelete={removing === account.id}
           treasuryReady={treasuryReady}
+          feeReady={feeReady}
         />
       ))}
 
@@ -1019,8 +1234,9 @@ export default async function PaymentAccountsPage({
               إضافة حساب
               <HelpTip>
                 أضف أكثر من حساب ووزّع الحدود بينها: عندما يشبع أحدها ينتقل العملاء إلى
-                التالي تلقائياً، فلا تتوقف الحجوزات ولا تحتاج للتدخل ليلاً. وللخزينة أضف حساباً
-                داخلياً واحداً على الأقل (نقدية) تُقيَّد عليه المصروفات ودفعات المتعهدين.
+                التالي تلقائياً، فلا تتوقف الحجوزات ولا تحتاج للتدخل ليلاً. وللخزينة أضف حساب
+                نقدية واحداً على الأقل تُقيَّد عليه المصروفات ودفعات المتعهدين — وهو الوحيد
+                الذي لا يصلح وجهةَ تحويل.
               </HelpTip>
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -1114,6 +1330,16 @@ export default async function PaymentAccountsPage({
               treasuryReady={treasuryReady}
             />
           </div>
+
+          <FeeField
+            idBase="new"
+            namePrefix="new."
+            kind="none"
+            value={0}
+            currency={currency}
+            disabled={readOnly}
+            feeReady={feeReady}
+          />
 
           <div className="flex justify-end">
             <Button type="submit" disabled={readOnly}>

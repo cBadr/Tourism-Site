@@ -3,9 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isMissingTable } from "@/lib/dispatch/settings";
+import {
+  DESIGN_PALETTE,
+  PALETTE_CSS_VARS,
+  safeColorValue,
+  type BrandPalette,
+} from "@/lib/site-config";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
+  MAX_LEAD_MINUTES,
   MAX_UNPAID_TIMEOUT_MINUTES,
+  MIN_LEAD_MINUTES_FLOOR,
   MIN_UNPAID_TIMEOUT_MINUTES,
   runStaleSweep,
   TRIP_SETTINGS_COLUMNS,
@@ -35,6 +43,30 @@ export async function saveSettings(formData: FormData) {
   const brandName = s("brand.name");
   if (!brandName) redirect("/admin/settings?error=name");
 
+  /*
+   * ⚠ **لوحة الألوان تُبنى بالتكرار على `PALETTE_CSS_VARS`، ولا تُكتب مفاتيحها هنا.**
+   *
+   * كان هذا الموضع يكتب ثلاثة مفاتيح بأسمائها ويُسقط ما عداها. وما دامت اللوحة
+   * ثلاثةً فذلك سليم؛ لكنها صارت سبعة عشر — و`site_settings.value` عمود `jsonb`
+   * **يُستبدل كاملاً لا يُدمج**. أي أن أول ضغطة على «حفظ الإعدادات» كانت ستمحو
+   * أربعة عشر مفتاحاً من صفّ العلامة: تعود الأرضيات والنصوص والحدود إلى قيم
+   * `:root` بنجاحٍ ظاهر وبلا رسالة، لمجرد أن المالك عدّل شعاره النصي. وهو نفس
+   * الفخّ الذي أطاح بمفتاح `seo` مرة (انظر التعليق داخل مصفوفة الصفوف أدناه)،
+   * فيُعالَج بنفس المعيار: **ما يُحقن هو ما يُحرَّر هو ما يُحفظ**، من قائمةٍ واحدة.
+   *
+   * والانطلاق من نسخة `DESIGN_PALETTE` لا من كائن فارغ مقصود: مفتاحٌ يُضاف إلى
+   * العقد ولمّا يُضَف له حقلٌ في الشاشة يُحفظ بقيمة التصميم، لا يغيب عن الصفّ.
+   *
+   * وقيمةٌ يرفضها `safeColorValue` **لا تصل القاعدة أصلاً** — تسقط إلى قيمة
+   * التصميم كأنها لم تُرسل. فالحارس في `paletteVars` يحمي الحقن وحده، وهذا الصفّ
+   * مقروء علناً وتقرؤه أدوات أخرى، فلا يُخزَّن فيه ما لا يصلح لوناً.
+   */
+  const brandColors: BrandPalette = { ...DESIGN_PALETTE };
+  for (const [key] of PALETTE_CSS_VARS) {
+    const submitted = safeColorValue(formData.get(`brand.colors.${key}`));
+    if (submitted !== null) brandColors[key] = submitted;
+  }
+
   const rows = [
     {
       key: "brand",
@@ -42,11 +74,7 @@ export async function saveSettings(formData: FormData) {
         name: brandName,
         tagline: s("brand.tagline") ?? "",
         logoUrl: s("brand.logoUrl"),
-        colors: {
-          primary: s("brand.colors.primary") ?? "oklch(0.45 0.15 250)",
-          primaryForeground: s("brand.colors.primaryForeground") ?? "oklch(0.985 0 0)",
-          accent: s("brand.colors.accent") ?? "oklch(0.75 0.15 85)",
-        },
+        colors: brandColors,
       },
     },
     {
@@ -168,6 +196,18 @@ export async function saveTripSettings(formData: FormData) {
     redirect(tripUrl("error=timeout"));
   }
 
+  // أدنى مهلة قبل الانطلاق (0067) — مدىً مرآةٌ لقيد `check` في القاعدة، ورمز
+  // خطأ **مستقل** عن مهلة الإلغاء: رسالةٌ واحدة لحقلين تُخفي أيهما أخطأ.
+  const lead = num(formData, TRIP_SETTINGS_COLUMNS.minLeadMinutes);
+  if (
+    lead === null ||
+    !Number.isInteger(lead) ||
+    lead < MIN_LEAD_MINUTES_FLOOR ||
+    lead > MAX_LEAD_MINUTES
+  ) {
+    redirect(tripUrl("error=lead"));
+  }
+
   // جدول غائب = هجرة 0027 لم تُنفَّذ؛ وأي فشل آخر رفضُ قراءةٍ من RLS
   const existing = await supabase.from(TRIP_SETTINGS_TABLE).select("id").limit(1);
   if (existing.error) {
@@ -182,6 +222,7 @@ export async function saveTripSettings(formData: FormData) {
         id: true,
         [TRIP_SETTINGS_COLUMNS.unpaidCancelEnabled]: enabled,
         [TRIP_SETTINGS_COLUMNS.unpaidTimeoutMinutes]: minutes,
+        [TRIP_SETTINGS_COLUMNS.minLeadMinutes]: lead,
       },
       { onConflict: "id" }
     )

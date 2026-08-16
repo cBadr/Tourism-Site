@@ -1,0 +1,745 @@
+/* ============================================================
+   طبقة الحركة — CSS المنقول من `Tours-02/landing/assets/css/style.css`
+
+   🔴 **قاعدة الملف كله، ولها استثناء واحد مكتوب في آخره:**
+   الحالة الساكنة هي الأصل، والحركة تُضاف داخل
+   `@media (prefers-reduced-motion: no-preference)` — لا العكس.
+
+   التصميم يفعل العكس: يحرّك افتراضياً ثم يُلغي داخل `(reduce)` بـ`!important`.
+   والفرق ليس أسلوبياً: `no-preference` استعلامٌ **يجيب بنعم صراحةً**، فمتصفحٌ
+   لا يعرف الميزة أصلاً — أو وكيلٌ يقرأ الصفحة، أو بيئةُ طباعة — يقع في الفرع
+   الساكن بدل أن يقع في الحركة. وهذا هو معنى «تقليل الحركة هو الفرع الافتراضي».
+
+   ⚠ وثمنٌ يجب أن يعرفه من يعدّل هنا: أي حركة تُكتب خارج ذلك الاستعلام تكسر
+   القاعدة صامتةً — لن يفشل بناء ولا اختبار. الفحص بصريّ: افتح الصفحة ومفتاح
+   «تقليل الحركة» مفعَّل في نظام التشغيل، ولا يتحرك شيء.
+
+   والألوان هنا ثلاثة أنواع فقط: `var(--*)` من `globals.css`، أو
+   `color-mix` منها، أو أبيضٌ شفاف في اللمعان (وهو ضوء لا لون علامة).
+   صفر لون علامة مكتوب — اتفاقيات §٣.
+   ============================================================ */
+
+/* ══════════════════════════════════════════════════════════════
+   ١) الظهور المُدرَّج عند التمرير — `.reveal` في التصميم
+   ══════════════════════════════════════════════════════════════ */
+
+/*
+  الحالة الأساس: **ظاهر تماماً**. فمن وصله HTML بلا جافاسكربت — زاحفُ بحث،
+  قارئُ RSS، متصفحٌ سقط عنه الحزمة — يرى المحتوى كاملاً. هذا هو نفس معنى
+  البادئة `.js` في التصميم، بلا حاجة إلى سكربتٍ في `<head>` لا نملكه.
+*/
+.reveal {
+  /* لا شيء. الظهور هو الحالة. */
+}
+
+@media (prefers-reduced-motion: no-preference) and (scripting: enabled) {
+  .reveal {
+    transition:
+      opacity var(--dur-3) var(--motion-ease),
+      transform var(--dur-3) var(--motion-ease);
+    transition-delay: calc(var(--stagger, 0) * 70ms);
+  }
+
+  /*
+    الإخفاء مشروطٌ بـ`scripting: enabled` وحده — أي أن المتصفح الذي لا يشغّل
+    جافاسكربت لا يمرّ من هنا إطلاقاً، فلا يوجد شيء ليعلق مخفياً عنده.
+  */
+  .reveal:not([data-in]) {
+    opacity: 0;
+    transform: translateY(14px);
+
+    /*
+      🔒 شبكة أمان **بلا جافاسكربت**: لو فشل تحميل الحزمة كلها (شبكة، حاجب
+      إعلانات، خطأ ترطيب) فالجافاسكربت لن يضع `data-in` أبداً — ويبقى نصف
+      الصفحة مخفياً للأبد. الأصل في التصميم يحمل هذا الخطر بعينه عبر صنف `.js`.
+      هنا يكشف CSS نفسه بنفسه بعد ست ثوانٍ: حركةٌ مدتها ١ms بتأخير ٦s.
+      وفي المسار الطبيعي لا تصل إليها الصفحة: المراقب يضع `data-in` خلال
+      أجزاء من الثانية فتسقط القاعدة كلها ومعها الحركة.
+    */
+    animation: reveal-failsafe 1ms linear 6s forwards;
+  }
+
+  .reveal[data-in] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes reveal-failsafe {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٢) البطل — Ken Burns · الجسيمات · نبضة الشارة · سهم التمرير
+   أربعتها CSS خالص في التصميم، وتبقى كذلك: حركةٌ لا نهائية زخرفية
+   تُدار على المُركِّب (compositor)، ونقلها إلى جافاسكربت انحدارُ أداء
+   لا ترقية — إطارٌ لكل ٦٠ ثانية × ٢٠ دقيقة على الخيط الرئيسي بلا مقابل.
+   ══════════════════════════════════════════════════════════════ */
+
+.kenBurns {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .kenBurns {
+    animation: ken-burns 20s ease-in-out infinite alternate;
+  }
+}
+
+/* عند تشغيل الفيديو نوقف Ken Burns حتى لا تتحرك طبقتان فوق بعضهما */
+.mediaHasVideo .kenBurns {
+  animation: none;
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.08);
+  }
+}
+
+/* --- الجسيمات الضوئية: ستة عناصر، مواضعها ومددها من التصميم حرفاً بحرف --- */
+.sparks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.spark {
+  position: absolute;
+  inline-size: 5px;
+  block-size: 5px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--primary) 95%, transparent),
+    transparent 70%
+  );
+  /* ساكنةً: لا تُرى إطلاقاً. الحركة وحدها هي التي تُظهرها. */
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spark {
+    animation: spark-drift 14s ease-in-out infinite;
+  }
+}
+
+.spark1 {
+  inset-inline-start: 12%;
+  inset-block-start: 72%;
+  animation-delay: 0s;
+}
+.spark2 {
+  inset-inline-start: 28%;
+  inset-block-start: 84%;
+  animation-delay: 2.4s;
+}
+.spark3 {
+  inset-inline-start: 48%;
+  inset-block-start: 66%;
+  inline-size: 4px;
+  block-size: 4px;
+  animation-delay: 4.8s;
+}
+.spark4 {
+  inset-inline-start: 66%;
+  inset-block-start: 79%;
+  animation-delay: 7.2s;
+}
+.spark5 {
+  inset-inline-start: 81%;
+  inset-block-start: 70%;
+  inline-size: 7px;
+  block-size: 7px;
+  animation-delay: 9.6s;
+}
+.spark6 {
+  inset-inline-start: 93%;
+  inset-block-start: 88%;
+  animation-delay: 12s;
+}
+
+@keyframes spark-drift {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.6);
+  }
+  14% {
+    opacity: 0.85;
+  }
+  70% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-18px, -190px, 0) scale(1.25);
+  }
+}
+
+/* --- نبضة النقطة داخل شارة البطل --- */
+.pulseDot {
+  inline-size: 8px;
+  block-size: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--brand-accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pulseDot {
+    animation: dot-pulse 2.4s var(--motion-ease) infinite;
+  }
+}
+
+@keyframes dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0
+      color-mix(in oklab, var(--brand-accent) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* --- سهم «مرّر لأسفل» --- */
+@media (prefers-reduced-motion: no-preference) {
+  .scrollCue {
+    animation: cue-bob 2.2s var(--motion-ease) infinite;
+  }
+}
+
+@keyframes cue-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+
+/* --- الفيديو: يظهر عند أول إطار صالح، لا قبله --- */
+.heroVideo {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  object-position: center 62%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* الظهور تدريجيّ فقط حين تُطلب الحركة. ومع تقليلها لا يُصيَّر الفيديو أصلاً
+   (`hero-video.tsx` يخرج قبل أن يبني العنصر)، فهذه الحارسة توكيدٌ لا شرط. */
+@media (prefers-reduced-motion: no-preference) {
+  .heroVideo {
+    transition: opacity 900ms var(--motion-ease);
+  }
+}
+
+.heroVideo[data-playing] {
+  opacity: 1;
+}
+
+/*
+  ترتيب طبقات صريح داخل حاوية وسائط البطل.
+  ضروري لا تجميلي: `.kenBurns` تحمل `will-change:transform` وهذا ينشئ
+  stacking context، فتصير الصورة نظيرة الفيديو في ترتيب الرسم وتغطّيه لأنها
+  بعده في الـDOM. بلا هذه الأسطر يعمل الفيديو فعلاً — يُحمَّل ويُشغَّل — ولا
+  يُرى إطلاقاً. (عيبٌ مكتوب في `style.css:958-961`، منقولٌ بعلّته.)
+*/
+.heroMedia {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.heroMedia > .kenBurns {
+  position: relative;
+  z-index: 0;
+}
+.heroMedia > .sparks {
+  z-index: 3;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٣) شريط الشعارات — تمرير لا نهائي
+   المسار = أربع نسخ متطابقة بعرض متساوٍ تماماً، فإزاحته بمقدار ٪١٠٠/٤ تضع
+   النسخة التالية في مكان السابقة بالضبط ⇒ التفاف بلا قفزة. والإزاحة على
+   `transform` وحده: لا `margin` ولا `inset-inline-start` (فتبقى على المُركِّب).
+   ══════════════════════════════════════════════════════════════ */
+
+.marqueeViewport {
+  overflow: hidden;
+}
+
+@supports (mask-image: linear-gradient(#000, #000)) or
+  (-webkit-mask-image: linear-gradient(#000, #000)) {
+  /* تلاشٍ جانبي عند الحافتين — تحسين بحت، وغيابه لا يمنع رؤية أي شعار */
+  .marqueeViewport {
+    -webkit-mask-image: linear-gradient(
+      90deg,
+      transparent 0,
+      #000 9%,
+      #000 91%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      90deg,
+      transparent 0,
+      #000 9%,
+      #000 91%,
+      transparent 100%
+    );
+  }
+}
+
+.marqueeTrack {
+  display: flex;
+  inline-size: max-content;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .marqueeTrack {
+    will-change: transform;
+    animation: marquee-rtl var(--marquee-dur, 40s) linear infinite;
+  }
+
+  /* في LTR ينعكس اتجاه الجريان — وإلا سار الشريط عكس اتجاه القراءة */
+  :global([dir="ltr"]) .marqueeTrack {
+    animation-name: marquee-ltr;
+  }
+
+  /*
+    التوقّف: خارج الشاشة، أو تبويب في الخلفية (كلاهما بجافاسكربت عبر
+    `data-paused`)، أو تحويم، أو تركيز لوحة مفاتيح داخل الشريط — والأخيران
+    بلا جافاسكربت إطلاقاً. وتوقّف التركيز ليس رفاهية: قارئ لوحة المفاتيح لا
+    يستطيع ملاحقة رابطٍ يهرب منه.
+  */
+  .marqueeTrack[data-paused],
+  .marqueeViewport:focus-within .marqueeTrack {
+    animation-play-state: paused;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  .marqueeViewport:hover .marqueeTrack {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes marquee-rtl {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(100% / var(--marquee-copies, 4)));
+  }
+}
+
+@keyframes marquee-ltr {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% / var(--marquee-copies, 4)));
+  }
+}
+
+/*
+  تقليل الحركة: لا «شريطٌ متوقف» — بل **شبكة ثابتة مرتّبة**.
+  الفرق مهم: شريطٌ ساكن يقصّه `overflow:hidden` يُخفي نصف الشعارات بلا أي
+  طريقة لرؤيتها. فتُفكّ الحاوية وتُخفى النسخ الثلاث المكرّرة وتلتفّ العشرة.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .marqueeViewport {
+    overflow: visible;
+    padding-inline: var(--gut);
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .marqueeTrack {
+    inline-size: 100%;
+    justify-content: center;
+  }
+  .marqueeSetDuplicate {
+    display: none;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٤) شريط الأرقام — وهج العدّاد
+   العدّ نفسه في `count-up.tsx`؛ هنا نبرته البصرية فقط.
+   ══════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: no-preference) {
+  .counter {
+    transition: filter var(--dur-3) var(--motion-ease);
+  }
+  .counter[data-count="running"] {
+    filter: drop-shadow(
+      0 0 20px color-mix(in oklab, var(--primary) 38%, transparent)
+    );
+  }
+  .counter[data-count="done"] {
+    filter: drop-shadow(
+      0 4px 14px color-mix(in oklab, var(--primary) 16%, transparent)
+    );
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٥) «كيف نعمل» — الخط يُرسم والسيارة تسير عليه
+   المسار نفسه يبنيه `flow-road.tsx` بالبكسل (`offset-path` لا يقبل نِسَباً).
+   ══════════════════════════════════════════════════════════════ */
+
+.flowTrack {
+  fill: none;
+  stroke: var(--brand-accent);
+  stroke-width: 2.5;
+  opacity: 0.2;
+}
+
+.flowDraw {
+  fill: none;
+  stroke: var(--brand-accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+/*
+  المحطات والنقاط الوسيطة والسيارة — مواضعها بـ`inset` + **هوامش سالبة**،
+  لا بـ`transform: translate(-50%)`.
+
+  ⚠ والسبب ليس ذوقاً: `transform` هو الخاصية التي تحرّكها إضاءة المحطة
+  (`scale(.5)` ⇐ `none`) وهي التي يكتبها `offset-path` للسيارة. فتوسيطٌ
+  مكتوبٌ فيها يُبتلع في الحالتين — تظهر المحطة بلا تكبير، وتنزاح السيارة
+  عن مسارها بنصف قرص. الهامش السالب يوسّط بلا أن يزاحم أحداً.
+*/
+.flowMark,
+.flowMid,
+.flowCar {
+  position: absolute;
+  inset-inline-start: var(--x, 50%);
+  inset-block-start: var(--y, 50%);
+  border-radius: 50%;
+}
+
+.flowMark {
+  inline-size: var(--flow-stn, 16px);
+  block-size: var(--flow-stn, 16px);
+  margin-inline-start: calc(var(--flow-stn, 16px) / -2);
+  margin-block-start: calc(var(--flow-stn, 16px) / -2);
+  background: var(--brand-accent);
+  border: 3px solid var(--flow-ring, var(--background));
+}
+
+/* خيطٌ نازل من المحطة نحو شارتها: يربط المسار بأرقام الخطوات بدل أن يطفو فوقها */
+.flowMark::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-start: 50%;
+  margin-inline-start: -1px;
+  inline-size: 2px;
+  block-size: var(--flow-thread, 28px);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--brand-accent) 42%, transparent),
+    transparent
+  );
+}
+
+/* أصغر ومجوّفة: لا تُقرأ كخطوةٍ إضافية */
+.flowMid {
+  inline-size: var(--flow-mid, 11px);
+  block-size: var(--flow-mid, 11px);
+  margin-inline-start: calc(var(--flow-mid, 11px) / -2);
+  margin-block-start: calc(var(--flow-mid, 11px) / -2);
+  background: var(--flow-ring, var(--background));
+  border: 2px solid color-mix(in oklab, var(--brand-accent) 55%, transparent);
+}
+
+/* الحالة الأساس: الخط مرسوم بالكامل والسيارة راسية عند نهايته وظاهرة.
+   هذه هي حالة «بلا جافاسكربت»، و«بلا دعم offset-path»، و«تقليل الحركة» —
+   ثلاثتها حالةٌ واحدة صحيحة، لا ثلاث معالجات. */
+.flowCar {
+  inline-size: var(--flow-puck, 46px);
+  block-size: var(--flow-puck, 46px);
+  margin-inline-start: calc(var(--flow-puck, 46px) / -2);
+  margin-block-start: calc(var(--flow-puck, 46px) / -2);
+  display: grid;
+  place-items: center;
+  opacity: 1;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow:
+    var(--sh-brand),
+    0 0 0 6px var(--flow-ring, var(--background));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .flowDrawArmed:not([data-drawn]) {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+  .flowDrawArmed[data-drawn] {
+    stroke-dasharray: 1;
+    animation: flow-trail var(--flow-drive, 3600ms)
+      var(--flow-ease, cubic-bezier(0.4, 0, 0.6, 1)) both;
+  }
+
+  /* السيارة تظهر مع بداية الرسم بلا تأخير حتى تقود رأس الخط */
+  .flowCarArmed:not([data-drawn]) {
+    opacity: 0;
+  }
+  .flowCarArmed {
+    transition: opacity var(--dur-2) var(--motion-ease);
+  }
+
+  /* المحطات: كلٌّ تضيء لحظة مرور السيارة بها فعلاً.
+     `--at` = نسبة **الزمن** (لا المسافة) التي تصل عندها بعد حساب المنحنى. */
+  .flowStop:not([data-drawn]) {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  .flowStop {
+    transition:
+      opacity 320ms var(--motion-ease),
+      transform 380ms var(--motion-ease-back);
+    transition-delay: calc(var(--at, 0) * var(--flow-drive, 3600ms));
+  }
+}
+
+/* الحركة الفعلية على المسار.
+   `is-live` لا يُضاف إلا بعد اختبار الدعم حياً في الجافاسكربت — فالـ`@supports`
+   طبقةٌ ثانية لا وحيدة، ومن سقط عنه الاثنان تبقى سيارته راسية في مكانها. */
+@supports (offset-path: path("M0,0")) {
+  .flowLive .flowCar {
+    /* أصل إحداثيات المسار = زاوية صندوق المسار نفسه (في RTL: `inline-end`) */
+    inset-block-start: 0;
+    inset-block-end: auto;
+    inset-inline-end: 0;
+    inset-inline-start: auto;
+    margin-block-start: 0;
+    margin-inline-start: 0;
+    offset-anchor: 50% 50%;
+    /* الحالة الساكنة = نهاية المسار، وهي حالة تقليل الحركة أيضاً */
+    offset-distance: 100%;
+    /* المسار الرأسي مماسّه ٩٠° فالدوران التلقائي يقلب السيارة على جنبها */
+    offset-rotate: 0deg;
+  }
+  /* الأفقي وحده يميل مع المنحنى: اتجاه السير في RTL = ١٨٠°،
+     فـ`auto 180deg` يعيدها معتدلة وتميل صعوداً وهبوطاً مع الموجة. */
+  .flowLive .flowCarHorizontal {
+    offset-rotate: auto 180deg;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .flowLive .flowCarArmed[data-drawn] {
+      animation: flow-drive var(--flow-drive, 3600ms)
+        var(--flow-ease, cubic-bezier(0.4, 0, 0.6, 1)) both;
+    }
+  }
+}
+
+@keyframes flow-trail {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes flow-drive {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٦) أصنافٌ عامة تتبنّاها العارضات — تحويم وبريق
+   كلها داخل `(hover:hover)`: أثرُ تحويمٍ على شاشة لمس يعلق بعد الضغطة
+   ولا شيء يزيله.
+   ══════════════════════════════════════════════════════════════ */
+
+/* الانتقالات نفسها داخل الحارسة — لا الحالات وحدها. فمن طلب تقليل الحركة لا
+   يرث حتى `transition-property`، ولو غيّر القسم لوناً أو ظلاً على العنصر نفسه. */
+@media (prefers-reduced-motion: no-preference) {
+  .cardLift {
+    transition:
+      transform var(--dur-2) var(--motion-ease),
+      border-color var(--dur-2) var(--motion-ease),
+      box-shadow var(--dur-2) var(--motion-ease);
+  }
+
+  .zoomImage {
+    transition: transform var(--dur-3) var(--motion-ease);
+  }
+
+  .nudgeIcon {
+    transition: transform var(--dur-2) var(--motion-ease);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  .cardLift:hover {
+    transform: translateY(-6px);
+  }
+  .cardLift:hover .zoomImage {
+    transform: scale(1.06);
+  }
+  /* السهم يتقدّم في اتجاه القراءة — سالبٌ في RTL، ويُقلَب في LTR */
+  .cardLift:hover .nudgeIcon,
+  .nudgeHost:hover .nudgeIcon {
+    transform: translateX(-6px);
+  }
+  :global([dir="ltr"]) .cardLift:hover .nudgeIcon,
+  :global([dir="ltr"]) .nudgeHost:hover .nudgeIcon {
+    transform: translateX(6px);
+  }
+}
+
+/* --- وهج يتبع المؤشّر على بطاقات الخدمات ---
+   يعمل بلا جافاسكربت أيضاً: القيمتان الافتراضيتان تضعان الوهج أعلى البطاقة. */
+.pointerGlow {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    340px circle at var(--mx, 50%) var(--my, 14%),
+    color-mix(in oklab, var(--brand-accent) 20%, transparent),
+    transparent 68%
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pointerGlow {
+    transition: opacity var(--dur-2) var(--motion-ease);
+  }
+}
+
+/* الوهج نفسه يظهر في الحالتين — هو **لونٌ** يتبع المؤشّر لا حركة، والفرق مع
+   تقليل الحركة أنه يقفز بلا تلاشٍ. أما تتبّع المؤشّر فيتوقف من الجافاسكربت. */
+@media (hover: hover) {
+  .pointerGlowHost:hover .pointerGlow,
+  .pointerGlowHost:focus-visible .pointerGlow {
+    opacity: 1;
+  }
+}
+
+/* --- لمعانٌ يعبر الزر مرّة عند التحويم --- */
+.shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.shine::after {
+  content: "";
+  position: absolute;
+  inset-block: -50%;
+  inset-inline-start: 33%;
+  inline-size: 34%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-300%) skewX(-18deg);
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgb(255 255 255 / 0.45),
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  .shine:hover::after {
+    animation: shine-sweep 780ms var(--motion-ease);
+  }
+}
+
+@keyframes shine-sweep {
+  0% {
+    transform: translateX(-300%) skewX(-18deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(300%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٧) شريط الإجراء السفلي اللاصق — ينزلق عند تجاوز البطل
+   ══════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: no-preference) {
+  .slideUpBar {
+    transition: transform var(--dur-2) var(--motion-ease);
+  }
+}
+
+@media (scripting: enabled) {
+  /* بلا جافاسكربت يبقى الشريط ظاهراً — زرُّ حجزٍ ظاهرٌ دائماً أسوأ
+     احتمالاته أنه زائد، وزرٌّ مخفيّ للأبد خسارةُ تحويلٍ صامتة. */
+  .slideUpBar:not([data-on]) {
+    transform: translateY(115%);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ٨) الاستثناء المكتوب: طبقة الأرضية البيضاوية تحت سيارات الأسطول
+
+   ليست حركةً ولا تتحرك — ولا مكان لها هنا بحكم الاسم. وُضعت لأن حزمة
+   التصميم تسجّل أنها «فعلت للتجانس أكثر من أي شيء آخر»: الصور الأربع من
+   بيئات مختلفة (شارع · طريق سريع · جراج · موقف)، وهذا التعتيم البيضاوي
+   أسفل الكادر وحده هو ما يجعلها تُقرأ أسطولاً واحداً واقفاً على سطح واحد.
+
+   🔴 **تُتبنّى كما هي ولا تُعاد كتابتها بالتقريب.** ومكانها الطبيعي عارضة
+   `fleet` — وهي ليست ملكي، فالصنف مُصدَّر لصاحبها ليتبنّاه.
+   ══════════════════════════════════════════════════════════════ */
+
+.fleetFloor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 55% at 50% 118%,
+    color-mix(in oklab, var(--ink) 85%, transparent) 0%,
+    color-mix(in oklab, var(--ink) 45%, transparent) 45%,
+    transparent 72%
+  );
+}
+
+.fleetScrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in oklab, var(--ink) 55%, transparent) 0%,
+    color-mix(in oklab, var(--ink) 12%, transparent) 34%,
+    transparent 60%
+  );
+}

@@ -70,6 +70,13 @@ export type PortalTrip = PortalOffer & {
    */
   bookingId: string | null;
   /**
+   * رقم الرحلة الجوية (هجرة `0067`) — كان يصل داخل `notes` النصّية.
+   *
+   * ⚠ و**غيابه لا يعني «رحلة ليست مطارية»**: قد يكون العميل لم يكتبه، وقد
+   * تكون القاعدة لم تصلها الهجرة. فالشاشة تعرضه حين وُجد ولا تنفيه حين غاب.
+   */
+  flightNumber: string | null;
+  /**
    * الطاقم المسجَّل — و`null` تعني **«لا نعرف»** لا «لم يُسجَّل».
    * والفرق ليس تدقيقاً لغوياً: عليه تُبنى الجملة التي تُقال للمتعهد، فلا نقول له
    * «لم تسجّل مركبة» ونحن لم نسأل أصلاً. (انظر `toCrew` أدناه.)
@@ -224,6 +231,8 @@ function withContact(base: PortalOffer, row: Record<string, unknown>): PortalTri
     status: asText(pick(row, ["status", "booking_status", "bookingStatus", "trip_status"])),
     assignedAt: asText(pick(row, ["assigned_at", "assignedAt"])),
     bookingId: asText(pick(row, ["booking_id", "bookingId"])),
+    // 0067 — قاعدةٌ لم تصلها الهجرة لا تُرجع العمود، فيعود `null` بلا كسر
+    flightNumber: asText(pick(row, ["flight_number", "flightNumber"])),
     crew: toCrew(row),
   };
 }

@@ -1916,6 +1916,18 @@ export default async function OrderDetailPage({
           </Row>
           <Row label="موعد الانطلاق">{dateTimeLabel(trip.pickupAt ?? null)}</Row>
           <Row label="الفئة">{booking.classTitle ?? booking.classSlug ?? "—"}</Row>
+          {/*
+            ج‑٣ (هجرة 0067) — رقم الرحلة الجوية حقلاً مستقلاً بعد أن كان يُكتب
+            داخل الملاحظات. يظهر **حين وُجد وحده**: أغلب الرحلات ليست مطارية،
+            وسطرٌ فارغ في كل طلب ضجيجٌ يُعلَّم القارئ تجاهله.
+          */}
+          {trip.flightNumber ? (
+            <Row label="رقم الرحلة الجوية">
+              <span dir="ltr" className="font-mono tracking-wider">
+                {trip.flightNumber}
+              </span>
+            </Row>
+          ) : null}
           {trip.notes ? (
             <Row label="ملاحظات العميل">
               <span className="block max-w-md leading-relaxed">{trip.notes}</span>

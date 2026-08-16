@@ -41,6 +41,8 @@ type FleetClass = {
   /** سعة الحقائب — عمود هجرة `0031`، و`null` قبل تنفيذها */
   luggageCapacity: number | null;
   short: string | null;
+  /** صورة الفئة في قسم الأسطول — عمود `image_url` (قائمٌ منذ `0005`) */
+  imageUrl: string | null;
   active: boolean;
   sort: number;
   tariff: Tariff | null;
@@ -124,6 +126,7 @@ async function loadFleet(): Promise<{
     capacity: asNumber(row.capacity),
     luggageCapacity: asNumber(row.luggage_capacity),
     short: asText(row.short),
+    imageUrl: asText(row.image_url),
     active: row.active === true,
     sort: asNumber(row.sort) ?? 0,
     tariff: tariffs.get(asText(row.id) ?? "") ?? null,
@@ -140,6 +143,7 @@ const PREVIEW_CLASSES: FleetClass[] = VEHICLE_CLASSES.map((c, i) => ({
   capacity: null,
   luggageCapacity: null,
   short: c.short,
+  imageUrl: c.imageUrl ?? null,
   active: true,
   sort: i,
   tariff: null,
@@ -151,6 +155,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   slug: "المعرّف غير صالح — حروف لاتينية صغيرة وأرقام تفصلها شرطات فقط (مثال: mini-bus).",
   capacity: "السعة يجب أن تكون عدداً صحيحاً من ١ فأكثر.",
   luggage: "سعة الحقائب يجب أن تكون عدداً صحيحاً بين ٠ و٩٩ — وهو المدى الذي تفرضه القاعدة نفسها.",
+  image:
+    "مسار الصورة غير مقبول — اكتب مساراً داخلياً يبدأ بشرطة مائلة واحدة مثل ‎/img/fleet-sedan.avif، أو اتركه فارغاً. النطاقات الخارجية مرفوضة: صورة على نطاق غيرنا تختفي يوم يحذفها صاحبها، وتُرسل عنوان كل زائر إليه.",
   luggagemig:
     "سعة الحقائب تحتاج هجرة 0031 — العمود luggage_capacity غير موجود في قاعدة البيانات. نفِّذ الهجرة من supabase/migrations ثم أعد المحاولة؛ لم يُحفظ شيء من هذه البطاقة.",
   sort: "ترتيب العرض يجب أن يكون عدداً صحيحاً غير سالب.",
@@ -359,6 +365,22 @@ function ClassCard({
           defaultValue={cls.short}
           disabled={readOnly}
           help="سطر واحد يظهر تحت اسم الفئة في الموقع — اتركه فارغاً ليختفي."
+        />
+
+        {/*
+          🔴 صورة الفئة — العمود موجود منذ `0005` و**لا شاشة كانت تكتبه ولا
+          عارضة تقرؤه**، فبقيت بطاقات الأسطول أيقوناتٍ حيث يضع التصميم صورة
+          السيارة. الثلاثة عولجت في م‑٧: الهجرة `0065` تملؤه، و`fleet.tsx`
+          يقرؤه، وهذا الحقل يجعله قابلاً للتبديل بلا نشرة.
+        */}
+        <TextField
+          id={f("image_url")}
+          label="صورة الفئة"
+          name="image_url"
+          defaultValue={cls.imageUrl}
+          disabled={readOnly}
+          dir="ltr"
+          help="مسار داخلي مثل ‎/img/fleet-sedan.avif — يظهر في بطاقة الفئة على الموقع. الفارغ يعيد البطاقة إلى أيقونتها، ولا يكسر شيئاً. ولا يُقبل نطاق خارجي."
         />
 
         <Label className="flex w-fit cursor-pointer items-center gap-2 text-sm font-normal">

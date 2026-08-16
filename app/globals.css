@@ -2,14 +2,344 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/*
+  المتغيّر `dark:` يعمل داخل `.dark` (قشرة الموقع العام) **وداخل `.surface-ink`**
+  (قسمٌ داكن داخل صفحة فاتحة). بلا الثانية يصير القسم الداكن جزيرةً لا تراها
+  أدوات تيلويند الداكنة، فتُكتب له أصناف يدوية — وهي أول خطوة نحو نظامٍ ثانٍ.
+*/
+@custom-variant dark (&:is(.dark *, .surface-ink *));
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ١) الطبقة الخام — لوحة تصميم Tours-02 **بقيمها الأصلية**، والقاعدة تملك المكان
+
+   المصدر: كتلة `:root` في `Tours-02/landing/assets/css/style.css`.
+
+   ── 🔴 تصحيحٌ لما كان هنا، وسببه مقيس ───────────────────────────────────────
+
+   كانت هذه الكتلة **تشتقّ** السبعة عشر من ثلاثة مفاتيح في الإعدادات، بصيغة
+   `oklch(from var(--primary) L C h)`: «التصميم يملك السلّم والعلامة تملك
+   الدرجة». والقاعدة بدت أنيقة وكانت خاطئة، والدليل قياسٌ على الصفحة الحيّة:
+   لمّا كان `--primary` في القاعدة أزرق (‏`oklch(.65 .15 250)`) خرجت أرضية
+   الموقع `oklch(.956 .013 250)` — **أبيض مُزرق**، والتصميم رملٌ دافئ. أي أن
+   لوناً واحداً في صفٍّ واحد كان يمحو هوية التصميم كلها، ولا مخرج من ذلك في هذه
+   الطبقة: القيمة تُحقن سطرياً على `<html>` فتسبق `:root` دائماً.
+
+   ── والقسمة الصحيحة ────────────────────────────────────────────────────────
+
+   ┌─ **التصميم يملك القيم** — تُنقل كما هي، بلا اشتقاق ولا إعادة حساب.
+   └─ **`site_settings` يملك المكان** — تُبذَر فيه تلك القيم نفسها (الهجرة
+       `0063`)، ويحقنها `app/layout.tsx` كلها على `<html>` سطرياً.
+
+   وهذا **ليس لوحتين**: ما في `:root` أدناه ليس لوحةً منافسة بل **الاحتياطي
+   الثابت** — نفس أرقام الصفّ حرفاً، مكتوبةً هنا كي لا تظهر الصفحة بلا هوية في
+   اللحظة التي تسبق وصول الإعدادات أو حين تسقط القاعدة. ومصنع الـwhite-label
+   (المرحلة ١٤) يبقى ممكناً لأن التبديل يقع في الصفّ: النسخة الثانية تُصبغ
+   بـ`update site_settings` لا بتفريع CSS.
+
+   ⚠ **وأربعة رموز تبقى مشتقّة عمداً** — قواعد قراءةٍ لا خيارات هوية:
+   `--primary-on-sand` · `--brand-accent-on-sand` · `--danger-on-sand` ·
+   `--danger-on-ink`. الإضاءة فيها **شرط تباين مقيس** لا نبرة، فلو صارت مفاتيح
+   لأمكن ضبطها على قيمةٍ تسقط دون AA بلا حارس.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── (أ) الأرضيات الداكنة — أربع رتب ─────────────────────────────────────── */
+  --ink: #08100f;
+  --ink-1: #0d1917;
+  --ink-2: #142522;
+  --ink-line: #21322e;
+
+  /* ── (ب) الأرضيات الفاتحة — ثلاث رتب ──────────────────────────────────────
+     و`--sand-mut` رتبةٌ **زائدة على التصميم**، ومبرّرها صريح: shadcn يحتاج سطحاً
+     بين الأرضية والحدّ (`muted`/`secondary`/`accent`)، والعائلة الفاتحة في
+     التصميم رتبتان وخط. فتُحسب **منتصف المسافة بين الاثنتين** بدل أن تُخترع
+     نبرة ثالثة — ولهذا `color-mix` لا قيمة مكتوبة: تتبع الرتبتين حين تتغيّران
+     من اللوحة، فلا يبقى رمزٌ يتخلّف عن لوحته. */
+  --sand: #f4f0e7;
+  --sand-2: #ffffff;
+  --sand-line: #e0d8c8;
+  --sand-mut: color-mix(in oklab, var(--sand) 55%, var(--sand-line));
+
+  /* ── (ج) النصوص — رتبتان فوق كل أرضية ─────────────────────────────────────── */
+  --on-ink: #f3f1eb;
+  --on-ink-mut: #9fb2ac;
+  --on-sand: #16201d;
+  --on-sand-mut: #55635e;
+
+  /* ── (د) الإشارتان: «فعل» و«معلومة» ───────────────────────────────────────
+     التصميم يفصل الفعل عن المعلومة بلونين، والمشروع يملك الفصل نفسه مسبقاً:
+
+        --amber (فعل)    ⇒ --primary       ← تقرؤه أزرار shadcn أصلاً
+        --nile  (معلومة) ⇒ --brand-accent  ← تقرؤه شارات الكتل أصلاً
+
+     ولهذا لم يُعَد تسميتهما: إعادة التسمية تعني تعديل ٤٠+ شاشة بلا مقابل.
+
+     ⚠ و`--primary-foreground` **داكنٌ لا أبيض** (#1A1206 = `--amber-ink`):
+     الكهرمان أرضيةٌ فاتحة، ونصٌّ أبيض فوقه يسقط إلى ‏1.9:1. */
+  --primary: #d89a3e;
+  --primary-foreground: #1a1206;
+  --primary-hi: #edb45b;
+  --brand-accent: #2e9184;
+  --brand-accent-soft: #1b4a45;
+
+  /* ── (هـ) الخطر ─────────────────────────────────────────────────────────── */
+  --danger: #d64545;
+
+  /* ── (و) الدرجات المصحَّحة للتباين — الأربعة المشتقّة ──────────────────────
+     ملاحظة حزمة التصميم المقيسة: «`--nile` يسقط دون AA فوق `--sand` (≈3.3:1)،
+     فاستخدم درجة أغمق فوق الأرضيات الفاتحة». والحكم نفسه يسري على `--amber`
+     (‏2.2:1 فوق الرمل) وعلى `--danger` (‏3.86:1 — دون AA أيضاً).
+
+     والإضاءة هنا **مطلقة** لأنها شرط قراءةٍ لا علاقة نبرة، أما التشبّع والدرجة
+     فيُؤخذان من اللون كما ضُبط في اللوحة (‏`c h`) — فالتصحيح يتبع أي علامة. */
+  --primary-on-sand: oklch(from var(--primary) 0.46 c h);
+  --brand-accent-on-sand: oklch(from var(--brand-accent) 0.45 c h);
+  --danger-on-sand: oklch(from var(--danger) 0.55 c h);
+  --danger-on-ink: oklch(from var(--danger) 0.7 c h);
+
+  /* ── (و) الظلال — لون الأرضية نفسه بشفافية، والتوهّج بلون الفعل ──────────
+     الأصل يكتب `rgba(8,16,15,…)` وهو `--ink` حرفياً، و`rgba(216,154,62,…)`
+     وهو `--amber`. فالاشتقاق هنا ليس تجميلاً: ظلٌّ رماديٌّ ثابت فوق أرضيةٍ
+     ملوّنة يظهر «متّسخاً»، وظلٌّ من الأرضية نفسها يذوب فيها. */
+  --sh-1:
+    0 1px 2px color-mix(in oklab, var(--ink) 10%, transparent),
+    0 2px 8px color-mix(in oklab, var(--ink) 6%, transparent);
+  --sh-2: 0 8px 24px color-mix(in oklab, var(--ink) 14%, transparent);
+  --sh-3: 0 18px 48px color-mix(in oklab, var(--ink) 22%, transparent);
+  --sh-brand: 0 8px 28px color-mix(in oklab, var(--primary) 32%, transparent);
+
+  /* ── (ز) الطباعة ──────────────────────────────────────────────────────────
+     الخطّان محلّيان (SIL OFL 1.1) ولا اتصال بأي مضيف خارجي — لا وقت البناء ولا
+     وقت التشغيل. و`app/layout.tsx` يسجّلهما بـ`next/font/local` في **أربع
+     مناداة** لا اثنتين: نداءٌ لكل نطاق يونيكود (عربي/لاتيني) من كل خطّ، لأن
+     `unicode-range` لا يُكتب إلا في `declarations` وهي تسري على المناداة كلها.
+
+     ⚠ والقيم أدناه **احتياطيّ لا مصدر**: `app/layout.tsx` يحقن `--font-display`
+     و`--font-body` و`--font-sans` سطرياً على `<html>` فتسبق ما هنا. وبقاؤها
+     يمنع صفحةً بخطّ النظام لو تغيّر ترتيب التحميل. */
+  --font-display:
+    var(--font-alexandria-ar), var(--font-alexandria-latin), "Segoe UI", Tahoma, sans-serif;
+  --font-body: var(--font-plex-ar), var(--font-plex-latin), "Segoe UI", Tahoma, sans-serif;
+
+  /* سلّم القياسات كما هو في التصميم حرفاً بحرف — خمسة `clamp` وقياسان ثابتان */
+  --fs-hero: clamp(2.05rem, 1.35rem + 3.2vw, 4.25rem);
+  --fs-h2: clamp(1.6rem, 1.25rem + 1.6vw, 2.75rem);
+  --fs-h3: clamp(1.15rem, 1.02rem + 0.6vw, 1.5rem);
+  --fs-lead: clamp(1.02rem, 0.96rem + 0.4vw, 1.25rem);
+  --fs-body: clamp(0.95rem, 0.92rem + 0.2vw, 1.06rem);
+  --fs-sm: 0.875rem;
+  --fs-xs: 0.78rem;
+
+  /* ── (ح) الإيقاع والشكل ─────────────────────────────────────────────────
+     ⚠ `--sp-1..8` **لا تُنقل**: قيمها (.5 · .75 · 1 · 1.5 · 2 · 3 · 4 · 6 rem)
+     هي بالضبط رتب تيلويند 2 · 3 · 4 · 6 · 8 · 12 · 16 · 24 — انطباقٌ تام.
+     فنقلها يعني ثمانية رموز تكرّر ما هو قائم، وهو تعريف «النظام الثاني».
+
+     و`--r-*` أربعة لا خامس لها: «أنصاف الأقطار العشوائية أول ما يفضح التصميم
+     غير المنضبط». والقيد يُفرض بنيوياً في `@theme` أدناه لا بالانضباط. */
+  --sec-y: clamp(3.5rem, 2.5rem + 4vw, 7rem);
+  --wrap: 1200px;
+  --wrap-narrow: 840px;
+  --gut: clamp(1rem, 0.6rem + 2vw, 2rem);
+
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 22px;
+  --r-pill: 999px;
+
+  /* ── (ط) الحركة ─────────────────────────────────────────────────────────── */
+  --dur-1: 160ms;
+  --dur-2: 280ms;
+  --dur-3: 520ms;
+  --motion-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --motion-ease-back: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* ── (ي) ثوابت التخطيط — ارتفاع الشريط العلوي وشريط الجوال السفلي ───────── */
+  --hdr-h: 62px;
+  --mbar-h: 68px;
+}
+
+/* الشريط العلوي يعلو على الديسكتوب — نقطة التبديل ٩٠٠px كما في التصميم */
+@media (min-width: 900px) {
+  :root {
+    --hdr-h: 76px;
+  }
+}
+
+/*
+  احتياطي المتصفحات التي لا تعرف صيغة الألوان النسبية (كروم أقدم من ١١٩؛
+  وفايرفوكس ١٢٨ وسفاري ١٦٫٤ هما نفس أرضية تيلويند ٤ أصلاً).
+
+  وقد **انكمش إلى أربعة أسطر** بعد أن صارت اللوحة قيماً لا اشتقاقاً: الرموز
+  السبعة عشر ألوانٌ حرفية يفهمها كل متصفح، ولم يبقَ مشتقٌّ إلا الدرجات المصحَّحة
+  للتباين. وتُعوَّض بـ`color-mix` — مدعومةٌ أوسع، وتحفظ الغرض نفسه: خفضُ الإضاءة
+  حتى تُقرأ فوق الأرضية، بلا قيمة علامةٍ محفورة تبلى عند تغيير لونٍ في اللوحة.
+*/
+@supports not (color: oklch(from white l c h)) {
+  :root {
+    --primary-on-sand: color-mix(in oklab, var(--primary) 76%, black);
+    --brand-accent-on-sand: color-mix(in oklab, var(--brand-accent) 62%, black);
+    --danger-on-sand: color-mix(in oklab, var(--danger) 82%, black);
+    --danger-on-ink: color-mix(in oklab, var(--danger) 78%, white);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ٢) الطبقة الدلالية — رموز shadcn القائمة تُغذَّى من الطبقة الخام أعلاه
+
+   ولا يُخترع اسمٌ جديد لما له اسم: `--background` هو `--ink`/`--sand`،
+   و`--card` هو `--ink-2`/`--sand-2`، و`--border` هو `--ink-line`/`--sand-line`.
+   فكل مكوّن في المستودع — ٤٠+ شاشة لوحة وبورتال وموقع — يرث التصميم بلا سطر.
+
+   والترتيب مقصود ولا يُعكس:
+     `:root`  →  `.dark, .surface-ink`  →  `.surface-sand`
+   لأن الثلاثة بنفس الأولوية (صنف واحد)، فالمتأخّر يغلب. و`.surface-sand` قسمٌ
+   فاتح **داخل** صفحة داكنة، فيجب أن يأتي بعد `.dark` ليغلبها.
+
+   🔴 ولا يُعرَّف `--primary` ولا `--primary-foreground` في أيٍّ من الكتل الثلاث:
+   هما من `site_settings` عبر `<html style>`، ولونُ العلامة لا ينقلب بانقلاب
+   الأرضية. (النسخة السابقة كانت تقلبهما في `.dark` إلى رماديين — وهو سلوك
+   قالب shadcn لا سلوك منتجٍ له علامة.)
+
+   ── 🔴 و`color-scheme` سطرٌ في كل كتلة، وهو ليس لوناً بل إعلانُ عائلة ────────
+
+   ما تحت سيطرتنا هو ما نرسمه نحن. أما ما يرسمه **المتصفح بنفسه** — أيقونة
+   التقويم في `input[type=date]`، وأيقونة الساعة في `type=time`، ومنتقياهما
+   المنسدلان، وقائمة `select`، وأشرطة التمرير، وأرضية الإكمال التلقائي — فيتبع
+   `color-scheme` وحده، ولا يسمع لأي رمز من السبعة عشر.
+
+   والقيمة كانت `normal` في الشجرة كلها (مقيسٌ حياً: `getComputedStyle(html)
+   .colorScheme === "normal"`)، و`normal` تعني «فاتح» عند كروم. فكانت أيقونة
+   التقويم **رسماً أسودَ على حقلٍ حبريّ** في ويدجت البحث حين يُفتح «ذهاب
+   وعودة» — أي زرُّ فتحِ المنتقي غير مرئيّ، لا خافتاً. **والعيب لا يُمسَك
+   بقياس تباين ولا باختبار**: اللون المُعلَن على العنصر أبيضُ صحيح
+   (‏`rgb(243,241,235)`)، والأسودُ يأتي من ورقة أنماط المتصفح لا من ورقتنا.
+
+   وهو **رمزُ عائلةٍ لا لون**، فمكانه الطبيعي هذه الكتل الثلاث بعينها: يُقلب
+   مع الأرضية في نفس الصنف، فيوم يأتي مبدّل م‑٩ يحمله معه بلا سطرٍ إضافي.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* الأرضية الفاتحة هي الافتراضية: اللوحة `/admin` والبورتال `/portal`.
+     والموقع العام يلبس `.dark` من غلاف `app/(site)/layout.tsx` — بلا لمس هذا
+     الملف. */
+  color-scheme: light;
+
+  --background: var(--sand);
+  --foreground: var(--on-sand);
+  --card: var(--sand-2);
+  --card-foreground: var(--on-sand);
+  --popover: var(--sand-2);
+  --popover-foreground: var(--on-sand);
+  --secondary: var(--sand-mut);
+  --secondary-foreground: var(--on-sand);
+  --muted: var(--sand-mut);
+  --muted-foreground: var(--on-sand-mut);
+  --accent: var(--sand-mut);
+  --accent-foreground: var(--on-sand);
+  --destructive: var(--danger-on-sand);
+  --border: var(--sand-line);
+  --input: var(--sand-line);
+  /* حلقة التركيز بلون الفعل لا برمادي — التصميم: `outline: 3px solid --amber-hi`.
+     وعلى الأرضية الفاتحة تُؤخذ الدرجة الأغمق وإلا سقطت دون ٣:١. */
+  --ring: var(--primary-on-sand);
+
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+
+  /* `--radius` مقبض shadcn التاريخي — يبقى معرّفاً لمن يقرؤه، وقيمته الآن
+     رتبةٌ من الأربع لا رقماً حراً يولّد سلّماً خامساً. */
+  --radius: var(--r-md);
+
+  --sidebar: var(--sand-2);
+  --sidebar-foreground: var(--on-sand);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--sand-mut);
+  --sidebar-accent-foreground: var(--on-sand);
+  --sidebar-border: var(--sand-line);
+  --sidebar-ring: var(--primary-on-sand);
+}
+
+.dark,
+.surface-ink {
+  /* أدوات المتصفح نفسها تنقلب مع الأرضية — الشرح في ترويسة القسم */
+  color-scheme: dark;
+
+  --background: var(--ink);
+  --foreground: var(--on-ink);
+  --card: var(--ink-2);
+  --card-foreground: var(--on-ink);
+  --popover: var(--ink-2);
+  --popover-foreground: var(--on-ink);
+  --secondary: var(--ink-1);
+  --secondary-foreground: var(--on-ink);
+  --muted: var(--ink-1);
+  --muted-foreground: var(--on-ink-mut);
+  --accent: var(--ink-1);
+  --accent-foreground: var(--on-ink);
+  --destructive: var(--danger-on-ink);
+  --border: var(--ink-line);
+  --input: var(--ink-line);
+  --ring: var(--primary-hi);
+
+  --sidebar: var(--ink-1);
+  --sidebar-foreground: var(--on-ink);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--ink-2);
+  --sidebar-accent-foreground: var(--on-ink);
+  --sidebar-border: var(--ink-line);
+  --sidebar-ring: var(--primary-hi);
+}
+
+/* قسمٌ رمليٌّ فاتح داخل صفحة داكنة — `.sec--sand` في التصميم.
+   يعيد إسناد الرموز نفسها إلى العائلة الفاتحة، فيعمل داخله **كل** مكوّن قائم
+   بلا صنفٍ إضافي ولا نسخةٍ فاتحة منه. */
+.surface-sand {
+  /* ويعود فاتحاً داخل القسم الرملي، وإلا ورث حقلُ تاريخٍ فيه أيقونةً بيضاء
+     على أرضية بيضاء — نفس العيب مقلوباً */
+  color-scheme: light;
+
+  --background: var(--sand);
+  --foreground: var(--on-sand);
+  --card: var(--sand-2);
+  --card-foreground: var(--on-sand);
+  --popover: var(--sand-2);
+  --popover-foreground: var(--on-sand);
+  --secondary: var(--sand-mut);
+  --secondary-foreground: var(--on-sand);
+  --muted: var(--sand-mut);
+  --muted-foreground: var(--on-sand-mut);
+  --accent: var(--sand-mut);
+  --accent-foreground: var(--on-sand);
+  --destructive: var(--danger-on-sand);
+  --border: var(--sand-line);
+  --input: var(--sand-line);
+  --ring: var(--primary-on-sand);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ٣) جسر تيلويند ٤ — `@theme` هو ما يحوّل الرموز أعلاه إلى أدوات
+   ════════════════════════════════════════════════════════════════════════════ */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  /* `--font-sans` يبقى **مؤجَّلاً** عمداً: القيمة تُحسم عند الاستعمال من
+     `<html style>` الذي يكتبه `app/layout.tsx` تبعاً لاتجاه اللغة. حلُّه هنا
+     يُجمّد الخط على لغةٍ واحدة ويكسر التبديل إلى `/en`. */
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  /* كان اسماً مستعاراً لـ`--font-sans` (بلا أثر). صار خطّ العناوين الحقيقي.
+     ولا مدخل هنا لخطّ المتن: اسمه في هذا المشروع `--font-sans` منذ البداية،
+     وإضافة `font-body` بجانبه اسمٌ ثانٍ لشيءٍ واحد — وهو تعريف النظام الثاني. */
+  --font-heading: var(--font-display);
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,82 +369,98 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
-}
 
-:root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
+  /* لون العلامة المساعد وإخوته — لم يكن له مدخل `--color-*` قط، ولهذا كُتب في
+     المكوّنات هكذا: `bg-[color-mix(in_oklab,var(--brand-accent)_12%,transparent)]`.
+     بعد هذا السطر تكفي `bg-brand-accent/12`. */
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-soft: var(--brand-accent-soft);
+  --color-brand-accent-on-sand: var(--brand-accent-on-sand);
+  --color-primary-hi: var(--primary-hi);
+  --color-primary-on-sand: var(--primary-on-sand);
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* ── سلّم القياسات ───────────────────────────────────────────────────────
+     🔴 **إصلاح التباعد الحرفي — مخبوزٌ في الرمز لا متروكٌ للانضباط.**
+
+     قاعدة حزمة التصميم: «ممنوع `letter-spacing` موجب على العربية — يكسر وصل
+     الحروف. والسالب الخفيف مقبول على العناوين الكبيرة بخط Alexandria وحده».
+     والقاعدة صحيحة، **والكود المشحون يخالفها في ثلاثة مواضع عربية**:
+       · `.svcx__brow`  ‏(style.css:1343) `+.03em` فوق «6 خدمات · سعر نهائي…»
+       · `.flx__brow`   ‏(style.css:2255) `+.03em` فوق «4 فئات · الأطفال…»
+       · `.ftr .ftr__h` ‏(style.css:2095) `+.01em` فوق «الخدمات» و«المدن» و«تواصل»
+     (وملف `DESIGN_SYSTEM.md:77` يدافع عن الأولى بأنها «نص لاتيني» — وهو خطأ
+      يُصحَّح بقراءة `index.html:396`: النص عربي.)
+
+     فالتباعد يسافر **مع القياس** لا كأداة مستقلة: من كتب `text-eyebrow` نال
+     صفراً حتماً، ولا يستطيع أن ينال تباعد العنوان السالب على نصٍّ صغير. */
+  --text-hero: var(--fs-hero);
+  --text-hero--line-height: 1.25;
+  --text-hero--letter-spacing: -0.02em;
+  --text-h2: var(--fs-h2);
+  --text-h2--line-height: 1.25;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h3: var(--fs-h3);
+  --text-h3--line-height: 1.25;
+  --text-h3--letter-spacing: 0em;
+  --text-lead: var(--fs-lead);
+  --text-lead--line-height: 1.85;
+  --text-body: var(--fs-body);
+  --text-body--line-height: 1.85;
+  --text-eyebrow: var(--fs-xs);
+  --text-eyebrow--line-height: 1.4;
+  --text-eyebrow--letter-spacing: 0em;
+
+  /* التباعد الموجب الوحيد المسموح في النظام — والاسم هو الشرط:
+     نصٌّ لاتيني بحت (‏`EN` في مبدّل اللغة، مرجع حجز، رمز كوبون). */
+  --tracking-latin: 0.06em;
+
+  /* ارتفاعا السطر اللذان تفرضهما العربية — أعلى من اللاتينية بنيوياً */
+  --leading-arabic: 1.85;
+  --leading-display: 1.25;
+
+  /* ── أنصاف الأقطار: أربع قيم، والخامسة ممنوعة بنيوياً ────────────────────
+     المستودع اليوم يكتب ٦ رتب فتخرج ٦ قيم: 8 · 10 · 14 · 18 · 22 · 26px.
+     وإسقاط الرتب السبع على الأربع يعني أن **أي** صنف يكتبه أي مكوّن لاحقاً
+     يقع حتماً على واحدة منها — فالانضباط لا يعتمد على تذكّر أحد.
+     (والمتحرّك عملياً رتبتان فقط: `rounded-lg` 10⇒14 و`rounded-2xl` 18⇒22.) */
+  --radius-xs: var(--r-sm);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-sm);
+  --radius-lg: var(--r-md);
+  --radius-xl: var(--r-md);
+  --radius-2xl: var(--r-lg);
+  --radius-3xl: var(--r-lg);
+  --radius-4xl: var(--r-lg);
+
+  /* ثلاثة ظلال لا خمسة — بنفس منطق أنصاف الأقطار.
+     و`--shadow` العارية مذكورة لأنها **مستعملة فعلاً** في ثلاثة مواضع
+     (`offers.tsx` · `search-widget.tsx` · `faq.tsx`)، وهي رمزٌ مهجور في تيلويند
+     يعيش في كتلة `default` خاصة به — فلو نُسي لبقي على ظلٍّ رماديٍّ ثابت وسط
+     ظلالٍ مشتقّة من الأرضية، وهو أوّل ما يظهر «متّسخاً» على أرضيةٍ ملوّنة. */
+  --shadow: var(--sh-1);
+  --shadow-2xs: var(--sh-1);
+  --shadow-xs: var(--sh-1);
+  --shadow-sm: var(--sh-1);
+  --shadow-md: var(--sh-2);
+  --shadow-lg: var(--sh-2);
+  --shadow-xl: var(--sh-3);
+  --shadow-2xl: var(--sh-3);
+  --shadow-brand: var(--sh-brand);
+
+  /* إيقاع الأقسام والحاوية — `py-sec` · `px-gut` · `max-w-wrap` */
+  --spacing-sec: var(--sec-y);
+  --spacing-gut: var(--gut);
+  --spacing-header: var(--hdr-h);
+  --spacing-mbar: var(--mbar-h);
+  --container-wrap: var(--wrap);
+  --container-wrap-narrow: var(--wrap-narrow);
+
+  /* الحركة. وضبط `--default-transition-*` يجعل **كل** `transition-*` في
+     المستودع يتبنّى مدّة التصميم ومنحناه بلا تعديل صنفٍ واحد. */
+  --ease-brand: var(--motion-ease);
+  --ease-brand-back: var(--motion-ease-back);
+  --default-transition-duration: var(--dur-1);
+  --default-transition-timing-function: var(--motion-ease);
 }
 
 @layer base {
@@ -126,6 +472,17 @@
   }
   html {
     @apply font-sans;
+  }
+  /*
+    خطّ العناوين قاعدةٌ نظامية لا زخرفة قسم. واليوم بلا أثر مرئي إطلاقاً لأن
+    `--font-display` يسقط إلى `--font-sans` حتى يسجّل م‑٢ الخط المحلي — ثم
+    يصير العنوان Alexandria في الموقع واللوحة معاً، بنظامٍ واحد لا اثنين.
+    وأي `font-sans` صريح على عنصر يغلبه (طبقة الأدوات بعد طبقة الأساس).
+  */
+  h1,
+  h2,
+  h3 {
+    @apply font-heading;
   }
 }
 
@@ -155,11 +512,12 @@
     );
 }
 
-/* خلفية شريط الدعوة للحجز: تدرج داكن مبني على لون العلامة */
+/* خلفية شريط الدعوة للحجز: تدرج داكن مبني على لون العلامة.
+   (‏`--ink` بدل درجةٍ محفورة: الأرضية الداكنة صارت رمزاً مشتقاً من العلامة.) */
 .site-cta-bg {
   background-image: linear-gradient(
     135deg,
-    color-mix(in oklab, var(--primary) 78%, oklch(0.16 0.02 260)),
+    color-mix(in oklab, var(--primary) 78%, var(--ink)),
     var(--primary) 55%,
     color-mix(in oklab, var(--primary) 86%, var(--brand-accent))
   );
@@ -206,6 +564,15 @@
    الدرجات ليست مخترعة: هي نفس درجات emerald/amber/sky المستعملة أصلاً في
    تنبيهات اللوحة وشاراتها، منقولة إلى رمز واحد بدل تكرارها في ٤٦ ملفاً.
    والخطر يعيد استعمال `--destructive` القائم ولا يضيف لوناً خامساً.
+
+   ⚠ **ولا تُشتقّ من العلامة، بخلاف كل ما فوقها**: «نجاح» و«تحذير» و«معلومة»
+   معانٍ لا هوية. علامةٌ برتقالية لا تجعل رسالة النجاح برتقالية. ولهذا بقي
+   الأخضر أخضرَ والكهرماني كهرمانياً بعد اشتقاق اللوحة كلها.
+   وانتبه: كهرمان `--tone-warning` **ليس** كهرمان التصميم — ذاك لون الفعل
+   وقد صار `--primary`، وهذا لون حالة يبقى كما هو.
+
+   والمحدَّد أدناه ثلاث كتل لا اثنتان، بترتيبٍ لا يُعكس: القسم الفاتح داخل
+   صفحةٍ داكنة يجب أن يأتي بعد الداكن ليغلبه (نفس منطق §٢).
    ============================================================ */
 
 :root {
@@ -215,11 +582,19 @@
   --tone-info: oklch(0.588 0.158 241.966);
 }
 
-.dark {
+.dark,
+.surface-ink {
   --tone-success: oklch(0.765 0.177 163.223);
   --tone-warning: oklch(0.828 0.189 84.429);
   --tone-danger: var(--destructive);
   --tone-info: oklch(0.746 0.16 232.661);
+}
+
+.surface-sand {
+  --tone-success: oklch(0.596 0.145 163.225);
+  --tone-warning: oklch(0.666 0.179 58.318);
+  --tone-danger: var(--destructive);
+  --tone-info: oklch(0.588 0.158 241.966);
 }
 
 /*
@@ -251,6 +626,92 @@
   .site-float-slow,
   .card-enter {
     animation: none;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   عرضُ القراءة وإيقاع النثر العربي (م‑١٠) — كتلة إلحاقية فقط،
+   لا تعديل على أي سطر أعلاه.
+
+   ── العلّة: راحة القراءة طباعيةٌ قبل أن تكون تحريرية ─────────────────────────
+
+   الصفحات الثابتة مبنيةٌ من `rich-text` متتالية (الشروط ١١ · الخصوصية ١٠ ·
+   الاسترداد ٩)، وحاويتها اليوم `max-w-3xl` = ٧٦٨px. وسطرٌ عربي بهذا العرض
+   يقارب المئة محرف — **والعين تفقد أول السطر التالي** فتقرأ السطر نفسه مرتين
+   أو تقفز سطراً. والهدف المتعارف عليه ٦٥–٧٥ محرفاً.
+
+   ── لماذا `em` لا `ch` ─────────────────────────────────────────────────────
+
+   وحدة `ch` عرض المحرف «0» — وهو **لاتيني** حتى داخل خطٍّ عربي، فـ`65ch` تعطي
+   عرضاً يقيس شيئاً لا يُقرأ في هذه الصفحة أصلاً. و`em` تتبع قياس الخطّ نفسه،
+   ومتوسط تقدّم المحرف في IBM Plex Sans Arabic ≈ نصف الـem — فـ`34em` ≈ ٦٨
+   محرفاً، **وقد قيست على الصفحة الحيّة لا حُسبت على الورق**.
+
+   ── 🔴 ولماذا **ليست** على `body` ولا على قسمٍ عام ─────────────────────────
+
+   حدُّ العرض قاعدةُ **نثرٍ متصل** لا قاعدةُ صفحة. وفرضُه عالمياً كان يكسر
+   ثلاثة أشياء دفعةً: ويدجت الحجز (شبكةٌ من حقول تحتاج عرضها كاملاً)، وجداول
+   اللوحة والبورتال (عمودٌ سادس يخرج أو ينضغط)، وكتلة `table` نفسها في هذه
+   المرحلة — أربعة أعمدة داخل ٣٤em تصير كلمةً في السطر. فالقاعدة تُلبَس
+   **بالصنف على حاوية النثر بعينها**: `rich-text` و`clause` و`callout` والفهرس،
+   ولا شيء غيرها.
+
+   والصنفان صريحان لأن وظيفتيهما مختلفتان:
+     `.prose-measure` — **عرضٌ فقط** (صندوقٌ يقف على محور القراءة: الفهرس · إطار
+                        التنبيه · هامش الجدول).
+     `.prose-ar`      — العرض **وإيقاع النثر** (فقرات وعناوين).
+
+   ⚠ **والكتلة كلها داخل `@layer base` بقصد**: أدوات تيلويند تعيش في
+   `@layer utilities`، والطبقة المتأخرة تغلب. فلو كُتبت هذه القواعد بلا طبقة
+   (كبقية الكتل الإلحاقية أعلاه) لغلبت **كل** أداة على أي ابن — و`mt-4` مكتوبة
+   على فقرةٍ داخل `.prose-ar` كانت تُلغى بلا أن يفهم كاتبها لماذا.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* عرض سطر القراءة — رمزٌ واحد يقرؤه الصنفان، فلا رقمان ينحرفان */
+  --measure-prose: 34em;
+}
+
+@layer base {
+  .prose-measure,
+  .prose-ar {
+    max-width: var(--measure-prose);
+    margin-inline: auto;
+  }
+
+  .prose-ar {
+    /* ١٫٨٥ — الارتفاع الذي تفرضه العربية بنيوياً، وهو رمزٌ قائم في `@theme` */
+    line-height: var(--leading-arabic);
+    /* يوازن آخر سطرٍ في الفقرة فلا تبقى كلمةٌ يتيمة — بلا أثر على الأداء */
+    text-wrap: pretty;
+  }
+
+  /*
+    إيقاع الفقرة: المسافة بين الفقرتين أوسع قليلاً من سطرٍ فارغ، فتُقرأ الفقرة
+    وحدةً واحدة. و`>` مقصود: الفقرات المباشرة وحدها، فلا يرث ما بداخل صندوقٍ
+    مركّب إيقاعاً لم يُبنَ له.
+  */
+  .prose-ar > * + * {
+    margin-block-start: 1.15em;
+  }
+
+  /*
+    إيقاع العنوان — **الفراغ فوقه يقارب أربعة أضعاف الفراغ تحته**. وهذه هي
+    القاعدة التي تجعل العنوان يبدو تابعاً لما بعده لا لما قبله: القارئ يرى
+    المجموعة (عنوان + نصّه) قبل أن يقرأ حرفاً. والقفزة القياسية وحدها (‏`h3`
+    ≈ ١٫٣٥× قياس المتن) تكفي علامةً — فلا حاجة إلى خطٍّ فاصل ولا لون.
+  */
+  .prose-ar :is(h2, h3, h4) {
+    line-height: var(--leading-display);
+    text-wrap: balance;
+  }
+
+  .prose-ar > :is(h2, h3, h4) + * {
+    margin-block-start: 0.5em;
+  }
+
+  .prose-ar > :is(h2, h3, h4):not(:first-child) {
+    margin-block-start: 1.9em;
   }
 }
 

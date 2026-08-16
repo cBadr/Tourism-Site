@@ -10,7 +10,9 @@ import {
   ITEMS_FIELD,
   STYLE_FIELD,
   blockRenders,
+  type BlockStyle,
 } from "@/lib/page-builder-types";
+import { resolveAnchor } from "@/lib/item-fields-types";
 import { HeroSection } from "./hero";
 import { PageHeroSection } from "./page-hero";
 import { ServicesGridSection } from "./services-grid";
@@ -23,6 +25,13 @@ import { CtaBandSection } from "./cta-band";
 import { ContactSection } from "./contact";
 import { ColumnsSection } from "./columns";
 import { ImageSection } from "./image";
+import { LogoStripSection } from "./logo-strip";
+import { StatBandSection } from "./stat-band";
+import { RouteRailSection } from "./route-rail";
+import { ClauseSection } from "./clause";
+import { TableSection } from "./table";
+import { CalloutSection } from "./callout";
+import { PageTocSection, type ClauseLink } from "./page-toc";
 import { BlockStyleWrapper, readBlockStyle } from "./block-style";
 
 /**
@@ -61,14 +70,29 @@ type SectionProps<T extends SectionType> = {
   content: SectionContentMap[T];
   settings: SiteSettings;
   locale: string;
+  /**
+   * 🆕 م‑١٠ — معرّف الصفّ. مصدر **المرساة الاحتياطية** لكتلة `clause`، وهو ما
+   * يجعل «لا بندَ بلا مرساة» صحيحاً بالبناء لا بالانضباط (‏`resolveAnchor`).
+   */
+  sectionId: string;
+  /**
+   * 🆕 م‑١٠ — `content.style` **مطهَّراً** من `readBlockStyle`. ولا يُمرَّر
+   * `content.style` الخام أبداً: `sanitizeContent` تُسقطه قبل العارضة بقصد،
+   * فلا يستطيع رمزُ تنسيقٍ أن يُصيَّر نصّاً بالخطأ. ومستهلكه الوحيد اليوم
+   * `callout.tone`.
+   */
+  style: BlockStyle | null;
 };
 
 /**
- * الكتل ذات المحتوى — `columns` خارجها بقصد: هي **تخطيط** تأخذ أبناءً مُصيَّرين
- * لا `content`، فتوقيعها مختلف ولا يصح حشره في هذا السجل بـ`as`.
+ * الكتل ذات المحتوى — و**اثنتان خارجها بقصد**:
+ *   • `columns` **تخطيط**: تأخذ أبناءً مُصيَّرين لا `content`.
+ *   • `page-toc` تقرأ **الصفحة** لا كتلتها: قائمتها تُجمَع من كتل `clause`
+ *     الأخرى، فتوقيعها يحمل وسيطاً لا وجود له عند بقية الكتل.
+ * وحشرُ أيٍّ منهما هنا بـ`as` كان سيُسقط نوعَ الوسيط الزائد صامتاً.
  */
 const CONTENT_REGISTRY: {
-  [T in Exclude<SectionType, "columns">]: (props: SectionProps<T>) => ReactNode;
+  [T in Exclude<SectionType, "columns" | "page-toc">]: (props: SectionProps<T>) => ReactNode;
 } = {
   hero: HeroSection,
   "page-hero": PageHeroSection,
@@ -81,6 +105,14 @@ const CONTENT_REGISTRY: {
   "cta-band": CtaBandSection,
   contact: ContactSection,
   image: ImageSection,
+  // ── كتل م‑٢ ──────────────────────────────────────────────────────────────
+  "logo-strip": LogoStripSection,
+  "stat-band": StatBandSection,
+  "route-rail": RouteRailSection,
+  // ── كتل المستندات (م‑١٠) ──────────────────────────────────────────────────
+  clause: ClauseSection,
+  table: TableSection,
+  callout: CalloutSection,
 };
 
 /* ------------------------------------------------------------------ */
@@ -139,7 +171,8 @@ function renderBlock(
   section: Section,
   children: Section[],
   settings: SiteSettings,
-  locale: string
+  locale: string,
+  clauses: readonly ClauseLink[]
 ): ReactNode {
   const content = sanitizeContent(section.content);
 
@@ -164,7 +197,7 @@ function renderBlock(
      * `parent_id` دائري.
      */
     const rendered = children
-      .map((child) => renderBlock(child, [], settings, locale))
+      .map((child) => renderBlock(child, [], settings, locale, clauses))
       .filter((node) => node !== null);
     if (rendered.length === 0) return null;
     return (
@@ -174,17 +207,66 @@ function renderBlock(
     );
   }
 
+  /**
+   * فهرس الصفحة يقرأ **الصفحة** لا كتلته — وقائمته محسوبةٌ مرةً واحدة في
+   * `RenderSections` قبل التصيير، لأن الفهرس قد يقف **قبل** البنود التي يصفها.
+   */
+  if (section.type === "page-toc") {
+    return (
+      <BlockStyleWrapper key={section.id} style={style}>
+        <PageTocSection content={content} clauses={clauses} locale={locale} />
+      </BlockStyleWrapper>
+    );
+  }
+
   const Component = CONTENT_REGISTRY[section.type] as (props: {
     content: Record<string, unknown>;
     settings: SiteSettings;
     locale: string;
+    sectionId: string;
+    style: BlockStyle | null;
   }) => ReactNode;
 
   return (
     <BlockStyleWrapper key={section.id} style={style}>
-      <Component content={content} settings={settings} locale={locale} />
+      <Component
+        content={content}
+        settings={settings}
+        locale={locale}
+        sectionId={section.id}
+        style={style}
+      />
     </BlockStyleWrapper>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* (٣) خريطة البنود — تُبنى مرةً واحدة، ومصدرُ مرساتها مصدرُ مرساة البند       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * بنود الصفحة بترتيب تصييرها. **الشرط الحاكم: لا يدخل الفهرس بندٌ لا يُصيَّر.**
+ * فلذلك تمرّ كل كتلة على `sanitizeContent` و`blockRenders` بعينهما — نفس
+ * البوابة التي تمرّ منها عند التصيير، لا نسخةٌ مبسّطة منها. ولولا ذلك لوعَد
+ * الفهرس برابطٍ إلى بندٍ محذوفٍ أو ناقص العنوان: نقرةٌ لا تفعل شيئاً، وهو
+ * أسوأ من غياب السطر.
+ *
+ * والمرساة من `resolveAnchor` نفسها التي تكتب `id` على البند — مصدرٌ واحد،
+ * فلا يمكن أن يشير الفهرس إلى مرساةٍ لا وجود لها.
+ */
+function collectClauses(ordered: readonly Section[]): ClauseLink[] {
+  const links: ClauseLink[] = [];
+  for (const section of ordered) {
+    if (section.type !== "clause") continue;
+    const content = sanitizeContent(section.content);
+    if (!blockRenders(section.type, content)) continue;
+    links.push({
+      anchor: resolveAnchor(section.id, content.anchor),
+      num: typeof content.num === "string" ? content.num.trim() : "",
+      title: (content.title as string).trim(),
+    });
+  }
+  return links;
 }
 
 /** يرسم الأقسام المرئية بترتيبها عبر السجل — الكتلة التي لا تُصيَّر تُرسم null */
@@ -224,10 +306,21 @@ export function RenderSections({
     .filter((section) => (section.parentId ?? null) === null)
     .sort((a, b) => a.sort - b.sort);
 
+  /**
+   * ترتيب المستند مسطّحاً: جذرٌ ثم أبناؤه. وهو الترتيب الذي يقرؤه الزائر
+   * بالضبط، فالفهرس يعِد بما تعطيه الصفحة ترتيباً كما يعِد به عدداً.
+   */
+  const ordered: Section[] = [];
+  for (const root of roots) {
+    ordered.push(root);
+    for (const child of childrenOf.get(root.id) ?? []) ordered.push(child);
+  }
+  const clauses = collectClauses(ordered);
+
   return (
     <>
       {roots.map((section) =>
-        renderBlock(section, childrenOf.get(section.id) ?? [], settings, locale)
+        renderBlock(section, childrenOf.get(section.id) ?? [], settings, locale, clauses)
       )}
     </>
   );

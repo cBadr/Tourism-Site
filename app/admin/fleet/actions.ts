@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createServerSupabase } from "@/lib/supabase/server";
+import { safeMediaSrc } from "@/components/sections/image";
 
 /**
  * إجراءات شاشة الأسطول — تحرير فئات السيارات (`vehicle_classes`) وتعريفاتها (`tariffs`).
@@ -135,6 +136,18 @@ export async function saveClass(classId: string, formData: FormData) {
   const luggage = readLuggage(formData);
   if (luggage === "invalid") redirect(url("error=luggage"));
 
+  /**
+   * 🔒 صورة الفئة تمرّ من **حارس العرض نفسه** لا من حارسٍ ثانٍ (الذهبية ١٢).
+   * `safeMediaSrc` هي التي تقرّر على الصفحة العامة أيُصيَّر المسار أم يُسقَط،
+   * فرفضُه هنا يعني أن المالك يرى سبب الرفض عند الحفظ بدل أن يحفظ قيمةً
+   * تختفي صامتةً على الموقع (النمط ٣ في LESSONS: ميزةٌ لا وجود لها عند مالكها).
+   *
+   * والفارغ يعني `null` — «بلا صورة» قرارٌ صالح يعيد البطاقة إلى أيقونتها.
+   */
+  const imageRaw = text(formData, "image_url");
+  const imageUrl = imageRaw === null || imageRaw === undefined ? null : safeMediaSrc(imageRaw);
+  if (imageRaw && imageUrl === null) redirect(url("error=image"));
+
   const active = checked(formData, "active");
   // فئة نشطة بتعريفة صفرية تعني عروضاً بسعر صفر أمام العملاء — تُرفض قبل الكتابة
   if (active && isZeroTariff(money)) redirect(url("error=tariff"));
@@ -145,6 +158,7 @@ export async function saveClass(classId: string, formData: FormData) {
       title,
       capacity,
       short: text(formData, "short"),
+      image_url: imageUrl,
       active,
       sort,
       ...(luggage === undefined ? {} : { luggage_capacity: luggage }),

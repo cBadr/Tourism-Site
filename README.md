@@ -14,8 +14,8 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
 ![Phases](https://img.shields.io/badge/phases-12%2F14-blue)
-![Migrations](https://img.shields.io/badge/migrations-57-informational)
-![Tests](https://img.shields.io/badge/SQL%20suites-23%20green-brightgreen)
+![Migrations](https://img.shields.io/badge/migrations-69-informational)
+![Tests](https://img.shields.io/badge/SQL%20suites-24%20green-brightgreen)
 ![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
 <div dir="rtl">
@@ -26,7 +26,7 @@
 
 **والمنظومة منشورة وتعمل** على [`rentlimousine.duckdns.org`](https://rentlimousine.duckdns.org) منذ 2026-08-15: خادم VPS خلف Nginx بشهادة، والخدمة تحت `systemd`، والنشر بأمرٍ واحد (`deploy.sh`) — والدليل الكامل في [`docs/VPS.md`](docs/VPS.md).
 
-⚠ **لكن البيانات المعروضة اليوم بيانات عرضٍ تجريبي** يزرعها `pnpm demo:seed` (٣٤١ حجزاً وثمانية متعهدين مُحاكين بستة أشهر تشغيل)، لا عملاء حقيقيين. وتُمسح بأمرٍ واحد: `pnpm demo:clean`.
+⚠ **وبيانات العرض التجريبي مُسحت في 2026-08-16** بأمر المالك (٩٨٬٨٤٠ صفاً) وحلّ محلها محتوى حقيقي: ٢٣ صفحة و١٣٥ قسماً. و🔴 **الموقع الآن `noindex` للمعاينة** (`site_settings.seo.robots.indexable = false`) — **يُرفع من `/admin/seo/settings` قبل الإطلاق، وموقعٌ يبقى عليه لا يظهر في جوجل أبداً.**
 
 </div>
 
@@ -34,7 +34,7 @@
 
 Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a single Next.js 16 application on top of one Supabase (Postgres) project. A customer picks two points and a passenger count, gets an instant final price per eligible vehicle class, books as a guest and pays in full or by deposit; the confirmed booking is then broadcast in timed waves to approved **subcontractors** who cover that route, and the first to accept wins the trip — atomically, enforced by a partial unique index in Postgres. Every money and pricing calculation lives in Postgres functions and views; TypeScript only formats and renders. The system is white-label by construction: no brand string is hardcoded, and a second brand means a separate Supabase project, host and domain — not a `tenant_id`.
 
-Phases 1–12 of 14 are built — **57 migrations applied and 23 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phases 13 (page builder) and 14 (white-label factory) have not started; phase 11 (AI agent) is designed but waits on API credit. The data currently on the live site is **seeded demonstration data**, not real customers.
+Phases 1–12 of 14 are built — **69 migrations applied and 24 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
 
 Two systems ship **switched off by design** and wait on an owner decision: coupons and loyalty. A loyalty programme that starts itself starts owing money.
 
@@ -156,7 +156,7 @@ flowchart TD
 pnpm install
 cp .env.example .env.local     # ثم املأ القيم — الشرح الكامل: handover/ENVIRONMENT.md
 pnpm db:migrate                # تطبيق الترحيلات 0001 … 0023
-pnpm db:test                   # ٢٣ مجموعة — النجاح = ALL PASSED في كل واحدة
+pnpm db:test                   # ٢٤ مجموعة — النجاح = ALL PASSED في كل واحدة
 pnpm dev                       # http://localhost:3000
 ```
 
@@ -224,7 +224,7 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ٥٧** في `supabase/migrations/` من `0001_core.sql` إلى `0057_telegram_binding_guard.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار الثلاث والعشرون** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
+**الترحيلات الـ ٦٩** في `supabase/migrations/` من `0001_core.sql` إلى `0069_document_pages_content.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار الثلاث والعشرون** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 
 ---
 

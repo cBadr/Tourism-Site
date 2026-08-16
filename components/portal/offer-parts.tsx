@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowLeft, MapPin, MessageCircle, Phone } from "lucide-react";
+import { ArrowLeft, MapPin, MessageCircle, Phone, Plane } from "lucide-react";
 
 import {
   formatAmount,
@@ -168,6 +168,30 @@ export function TripFacts({ trip }: { trip: TripFactsInput }) {
       <Fact label="الانتظار">{waitingLabel(trip.waitingHours)}</Fact>
       <Fact label="نوع الرحلة">{trip.roundTrip ? "ذهاب وعودة" : "اتجاه واحد"}</Fact>
     </dl>
+  );
+}
+
+/**
+ * رقم الرحلة الجوية (هجرة `0067`) — بارزاً لا مدسوساً في الملاحظات.
+ *
+ * ── لماذا بطاقة مستقلة ─────────────────────────────────────────────────────
+ * كان يُكتب داخل ملاحظات العميل، فيقرؤه السائق وسط جملةٍ أو لا يقرؤه. وهو
+ * **المعلومة الوحيدة التي تحدّد متى يقف فعلاً** في نقل المطار: الرحلة تتأخر
+ * ساعتين والموعد المكتوب يصير خطأً، ورقمُها هو ما يُقاس به الواقع.
+ *
+ * ⚠ ويُعرض `ltr` بخطٍّ أحادي المسافة: `MS736` داخل فقرةٍ عربية ينقلب ترتيبه
+ * بصرياً بلا عزل، فيقرأ السائق رقماً غير المكتوب — وهو أسوأ من غيابه.
+ */
+export function TripFlight({ flightNumber }: { flightNumber: string | null }) {
+  if (!flightNumber) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
+      <Plane className="size-4 shrink-0 text-primary" aria-hidden="true" />
+      <span className="font-semibold">رقم الرحلة الجوية:</span>
+      <bdi dir="ltr" className="font-mono text-base font-bold tracking-wider">
+        {flightNumber}
+      </bdi>
+    </div>
   );
 }
 

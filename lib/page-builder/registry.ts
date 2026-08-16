@@ -14,6 +14,7 @@
 import { SECTION_TYPE_LABELS, type PageKind } from "@/lib/content-types";
 import {
   BLOCK_CATALOGUE,
+  CALLOUT_TONE_TOKENS,
   blockDef,
   ITEMS_FIELD,
   SPACING_TOKENS,
@@ -23,6 +24,7 @@ import {
   type BlockStyle,
   type BuilderBlockType,
   type BuilderErrorCode,
+  type CalloutToneToken,
   type PublishBlockerCode,
   type SpacingToken,
   type ThemeColorToken,
@@ -102,11 +104,18 @@ export const FIELD_LABELS: Record<string, FieldLabel> = {
     multiline: true,
     help: "اترك سطراً فارغاً بين الفقرات — كل فقرة تُعرض منفصلة.",
   },
-  note: { label: "ملاحظة تحت العنوان" },
+  /**
+   * ⚠ «ملاحظة» لا «ملاحظة تحت العنوان»: أربع كتل تستعمل هذا الحقل اليوم،
+   * وموضعه يختلف بينها (تحت عنوان الشريط · **أسفل** الجدول). واسمٌ يصف موضعاً
+   * لا يصحّ إلا في ثلاثةٍ من أربعة كذبٌ صغير على من يقرأ الحقل الرابع.
+   */
+  note: { label: "ملاحظة" },
   ctaLabel: { label: "نص زر الحجز" },
   alt: {
     label: "النص البديل للصورة",
-    help: "يصف ما في الصورة لمن لا يراها — إلزامي، ويُقرأ في نتائج البحث ولقارئ الشاشة.",
+    help:
+      "يصف ما في الصورة لمن لا يراها، ويُقرأ في نتائج البحث ولقارئ الشاشة — ويُترجَم كأي نصّ. " +
+      "واتركه فارغاً حين يقول عنوان البطاقة ما تقوله صورتها: تصير الصورة زخرفةً معلنة يتخطاها قارئ الشاشة.",
   },
   caption: { label: "تعليق أسفل الصورة" },
   src: {
@@ -117,6 +126,124 @@ export const FIELD_LABELS: Record<string, FieldLabel> = {
   q: { label: "السؤال" },
   a: { label: "الجواب", multiline: true },
   text: { label: "النص", multiline: true },
+  // ── حقول كتل م‑٢ ────────────────────────────────────────────────────────
+  badge: {
+    label: "نص الشارة فوق العنوان",
+    help: "الفارغ يعرض نشاط الشركة من الإعدادات — ولا تكتب فيه رقماً لا تملك مصدره.",
+  },
+  scrollLabel: {
+    label: "نص سهم النزول",
+    help: "كلمة واحدة أسفل البطل تدعو للنزول («اكتشف») — الفارغ يُخفي السهم كله.",
+  },
+  value: {
+    label: "الرقم",
+    help: "نصّ لا رقم، لأنه يُكتب ١٢٬٤٠٠ بالعربية و12,400 بالإنجليزية — فيُترجَم كأي نص.",
+  },
+  suffix: { label: "اللاحقة", help: "ما يلي الرقم مباشرة: + أو /5 أو ٪ — والفارغ لا يظهر." },
+  label: { label: "تسمية الرقم" },
+  name: { label: "اسم المسار" },
+  href: {
+    label: "رابط المسار",
+    dir: "ltr",
+    help: "مسارٌ داخلي يبدأ بـ/ مثل /routes/cairo-alexandria — والصفحة يجب أن تكون منشورة فعلاً وإلا كان الرابط ٤٠٤.",
+  },
+  duration: { label: "المدة", help: "كما تُقرأ: «٣ ساعات» أو «٤٥ دقيقة» — والفارغ لا يظهر." },
+  distance: { label: "المسافة", help: "كما تُقرأ: «٢٢٠ كم» — والفارغ لا يظهر." },
+  // ── حقول م‑٧ غير النصّية ────────────────────────────────────────────────
+  poster: {
+    label: "غلاف الفيديو",
+    dir: "ltr",
+    help: "الصورة التي تُعرض قبل تشغيل الفيديو — اتركها فارغة لتُستعمل صورة القسم نفسها فلا يُحمَّل ملفٌّ ثانٍ.",
+  },
+  video: {
+    label: "مسار الفيديو",
+    dir: "ltr",
+    help: "ملف MP4 داخلي. الفارغ يعني صورةً ساكنة — وهو مسارٌ سليم لا نقص. ولا يُحمَّل على الجوال إطلاقاً.",
+  },
+  icon: {
+    label: "الأيقونة",
+    help: "رمزٌ صغير فوق العنوان. القائمة مغلقة عمداً: الاسم المكتوب بيدك لا يقابل رمزاً، ولا شيء كان سيقول لك ذلك.",
+  },
+  // ── حقول كتل المستندات (م‑١٠) ───────────────────────────────────────────
+  num: {
+    label: "رقم البند",
+    help:
+      "كما يُقرأ: «٤» أو «٤-٢». وهو نصٌّ يُترجَم لأن العربية تكتب ٤ والإنجليزية 4 — " +
+      "والفارغ يعرض العنوان بلا رقم.",
+  },
+  anchor: {
+    label: "مرساة البند (في الرابط)",
+    dir: "ltr",
+    help:
+      "معرّفٌ لاتيني قصير يظهر في الرابط بعد #، مثل cancellation ⇐ ‎/terms#cancellation. " +
+      "🔴 وهو ثابتٌ بقصد: لا يتغيّر أبداً بتعديل عنوان البند ولا نصّه، فالرابط الذي أرسلتَه لعميل " +
+      "يظل يفتح البند نفسه. واتركه فارغاً فيتولّد رابطٌ طويل يعمل تماماً — " +
+      "لكن **اكتبه بيدك قبل أن ترسل الرابط لأحد**، فتغييره لاحقاً هو الشيء الوحيد الذي يكسر ما أُرسل.",
+  },
+  h1: { label: "عنوان العمود ١" },
+  h2: { label: "عنوان العمود ٢" },
+  h3: { label: "عنوان العمود ٣" },
+  h4: { label: "عنوان العمود ٤" },
+  c1: { label: "الخانة ١" },
+  c2: { label: "الخانة ٢" },
+  c3: { label: "الخانة ٣" },
+  c4: { label: "الخانة ٤" },
+};
+
+/**
+ * 🔴 **الحدّ الأدنى الذي تشترطه م‑٧ على نفسها** (‏`lib/item-fields-types.ts` §٨):
+ * منتقي الوسائط الكامل مؤجَّل، **لكن لا يُشحن حقلُ مسارٍ عارٍ**. فقائمة الأصول
+ * القائمة تحت `public/` تُعرض اقتراحاً (`<datalist>`) — والمالك يختار بدل أن
+ * يكتب مساراً بيده ويكتشف خطأه صورةً غائبة.
+ *
+ * ⚠ وهي **اقتراحٌ لا قيد**: الحقل يبقى قابلاً للكتابة، لأن دلو `media` سيصير
+ * مصدراً ثانياً يوم يُفتح الرفع، و`safeMediaSrc` هي الحارس لا هذه القائمة.
+ */
+export const MEDIA_SUGGESTIONS: readonly string[] = [
+  "/img/hero-chauffeur.avif",
+  "/img/hero-video-poster.avif",
+  "/img/fleet-sedan.avif",
+  "/img/fleet-suv.avif",
+  "/img/fleet-minibus.avif",
+  "/img/fleet-bus.avif",
+  "/img/service-airport.avif",
+  "/img/service-city.avif",
+  "/img/service-intercity.avif",
+  "/img/service-tours.avif",
+  "/img/service-events.avif",
+  "/img/service-conference.avif",
+  "/img/egypt-cairo.avif",
+  "/img/egypt-luxor.avif",
+  "/img/egypt-redsea.avif",
+  "/img/night-road.avif",
+  "/img/traveler-airport.avif",
+  "/img/interior-van.avif",
+  "/img/interior-detail.avif",
+] as const;
+
+/** أصول الفيديو القائمة — حقلٌ واحد يستعملها اليوم (`hero.video`) */
+export const VIDEO_SUGGESTIONS: readonly string[] = ["/video/hero-loop.mp4"] as const;
+
+/** تسميات الأيقونات بالعربية — القائمة نفسها من العقد، والنصّ هنا */
+export const ICON_LABELS: Record<string, string> = {
+  plane: "طائرة",
+  building: "مبنى",
+  route: "مسار",
+  landmark: "معلم أثري",
+  party: "مناسبة",
+  mic: "ميكروفون",
+  shield: "درع",
+  check: "علامة صحّ",
+  clock: "ساعة",
+  wallet: "محفظة",
+  star: "نجمة",
+  headset: "سمّاعة دعم",
+  car: "سيارة",
+  bus: "باص",
+  users: "ركاب",
+  luggage: "حقيبة",
+  mapPin: "دبوس خريطة",
+  phone: "هاتف",
 };
 
 export function fieldLabel(field: string): FieldLabel {
@@ -186,8 +313,18 @@ export const SPACING_LABELS: Record<SpacingToken, string> = {
   roomy: "متباعد",
 };
 
+/**
+ * نبرة التنبيه (م‑١٠) — رمزان لا خمسة. واللون **ليس** هو الرسالة: كل نبرة
+ * تحمل أيقونتها ونصّاً لقارئ الشاشة، فمن لا يميّز الألوان يقرأ المعنى نفسه.
+ */
+export const CALLOUT_TONE_LABELS: Record<CalloutToneToken, string> = {
+  info: "معلومة",
+  warning: "تحذير",
+};
+
 export const THEME_COLOR_OPTIONS = THEME_COLOR_TOKENS;
 export const SPACING_OPTIONS = SPACING_TOKENS;
+export const CALLOUT_TONE_OPTIONS = CALLOUT_TONE_TOKENS;
 
 // ---------------------------------------------------------------------------
 // الرموز → عربية. **الخادم يرسل رمزاً والشاشة تترجمه** (قاعدة المشروع)

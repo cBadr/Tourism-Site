@@ -85,7 +85,7 @@ begin
     ('public.section_stats(text, date, date)'),
     -- التوقيعان الموسَّعان: غيابهما يعني قاعدة توقّفت قبل 0024
     ('public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

@@ -1,68 +1,76 @@
 import { Fragment } from "react";
-import {
-  Building2,
-  Landmark,
-  MicVocal,
-  PartyPopper,
-  Plane,
-  Route,
-} from "lucide-react";
+import Image from "next/image";
+import { FileText } from "lucide-react";
 import {
   Card,
+  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ServiceDef } from "@/lib/site-config";
+import { cn } from "@/lib/utils";
 import { getPagesByKind } from "@/lib/content";
 import { pagePublicPath } from "@/lib/seo/site-paths";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getLocalizedServices, getT } from "@/lib/i18n/content";
-import { localeHref } from "./links";
+import { iconFor, type IconComponent } from "@/components/sections/icons";
+import { safeMediaSrc } from "@/components/sections/image";
+import type { SectionContentMap } from "@/lib/content-types";
+import { internalPath, localeHref } from "./links";
 import { SectionHeading } from "./section-heading";
 
-/** ربط حقل icon في بيانات الخدمات بأيقونات lucide المناسبة */
-const SERVICE_ICONS: Record<ServiceDef["icon"], typeof Plane> = {
-  plane: Plane,
-  building: Building2,
-  route: Route,
-  landmark: Landmark,
-  party: PartyPopper,
-  mic: MicVocal,
-};
+/**
+ * ── الفجوة ١٥: الخدمات الثلاث التي **لا تخدمها الحاسبة بنيوياً** ───────────
+ *
+ * `/quote-request` مسارٌ حيّ بخانق خمسة طلبات لكل عشر دقائق، **وهو الطريق
+ * الوحيد** إلى ثلاث من الخدمات الست: الجولات والمناسبات والمؤتمرات. والحاسبة
+ * تسعّر رحلةً بنقطتين وفئة — فمن دخل يريد جولةً ليوم كامل أو تحرّك وفدٍ على عدة
+ * مركبات لا يجد فيها ما يخدمه، ويخرج بلا طريق.
+ *
+ * وقرار الفجوة صريح: **زرٌّ داخل بطاقات الخدمات الثلاث نفسها** — أي عند اللحظة
+ * التي يقرأ فيها الزائر «الجولات السياحية» بالضبط.
+ *
+ * 🔒 **وهو يبقى عاملاً على البطاقة المتجاوَزة كذلك** (م‑٧): الـslug يُشتق من
+ * `href` المكتوب (`/services/tours` ⇐ `tours`) لا من حقلٍ سادس. فحقلٌ أقلّ
+ * يكتبه المالك، وميزةٌ لا تسقط حين يملك البطاقات.
+ */
+const QUOTE_ONLY_SERVICES: ReadonlySet<string> = new Set(["tours", "events", "conferences"]);
+
+/** الـslug من مسار خدمةٍ داخلي — `/services/tours?x=1` ⇐ `tours`، وما عداه `null` */
+function serviceSlugFromHref(href: string | null): string | null {
+  if (href === null) return null;
+  const path = href.split(/[?#]/)[0] ?? "";
+  const match = /^\/services\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/.exec(path);
+  return match ? match[1] : null;
+}
 
 /**
  * قسم الخدمات الست — بطاقات ترتفع بلطف عند التحويم.
- * `content` اختياري من نظام الأقسام — عند غيابه تُستخدم نصوص `site.services`.
  *
- * المرحلة ٨: أسماء الخدمات ووصفها من مساحة `service` في جدول الترجمات
- * (`getLocalizedServices`)، والحقل غير المترجم يبقى عربياً.
+ * ── مساران، والثاني هو ما تضيفه م‑٧ ─────────────────────────────────────────
  *
- * ── والبطاقات تنقل الآن، ولم تكن ───────────────────────────────────────────
- * كانت الشبكة ست بطاقات **بلا عنصر رابط واحد** بينما صفحات الخدمات الست منشورة
- * بأقسامها، وزرُّ البطل «استكشف خدماتنا» يقود إلى `/#services` — أي إلى هذه
- * الشبكة الميتة بالضبط. والتذييل وحده كان يعرف الطريق إليها.
+ * **(أ) بلا `items`** — السلوك القائم حرفاً: الخدمات من `SERVICES` عبر
+ * `getLocalizedServices`، والوجهة من الصفحات **المنشورة** لا من الثابت، فما
+ * لا صفحةَ له يبقى عنواناً صامتاً و«إلغاء النشر يُطفئ الرابط ولا يكسره».
  *
- * 🔒 **والوجهة تُشتق من المنشور لا من `SERVICES`:** الثابت في `lib/site-config.ts`
- * قائمة عرضٍ (أيقونة ووصف)، وليس تعهّداً بأن للـ slug صفحةً حية. فلو اشتُقّ منه
- * الرابط لصارت البطاقة تشير إلى 404 لحظةَ يُلغي المالك نشر صفحة من اللوحة —
- * ولا خطأ يُنبّهه، فالبطاقة تبدو سليمة تماماً. فنقرأ `getPagesByKind("service")`
- * (وهي المنشور وحده — انظر `lib/content.ts`) ونربط بالـ slug: ما له صفحة يصير
- * رابطاً، وما لا صفحةَ له يبقى بطاقةً صامتة كما كانت. **إلغاء النشر يُطفئ الرابط
- * ولا يكسره.**
+ * **(ب) مع `items`** — المالك يملك البطاقات: العنوان والنصّ والصورة والأيقونة
+ * والوجهة، كلها صفوفٌ في `sections` تُحرَّر من المنشئ. وهذا هو تنفيذ القيد غير
+ * القابل للتفاوض على أصعب موضعٍ فيه: بيانات الخدمات كانت **في ملف TS**
+ * (`lib/site-config.ts`) — أي في الكود، خارج ما تصله اللوحة إطلاقاً.
  *
- * وشكل المسار من `pagePublicPath` لا بقالب مكتوب هنا — هو المصدر الذي تقرؤه
- * خريطة الموقع وتحقّق مدير التحويلات معاً (`lib/seo/site-paths.ts`)، ونسخةٌ
- * ثانية منه تنحرف يوم يتغيّر شكل المسار.
+ * ⚠ **والثمن يُكتب لا يُخفى:** البطاقة المتجاوَزة تأخذ وجهتها من `href`
+ * المكتوب، فإلغاءُ نشر صفحة خدمة لم يعد يُطفئ رابطها بل يجعله **٤٠٤
+ * داخلياً**. وهو نفس الثمن الذي قبله `route-rail` بقرارٍ مكتوب، وحدُّه محفوظ
+ * بـ`internalPath`: لا وجهة خارجية من قلب الرئيسية بحال.
  *
- * ⚠ وتبقى الشبكة محكومة بـ`SERVICES`: صفحة خدمة سابعة يُنشئها المالك لا تظهر
- * هنا لأن الأيقونة لا مصدر لها في `pages`. التذييل يعرضها، وهذا القسم لا.
+ * المرحلة ٨: أسماء الخدمات ووصفها من مساحة `service` في جدول الترجمات في
+ * المسار (أ)، ومن فهرس الأقسام (`section`) في المسار (ب) — كلاهما مفهرس.
  */
 export async function ServicesSection({
   content,
   locale = DEFAULT_LOCALE,
 }: {
-  content?: { title?: string; sub?: string };
+  content?: SectionContentMap["services-grid"];
   locale?: string;
 } = {}) {
   const [t, services, servicePages] = await Promise.all([
@@ -75,6 +83,50 @@ export async function ServicesSection({
   const publishedPaths = new Map(
     servicePages.map((page) => [page.slug, localeHref(pagePublicPath(page.kind, page.slug), locale)])
   );
+
+  /**
+   * البطاقات الموحَّدة — مصدرها المحتوى إن وُجد، وإلا بيانات النظام. ومن هنا
+   * فصاعداً **حلقة تصيير واحدة**: نسختان من قالب البطاقة كانتا ستنحرفان أول
+   * مرة يُعدَّل التخطيط (النمط ٤ في `LESSONS.md`).
+   */
+  const overrides = (content?.items ?? []).filter((item) => item?.title);
+
+  type Card = {
+    key: string;
+    title: string;
+    short: string | undefined;
+    href: string | null;
+    quoteSlug: string | null;
+    src: string | null;
+    alt: string;
+    Icon: IconComponent | null;
+  };
+
+  const cards: Card[] =
+    overrides.length > 0
+      ? overrides.map((item, index) => {
+          const path = internalPath(item.href);
+          return {
+            key: (item as { _k?: string })._k ?? `${item.title}-${index}`,
+            title: item.title,
+            short: item.text,
+            href: path === null ? null : localeHref(path, locale),
+            quoteSlug: serviceSlugFromHref(path),
+            src: safeMediaSrc(item.src),
+            alt: typeof item.alt === "string" ? item.alt.trim() : "",
+            Icon: iconFor(item.icon),
+          };
+        })
+      : services.map((service) => ({
+          key: service.slug,
+          title: service.title,
+          short: service.short,
+          href: publishedPaths.get(service.slug) ?? null,
+          quoteSlug: service.slug,
+          src: null,
+          alt: "",
+          Icon: iconFor(service.icon),
+        }));
 
   return (
     <section id="services" className="scroll-mt-24 py-20 md:py-28">
@@ -92,57 +144,145 @@ export async function ServicesSection({
         />
 
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 md:mt-16">
-          {services.map((service) => {
-            const Icon = SERVICE_ICONS[service.icon];
-            const href = publishedPaths.get(service.slug);
-            const card = (
-              /*
-               * `h-full` شرطٌ للرابط لا تجميل: البطاقة كانت عنصر شبكة مباشراً
-               * فتمدّدها الشبكة إلى ارتفاع الصف (`stretch`). وبإدخال الرابط
-               * بينهما صار المتمدّد هو الرابط، فتعود البطاقات إلى ارتفاعاتٍ
-               * متفاوتة بحسب طول الوصف — انحدار بصري يصنعه الربط نفسه.
-               */
-              <Card className="h-full rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]">
-                <CardHeader>
-                  <div className="mb-3 grid size-12 place-items-center rounded-xl bg-primary/10 text-primary transition-colors duration-300 group-hover/card:bg-primary group-hover/card:text-primary-foreground">
-                    <Icon className="size-6" aria-hidden="true" />
-                  </div>
-                  <CardTitle className="text-lg font-bold transition-colors duration-300 group-hover/card:text-primary">
-                    {service.title}
+          {cards.map((card) => {
+            const quoteHref =
+              card.quoteSlug && QUOTE_ONLY_SERVICES.has(card.quoteSlug)
+                ? localeHref(`/quote-request?service=${card.quoteSlug}`, locale)
+                : null;
+            const { Icon } = card;
+
+            /*
+             * `h-full` شرطٌ لا تجميل: الشبكة تمدّد عناصرها إلى ارتفاع الصف
+             * (`stretch`)، وأي غلافٍ يدخل بينها وبين البطاقة يصير هو المتمدّد
+             * فتعود البطاقات إلى ارتفاعاتٍ متفاوتة بحسب طول الوصف.
+             *
+             * و`relative` هنا هي مرساة **الرابط الممدود**: الرابط على العنوان
+             * وحده في DOM، و`after:inset-0` يبسط هدف نقره على البطاقة كاملة.
+             * ولماذا هذا الشكل بدل `<a>` تلفّ البطاقة؟ لأن زرّ «اطلب عرض سعر»
+             * رابطٌ ثانٍ، **ورابطٌ داخل رابط HTML غير صالح** ولا يعمل في أي
+             * متصفح. فالنمط الممدود هو الذي يجمع الاثنين.
+             *
+             * وحلقة التركيز على البطاقة لا على الكلمة (`has-[a:focus-visible]`)
+             * وإلا رأى من يتنقّل بلوحة المفاتيح حلقةً حول ثلاث كلمات في وسط
+             * بطاقةٍ لا يعرف حدودها.
+             */
+            const body = (
+              <Card
+                className={cn(
+                  "relative h-full overflow-hidden rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring/60 [--card-spacing:--spacing(6)]",
+                  /**
+                   * ارتفاعٌ أدنى مع الصورة: بلاه تُقصّ الصورة إلى شريطٍ خلف
+                   * سطرين من نصّ، فيضيع تخطيط `bento` الذي تقوم عليه الشبكة
+                   * في التصميم. وبلا صورة يبقى الارتفاع من المحتوى كما كان.
+                   */
+                  card.src
+                    ? "min-h-64 justify-end border-transparent bg-transparent text-white ring-white/15"
+                    : null
+                )}
+              >
+                {/*
+                 * صورة البطاقة — طبقةٌ خلف النصّ لا رأسٌ فوقه، وهو تخطيط
+                 * التصميم (`bento`). والحجاب شرطُ قراءةٍ لا زينة.
+                 *
+                 * و`alt=""` معلنٌ لا مسكوتٌ عنه: صورةُ بطاقةٍ عنوانها يقول ما
+                 * تقوله **زخرفة**، وقارئ الشاشة يتخطاها بدل أن يقرأ مساراً.
+                 */}
+                {card.src ? (
+                  <span
+                    aria-hidden={card.alt === "" ? "true" : undefined}
+                    className="absolute inset-0 z-0"
+                  >
+                    <Image
+                      src={card.src}
+                      alt={card.alt}
+                      fill
+                      sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 384px"
+                      quality={55}
+                      className="object-cover transition-transform duration-500 group-hover/card:scale-105"
+                    />
+                    <span className="absolute inset-0 bg-[linear-gradient(to_top,color-mix(in_oklab,var(--ink)_93%,transparent),color-mix(in_oklab,var(--ink)_66%,transparent)_55%,color-mix(in_oklab,var(--ink)_34%,transparent))]" />
+                  </span>
+                ) : null}
+
+                <CardHeader className={card.src ? "relative z-10 mt-auto" : undefined}>
+                  {Icon ? (
+                    <div
+                      className={cn(
+                        "mb-3 grid size-12 place-items-center rounded-xl transition-colors duration-300",
+                        card.src
+                          ? "bg-white/15 text-white backdrop-blur-sm"
+                          : "bg-primary/10 text-primary group-hover/card:bg-primary group-hover/card:text-primary-foreground"
+                      )}
+                    >
+                      <Icon className="size-6" aria-hidden="true" />
+                    </div>
+                  ) : null}
+                  <CardTitle
+                    className={cn(
+                      "text-lg font-bold transition-colors duration-300",
+                      card.src ? null : "group-hover/card:text-primary"
+                    )}
+                  >
+                    {/*
+                     * والوجهة تُشتق من المنشور في المسار (أ) — فما لا صفحةَ له
+                     * يبقى عنواناً صامتاً كما كان، ولا يصير رابطاً إلى ٤٠٤.
+                     *
+                     * ولا نصّ «اعرف المزيد» عمداً: الإشارة بصرية — ارتفاع
+                     * البطاقة وتلوّن عنوانها — ولا حرف يحتاج ترجمة.
+                     */}
+                    {card.href ? (
+                      <a
+                        href={card.href}
+                        className="outline-none after:absolute after:inset-0 after:content-['']"
+                      >
+                        {card.title}
+                      </a>
+                    ) : (
+                      card.title
+                    )}
                   </CardTitle>
-                  <CardDescription className="leading-7">
-                    {service.short}
-                  </CardDescription>
+                  {card.short ? (
+                    <CardDescription
+                      className={cn("leading-7", card.src ? "text-white/80" : null)}
+                    >
+                      {card.short}
+                    </CardDescription>
+                  ) : null}
                 </CardHeader>
+
+                {/*
+                 * 🔴 الفجوة ١٥ — «اطلب عرض سعر لهذه الخدمة».
+                 *
+                 * `z-10` شرطُ عمله: الرابط الممدود أعلاه يغطّي البطاقة كاملة،
+                 * فبلا رفعِ هذا فوقه تبتلع النقرةَ البطاقةُ ويصل الزائر صفحة
+                 * الخدمة بدل نموذج العرض. و`relative` تُفعّل `z-index` أصلاً.
+                 *
+                 * و`?service=` يُقرأ في `app/quote-request/page.tsx` فيصل
+                 * الزائر ونوعُ خدمته مختارٌ سلفاً — والـslug لا يُترجَم، فالرابط
+                 * نفسه يعمل من العربية ومن `/en` معاً.
+                 */}
+                {quoteHref ? (
+                  <CardContent className="relative z-10 mt-auto">
+                    <a
+                      href={quoteHref}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold underline-offset-4 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                        card.src ? "text-white" : "text-primary"
+                      )}
+                    >
+                      <FileText className="size-4 shrink-0" aria-hidden="true" />
+                      {t("quoteCta", "اطلب عرض سعر لهذه الخدمة")}
+                    </a>
+                  </CardContent>
+                ) : null}
               </Card>
             );
 
             /*
-             * البطاقة بلا صفحة منشورة تُعاد بـ`Fragment` لا بـ`div`: الغلاف
-             * الإضافي يصير هو عنصر الشبكة فتفقد البطاقة تمدّدها — أي العيب نفسه
-             * الذي عالجه `h-full` أعلاه، عائداً من الباب الآخر. و`Fragment` بلا
-             * عقدة DOM فتبقى البطاقة عنصر الشبكة كما كانت حرفياً.
+             * البطاقة هي عنصر الشبكة مباشرةً — بلا غلاف — فتبقى محتفظةً
+             * بتمدّدها. و`Fragment` هنا لحمل المفتاح وحده، بلا عقدة DOM.
              */
-            if (!href) return <Fragment key={service.slug}>{card}</Fragment>;
-            /*
-             * والرابط يلفّ البطاقة كلها لا كلمة داخلها: هدف نقر بحجم البطاقة على
-             * الجوال، وحلقةُ تركيز واحدة لمن يتنقّل بلوحة المفاتيح. و`<a>` عادية
-             * كما في الترويسة والتذييل والبطل — أسطح الموقع العام كلها كذلك.
-             *
-             * ولا نصّ «اعرف المزيد» عمداً: كل نص جديد يحتاج مفتاحاً في
-             * `messages/*.json`، والمفتاح المفقود يسقط إلى نصّه العربي الاحتياطي
-             * فيظهر عربياً على `/en`. فالإشارة بصرية بحتة — ارتفاع البطاقة
-             * وتلوّن عنوانها — ولا حرف يحتاج ترجمة.
-             */
-            return (
-              <a
-                key={service.slug}
-                href={href}
-                className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-              >
-                {card}
-              </a>
-            );
+            return <Fragment key={card.key}>{body}</Fragment>;
           })}
         </div>
       </div>

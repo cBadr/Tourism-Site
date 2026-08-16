@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Sparkles, XCircle } from "lucide-react";
 import { toArabicDigits } from "@/components/booking/format";
 import { getSettings } from "@/lib/settings";
+import type { BrandPalette } from "@/lib/site-config";
 import { saveSettings } from "./actions";
 import { TripSettingsSection } from "./_components/trip-settings-section";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -75,14 +76,84 @@ function ColorField({
           style={{ backgroundColor: defaultValue }}
         />
         <HelpTip>
-          قيمة لون CSS — يُفضَّل صيغة oklch مثل oklch(0.45 0.15 250)، وتُقبل hex مثل ‎#1e40af. تظهر
-          المعاينة بجوار الاسم بعد الحفظ.
+          قيمة لون CSS — hex مثل ‎#D89A3E أو oklch مثل oklch(0.45 0.15 250) أو أي دالّة ألوان.
+          والحقل المتروك فارغاً يعود إلى قيمة التصميم الأصلية، فهو طريقة التراجع عن تجربة لون.
+          تظهر المعاينة بجوار الاسم بعد الحفظ.
         </HelpTip>
       </Label>
       <Input id={name} name={name} dir="ltr" defaultValue={defaultValue} disabled={disabled} />
     </div>
   );
 }
+
+/**
+ * حقول اللوحة السبعة عشر — **وهذه القائمة تسميات لا مفاتيح**.
+ *
+ * المفاتيح مصدرها `PALETTE_CSS_VARS` في `lib/site-config.ts`: منها يبني
+ * `app/layout.tsx` السمة السطرية، ومنها يبني `saveSettings` صفَّ العلامة. وما
+ * يخصّ هذه الشاشة وحدها هو **ما يُكتب للمالك بالعربية** — فيعيش هنا ولا يُصدَّر،
+ * لأن الإجراء لا يحتاج تسميةً واحدة منه ولا يستوردها.
+ *
+ * ⚠ **والتسمية بالدور لا باللون** — «الأرضية الداكنة الأساسية» لا «الأخضر
+ * الفحمي». فهذه الشاشة هي واجهة نسخة الـwhite-label أيضاً، ونسخةٌ أخرى تُصبغ
+ * بأزرق وبيضاء تجعل كل اسم لونٍ مكتوبٍ هنا كذباً على المالك، بينما يبقى الدور
+ * صادقاً مهما بُدِّلت اللوحة.
+ *
+ * والتجميع لأجل العين لا لأجل البيانات: سبعة عشر حقلاً في شبكة واحدة كتلةٌ لا
+ * تُقرأ، وأربع رتب من الأرضية الداكنة متجاورةً تُفهم ترتيباً من الأعمق إلى ما
+ * فوقها.
+ */
+const COLOR_GROUPS: ReadonlyArray<{
+  title: string;
+  hint: string;
+  fields: ReadonlyArray<readonly [keyof BrandPalette, string]>;
+}> = [
+  {
+    title: "الإشارتان",
+    hint: "لون الفعل (الأزرار والأسعار وحلقة التركيز) ولون المعلومة (الشارات والأيقونات) ودرجاتهما.",
+    fields: [
+      ["primary", "لون الفعل الأساسي"],
+      ["primaryForeground", "النص فوق لون الفعل"],
+      ["primaryHi", "درجة الفعل الأفتح (تمرير وتركيز)"],
+      ["accent", "لون المعلومة"],
+      ["accentSoft", "أرضية شارة المعلومة على الداكن"],
+    ],
+  },
+  {
+    title: "الأرضيات الداكنة",
+    hint: "أربع رتب بالترتيب من أعمق خلفية إلى البطاقة التي تعلوها، ثم الحدّ الفاصل بينها.",
+    fields: [
+      ["ink", "الأرضية الداكنة الأساسية"],
+      ["ink1", "الأرضية الداكنة — الرتبة الثانية"],
+      ["ink2", "أرضية البطاقات على الداكن"],
+      ["inkLine", "الحدود على الأرضية الداكنة"],
+    ],
+  },
+  {
+    title: "الأرضيات الفاتحة",
+    hint: "خلفية الأقسام الفاتحة، والبطاقات التي تعلوها، والحدّ الفاصل بينها.",
+    fields: [
+      ["sand", "الأرضية الفاتحة الأساسية"],
+      ["sand2", "أرضية البطاقات على الفاتح"],
+      ["sandLine", "الحدود على الأرضية الفاتحة"],
+    ],
+  },
+  {
+    title: "النصوص",
+    hint: "رتبتان — أساسي وثانوي — فوق كل أرضية. هنا تُحسم قابلية القراءة: نصٌّ يقارب درجةَ أرضيته يختفي على الشاشات الساطعة قبل أن يختفي على شاشتك.",
+    fields: [
+      ["onInk", "نص أساسي على الداكن"],
+      ["onInkMut", "نص ثانوي على الداكن"],
+      ["onSand", "نص أساسي على الفاتح"],
+      ["onSandMut", "نص ثانوي على الفاتح"],
+    ],
+  },
+  {
+    title: "الخطر",
+    hint: "رسائل الخطأ والإلغاء — وليس خياراً هوياتياً: ضبطه على لون العلامة يجعل التحذير يبدو كبقية الموقع، فلا يُقرأ تحذيراً.",
+    fields: [["danger", "لون الخطر والإلغاء"]],
+  },
+];
 
 /**
  * رسالة النجاح بحسب النموذج المحفوظ — إعدادات الموقع لها زرها، وإعدادات الرحلات
@@ -112,6 +183,8 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
     // ── إعدادات الرحلات (هجرة 0027): رمز مستقل لكل سبب، فلا تُتَّهم الصلاحيات في خطأ إدخال
     timeout:
       "المهلة يجب أن تكون عدداً صحيحاً من الدقائق بين ١٥ و٤٣٢٠٠ (ثلاثين يوماً) — وهو نفس المدى المفروض في قاعدة البيانات.",
+    lead:
+      "أدنى مهلة قبل الانطلاق يجب أن تكون عدداً صحيحاً من الدقائق بين ٠ (مطفأة) و١٠٠٨٠ (سبعة أيام) — وهو نفس المدى المفروض في قاعدة البيانات.",
     tripnotready:
       "إعدادات الرحلات غير جاهزة على هذه القاعدة — نفِّذ هجرة 0027 من supabase/migrations ثم أعد المحاولة.",
     tripsave:
@@ -209,26 +282,41 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
             dir="ltr"
             disabled={!wired}
           />
-          <div className="grid gap-4 sm:grid-cols-3">
-            <ColorField
-              label="اللون الأساسي"
-              name="brand.colors.primary"
-              defaultValue={settings.brand.colors.primary}
-              disabled={!wired}
-            />
-            <ColorField
-              label="نص اللون الأساسي"
-              name="brand.colors.primaryForeground"
-              defaultValue={settings.brand.colors.primaryForeground}
-              disabled={!wired}
-            />
-            <ColorField
-              label="لون التمييز"
-              name="brand.colors.accent"
-              defaultValue={settings.brand.colors.accent}
-              disabled={!wired}
-            />
+          <Separator />
+
+          <div>
+            <h3 className="flex items-center gap-1.5 font-heading text-sm font-bold">
+              لوحة الألوان
+              <HelpTip>
+                اللوحة كلها تُحقن متغيّراتِ CSS على جذر الصفحة، فتتبعها كل شاشة في الموقع وفي
+                هذه اللوحة معاً بلا استثناء. وتغييرُ رتبةٍ واحدة يظهر في كل موضع تستعملها فيه
+                — لذلك جرّب على الموقع العام بعد الحفظ قبل أن تعتمد لوحةً كاملة.
+              </HelpTip>
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              سبعة عشر لوناً هي هوية الموقع البصرية كاملةً — لا لونَ محفورٌ في الكود خارجها.
+            </p>
           </div>
+
+          {COLOR_GROUPS.map((group) => (
+            <div key={group.title} className="space-y-3">
+              <div>
+                <p className="text-sm font-medium">{group.title}</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">{group.hint}</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {group.fields.map(([key, label]) => (
+                  <ColorField
+                    key={key}
+                    label={label}
+                    name={`brand.colors.${key}`}
+                    defaultValue={settings.brand.colors[key]}
+                    disabled={!wired}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </Card>
 
         <Card className="space-y-4 p-5">

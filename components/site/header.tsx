@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import type { SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
+import { AccountMenu } from "./account-menu";
 import { LocaleSwitcher } from "./locale-switcher";
 import { bookingHref, externalLinkProps, localeHref, navLinks } from "./links";
 
@@ -69,10 +70,14 @@ export async function SiteHeader({
 
         {/*
          * التنقل — العتبة `xl` لا `lg`. القياس (لا التقدير) على خادم التطوير:
-         * القائمة **سبعة** روابط (`NAV_LINKS` في links.ts)، وعرضها الطبيعي على
-         * سطر واحد ٧١٠ بكسل بالإنجليزية مقابل ٥٧٩ بالعربية — «Track your
+         * القائمة كانت **سبعة** روابط (`NAV_LINKS` في links.ts)، وعرضها الطبيعي
+         * على سطر واحد ٧١٠ بكسل بالإنجليزية مقابل ٥٧٩ بالعربية — «Track your
          * booking» وحدها ١٥٣ مقابل «تابع حجزك» ٩٥. ومع الشعار (٩٢) وكتلة
          * اليمين (٢٠٣) وفجوتَي ١٦ يلزم الصفَّ ‏١٠٣٧ بكسل صافية.
+         *
+         * ⚠ **وقد صارت ستة** بخروج «حجوزاتي» إلى جزيرة الحساب (‏الفجوة ١٣)،
+         *   ودخل مقابلها زرُّ الحساب في كتلة اليمين. فالمُوازنة تقريباً صفرية،
+         *   والعتبة تبقى `xl` كما هي — **ومن يضيف رابطاً سابعاً يعيد القياس**.
          *
          * وعند `lg` (‏١٠٢٤) المتاح ٩٧٦ فقط بعد `px-6`، فكان أربعة روابط تلتف
          * سطرين داخل صناديقها (ارتفاع الشريط ٥٦ بدل ٣٦) بين ١٠٢٤ و‏١١٣٠ على
@@ -112,6 +117,22 @@ export async function SiteHeader({
            */}
           <LocaleSwitcher />
 
+          {/*
+           * 🔴 مدخل حساب العميل (الفجوة ١٢) — «أول ما أُصلحه في هذه المرحلة».
+           *
+           * جزيرةُ عميلٍ صغيرة، **لا ترويسة ديناميكية**: قراءة الجلسة هنا كانت
+           * تعني قراءتها في كل صفحة من الموقع فتفقد الصفحاتُ العامة تصييرها
+           * الثابت — وهي صفحات السيو نفسها. المبرر كاملاً في ترويسة الملف.
+           *
+           * وعتبتها `xl` مرآةً لعتبة `<nav>`: ما دونها يحمل الدرجُ المدخلَ نفسه
+           * بنصّه كاملاً، فلا يزدحم شريط الجوال بزرٍّ خامس. والغلاف هو من يحمل
+           * العتبة لا الجزيرة: شكلاها مختلفان (‏`a` و`details`) فصنفُ عرضٍ واحد
+           * يمرَّر إليهما كان سيكسر أحدهما.
+           */}
+          <div className="hidden xl:flex xl:items-center">
+            <AccountMenu locale={locale} />
+          </div>
+
           <a
             href={booking}
             {...externalLinkProps(booking)}
@@ -147,6 +168,12 @@ export async function SiteHeader({
                   {link.label}
                 </a>
               ))}
+
+              {/* مدخل الحساب في الدرج — الفجوة ١٢ تنصّ عليه صراحةً: «أيقونة/زر
+                  في شريط الإجراءات… **وفي درج الجوال**، وفي التذييل». وفاصلٌ
+                  فوقه لأنه ليس تنقّلاً في الموقع بل باباً إلى سطحٍ آخر. */}
+              <span aria-hidden="true" className="my-1 h-px bg-border" />
+              <AccountMenu variant="drawer" locale={locale} />
             </nav>
           </details>
         </div>

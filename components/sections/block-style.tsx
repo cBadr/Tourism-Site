@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
+  CALLOUT_TONE_TOKENS,
   SPACING_TOKENS,
   STYLE_FIELD,
   THEME_COLOR_TOKENS,
   type BlockStyle,
+  type CalloutToneToken,
   type SpacingToken,
   type ThemeColorToken,
 } from "@/lib/page-builder-types";
@@ -51,12 +53,20 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
   const background = tokenOf<ThemeColorToken>(record.background, THEME_COLOR_TOKENS);
   const spacing = tokenOf<SpacingToken>(record.spacing, SPACING_TOKENS);
   const hideOnMobile = record.hideOnMobile === true;
+  /**
+   * 🆕 م‑١٠ — `tone` يمرّ من هنا **ولا يخرج في `blockStyleClass`**: هو المقبض
+   * الوحيد الذي يصف **داخل** الكتلة لا غلافها، فتقرؤه العارضة عبر
+   * `SectionProps.style`. وتطهيرُه هنا لا هناك شرطٌ لا زينة: قيمةٌ من محرر SQL
+   * أو من PostgREST لا تمرّ على أي شاشة (نفس مبرر القاعدة (١) في الترويسة).
+   */
+  const tone = tokenOf<CalloutToneToken>(record.tone, CALLOUT_TONE_TOKENS);
 
-  if (background === null && spacing === null && !hideOnMobile) return null;
+  if (background === null && spacing === null && !hideOnMobile && tone === null) return null;
   return {
     ...(background !== null ? { background } : {}),
     ...(spacing !== null ? { spacing } : {}),
     ...(hideOnMobile ? { hideOnMobile: true } : {}),
+    ...(tone !== null ? { tone } : {}),
   };
 }
 
@@ -86,7 +96,14 @@ const SPACING_CLASS: Record<SpacingToken, string> = {
   roomy: "py-24 md:py-32 [&>section]:py-0!",
 };
 
-/** الأصناف الناتجة عن `style` — نصّ فارغ يعني «لا غلاف» */
+/**
+ * الأصناف الناتجة عن `style` — نصّ فارغ يعني «لا غلاف».
+ *
+ * ⚠ **و`tone` ليست هنا بقصد**: هي المقبض الوحيد الذي يصف داخل الكتلة لا
+ * غلافها، فلو أخرجت صنفاً هنا لصار للتنبيه إطارٌ ملوّن **وغلافٌ ملوّن حوله**.
+ * وكتلةٌ لا تحمل إلا `tone` تخرج من هنا بنصٍّ فارغ ⇒ لا عقدة DOM إضافية —
+ * وهو نفس تعهّد القاعدة (٢) في الترويسة.
+ */
 export function blockStyleClass(style: BlockStyle | null): string {
   if (style === null) return "";
   return cn(

@@ -63,7 +63,10 @@ begin
     ('public.settle_payment_intent(text, text, text, text, integer, jsonb)'),
     ('public.get_payment_intent_status(uuid)'),
     ('public.to_minor_units(numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer)'),
+    -- ⚠ 0067: أُلحق `p_flight_number text` بتوقيع create_booking (وأُسقط
+    --   التوقيع العشروني صراحةً كما فعلت 0031). هذا السطر **شرط وجود** لا يخصّ
+    --   منطق الدفع، وتحديثه هنا وحده يُبقي المجموعة خضراء.
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)'),
     -- تصليب 0025 البند (١): الجسم انتقل إلى دالة داخلية، والغلافان يستدعيانها
     ('public.payment_accounts_within_caps(numeric)'),
     ('public.available_payment_accounts(numeric)'),
@@ -1216,6 +1219,572 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ل) 🔴 اللوحة تقرّر بالمفتاح لا بالنوع — حارس انحدار على عيبٍ عاش شهراً
+--
+-- ما يُختبر: صفحة التحويل كانت لا تعرض إلا المحافظ وانستا باي، وخانةُ «يظهر
+-- للعملاء» على الحساب البنكي تُحفظ «بنجاح» ثم تعود مطفأة. والسبب لم يكن في
+-- القاعدة — `payment_accounts_within_caps` لا تعرف النوع أصلاً — بل في إجراء
+-- اللوحة الذي كان يقسر `customer_facing` إلى `false` لكل `bank`. **وهذا صنف
+-- عيبٍ لا تمسكه قراءةُ كود ولا فحصُ بناء**: كل طبقة على حِدة سليمة.
+--
+-- فالفحص هنا **سلوكي على الطريق الكامل**: حساب `kind='bank'` بمفتاح مشغَّل
+-- يجب أن يصل العميلَ عبر غلاف التوكن نفسه الذي تناديه `/booking/[token]`،
+-- وإطفاء المفتاح وحده يجب أن يخفيه. ويكمله فحصان بنيويان: القائمة البيضاء
+-- (لا رقم خزينة يصل المتصفح) والحارس البنيوي على وعاء تسوية البوابات (0060).
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_bank  constant uuid := '9a000000-0000-4000-8000-00000000000b';
+  v_b     record;
+  v_tok   text;
+  v_n     integer;
+  v_gw    uuid;
+  v_fired boolean;
+  v_names text[];
+begin
+  insert into public.payment_accounts
+    (id, kind, label, handle, holder_name, opening_balance, active, sort, customer_facing)
+  values
+    (v_bank, 'bank', 'PAYMENT_TESTS بنك معروض', 'PT-BANK-SELFCHECK', 'اختبار',
+     0, true, 952, true)
+  on conflict (id) do update
+    set customer_facing = true, active = true, kind = 'bank';
+
+  select * into v_b
+  from public.create_booking(
+    jsonb_build_object('label', 'موقع صحراوي أ', 'lat', 25.000000, 'lng', 27.500000),
+    jsonb_build_object('label', 'موقع صحراوي ب', 'lat', 24.500000, 'lng', 28.200000),
+    1, false, 0, 100, 90, 'test',
+    current_setting('tours.p_class'), 'full',
+    'عميل اختبار الحساب البنكي', '01000009207', null, now() + interval '3 days',
+    'PAYMENT_TESTS_FIXTURE-6'
+  );
+  select b.public_token into v_tok from public.bookings b where b.id = v_b.id;
+  if v_tok is null or length(v_tok) < 32 then
+    raise exception '(ل-٠) توكن الحجز غير صالح — لا معنى لما بعده';
+  end if;
+
+  -- (ل-١) 🔴 الشاهد المباشر على العيب: البنكي المعروض يصل العميل
+  select count(*) into v_n
+  from public.available_payment_accounts(v_tok, 0) a where a.id = v_bank;
+  if v_n <> 1 then
+    raise exception
+      '(ل-١) حساب بنكي مفعَّل و«يظهر للعملاء» غاب عن صفحة التحويل (% صفاً) — عاد ترشيحٌ بالنوع إلى الطريق', v_n;
+  end if;
+
+  -- (ل-٢) والمفتاح وحده هو ما يحكم: إطفاؤه يخفيه، وتشغيله يعيده — بلا لمس النوع
+  update public.payment_accounts pa set customer_facing = false where pa.id = v_bank;
+  select count(*) into v_n
+  from public.available_payment_accounts(v_tok, 0) a where a.id = v_bank;
+  if v_n <> 0 then
+    raise exception '(ل-٢) إطفاء «يظهر للعملاء» لم يُخفِ الحساب (% صفاً)', v_n;
+  end if;
+
+  update public.payment_accounts pa set customer_facing = true where pa.id = v_bank;
+  select count(*) into v_n
+  from public.available_payment_accounts(v_tok, 0) a where a.id = v_bank;
+  if v_n <> 1 then
+    raise exception '(ل-٣) إعادة تشغيل المفتاح لم تُعِد الحساب (% صفاً)', v_n;
+  end if;
+
+  -- (ل-٤) والحساب المتوقف يبقى مخفياً مهما كان المفتاح — الشرطان معاً لا أحدهما
+  update public.payment_accounts pa set active = false where pa.id = v_bank;
+  select count(*) into v_n
+  from public.available_payment_accounts(v_tok, 0) a where a.id = v_bank;
+  if v_n <> 0 then
+    raise exception '(ل-٤) حساب متوقف ظهر للعميل لأن مفتاح الظهور مشغَّل (% صفاً)', v_n;
+  end if;
+  update public.payment_accounts pa set active = true where pa.id = v_bank;
+
+  -- (ل-٥) قائمة بيضاء: لا رقم خزينة في طريق الزائر (0060 البند ١)
+  select coalesce(p.proargnames, '{}') into v_names
+  from pg_proc p
+  where p.oid = 'public.available_payment_accounts(text, numeric)'::regprocedure;
+  if v_names && array['daily_headroom', 'monthly_headroom', 'opening_balance',
+                      'daily_cap', 'monthly_cap'] then
+    raise exception
+      '(ل-٥) طريق الزائر يحمل عمود خزينة (%) — فرقُ المتاح بين لحظتين هو إيرادنا اليومي',
+      array_to_string(v_names, ', ');
+  end if;
+
+  -- (ل-٦) وما كان قائماً يبقى: الغلاف الإداري ما زال يحمل المتاح لأشرطة اللوحة
+  select coalesce(p.proargnames, '{}') into v_names
+  from pg_proc p
+  where p.oid = 'public.available_payment_accounts(numeric)'::regprocedure;
+  if not (v_names @> array['daily_headroom', 'monthly_headroom']) then
+    raise exception '(ل-٦) الغلاف الإداري فقد المتاح اليومي/الشهري — أشرطة اللوحة تنكسر';
+  end if;
+
+  -- (ل-٧) الحارس البنيوي: وعاء تسوية بوابة لا يصير وجهة تحويل ولو بنقرة ساهية.
+  --       بنداءٍ حيّ يُلغى داخل كتلته — لا بقراءة تعريف المُشغّل (القاعدة ١٩).
+  select pa.id into v_gw
+  from public.payment_accounts pa
+  where exists (select 1 from public.payment_providers pp where pp.account_id = pa.id)
+  limit 1;
+
+  if v_gw is null then
+    raise exception '(ل-٧) لا حساب مرتبط بمزوّد دفع — الفيكسترة (٠-ب) لم تُبنَ، والفحص أعمى';
+  end if;
+
+  begin
+    update public.payment_accounts pa set customer_facing = true where pa.id = v_gw;
+    raise exception 'PT_GUARD_MISSING';
+  exception
+    when others then
+      v_fired := sqlerrm <> 'PT_GUARD_MISSING';
+  end;
+  if not v_fired then
+    raise exception
+      '(ل-٧) حساب تسوية البوابات قَبِل «يظهر للعملاء» — الحارس البنيوي (0060) غائب';
+  end if;
+
+  raise notice '✔ (ل) المفتاح وحده يحكم: البنكي يظهر ويختفي بأمر اللوحة · لا رقم خزينة للزائر · ووعاء البوابات محجوب بنيوياً';
+end;
+$$;
+
+-- ============================================================================
+-- (ن) عمولة بوابات الدفع — ن‑١ (الهجرة 0066)
+--
+-- الادّعاء الذي يحرسه هذا القسم في جملة واحدة: **العمولة تُضاف إلى ما يدفعه
+-- العميل، ولا تحرّك جنيهاً واحداً مما يخصّ المتعهد.** وهي الجملة التي تُنقَض
+-- بسطرٍ واحد حسن النية (إضافة العمولة إلى `bookings.total`) بلا أن يحمرّ شيء:
+-- الحساب يبقى صحيحاً، والصفحة تعرض الرقم الصحيح، **وسقف موجة البث يتسع** فيفوز
+-- متعهدٌ أغلى بمالٍ دفعه العميل لفودافون كاش.
+--
+-- ولذلك القسم يقيس **زوجاً**: حجزٌ بعمولات وحجزٌ بلا عمولات، بمدخلات متطابقة
+-- حرفياً، ويقارن أربعة أرقام تخصّ المتعهد. الفرق في أيٍّ منها = العمولة تسرّبت.
+--
+-- المرجع: `lib/payment-fee-types.ts` (العقد) + `0066_payment_account_fees.sql`.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- (ن-٠) تجهيزات: حسابا عمولة بمثالَي بدر — فودافون كاش +١ · انستاباي +٢٠
+--
+-- حسابان **من الاختبار لا من قاعدة بدر**: تعديل عمولة حسابٍ حقيقي يجعل الاختبار
+-- يقيس ما ضبطه المالك لا ما تفعله الشيفرة، ويترك أثراً إن انهار التشغيل.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_fix constant uuid := '9a000000-0000-4000-8000-00000000000f';  -- ثابتة  +١
+  v_pct constant uuid := '9a000000-0000-4000-8000-00000000000e';  -- نسبة  ٢٪
+begin
+  if to_regprocedure('public.payment_fee_amount(text, numeric, numeric)') is null
+     or to_regprocedure('public.booking_payment_fee(jsonb, uuid)') is null
+     or to_regprocedure('public.attach_receipt(text, text, uuid)') is null then
+    raise exception 'شرط مسبق: دوال العمولة مفقودة — نفّذ 0066_payment_account_fees.sql';
+  end if;
+
+  insert into public.payment_accounts
+    (id, kind, label, handle, holder_name, opening_balance, active, sort,
+     customer_facing, fee_kind, fee_value)
+  values
+    (v_fix, 'wallet',   'PAYMENT_TESTS محفظة عمولة',  'PT-FEE-WALLET', 'اختبار', 0, true, 951,
+     true, 'fixed', 1),
+    (v_pct, 'instapay', 'PAYMENT_TESTS نسبة عمولة',   'PT-FEE-INSTA',  'اختبار', 0, true, 952,
+     true, 'percent', 2);
+
+  perform set_config('tours.p_fee_fix', v_fix::text, false);
+  perform set_config('tours.p_fee_pct', v_pct::text, false);
+
+  raise notice '✔ (ن-٠) حسابا عمولة: ثابتة ١ جنيه ونسبة ٢٪';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-١) حجزان بمدخلات متطابقة: أحدهما وُلد والعمولات مضبوطة، والآخر بلا عمولة
+--
+-- ⚠ **والفرق بينهما لحظة الميلاد لا بعده**: اللقطة تُكتب في `before insert`،
+--   فإطفاء العمولات ثم إنشاء الحجز الثاني يجعله شاهداً حقيقياً على «بلا عمولة»
+--   لا نسخةً من الأول أُخفيت أرقامها.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_fix uuid := current_setting('tours.p_fee_fix')::uuid;
+  v_pct uuid := current_setting('tours.p_fee_pct')::uuid;
+  v_b   record;
+begin
+  select * into v_b
+  from public.create_booking(
+    jsonb_build_object('label', 'موقع صحراوي أ', 'lat', 25.000000, 'lng', 27.500000),
+    jsonb_build_object('label', 'موقع صحراوي ب', 'lat', 24.500000, 'lng', 28.200000),
+    1, false, 0, 100, 90, 'test',
+    current_setting('tours.p_class'), 'deposit',
+    'عميل اختبار العمولة', '01000009261', null, now() + interval '3 days',
+    'PAYMENT_TESTS_FIXTURE-FEE'
+  );
+  perform set_config('tours.p_bfee', v_b.id::text, false);
+  perform set_config('tours.p_bfee_due', v_b.amount_due::text, false);
+  perform set_config('tours.p_bfee_total', v_b.total::text, false);
+
+  if v_b.amount_remaining <= 0 then
+    raise exception
+      '(ن-١) خطة العربون لم تترك باقياً — لا فرق بين المستحق والإجمالي فلا يُقاس موضع العمولة';
+  end if;
+
+  -- الشاهد: العمولات مطفأة قبل ميلاده
+  update public.payment_accounts set fee_kind = 'none', fee_value = 0
+   where id in (v_fix, v_pct);
+
+  select * into v_b
+  from public.create_booking(
+    jsonb_build_object('label', 'موقع صحراوي أ', 'lat', 25.000000, 'lng', 27.500000),
+    jsonb_build_object('label', 'موقع صحراوي ب', 'lat', 24.500000, 'lng', 28.200000),
+    1, false, 0, 100, 90, 'test',
+    current_setting('tours.p_class'), 'deposit',
+    'عميل اختبار بلا عمولة', '01000009262', null, now() + interval '3 days',
+    'PAYMENT_TESTS_FIXTURE-NOFEE'
+  );
+  perform set_config('tours.p_bnofee', v_b.id::text, false);
+
+  -- وتُعاد العمولات: الحجز الأول مجمَّد سلفاً، والباقي من القسم يقرأ الكتالوج حيّاً
+  update public.payment_accounts set fee_kind = 'fixed',   fee_value = 1 where id = v_fix;
+  update public.payment_accounts set fee_kind = 'percent', fee_value = 2 where id = v_pct;
+
+  raise notice '✔ (ن-١) حجزان متطابقان — بعمولات وبلا عمولات (إجمالي %)',
+    current_setting('tours.p_bfee_total');
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-٢) 🔒 العمولة تصل فاتورة العميل — بنوعيها، وبالحساب الصحيح لكل حساب
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b     uuid    := current_setting('tours.p_bfee')::uuid;
+  v_fix   uuid    := current_setting('tours.p_fee_fix')::uuid;
+  v_pct   uuid    := current_setting('tours.p_fee_pct')::uuid;
+  v_due   numeric := current_setting('tours.p_bfee_due')::numeric;
+  v_total numeric := current_setting('tours.p_bfee_total')::numeric;
+  v_token text;
+  v_row   record;
+  v_seen  integer := 0;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  for v_row in
+    select a.id, a.fee, a.amount_due_with_fee, a.total_with_fee
+    from public.available_payment_accounts(v_token, v_due) a
+    where a.id in (v_fix, v_pct)
+  loop
+    v_seen := v_seen + 1;
+
+    -- ★ العمولة الثابتة تساوي قيمتها، والنسبة تساوي نسبتها من **الإجمالي**
+    if v_row.id = v_fix and v_row.fee <> 1 then
+      raise exception '(ن-٢) العمولة الثابتة يجب أن تكون ١ وعادت %', v_row.fee;
+    end if;
+    if v_row.id = v_pct and v_row.fee <> round(v_total * 2 / 100, 2) then
+      raise exception '(ن-٢) نسبة ٢٪ من % يجب أن تكون %، وعادت %',
+        v_total, round(v_total * 2 / 100, 2), v_row.fee;
+    end if;
+
+    -- ★ وتُضاف إلى ما يحوّله العميل وإلى إجمالي فاتورته — لا إلى أحدهما
+    if v_row.amount_due_with_fee <> round(v_due + v_row.fee, 2) then
+      raise exception '(ن-٢) المطلوب تحويله ليس المستحق + العمولة (% ≠ % + %)',
+        v_row.amount_due_with_fee, v_due, v_row.fee;
+    end if;
+    if v_row.total_with_fee <> round(v_total + v_row.fee, 2) then
+      raise exception '(ن-٢) إجمالي الفاتورة ليس الإجمالي + العمولة (% ≠ % + %)',
+        v_row.total_with_fee, v_total, v_row.fee;
+    end if;
+  end loop;
+
+  if v_seen <> 2 then
+    raise exception
+      '(ن-٢) حسابا العمولة لم يبلغا مسار العميل (وصل % منهما) — العمولة موجودة ولا يراها أحد',
+      v_seen;
+  end if;
+
+  raise notice '✔ (ن-٢) الثابتة والنسبة تصلان الفاتورة: المستحق + العمولة، والإجمالي + العمولة';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-٣) 🔴 **وهي لا تحرّك المتعهد** — أربعة أرقام متطابقة بين الحجزين
+--
+-- سقف الموجتين والهامش والإجمالي والمتبقي نقداً. لو دخلت العمولة `bookings.total`
+-- لتحرّك أولها فوراً، ولمرّ ذلك في كل اختبار آخر في المستودع.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_fee   uuid := current_setting('tours.p_bfee')::uuid;
+  v_no    uuid := current_setting('tours.p_bnofee')::uuid;
+  a       record;
+  b       record;
+begin
+  select bk.total, bk.margin_amount, bk.amount_remaining, bk.amount_due,
+         public.dispatch_ceiling(bk.id, 1) as c1,
+         public.dispatch_ceiling(bk.id, 2) as c2
+    into a
+  from public.bookings bk where bk.id = v_fee;
+
+  select bk.total, bk.margin_amount, bk.amount_remaining, bk.amount_due,
+         public.dispatch_ceiling(bk.id, 1) as c1,
+         public.dispatch_ceiling(bk.id, 2) as c2
+    into b
+  from public.bookings bk where bk.id = v_no;
+
+  if a.total <> b.total then
+    raise exception
+      '(ن-٣) العمولة دخلت bookings.total (% مقابل %) — ومعها تحرّك سقف البث وأساس الخصم وكسب النقاط',
+      a.total, b.total;
+  end if;
+  if a.c1 <> b.c1 or a.c2 <> b.c2 then
+    raise exception
+      '(ن-٣) 🔴 سقف موجة البث تحرّك بالعمولة (%/% مقابل %/%) — متعهدٌ أغلى صار يفوز بمالٍ ليس من نصيبه',
+      a.c1, a.c2, b.c1, b.c2;
+  end if;
+  if a.margin_amount is distinct from b.margin_amount then
+    raise exception '(ن-٣) هامش الحجز تحرّك بالعمولة (% مقابل %)', a.margin_amount, b.margin_amount;
+  end if;
+  if a.amount_remaining <> b.amount_remaining then
+    raise exception
+      '(ن-٣) المتبقي نقداً مع السائق تحرّك بعمولة تحويلٍ إلكتروني (% مقابل %)',
+      a.amount_remaining, b.amount_remaining;
+  end if;
+  if a.amount_due <> b.amount_due then
+    raise exception '(ن-٣) المستحق المخزَّن تحرّك بالعمولة (% مقابل %)', a.amount_due, b.amount_due;
+  end if;
+
+  raise notice
+    '✔ (ن-٣) الإجمالي % والهامش % وسقفا البث %/% والمتبقي % — متطابقة مع حجز بلا عمولة',
+    a.total, coalesce(a.margin_amount::text, '—'), a.c1, a.c2, a.amount_remaining;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-٤) الحدّ **في الجدول** لا في الواجهة — ثلاث محاولات تُرفض
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_fix constant uuid := current_setting('tours.p_fee_fix')::uuid;
+  v_bad text[] := array['percent:101', 'fixed:-1', 'bogus:1'];
+  v_one text;
+  v_ok  boolean;
+begin
+  foreach v_one in array v_bad loop
+    begin
+      update public.payment_accounts
+         set fee_kind  = split_part(v_one, ':', 1),
+             fee_value = split_part(v_one, ':', 2)::numeric
+       where id = v_fix;
+      raise exception 'PT_FEE_NO_BOUND';
+    exception
+      when others then
+        v_ok := sqlerrm <> 'PT_FEE_NO_BOUND';
+    end;
+    if not v_ok then
+      raise exception '(ن-٤) القيد قَبِل «%» — الحدّ ليس في الجدول', v_one;
+    end if;
+  end loop;
+
+  -- والحارس: لا عمولة على وعاءٍ لا يُحوَّل إليه (النقدية ووعاء تسوية البوابات)
+  begin
+    update public.payment_accounts set fee_kind = 'fixed', fee_value = 5
+     where id = current_setting('tours.p_acc')::uuid;   -- وعاء تسوية «test»
+    raise exception 'PT_FEE_NO_GUARD';
+  exception
+    when others then
+      v_ok := sqlerrm <> 'PT_FEE_NO_GUARD';
+  end;
+  if not v_ok then
+    raise exception '(ن-٤) وعاء تسوية البوابات قَبِل عمولة — إعدادٌ يُحفظ ولا يصل عميلاً';
+  end if;
+
+  raise notice '✔ (ن-٤) نسبة ١٠١٪ ومبلغ سالب ونوع مجهول وعمولةُ وعاءٍ ميت — أربعتها مرفوضة في القاعدة';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-٥) 🔒 التجميد — تغيير العمولة اليوم لا يمسّ حجز الأمس
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b     uuid := current_setting('tours.p_bfee')::uuid;
+  v_fix   uuid := current_setting('tours.p_fee_fix')::uuid;
+  v_token text;
+  v_before numeric;
+  v_after  numeric;
+  v_new    record;
+  v_newfee numeric;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  select a.fee into v_before
+  from public.available_payment_accounts(v_token, current_setting('tours.p_bfee_due')::numeric) a
+  where a.id = v_fix;
+
+  update public.payment_accounts set fee_kind = 'fixed', fee_value = 999 where id = v_fix;
+
+  select a.fee into v_after
+  from public.available_payment_accounts(v_token, current_setting('tours.p_bfee_due')::numeric) a
+  where a.id = v_fix;
+
+  if v_after is distinct from v_before then
+    raise exception
+      '(ن-٥) 🔴 رفع العمولة غيّر حجزاً قائماً (% ⇐ %) — العميل يُطالَب بما لم يره',
+      v_before, v_after;
+  end if;
+
+  -- وحجزٌ **جديد** يلتقط الإعداد الجديد: التجميد تجميد لا تعطيل
+  select * into v_new
+  from public.create_booking(
+    jsonb_build_object('label', 'موقع صحراوي أ', 'lat', 25.000000, 'lng', 27.500000),
+    jsonb_build_object('label', 'موقع صحراوي ب', 'lat', 24.500000, 'lng', 28.200000),
+    1, false, 0, 100, 90, 'test',
+    current_setting('tours.p_class'), 'full',
+    'عميل اختبار العمولة الجديدة', '01000009263', null, now() + interval '3 days',
+    'PAYMENT_TESTS_FIXTURE-FEE2'
+  );
+
+  select public.booking_payment_fee(b.trip, v_fix) into v_newfee
+  from public.bookings b where b.id = v_new.id;
+
+  if v_newfee <> 999 then
+    raise exception
+      '(ن-٥) الحجز الجديد لم يلتقط العمولة الجديدة (%) — اللقطة مجمَّدة على الماضي لا على لحظة الحجز',
+      v_newfee;
+  end if;
+
+  update public.payment_accounts set fee_kind = 'fixed', fee_value = 1 where id = v_fix;
+
+  raise notice '✔ (ن-٥) القائم ثابت على % والجديد يلتقط ٩٩٩ — اللقطة لحظة الحجز لا لحظة القراءة',
+    v_before;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-٦) قيمة الإيصال = المستحق + عمولة الحساب المُصرَّح به
+--
+-- ولماذا يهمّ: المشرف يقارن السطر بصورة الإيصال. فرقٌ دائم بينهما يعلّمه أن
+-- يتجاهل الفرق — وهو اليوم الذي يمرّ فيه تحويلٌ ناقصٌ حقيقي.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b     uuid    := current_setting('tours.p_bfee')::uuid;
+  v_pct   uuid    := current_setting('tours.p_fee_pct')::uuid;
+  v_due   numeric := current_setting('tours.p_bfee_due')::numeric;
+  v_total numeric := current_setting('tours.p_bfee_total')::numeric;
+  v_token text;
+  v_res   record;
+  v_amt   numeric;
+  v_want  numeric;
+  v_on    uuid;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+  v_want := round(v_due + round(v_total * 2 / 100, 2), 2);
+
+  select * into v_res
+  from public.attach_receipt(v_token, v_token || '/pt-fee.jpg', v_pct);
+
+  select p.amount, p.account_id into v_amt, v_on
+  from public.payments p where p.id = v_res.payment_id;
+
+  if v_amt <> v_want then
+    raise exception '(ن-٦) قيمة الإيصال % والمتوقع % (المستحق % + عمولة النسبة)',
+      v_amt, v_want, v_due;
+  end if;
+  if v_on is distinct from v_pct then
+    raise exception '(ن-٦) الإيصال سُجّل على حسابٍ غير المُصرَّح به — لا يُعرف أين وصل المال';
+  end if;
+
+  -- وإعادة الحجز إلى «بانتظار الدفع» كي لا يعتمد ما بعده على حالة غيّرها هو
+  perform set_config('tours.booking_note', 'تجهيز اختبار', true);
+  update public.bookings b set status = 'pending_payment' where b.id = v_b;
+  delete from public.payments p where p.id = v_res.payment_id;
+
+  raise notice '✔ (ن-٦) الإيصال سُجّل بـ% = المستحق % + عمولة الحساب المُصرَّح به', v_amt, v_due;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن-٧) 🧬 **طفرة** — الاختبار الذي لا يفشل حين يُنزع حارسه ليس اختباراً
+--
+-- النمط ٩ في `LESSONS.md` («حارسٌ يطمئنك ولا يحرس»)، والقاعدة ١٩ («الكاشف الذي
+-- يقرأ النصّ يكذب في الاتجاهين»). أخطر ادّعاءٍ في هذا القسم هو **التجميد** —
+-- ولو كان `booking_payment_fee` يقرأ الكتالوج الحيّ بدل اللقطة لبقي كل شيء
+-- يعمل: الأرقام صحيحة، والصفحة تعرض، والقسم (ن-٢) أخضر. الفرق لا يظهر إلا
+-- يوم يغيّر المالك عمولةً وحجزٌ قائم لم يُدفع بعد.
+--
+-- فتُزرع الطفرة بعينها — قارئٌ يقرأ الحيّ — ويُطلَب من (ن-٥) أن **يفشل**.
+-- والاستعادة من `pg_get_functiondef` الحيّ المُلتقط قبل الطفرة، لا من نسخةٍ
+-- مكتوبة هنا تنحرف عن الأصل بعد أول تعديل (D-58).
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b       uuid := current_setting('tours.p_bfee')::uuid;
+  v_fix     uuid := current_setting('tours.p_fee_fix')::uuid;
+  v_token   text;
+  v_origin  text;
+  v_before  numeric;
+  v_after   numeric;
+  v_caught  boolean := false;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  -- المصدر الحيّ أولاً — قبل أي مساس
+  select pg_get_functiondef('public.booking_payment_fee(jsonb, uuid)'::regprocedure)
+    into v_origin;
+
+  select a.fee into v_before
+  from public.available_payment_accounts(v_token, current_setting('tours.p_bfee_due')::numeric) a
+  where a.id = v_fix;
+
+  -- 🧬 الطفرة: يتجاهل اللقطة ويقرأ الكتالوج الحيّ
+  execute $mut$
+    create or replace function public.booking_payment_fee(p_trip jsonb, p_account_id uuid)
+    returns numeric
+    language sql
+    stable
+    security definer
+    set search_path = ''
+    as $body$
+      select coalesce(
+        (select public.payment_fee_amount(pa.fee_kind, pa.fee_value, 100000)
+           from public.payment_accounts pa where pa.id = p_account_id),
+        0::numeric);
+    $body$;
+  $mut$;
+
+  begin
+    update public.payment_accounts set fee_value = 777 where id = v_fix;
+
+    select a.fee into v_after
+    from public.available_payment_accounts(v_token, current_setting('tours.p_bfee_due')::numeric) a
+    where a.id = v_fix;
+
+    -- نفس شرط (ن-٥) حرفياً — ويجب أن يرمي الآن
+    if v_after is distinct from v_before then
+      raise exception 'PT_FEE_MUTANT_CAUGHT';
+    end if;
+  exception
+    when others then
+      v_caught := sqlerrm = 'PT_FEE_MUTANT_CAUGHT';
+  end;
+
+  -- الاستعادة **قبل** الحكم: تشخيصٌ فاشل لا يجوز أن يترك القاعدة مطفَّرة
+  execute v_origin;
+  update public.payment_accounts set fee_kind = 'fixed', fee_value = 1 where id = v_fix;
+
+  if not v_caught then
+    raise exception
+      '(ن-٧) 🔴 نُزع التجميد ومرّ الاختبار — أي أن (ن-٥) يؤكد ما يفترضه ولا يحرس شيئاً';
+  end if;
+
+  -- وبعد الاستعادة يعود الادّعاء صحيحاً: نفس القراءة، نفس الرقم
+  select a.fee into v_after
+  from public.available_payment_accounts(v_token, current_setting('tours.p_bfee_due')::numeric) a
+  where a.id = v_fix;
+  if v_after is distinct from v_before then
+    raise exception '(ن-٧) لم تُستعَد الدالة الأصلية — القاعدة باقية على الطفرة (% ≠ %)',
+      v_after, v_before;
+  end if;
+
+  raise notice
+    '✔ (ن-٧) الطفرة أُمسكت: قارئٌ يقرأ الكتالوج الحيّ بدل اللقطة أسقط (ن-٥) — ثم استُعيد الأصل';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (م) التنظيف — لا صف اختبار يبقى، وإعدادات المزوّدين تعود كما كانت
 -- ----------------------------------------------------------------------------
 do $$
@@ -1308,6 +1877,22 @@ begin
   perform set_config('tours.p_test_enabled', '', false);
   perform set_config('tours.p_test_account', '', false);
   perform set_config('tours.p_stripe_enabled', '', false);
+  -- القسم (ن)
+  perform set_config('tours.p_fee_fix', '', false);
+  perform set_config('tours.p_fee_pct', '', false);
+  perform set_config('tours.p_bfee', '', false);
+  perform set_config('tours.p_bnofee', '', false);
+  perform set_config('tours.p_bfee_due', '', false);
+  perform set_config('tours.p_bfee_total', '', false);
+
+  -- ⚠ حسابا العمولة يحملان `customer_facing = true`، فبقاء أيٍّ منهما يعني رقماً
+  --   وهمياً في صفحة تحويل عميل حقيقي. حُذفا مع بقية صفوف `PAYMENT_TESTS%` أعلاه،
+  --   وهذا شاهدٌ صريح لا اطمئنان.
+  select count(*) into v_left from public.payment_accounts pa
+   where pa.label like 'PAYMENT_TESTS%';
+  if v_left <> 0 then
+    raise exception '(م) بقي % حساب اختبار — أحدها قد يظهر للعملاء في صفحة التحويل', v_left;
+  end if;
 
   raise notice '✔ (م) التنظيف تم — لا صفوف اختبار متبقية وإعدادات البوابات كما كانت';
 end;

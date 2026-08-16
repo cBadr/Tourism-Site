@@ -1174,18 +1174,18 @@ begin
   if to_regprocedure('public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer)') is null then
+       timestamptz, integer, jsonb, integer, text)') is null then
     raise exception '(ي-٧) توقيع create_booking تغيّر عمّا يفحصه هذا الاختبار — حدّث النص هنا قبل أي شيء';
   end if;
 
   if has_function_privilege('anon', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer)', 'EXECUTE')
+       timestamptz, integer, jsonb, integer, text)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer)', 'EXECUTE') then
+       timestamptz, integer, jsonb, integer, text)', 'EXECUTE') then
     raise exception '(ي-٧) ثغرة: create_booking عادت متاحة لدور عام (نقض د١ من 0009)';
   end if;
 

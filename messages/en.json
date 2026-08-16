@@ -20,7 +20,12 @@
       "mobileNav": "Mobile navigation menu",
       "menu": "Menu",
       "bookNow": "Book now",
-      "home": "Home"
+      "home": "Home",
+      "signIn": "Customer login",
+      "account": "My account",
+      "accountMenu": "Account menu",
+      "myBookings": "My bookings",
+      "signOut": "Sign out"
     },
 
     "nav": {
@@ -33,7 +38,8 @@
       "book": "Book a ride",
       "quoteRequest": "Request a quote",
       "track": "Track your booking",
-      "account": "My bookings"
+      "account": "My bookings",
+      "signIn": "Customer login"
     },
 
     "footer": {
@@ -64,7 +70,8 @@
     "services": {
       "eyebrow": "Our services",
       "title": "Six transport solutions that cover your trip end to end",
-      "description": "From the airport gate to the furthest landmark — pick the service that suits you and leave the road to us."
+      "description": "From the airport gate to the furthest landmark — pick the service that suits you and leave the road to us.",
+      "quoteCta": "Request a quote for this service"
     },
 
     "fleet": {
