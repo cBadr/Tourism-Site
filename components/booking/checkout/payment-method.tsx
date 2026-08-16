@@ -132,7 +132,14 @@ export function PaymentMethodChoice({
 
   return (
     <div className="flex flex-col gap-4">
-      <fieldset className="flex flex-col gap-2.5">
+      {/*
+        🖨 `no-print` عليه هو **بعينه**، لا على `fieldset` عارياً في ورقة الرحلة.
+        القاعدة المشتركة تُسقط كل `input` داخل `.print-sheet`، فتبقى تسميات
+        الوسائل نصّاً بلا خيارٍ يُختار — ومكانها الحجب. أما القاعدة العارية فكانت
+        تبتلع `AccountChooser` معه (وسمُه `fieldset` كذلك) فتخرج الورقة بلا رقم
+        تحويلٍ واحد، وهو نقيض ما تَعِد به `PRINT_CSS` في صفحة الرحلة.
+      */}
+      <fieldset className={cn(PRINT_HIDDEN_CLASS, "flex flex-col gap-2.5")}>
         <legend className="mb-2.5 text-sm font-bold">
           {t("methodLegend", "اختر وسيلة الدفع")}
         </legend>

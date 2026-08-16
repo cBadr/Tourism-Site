@@ -20,6 +20,8 @@ import {
   SPACING_TOKENS,
   STYLE_FIELD,
   THEME_COLOR_TOKENS,
+  TYPING_HOLD_TOKENS,
+  TYPING_SPEED_TOKENS,
   type BlockDef,
   type BlockStyle,
   type BuilderBlockType,
@@ -28,6 +30,8 @@ import {
   type PublishBlockerCode,
   type SpacingToken,
   type ThemeColorToken,
+  type TypingHoldToken,
+  type TypingSpeedToken,
 } from "@/lib/page-builder-types";
 
 export { blockDef, BLOCK_CATALOGUE };
@@ -97,7 +101,27 @@ export type FieldLabel = { label: string; help?: string; multiline?: boolean; di
  */
 export const FIELD_LABELS: Record<string, FieldLabel> = {
   title: { label: "العنوان" },
-  headline: { label: "العنوان الرئيسي" },
+  headline: {
+    label: "العنوان الرئيسي",
+    help:
+      "يُعرض كما هو ما دام حقل «الجُمل المتناوبة» فارغاً. " +
+      "وبمجرد أن تكتب فيه جملةً واحدة يحلّ محلَّ هذا العنوان: الجزء الثابت + الجملة المتحرّكة.",
+  },
+  // ── ن‑٤: أثر الكتابة على العنوان ────────────────────────────────────────
+  typingPrefix: {
+    label: "الجزء الثابت من العنوان",
+    help:
+      "ما لا يُعاد كتابته في أي دورة — اسم الخدمة عادةً («ايجار ليموزين»). " +
+      "يبقى ساكناً بينما يتبدّل ما بعده، فاسم العلامة لا يومض على الزائر.",
+  },
+  typingLines: {
+    label: "الجُمل المتناوبة",
+    multiline: true,
+    help:
+      "جملةٌ في كل سطر — تُكتب واحدةً تلو الأخرى بعد الجزء الثابت. " +
+      "سطرٌ واحد يعني أثر كتابةٍ مرة واحدة بلا تناوب، والفارغ يُعيد العنوان الرئيسي كما هو. " +
+      "والنصّ كامل في الصفحة منذ الخادم — الحركة قناعٌ فوقه، فلا يخسر البحثُ ولا قارئُ الشاشة شيئاً.",
+  },
   sub: { label: "النص التمهيدي", multiline: true },
   body: {
     label: "النصّ",
@@ -110,6 +134,19 @@ export const FIELD_LABELS: Record<string, FieldLabel> = {
    * لا يصحّ إلا في ثلاثةٍ من أربعة كذبٌ صغير على من يقرأ الحقل الرابع.
    */
   note: { label: "ملاحظة" },
+  /**
+   * ⚠ **الوحيد في هذه الخريطة الذي لا يعني الفراغُ فيه إخفاءً**: العارضة تعيد
+   * النصّ الافتراضي حين يُترك خالياً، لأنه شرط استعمالٍ لا نثر. والمساعدة تقول
+   * ذلك صراحةً — حقلٌ يتصرّف خلاف بقية الحقول ولا يُنبّه عليه فخٌّ لمن يحرّره.
+   */
+  disclaimer: {
+    label: "تنويه أسفل الشريط",
+    multiline: true,
+    help:
+      "شرط استعمال الشعارات: أنها تصف طرازات المركبات المتاحة عبر المتعهدين، " +
+      "لا رعايةً ولا شراكةً مع الشركات المصنِّعة. " +
+      "تستطيع إعادة صياغته، أما تركُه فارغاً فيعيد النصّ الافتراضي ولا يُخفيه.",
+  },
   ctaLabel: { label: "نص زر الحجز" },
   alt: {
     label: "النص البديل للصورة",
@@ -322,9 +359,27 @@ export const CALLOUT_TONE_LABELS: Record<CalloutToneToken, string> = {
   warning: "تحذير",
 };
 
+/**
+ * ن‑٤ — تسميات إيقاع أثر الكتابة. **الوصف بالأثر لا بالرقم**: «سريعة» تقول
+ * لمن يختارها ما سيراه، و«٤٥ مللي ثانية للحرف» لا تقول شيئاً لأحد.
+ */
+export const TYPING_SPEED_LABELS: Record<TypingSpeedToken, string> = {
+  slow: "متمهّلة",
+  normal: "معتدلة",
+  fast: "سريعة",
+};
+
+export const TYPING_HOLD_LABELS: Record<TypingHoldToken, string> = {
+  short: "قصيرة",
+  normal: "معتدلة",
+  long: "طويلة",
+};
+
 export const THEME_COLOR_OPTIONS = THEME_COLOR_TOKENS;
 export const SPACING_OPTIONS = SPACING_TOKENS;
 export const CALLOUT_TONE_OPTIONS = CALLOUT_TONE_TOKENS;
+export const TYPING_SPEED_OPTIONS = TYPING_SPEED_TOKENS;
+export const TYPING_HOLD_OPTIONS = TYPING_HOLD_TOKENS;
 
 // ---------------------------------------------------------------------------
 // الرموز → عربية. **الخادم يرسل رمزاً والشاشة تترجمه** (قاعدة المشروع)

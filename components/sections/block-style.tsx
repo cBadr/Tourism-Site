@@ -5,10 +5,14 @@ import {
   SPACING_TOKENS,
   STYLE_FIELD,
   THEME_COLOR_TOKENS,
+  TYPING_HOLD_TOKENS,
+  TYPING_SPEED_TOKENS,
   type BlockStyle,
   type CalloutToneToken,
   type SpacingToken,
   type ThemeColorToken,
+  type TypingHoldToken,
+  type TypingSpeedToken,
 } from "@/lib/page-builder-types";
 
 /**
@@ -60,13 +64,43 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
    * أو من PostgREST لا تمرّ على أي شاشة (نفس مبرر القاعدة (١) في الترويسة).
    */
   const tone = tokenOf<CalloutToneToken>(record.tone, CALLOUT_TONE_TOKENS);
+  /**
+   * 🆕 ن‑٤ — مقابض أثر الكتابة، وتسلك مسلك `tone` حرفاً: تصف داخل الكتلة لا
+   * غلافها، فتمرّ من هنا ولا تخرج صنفاً في `blockStyleClass`.
+   *
+   * والتطهير هنا لا في المحرر وحده هو ما يجعل «الرمز غير المعروف يسقط إلى
+   * الافتراضي» صحيحاً بالبناء: إدراجٌ مباشر من PostgREST أو من محرر SQL لا
+   * يمرّ على أي شاشة (نفس مبرر القاعدة (١) في الترويسة). ولا `Number(...)`
+   * هنا ولا في أي طبقة — المقبض **رمزٌ مغلق**، فالقيمة المخرَّبة لا تصير صفراً
+   * يجمّد الأثر بل تصير `null` أي «افتراضي».
+   */
+  const typingSpeed = tokenOf<TypingSpeedToken>(record.typingSpeed, TYPING_SPEED_TOKENS);
+  const typingHold = tokenOf<TypingHoldToken>(record.typingHold, TYPING_HOLD_TOKENS);
+  const typingErase = tokenOf<TypingSpeedToken>(record.typingErase, TYPING_SPEED_TOKENS);
+  /** `=== true` لا `Boolean(...)`: الغياب و«أي قيمة أخرى» كلاهما «يقف» */
+  const typingLoop = record.typingLoop === true;
 
-  if (background === null && spacing === null && !hideOnMobile && tone === null) return null;
+  if (
+    background === null &&
+    spacing === null &&
+    !hideOnMobile &&
+    tone === null &&
+    typingSpeed === null &&
+    typingHold === null &&
+    typingErase === null &&
+    !typingLoop
+  ) {
+    return null;
+  }
   return {
     ...(background !== null ? { background } : {}),
     ...(spacing !== null ? { spacing } : {}),
     ...(hideOnMobile ? { hideOnMobile: true } : {}),
     ...(tone !== null ? { tone } : {}),
+    ...(typingSpeed !== null ? { typingSpeed } : {}),
+    ...(typingHold !== null ? { typingHold } : {}),
+    ...(typingErase !== null ? { typingErase } : {}),
+    ...(typingLoop ? { typingLoop: true } : {}),
   };
 }
 
@@ -103,6 +137,10 @@ const SPACING_CLASS: Record<SpacingToken, string> = {
  * غلافها، فلو أخرجت صنفاً هنا لصار للتنبيه إطارٌ ملوّن **وغلافٌ ملوّن حوله**.
  * وكتلةٌ لا تحمل إلا `tone` تخرج من هنا بنصٍّ فارغ ⇒ لا عقدة DOM إضافية —
  * وهو نفس تعهّد القاعدة (٢) في الترويسة.
+ *
+ * ⚠ **ومقابض ن‑٤ الأربعة معها ولنفس السبب حرفاً**: بطلٌ ضُبطت سرعة كتابته
+ * لا يكتسب غلاف `<div>` حوله — وعقدةٌ زائدة حول قسمٍ بارتفاع الشاشة تكسر
+ * تجاور البطل مع ويدجت الحجز الذي يتداخل معه بـ`-mt-12`.
  */
 export function blockStyleClass(style: BlockStyle | null): string {
   if (style === null) return "";

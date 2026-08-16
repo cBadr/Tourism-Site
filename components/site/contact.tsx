@@ -113,7 +113,25 @@ export async function ContactSection({
                     key={channel.key}
                     href={channel.href}
                     {...externalLinkProps(channel.href)}
-                    aria-label={channel.label}
+                    /**
+                     * 🔴 **بلا `aria-label` — والحذف إصلاحُ مخالفةٍ لا تبسيط.**
+                     *
+                     * كان `aria-label={channel.label}` يجعل الاسم المتاح
+                     * «اتصال هاتفي» وحده، **والنصّ المرئي في البطاقة هو
+                     * «اتصال هاتفي» + الرقم**. والاسم المتاح الذي لا يحتوي
+                     * النصّ المرئي يخالف ٢٫٥٫٣ «التسمية في الاسم» (مستوى A)،
+                     * وأمسكها Lighthouse على البطاقات الأربع كلها
+                     * (`label-content-name-mismatch`).
+                     *
+                     * ومن يتحكم بصوته يقول «انقر اتصال هاتفي ٠١٠…» كما يقرأ،
+                     * فلا يجد هدفاً. والحذف يعيد الاسم إلى محتوى الرابط نفسه —
+                     * الاسم والرقم معاً — فيطابق ما يُرى، **ويسمع قارئ الشاشة
+                     * الرقم** بدل أن يُخفى عنه.
+                     *
+                     * ⚠ وروابط الشبكات أسفلَ هذا القسم تبقى على `aria-label`
+                     *   بحقّ: لا نصّ مرئي فيها أصلاً (أيقونة وحدها)، فلا تسمية
+                     *   تخالف اسماً.
+                     */
                     className="group flex items-center gap-4 rounded-2xl bg-card p-5 ring-1 ring-border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:shadow-primary/10 hover:ring-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                   >
                     <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary transition-colors duration-300 group-hover:bg-primary group-hover:text-primary-foreground">

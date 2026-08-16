@@ -7,6 +7,8 @@ import type { SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
 import { safeMediaSrc } from "@/components/sections/image";
+import type { BlockStyle } from "@/lib/page-builder-types";
+import { HeroTyping } from "./hero-typing";
 import { bookingHref, externalLinkProps, localeHref } from "./links";
 
 /**
@@ -22,6 +24,21 @@ const TRUST_POINTS = [
   { key: "trust.clearPrices", label: "أسعار واضحة" },
   { key: "trust.support", label: "متابعة ٢٤/٧" },
 ] as const;
+
+/**
+ * ن‑٤ — الجُمل المتناوبة: **سطرٌ لكل جملة**، والفراغُ لا يُنتج جملة.
+ *
+ * تُقرأ هنا على الخادم لا في مكوّن العميل، لأن المكوّن `"use client"` ولا
+ * تُستدعى دوالُّه من الخادم. والقصّ `trim` شرطٌ لا تجميل: سطرٌ فيه مسافةٌ
+ * واحدة كان سينتج «جملة» فارغة تُكتب في صمتٍ ثم تُمحى، فيبدو الأثر معطوباً.
+ */
+function parseTypingLines(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
 
 /**
  * قسم البطل.
@@ -50,12 +67,17 @@ const TRUST_POINTS = [
 export async function Hero({
   settings,
   content,
+  style,
   locale = DEFAULT_LOCALE,
 }: {
   settings: SiteSettings;
   content?: {
     headline?: string;
     sub?: string;
+    /** ن‑٤ — الجزء الثابت من العنوان، لا يُعاد كتابته في أي دورة */
+    typingPrefix?: string;
+    /** ن‑٤ — الجُمل المتناوبة، سطرٌ لكل جملة. الفارغ يُبقي `headline` كما هو */
+    typingLines?: string;
     badge?: string;
     scrollLabel?: string;
     /** مسار صورة البطل — أي مسار داخلي أو عنوان مضيف الوسائط المسموح */
@@ -68,6 +90,12 @@ export async function Hero({
     video?: string;
     items?: { title: string }[];
   };
+  /**
+   * ن‑٤ — مقابض الحركة مطهَّرةً من `readBlockStyle`. تصل عبر `SectionProps.style`
+   * وحده: `sanitizeContent` تُسقط `content.style` قبل العارضة بقصد، فلا يقرؤه
+   * أي مكوّن بنفسه (العقد §٥).
+   */
+  style?: BlockStyle | null;
   locale?: string;
 }) {
   const t = await getT("site.hero", locale);
@@ -83,6 +111,20 @@ export async function Hero({
   /** ضمانات البطل — المحرَّرة تسبق، والأربع المترجَمة احتياطيٌّ لا مصدر */
   const trust = (content?.items ?? []).filter((item) => item?.title);
   const scrollLabel = content?.scrollLabel?.trim();
+
+  /**
+   * ── ن‑٤ — العنوان: مسارٌ واحدٌ يعمل، لا مساران يتنافسان ────────────────────
+   *
+   * بلا جملةٍ واحدة في `typingLines` يخرج `<h1>` **حرفاً بحرف كما كان**: نصٌّ
+   * واحد، بلا مكوّن عميل، وبلا عقدة DOM زائدة. فالصفحة القائمة لا تتغيّر ببايت
+   * حتى يكتب المالك أول جملة — وهو نفس مذهب `items` والوسائط في هذه الكتلة.
+   *
+   * وبأول جملة يصير العنوان: الجزء الثابت ساكناً، وما بعده متحرّكاً. و`headline`
+   * يبقى محفوظاً في الصفّ ويعود لحظة تُفرَّغ الجُمل — فلا نصَّ يضيع بتجريب.
+   */
+  const typingLines = parseTypingLines(content?.typingLines);
+  const typingPrefix = content?.typingPrefix?.trim() ?? "";
+  const isTyping = typingLines.length > 0;
 
   /**
    * الوسائط — كلها اختيارية، وكلها تمرّ من `safeMediaSrc`: مسارٌ داخلي أو عنوانٌ
@@ -123,6 +165,21 @@ export async function Hero({
               sizes="100vw"
               /* الرسم الأكبر في الصفحة — لا `lazy` ولا تأخير */
               priority
+              /**
+               * 🔴 **`fetchPriority` صراحةً — لأن `priority` وحدها لا تضعها.**
+               *
+               * مقيسٌ على ناتج البناء: وسم `<img>` يخرج بلا `fetchpriority`،
+               * ووسمُ `<link rel=preload>` كذلك. وفحص `lcp-discovery` في
+               * Lighthouse يقولها حرفاً: `priorityHinted: false` بينما
+               * `requestDiscoverable: true` و`eagerlyLoaded: true` — أي أن
+               * المتصفح **يعرف** بالصورة مبكراً ولا يعرف أنها الأهم.
+               *
+               * والفرق يظهر تحت الخنق وحده: على Slow 4G تسبقها في الطابور
+               * ثمانية ملفات خطّ وثلاث أوراق أنماط، فيخرج
+               * `Load Delay = 2311ms` = **٥٤٪ من زمن LCP كله**. والتلميح
+               * يرفعها فوقها في نفس الموجة بلا طلبٍ إضافي.
+               */
+              fetchPriority="high"
               quality={65}
             />
             {videoSrc !== null ? (
@@ -161,23 +218,90 @@ export async function Hero({
         <div
           className={cn(
             "flex w-full flex-col gap-8",
-            hasMedia ? "max-w-3xl items-start" : "items-center"
+            // فوق صورة: ترويسة البطل تأخذ عرض الحاوية كاملاً على المكتب لأن
+            // النصّ الثانوي يقف بجانب العنوان لا تحته (ن‑٣)
+            hasMedia ? "max-w-3xl items-start lg:max-w-none" : "items-center"
+          )}
+        >
+        {/*
+          ── ن‑٣ — موضع النصّ الثانوي، مطابقاً `Tours-02/landing` ─────────────
+
+          التصميم هناك (`assets/css/style.css` — «إخراج البطل الطباعي») يجعل
+          `.hero__head` شبكةَ **عمودين محاذاةً لأسفل** من ‏1000px: العنوان في
+          `1.3fr` والجملة في `1fr` بخطٍّ عنبريٍّ رأسي يفصلها، والشارة تعبر
+          العمودين. وعلى الجوال يبقى الكل عموداً واحداً.
+
+          والفرق ليس ذوقياً: الجملة تحت العنوان تدفع الأزرار والويدجت لأسفل
+          الطيّة، وبجانبه تُقرأ في نفس نظرة العين — وهو ما بُني له التصميم.
+
+          ⚠ واللون **رمزٌ لا قيمة**: الخطّ العنبري في التصميم `#D89A3E`، وهو
+          `--primary` في هذا الثيم حرفاً — فيُكتب رمزاً (`border-s-primary/55`)
+          لا قيمةً. وتبديل اللوحة في م‑٩ يبدّل الخطّ معها، ولا لونٌ مكتوب في
+          هذا الملف (‏D-01/D-04).
+        */}
+        <div
+          className={cn(
+            "grid w-full gap-y-8 justify-items-start",
+            hasMedia
+              ? "lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:items-end lg:gap-x-10"
+              : "justify-items-center"
           )}
         >
         {badge ? (
-          <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm font-medium text-primary">
+          <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm font-medium text-primary lg:col-span-full">
             <Sparkles className="size-4" aria-hidden="true" />
             {badge}
           </span>
         ) : null}
 
-        <h1 className="max-w-3xl text-balance text-4xl font-extrabold leading-[1.25] tracking-tight sm:text-5xl sm:leading-[1.2] md:text-6xl md:leading-[1.15]">
-          {headline}
+        {/**
+         * 🔴 **`<h1>` واحدٌ دلالياً، ونصُّه كاملٌ من الخادم.** الجزء الثابت
+         * والجملة الأولى كلاهما نصٌّ حقيقي داخل العنوان في HTML الخادمي —
+         * والحركة `clip-path` فوقهما لا حقنُ حروف (‏`hero-typing.tsx`).
+         */}
+        <h1
+          className={cn(
+            "w-full max-w-3xl text-4xl font-extrabold leading-[1.25] tracking-tight sm:text-5xl sm:leading-[1.2] md:text-6xl md:leading-[1.15]",
+            hasMedia ? "lg:max-w-none" : "",
+            // `text-balance` يوازن أسطر النصّ المتدفّق، ولا معنى له على سطرٍ
+            // `nowrap` مقنَّع — بل يزاحم حساب العرض. فيُرفع في وضع الكتابة.
+            isTyping ? "" : "text-balance"
+          )}
+        >
+          {isTyping ? (
+            <>
+              {/*
+                🔴 **المسافة بعد الجزء الثابت شرطٌ لا تنسيق.** السطران كتلتان،
+                فبلا هذه المسافة يصير `h1.textContent` كلمةً ملتحمة:
+                «ايجار ليموزينبسعر مناسب…» — وهو ما يقرؤه الزاحف وما يبني منه
+                قارئُ الشاشة اسمَ العنوان. والمسافة في آخر سطرٍ كتليّ تُطوى
+                بصرياً فلا يتغيّر ما تراه العين ببكسل. (مقيسٌ حيّاً لا مفترضاً.)
+              */}
+              {typingPrefix ? <span className="block">{typingPrefix} </span> : null}
+              <HeroTyping
+                lines={typingLines}
+                speed={style?.typingSpeed}
+                hold={style?.typingHold}
+                erase={style?.typingErase}
+                loop={style?.typingLoop === true}
+              />
+            </>
+          ) : (
+            headline
+          )}
         </h1>
 
-        <p className="max-w-2xl text-pretty text-base leading-8 text-muted-foreground sm:text-lg sm:leading-9">
+        <p
+          className={cn(
+            "max-w-2xl text-pretty text-base leading-8 text-muted-foreground sm:text-lg sm:leading-9",
+            hasMedia
+              ? "lg:max-w-none lg:border-s-2 lg:border-s-primary/55 lg:ps-4 lg:pb-1.5"
+              : ""
+          )}
+        >
           {sub}
         </p>
+        </div>
 
         <div
           className={cn(

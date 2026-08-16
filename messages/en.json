@@ -164,6 +164,10 @@
     },
     "features": {
       "eyebrow": "Features"
+    },
+    "logoStrip": {
+      "title": "Vehicle classes available in our fleet",
+      "disclaimer": "The logos shown indicate the vehicle models available through our partners only. They do not imply sponsorship, endorsement, or any commercial relationship with the manufacturers."
     }
   },
 

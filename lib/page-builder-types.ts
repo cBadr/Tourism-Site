@@ -247,6 +247,33 @@ export const CALLOUT_TONE_TOKENS = ["info", "warning"] as const;
 export type CalloutToneToken = (typeof CALLOUT_TONE_TOKENS)[number];
 
 /**
+ * 🆕 **ن‑٤ — إيقاع أثر الكتابة في البطل.** أربعة مقابض، **ومكانها `style`
+ * بعينه** لا حقولاً عليا في `content`، والسبب قابلٌ للقياس لا ذوقي:
+ *
+ * فهرس الترجمة **يقرأ كل مفتاحٍ قيمتُه نصّ** ولا يقرأ `block_registry` أصلاً
+ * (المقيس في `0064` ثم المكتوب في `lib/item-fields-types.ts` §١). فحقلٌ أعلى
+ * اسمه `typingSpeed` قيمته «normal» كان **يدخل طابور المترجم** صفّاً حيّاً،
+ * ومترجمٌ مجتهد «يعرّبه» فيسقط الرمز إلى الافتراضي بلا خطأ ولا سجل. أما
+ * `style` فمفتاحٌ محجوزٌ بالاسم في `i18n_reserved_content_key` — لا يدخل
+ * الفهرس ولا يُستبدل في `i18n_apply`، **في كل كتلة قائمة أو قادمة**.
+ *
+ * والطريق الثالث (‏`non_text_fields`) مرفوض بثمنه: `NON_TEXT_FIELD_NAMES`
+ * قائمةٌ **عالمية** يحرسها `block_registry_check` بنسخةٍ محفورة في جسمها،
+ * فإضافة أربعة أسماء إليها تعني هجرةً تعيد كتابة حارسٍ عام ودالةَ فهرسة —
+ * لأجل مقابض حركةٍ في كتلةٍ واحدة. **الكلفة لا تشتري شيئاً لا يشتريه `style`.**
+ *
+ * ولماذا رموزٌ لا أرقام مللي ثانية؟ نفس مذهب `SPACING_TOKENS` و`tone`: حقلُ
+ * رقمٍ حرّ يقبل `0` فيتجمّد الأثر، ويقبل `5000` فيقف السطر نصف دقيقة — ولا
+ * شيء يقول لمن كتبه إن ما كتبه معطوب. والرموز الثلاثة تغطي المدى المعقول كله.
+ */
+export const TYPING_SPEED_TOKENS = ["slow", "normal", "fast"] as const;
+export type TypingSpeedToken = (typeof TYPING_SPEED_TOKENS)[number];
+
+/** مهلة ثبات الجملة المكتملة قبل محوها */
+export const TYPING_HOLD_TOKENS = ["short", "normal", "long"] as const;
+export type TypingHoldToken = (typeof TYPING_HOLD_TOKENS)[number];
+
+/**
  * شكل `content.style`. كل حقوله اختيارية، **والغياب يعني «الافتراضي»** لا
  * «صفر» — نفس تمييز القاعدة الذهبية ١٥.
  */
@@ -267,6 +294,19 @@ export type BlockStyle = {
    * يقرأ أي مكوّن `content.style` بنفسه.
    */
   tone?: CalloutToneToken;
+  /**
+   * 🆕 ن‑٤ — مقابض أثر الكتابة في البطل. تسلك مسلك `tone` حرفاً: تصف **داخل**
+   * الكتلة لا غلافها، فلا تُخرج صنفاً في `blockStyleClass`، وتصل المكوّن
+   * مطهَّرةً عبر `SectionProps.style` وحده.
+   *
+   * والغياب يعني الافتراضي: `normal` للسرعات والمهلة، و**التوقف** للتكرار —
+   * وهو قرار بدر صراحةً: حركةٌ دائمة تشتّت عميلاً يملأ نموذج الحجز.
+   */
+  typingSpeed?: TypingSpeedToken;
+  typingHold?: TypingHoldToken;
+  typingErase?: TypingSpeedToken;
+  /** يتكرر بلا توقف؟ الغياب = يقف عند آخر جملة (الافتراضي) */
+  typingLoop?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -680,12 +720,30 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
      * الحجب الحقيقي صار **بالاسم** في `public.i18n_non_text_field` (‏`0065`)،
      * وإعلانُها هنا في `nonTextFields` هو ما يجعل المحرر يعرض لها منتقي وسائط.
      */
-    textFields: ["badge", "headline", "sub", "scrollLabel", "imageAlt"],
+    /**
+     * 🆕 **ن‑٤ — `typingPrefix` و`typingLines`، ونصّان لا رقم بينهما.**
+     *
+     * وكلاهما **نثرٌ يقوله إنسان** فيدخل الفهرس كأي نصّ: الجزء الثابت اسمُ
+     * الخدمة، والجمل المتناوبة وعودٌ تُقرأ. أما إيقاع الأثر (سرعة · مهلة ·
+     * محو · تكرار) فرموزٌ في `style` لا حقولٌ هنا — والمبرر مكتوبٌ في §٥.
+     *
+     * 🔒 **والعلاقة بـ`headline` علاقة تجاوزٍ لا تكرار:** بلا جملةٍ واحدة في
+     * `typingLines` يبقى العنوان `headline` حرفاً بحرف وبلا عقدة DOM زائدة.
+     * وبأول جملة يصير العنوان `typingPrefix` ثابتاً + الجملة متحرّكة.
+     * فالحقل الذي يُحفظ هو الحقل الذي يعمل (الذهبية ١٨)، ونصّ المساعدة في
+     * اللوحة يقول ذلك صراحةً على الحقول الثلاثة.
+     */
+    textFields: ["badge", "headline", "typingPrefix", "typingLines", "sub", "scrollLabel", "imageAlt"],
     itemFields: ["title"],
     nonTextFields: ["src", "poster", "video"],
     nonTextItemFields: null,
     requiredFields: [],
-    styleKeys: [],
+    /**
+     * ⚠ **ولا `background` ولا `spacing` معها**: البطل يرسم أرضيته بنفسه
+     * (صورة + حجابان)، وغلافٌ ملوّن حوله يضع لوناً صمّاً فوق الصورة. فما
+     * دخل هنا هو **مقابض الحركة وحدها** — وهي التي تصف داخل الكتلة.
+     */
+    styleKeys: ["typingSpeed", "typingHold", "typingErase", "typingLoop"],
   },
 
   // ── الكتلتان الجديدتان ────────────────────────────────────────────────
@@ -741,13 +799,21 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
      *
      * و`requiredFields` فارغة كأخواتها النظاميات: بياناتها من الإعدادات
      * فتُصيَّر دائماً، وتغيب وحدها حين تفرغ القائمة.
+     *
+     * 🔴 **و`disclaimer` حقلٌ ثالث لأن الثاني لم يكفِ — والسبب مقيس (`0072`):**
+     * `0061` جعلت `note` يحمل شرط الاستعمال («وصفٌ للمركبات لا اعتماد ولا
+     * علاقة تجارية»)، فكُتب فوقه نثرٌ تسويقي واختفى الشرط من الصفحة الحيّة بلا
+     * خطأ ولا فحصٍ يمسكه. وخانةٌ واحدة تحمل نثراً تحريرياً وشرطاً قانونياً
+     * تخسر الثاني في أول تحرير. فصارتا خانتين:
+     *   `note`       نثرٌ تحريري — الفارغ يُخفيه.
+     *   `disclaimer` شرط استعمال — **الفارغ يعيد الافتراضي** (العارضة).
      */
     type: "logo-strip",
     role: "system",
     placement: "once-per-page",
     acceptsChildren: false,
     maxChildren: null,
-    textFields: ["title", "note"],
+    textFields: ["title", "note", "disclaimer"],
     itemFields: null,
     nonTextFields: null,
     nonTextItemFields: null,

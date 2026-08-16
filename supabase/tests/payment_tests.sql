@@ -1784,6 +1784,366 @@ begin
 end;
 $$;
 
+-- ============================================================================
+-- (س) قائمةٌ واحدة لا ثلاث — ن‑٩ (أ) والهجرة 0070
+--
+-- ما يُختبر ولماذا: بلّغ بدر أن الحسابات البنكية «تظهر في شاشة الإيصال ولا تظهر
+-- في اختر الحساب». والقياس أسقط الفرضية المكتوبة (الحدّ اليومي) وأسقط ظاهر
+-- البلاغ (القارئان صارا واحداً بعد ن‑١) — **وكشف قائمةً ثالثة في الكتابة**:
+-- `attach_receipt` كانت تقبل أي حساب `active`، فحاملُ التوكن يسمّي وعاء تسوية
+-- البوابات أو خزنة المكتب فيقع الإيصال ثم القيدُ على وعاءٍ لا علاقة له بتحويله.
+--
+-- 🔒 والادّعاء الذي يحرسه هذا القسم ليس «الكتابة ترفض المحجوب» وحده، بل
+--    **«القراءة والكتابة تقرآن التعريف نفسه»**. ولذلك تُزرع الطفرة في التعريف
+--    وحده (‏`payment_account_customer_visible`) ويُطلَب من **السطحين معاً** أن
+--    يتحرّكا. فلو استنسخت إحداهما الشرط لبقيت ساكنة — وذلك بعينه ما يُمسك.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- (س-٠) تجهيز: حسابٌ محجوب · وثلاثة بعمولات تخالف ترتيب اللوحة · وحجزٌ يجمّدها
+--
+-- ⚠ الترتيب مقصود: **الأغلى برقم ترتيبٍ أصغر**. فلو كان الفرز ما زال بترتيب
+--   اللوحة وحده لجاء الأغلى أولاً — والاختبار لا يفرّق بين الفرضين إن اتفقا.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_hidden constant uuid := '9a000000-0000-4000-8000-0000000000d1';
+  v_pricey constant uuid := '9a000000-0000-4000-8000-0000000000d2';
+  v_cheap  constant uuid := '9a000000-0000-4000-8000-0000000000d3';
+  v_tie    constant uuid := '9a000000-0000-4000-8000-0000000000d4';
+  v_b      record;
+begin
+  if to_regprocedure('public.payment_account_customer_visible(uuid)') is null
+     or to_regprocedure('public.payment_account_family(text)') is null then
+    raise exception 'شرط مسبق: دوال ن‑٩ مفقودة — نفّذ 0070_payment_choice_one_source.sql';
+  end if;
+
+  insert into public.payment_accounts
+    (id, kind, label, handle, holder_name, opening_balance, active, sort,
+     customer_facing, fee_kind, fee_value)
+  values
+    -- مفعَّلٌ و**غير معروض** — هو موضع العيب كله
+    (v_hidden, 'bank', 'PAYMENT_TESTS محجوب', 'PT-N9-HIDDEN', 'اختبار', 0, true, 953,
+     false, 'none', 0),
+    (v_pricey, 'bank',     'PAYMENT_TESTS غالٍ',   'PT-N9-PRICEY', 'اختبار', 0, true, 954,
+     true, 'fixed', 50),
+    (v_cheap,  'wallet',   'PAYMENT_TESTS رخيص',   'PT-N9-CHEAP',  'اختبار', 0, true, 955,
+     true, 'fixed', 2),
+    (v_tie,    'instapay', 'PAYMENT_TESTS متعادل', 'PT-N9-TIE',    'اختبار', 0, true, 956,
+     true, 'fixed', 2)
+  on conflict (id) do update
+    set active = true, customer_facing = excluded.customer_facing,
+        fee_kind = excluded.fee_kind, fee_value = excluded.fee_value,
+        sort = excluded.sort, kind = excluded.kind;
+
+  -- الحجز **بعد** ضبط العمولات: اللقطة تُكتب لحظة الإدراج (0066 §٣)
+  select * into v_b
+  from public.create_booking(
+    jsonb_build_object('label', 'موقع صحراوي أ', 'lat', 25.000000, 'lng', 27.500000),
+    jsonb_build_object('label', 'موقع صحراوي ب', 'lat', 24.500000, 'lng', 28.200000),
+    1, false, 0, 100, 90, 'test',
+    current_setting('tours.p_class'), 'full',
+    'عميل اختبار القائمة الواحدة', '01000009270', null, now() + interval '3 days',
+    'PAYMENT_TESTS_FIXTURE-N9'
+  );
+  perform set_config('tours.p_n9_b', v_b.id::text, false);
+  perform set_config('tours.p_n9_due', v_b.amount_due::text, false);
+  perform set_config('tours.p_n9_hidden', v_hidden::text, false);
+  perform set_config('tours.p_n9_pricey', v_pricey::text, false);
+  perform set_config('tours.p_n9_cheap', v_cheap::text, false);
+  perform set_config('tours.p_n9_tie', v_tie::text, false);
+
+  raise notice '✔ (س-٠) حسابٌ محجوب وثلاثةٌ بعمولات ٥٠ و٢ و٢ — وترتيب اللوحة يخالف الثمن';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (س-١) 🔴 ما لا تعرضه القراءة لا تقبله الكتابة — وما تعرضه تقبله
+--
+-- الشقّ الثاني ليس زينة: **حارسٌ يرفض كل شيء ليس حارساً بل عطلاً**، ويمرّ في
+-- اختبارٍ يفحص الرفض وحده.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b      uuid := current_setting('tours.p_n9_b')::uuid;
+  v_hidden uuid := current_setting('tours.p_n9_hidden')::uuid;
+  v_cheap  uuid := current_setting('tours.p_n9_cheap')::uuid;
+  v_token  text;
+  v_n      integer;
+  v_raised boolean := false;
+  v_hint   text;
+  v_res    record;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  -- القراءة: المحجوب غائب عن الطريقين معاً (طريق العميل وقائمة الحدود)
+  select count(*) into v_n
+  from public.available_payment_accounts(v_token, 0) a where a.id = v_hidden;
+  if v_n <> 0 then
+    raise exception '(س-١أ) حسابٌ غير معروض ظهر في طريق العميل (% صفاً)', v_n;
+  end if;
+
+  -- والكتابة: ترفضه برمزه المسمّى الذي يترجمه /api/booking/receipt
+  begin
+    perform 1 from public.attach_receipt(v_token, v_token || '/n9-hidden.jpg', v_hidden);
+  exception
+    when others then
+      v_raised := true;
+      get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+  if not v_raised or v_hint is distinct from 'account-unavailable' then
+    raise exception
+      '(س-١ب) 🔴 قُبل إيصالٌ على حسابٍ لا تعرضه الصفحة (رُفض=% رمز=%) — القائمة الثالثة مفتوحة، وتحصيلٌ يقع على وعاءٍ يسمّيه المتصفح',
+      v_raised, coalesce(v_hint, 'بلا');
+  end if;
+
+  -- والصفّ لم يُكتب: الرفض قبل الإدراج لا بعده
+  select count(*) into v_n from public.payments p
+   where p.booking_id = v_b and p.account_id = v_hidden;
+  if v_n <> 0 then
+    raise exception '(س-١ج) رُفض النداء وبقي % صفَّ تحصيل على الحساب المحجوب', v_n;
+  end if;
+
+  -- والحجز لم يتحرك — رفضٌ بلا أثر
+  if (select b.status from public.bookings b where b.id = v_b) <> 'pending_payment' then
+    raise exception '(س-١د) رفضُ الحساب حرّك حالة الحجز';
+  end if;
+
+  -- ثم المعروض: يُقبل، ويقع على حسابه هو
+  select * into v_res
+  from public.attach_receipt(v_token, v_token || '/n9-ok.jpg', v_cheap);
+  if (select p.account_id from public.payments p where p.id = v_res.payment_id)
+       is distinct from v_cheap then
+    raise exception '(س-١هـ) الإيصال المقبول سُجّل على حسابٍ غير المُصرَّح به';
+  end if;
+
+  -- وإعادة الأرض نظيفة لما بعده
+  perform set_config('tours.booking_note', 'تجهيز اختبار', true);
+  update public.bookings b set status = 'pending_payment' where b.id = v_b;
+  delete from public.payments p where p.id = v_res.payment_id;
+
+  raise notice '✔ (س-١) المحجوب مرفوضٌ برمزه وبلا أثر، والمعروض مقبولٌ على حسابه';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (س-٢) 🧬 **طفرة** — الادّعاء هو «تعريفٌ واحد»، فالطفرة تُزرع فيه وحده
+--
+-- النمط ٩ في `LESSONS.md` والقاعدة ١٩. ولو استنسخت القراءةُ أو الكتابةُ شرطَ
+-- الظهور بدل تفويضه لبقي سطحُها ساكناً تحت الطفرة — **وهذا بالضبط ما يُمسك**:
+-- المطلوب أن يتحرك السطحان **معاً**، وسكونُ أحدهما فشل.
+--
+-- والاستعادة من `pg_get_functiondef` الحيّ المُلتقط قبل الطفرة (D-58)، وقبل
+-- الحكم — فتشخيصٌ فاشل لا يجوز أن يترك القاعدة مطفَّرة.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b       uuid := current_setting('tours.p_n9_b')::uuid;
+  v_hidden  uuid := current_setting('tours.p_n9_hidden')::uuid;
+  v_token   text;
+  v_origin  text;
+  v_read    integer;
+  v_write   boolean := false;
+  v_caught  boolean := false;
+  v_res     record;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  select pg_get_functiondef('public.payment_account_customer_visible(uuid)'::regprocedure)
+    into v_origin;
+
+  -- 🧬 الطفرة: التعريف يقول «كل مفعَّلٍ مرئي» — أي `customer_facing` بلا أثر
+  execute $mut$
+    create or replace function public.payment_account_customer_visible(p_account_id uuid)
+    returns boolean
+    language sql
+    stable
+    security definer
+    set search_path = ''
+    as $body$
+      select exists (
+        select 1 from public.payment_accounts pa
+        where pa.id = p_account_id and pa.active
+      );
+    $body$;
+  $mut$;
+
+  begin
+    -- (١) القراءة تحرّكت؟
+    select count(*) into v_read
+    from public.available_payment_accounts(v_token, 0) a where a.id = v_hidden;
+
+    -- (٢) والكتابة تحرّكت؟
+    begin
+      select * into v_res
+      from public.attach_receipt(v_token, v_token || '/n9-mutant.jpg', v_hidden);
+      v_write := true;
+      -- تنظيف أثر الطفرة فوراً — لا يُترك لما بعد الاستعادة
+      perform set_config('tours.booking_note', 'تجهيز اختبار', true);
+      update public.bookings b set status = 'pending_payment' where b.id = v_b;
+      delete from public.payments p where p.id = v_res.payment_id;
+    exception
+      when others then v_write := false;
+    end;
+
+    v_caught := v_read = 1 and v_write;
+  exception
+    when others then
+      v_caught := false;
+  end;
+
+  -- الاستعادة **قبل** الحكم
+  execute v_origin;
+
+  if not v_caught then
+    raise exception
+      '(س-٢) 🔴 نُزع معنى «معروض للعميل» من التعريف الواحد ولم يتحرك السطحان معاً (قراءة=% كتابة=%) — أي أن أحدهما يحمل نسخته الخاصة من الشرط، وهو بعينه العيب الذي جاءت ن‑٩ تغلقه',
+      v_read, v_write;
+  end if;
+
+  -- وبعد الاستعادة يعود الادّعاء صحيحاً على السطحين
+  select count(*) into v_read
+  from public.available_payment_accounts(v_token, 0) a where a.id = v_hidden;
+  if v_read <> 0 then
+    raise exception '(س-٢) لم تُستعَد الدالة الأصلية — القاعدة باقية على الطفرة';
+  end if;
+
+  begin
+    perform 1 from public.attach_receipt(v_token, v_token || '/n9-after.jpg', v_hidden);
+    raise exception '(س-٢) الكتابة ما زالت تقبل المحجوب بعد الاستعادة';
+  exception
+    when others then
+      if sqlerrm like '(س-٢)%' then raise; end if;
+  end;
+
+  raise notice
+    '✔ (س-٢) الطفرة أُمسكت: نزعُ المعنى من التعريف الواحد حرّك القراءة والكتابة معاً — ثم استُعيد الأصل';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (س-٣) العائلة تُشتقّ في القاعدة — ولا نوعٍ يسقط من الشاشة
+--
+-- التجميع في الواجهة يعتمد على هذا العمود. وقائمةٌ بيضاء هناك — أو عائلةٌ
+-- فارغة هنا — تعني **حساباً لا يُعرض، أي مالاً لا يصل**.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b      uuid := current_setting('tours.p_n9_b')::uuid;
+  v_cheap  uuid := current_setting('tours.p_n9_cheap')::uuid;
+  v_tie    uuid := current_setting('tours.p_n9_tie')::uuid;
+  v_pricey uuid := current_setting('tours.p_n9_pricey')::uuid;
+  v_token  text;
+  v_bad    text;
+  v_n      integer;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  -- كل نوعٍ موجودٍ في الجدول فعلاً يُنتج عائلةً غير فارغة — لا افتراض عن الأنواع
+  select string_agg(distinct pa.kind, '، ') into v_bad
+  from public.payment_accounts pa
+  where coalesce(nullif(btrim(public.payment_account_family(pa.kind)), ''), '') = '';
+  if v_bad is not null then
+    raise exception '(س-٣أ) أنواعٌ بلا عائلة (%) — التجميع سيُسقط حساباتها من الشاشة', v_bad;
+  end if;
+
+  -- والمجهول الذي لم يولد بعد كذلك: فرعُ `else` هو الحارس البنيوي
+  if coalesce(nullif(btrim(public.payment_account_family('kind-does-not-exist')), ''), '') = '' then
+    raise exception '(س-٣ب) نوعٌ مجهول بلا عائلة — أول نوعٍ يضيفه المالك يختفي';
+  end if;
+
+  -- المحفظة وانستا باي عائلةٌ واحدة، والبنك غيرهما — وإلا فالتجميع بلا معنى
+  if public.payment_account_family('wallet') <> public.payment_account_family('instapay') then
+    raise exception '(س-٣ج) المحفظة وانستا باي في عائلتين';
+  end if;
+  if public.payment_account_family('bank') = public.payment_account_family('wallet') then
+    raise exception '(س-٣د) البنك والمحفظة عائلة واحدة';
+  end if;
+
+  -- والعمود يصل طريق العميل مملوءاً لكل صف
+  select count(*) into v_n
+  from public.available_payment_accounts(v_token, 0) a
+  where coalesce(nullif(btrim(a.family), ''), '') = '';
+  if v_n <> 0 then
+    raise exception '(س-٣هـ) % صفاً بلا عائلة في طريق العميل', v_n;
+  end if;
+
+  -- والصفوف الثلاثة تقع حيث يتوقع العميل: محفظةٌ وانستا باي معاً، والبنك وحده
+  if (select a.family from public.available_payment_accounts(v_token, 0) a where a.id = v_cheap)
+     is distinct from
+     (select a.family from public.available_payment_accounts(v_token, 0) a where a.id = v_tie) then
+    raise exception '(س-٣و) المحفظة وانستا باي وصلتا الشاشة في مجموعتين';
+  end if;
+  if (select a.family from public.available_payment_accounts(v_token, 0) a where a.id = v_pricey)
+     = (select a.family from public.available_payment_accounts(v_token, 0) a where a.id = v_cheap) then
+    raise exception '(س-٣ز) البنك وصل مع المحافظ في مجموعة واحدة';
+  end if;
+
+  raise notice '✔ (س-٣) كل نوعٍ له عائلة — والمجهول عائلةُ نفسه، فلا حساب يسقط';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (س-٤) 🔴 الأرخص أولاً — والتعادل يفكّه ترتيب اللوحة
+--
+-- بعد ن‑١ صار لكل خيارٍ سعرٌ مختلف، فالترتيب هو المقارنة. والفحص **نسبيّ لا
+-- مطلق**: حسابات المالك الحقيقية تشارك القائمة، فالمقيس موضعُ الرخيص من الغالي
+-- لا رقمُ سطرٍ ثابت.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_b      uuid    := current_setting('tours.p_n9_b')::uuid;
+  v_due    numeric := current_setting('tours.p_n9_due')::numeric;
+  v_pricey uuid    := current_setting('tours.p_n9_pricey')::uuid;
+  v_cheap  uuid    := current_setting('tours.p_n9_cheap')::uuid;
+  v_tie    uuid    := current_setting('tours.p_n9_tie')::uuid;
+  v_token  text;
+  v_p_pos  integer;
+  v_c_pos  integer;
+  v_t_pos  integer;
+  v_p_fee  numeric;
+  v_c_fee  numeric;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+
+  with listed as (
+    select a.id, a.fee, row_number() over () as pos
+    from public.available_payment_accounts(v_token, v_due) a
+  )
+  select
+    max(pos) filter (where id = v_pricey), max(pos) filter (where id = v_cheap),
+    max(pos) filter (where id = v_tie),
+    max(fee) filter (where id = v_pricey), max(fee) filter (where id = v_cheap)
+  into v_p_pos, v_c_pos, v_t_pos, v_p_fee, v_c_fee
+  from listed;
+
+  if v_p_pos is null or v_c_pos is null or v_t_pos is null then
+    raise exception '(س-٤أ) أحد حسابات الاختبار غاب عن القائمة — لا معنى لقياس ترتيبٍ ناقص';
+  end if;
+
+  -- شرط المعنى: العمولتان مختلفتان فعلاً، وإلا فالفحص يقيس تعادلاً لا ترتيباً
+  if v_p_fee <= v_c_fee then
+    raise exception '(س-٤ب) عمولة «الغالي» % ليست أكبر من «الرخيص» % — اللقطة لم تُجمَّد كما رُتّب',
+      v_p_fee, v_c_fee;
+  end if;
+
+  -- 🔴 والأرخص أسبق رغم أن ترتيب اللوحة يضع الغالي قبله
+  if v_c_pos > v_p_pos then
+    raise exception
+      '(س-٤ج) الغالي (+%) سبق الرخيص (+%) — الترتيب ما زال بترتيب اللوحة وحده، فالشاشة قائمةٌ لا مقارنة',
+      v_p_fee, v_c_fee;
+  end if;
+
+  -- والمتعادلان يعودان إلى ترتيب بدر: الرخيص sort=955 قبل المتعادل sort=956
+  if v_c_pos > v_t_pos then
+    raise exception
+      '(س-٤د) متساويا العمولة لم يعودا إلى ترتيب اللوحة — تعادلٌ يُفكّ عشوائياً يقلب الشاشة بين تحديثين';
+  end if;
+
+  raise notice '✔ (س-٤) الأرخص (+%) سبق الغالي (+%)، والتعادل عاد إلى ترتيب اللوحة', v_c_fee, v_p_fee;
+end;
+$$;
+
 -- ----------------------------------------------------------------------------
 -- (م) التنظيف — لا صف اختبار يبقى، وإعدادات المزوّدين تعود كما كانت
 -- ----------------------------------------------------------------------------
@@ -1884,6 +2244,13 @@ begin
   perform set_config('tours.p_bnofee', '', false);
   perform set_config('tours.p_bfee_due', '', false);
   perform set_config('tours.p_bfee_total', '', false);
+  -- القسم (س)
+  perform set_config('tours.p_n9_b', '', false);
+  perform set_config('tours.p_n9_due', '', false);
+  perform set_config('tours.p_n9_hidden', '', false);
+  perform set_config('tours.p_n9_pricey', '', false);
+  perform set_config('tours.p_n9_cheap', '', false);
+  perform set_config('tours.p_n9_tie', '', false);
 
   -- ⚠ حسابا العمولة يحملان `customer_facing = true`، فبقاء أيٍّ منهما يعني رقماً
   --   وهمياً في صفحة تحويل عميل حقيقي. حُذفا مع بقية صفوف `PAYMENT_TESTS%` أعلاه،

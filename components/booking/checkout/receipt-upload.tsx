@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { useT } from "@/components/site/i18n";
 import { createFormatter } from "../format";
+import { TRANSFER_GROUP } from "./transfer-preference";
 
 /**
  * نموذج رفع إيصال التحويل — يرسل multipart إلى /api/booking/receipt.
@@ -35,12 +36,21 @@ export function ReceiptUpload({
   amountDue,
   currency,
   accounts,
+  defaultAccountId = null,
   locale = DEFAULT_LOCALE,
 }: {
   token: string;
   amountDue: number;
   currency: string;
   accounts: ReceiptAccountOption[];
+  /**
+   * الحساب الذي يبدأ مختاراً — **هو نفسه المُبرَز في منتقي التحويل** (ن‑٩).
+   *
+   * وشاشتان تبدآن على حسابين مختلفين هي بعينها الشكوى التي وُلدت منها ن‑٩:
+   * من حوّل إلى ما أبرزته الشاشة الأولى يجد الثانية تسأله عن غيره، فيصرّح
+   * بحسابٍ لم يحوّل إليه — والمشرف يبحث عن المال في وعاءٍ خطأ.
+   */
+  defaultAccountId?: string | null;
   /** لغة الزائر — تصل من الصفحة الخادمية، وغيابها يعني العربية */
   locale?: string;
 }) {
@@ -49,7 +59,35 @@ export function ReceiptUpload({
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
   const uid = React.useId();
 
-  const [accountId, setAccountId] = React.useState<string>(accounts[0]?.id ?? "");
+  const [accountId, setAccountId] = React.useState<string>(() => {
+    const preferred = accounts.find((account) => account.id === defaultAccountId);
+    return preferred?.id ?? accounts[0]?.id ?? "";
+  });
+
+  /**
+   * 🔴 **يتبع منتقي التحويل فوق النموذج — وهذا ليس تلميعاً.**
+   *
+   * الشاشتان مستقلتان في الـDOM: منتقي الحسابات راديو خادميّ، وهذا `select`
+   * بحالته. فمن بدّل اختياره في المنتقي — رأى رقم «فودافون كاش» وحوّل إليه —
+   * كان يجد هذا الحقل ما زال على الحساب الافتراضي، فيُصرّح بحسابٍ **لم يحوّل
+   * إليه**. والنتيجة صفُّ تحصيلٍ على وعاءٍ خطأ، ومشرفٌ يبحث عن مالٍ في مكانٍ
+   * لم يصله — وهي بعينها «قائمتان لشيء واحد» التي جاءت ن‑٩ تُنهيها، في آخر
+   * موضعٍ بقيت فيه.
+   *
+   * والاستماع على `document` لا على المدخلات: المنتقي يبقى خادمياً بلا حالة
+   * (‏`RememberTransferAccount` بنفس الحجّة). والمعرّف **يُرشَّح بالقائمة** قبل
+   * قبوله، فلا يضع حدثٌ ملفَّق قيمةً ليست خياراً معروضاً.
+   */
+  React.useEffect(() => {
+    function follow(event: Event) {
+      const target = event.target as HTMLInputElement | null;
+      if (!target || target.name !== TRANSFER_GROUP || !target.checked) return;
+      const picked = target.value;
+      if (accounts.some((account) => account.id === picked)) setAccountId(picked);
+    }
+    document.addEventListener("change", follow);
+    return () => document.removeEventListener("change", follow);
+  }, [accounts]);
 
   /**
    * المبلغ المتوقَّع يتبع الحساب المختار: عمولة التحويل تختلف بينها (ن‑١)، ورقمٌ

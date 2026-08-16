@@ -213,8 +213,15 @@ export async function SiteFooter({
           >
             {legalLinks.map((link, index) => (
               <Fragment key={link.href}>
+                {/**
+                 * الفاصل `aria-hidden` فلا يقع عليه شرط ١٫٤٫٣، **لكنه كان
+                 * يفشل في غرضه هو**: `text-border` على أرضية التذييل الداكنة
+                 * = ‏١٫٤:١ مقيسة — أي لا يراه المبصر أصلاً، فتلتصق الروابط
+                 * الثلاثة بلا فاصل مرئي. و`/55` تعطي ‏٣٫٣٥:١: يُرى، ويبقى
+                 * دون الروابط (‏٨٫٤٩:١) فلا يُقرأ كرابطٍ رابع.
+                 */}
                 {index > 0 ? (
-                  <span aria-hidden="true" className="text-border">
+                  <span aria-hidden="true" className="text-muted-foreground/55">
                     ·
                   </span>
                 ) : null}

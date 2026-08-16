@@ -2,6 +2,7 @@ import { Hero } from "@/components/site/hero";
 import { BookingWidget } from "@/components/booking/booking-widget";
 import type { SectionContentMap } from "@/lib/content-types";
 import type { SiteSettings } from "@/lib/site-config";
+import type { BlockStyle } from "@/lib/page-builder-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 
 /**
@@ -21,15 +22,22 @@ import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 export function HeroSection({
   content,
   settings,
+  style,
   locale = DEFAULT_LOCALE,
 }: {
   content: SectionContentMap["hero"];
   settings: SiteSettings;
+  /**
+   * ن‑٤: مقابض أثر الكتابة مطهَّرةً (‏`readBlockStyle`). تمرّ عبر هذا الوسيط
+   * وحده — `sanitizeContent` تُسقط `content.style` قبل العارضة بقصد، فلا يقرأ
+   * أي مكوّن قسمٍ `content.style` بنفسه (العقد §٥ · نفس مسار `callout.tone`).
+   */
+  style?: BlockStyle | null;
   locale?: string;
 }) {
   return (
     <>
-      <Hero settings={settings} content={content} locale={locale} />
+      <Hero settings={settings} content={content} style={style} locale={locale} />
       <div className="relative z-10 -mt-12 px-4 pb-6 sm:px-6 md:-mt-16">
         <div className="mx-auto w-full max-w-4xl">
           <BookingWidget

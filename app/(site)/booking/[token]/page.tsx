@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import {
   BadgeCheck,
@@ -41,6 +42,14 @@ import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { readPaymentSettings } from "@/components/booking/checkout/payment";
 import { readPaymentHold } from "@/components/booking/checkout/hold";
+import { HoldCountdown } from "@/components/booking/checkout/hold-countdown";
+import { RememberTransferAccount } from "@/components/booking/checkout/remember-account";
+import { TripShare } from "@/components/booking/checkout/trip-share";
+import {
+  TRANSFER_ACCOUNT_COOKIE,
+  TRANSFER_GROUP,
+  preferredAccountId,
+} from "@/components/booking/checkout/transfer-preference";
 import { CopyButton } from "@/components/booking/checkout/copy-button";
 import { PrintButton } from "@/components/booking/print-button";
 import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
@@ -55,6 +64,7 @@ import {
   type ReceiptAccountOption,
 } from "@/components/booking/checkout/receipt-upload";
 import type { BookingStatus, BookingTokenCrew, ReceiptStatus } from "@/lib/booking-types";
+import type { PaymentAccountChoice } from "@/lib/payment-fee-types";
 
 /**
  * صفحة متابعة الحجز /booking/[token] — الصفحة الوحيدة التي يملكها العميل الضيف.
@@ -518,22 +528,11 @@ function StatusStepper({ status, t }: { status: TrackedStatus; t: Tx }) {
 /* بطاقة حساب استقبال المدفوعات                                          */
 /* ------------------------------------------------------------------ */
 
-type PaymentAccountView = {
-  id: string;
-  kind: string;
-  label: string;
-  handle: string;
-  holderName: string | null;
-  /**
-   * عمولة التحويل على هذا الحساب (ن‑١، الهجرة `0066`) — **مجمَّدة لحظة الحجز**،
-   * فرفعُها في اللوحة غداً لا يغيّر ما يراه من حجز اليوم.
-   */
-  fee: number;
-  /** `amount_due + fee` — محسوباً في Postgres (**D-05**)، لا يُجمع هنا */
-  dueWithFee: number;
-  /** `total + fee` — إجمالي الفاتورة بهذا الحساب */
-  totalWithFee: number;
-};
+/**
+ * صفٌّ واحد كما ترجعه `available_payment_accounts(text, numeric)` — **والعقد هو
+ * النوع**، لا نسخة منه هنا تنحرف عنه بعد أول توسيع (`lib/payment-fee-types.ts`).
+ */
+type PaymentAccountView = PaymentAccountChoice;
 
 /**
  * أيقونة الوعاء واسمه — **عرضٌ محض**. القائمة نفسها تصل مرشَّحة من
@@ -556,6 +555,39 @@ const ACCOUNT_KIND_FALLBACK: Record<string, string> = {
   card: "بطاقة",
   cash: "نقدي",
 };
+
+/**
+ * اسم العائلة — **احتياطيُّ ترجمةٍ لا قائمةُ سماح.** الفرق جوهري: العائلة نفسها
+ * تصل من القاعدة (`payment_account_family` في `0070`)، وعائلةٌ لا مدخل لها هنا
+ * تُعرض بمفتاحها كما وصل ولا تسقط — لأن حساباً لا يُعرض **مالٌ لا يصل**.
+ */
+const ACCOUNT_FAMILY_FALLBACK: Record<string, string> = {
+  wallet: "محافظ إلكترونية",
+  bank: "حسابات بنكية",
+  card: "بطاقات",
+  cash: "نقداً",
+  other: "طرق أخرى",
+};
+
+type AccountGroup = { family: string; accounts: PaymentAccountView[] };
+
+/**
+ * تجميعٌ بالعائلة **بترتيب الوصول** — ن‑٩ (ب-٢).
+ *
+ * والقاعدة رتّبت القائمة بالأرخص أولاً (`0070`)، فأول ظهورٍ لعائلةٍ يحدّد موضعها:
+ * المجموعة التي فيها أرخص خيار تأتي أولاً. أي أن الترتيب **يبقى مقارنةً** بعد
+ * التجميع ولا ينقلب إلى تصنيفٍ أبجدي يخفي الثمن.
+ */
+function groupByFamily(accounts: PaymentAccountView[]): AccountGroup[] {
+  const groups: AccountGroup[] = [];
+  for (const account of accounts) {
+    const family = account.family || account.kind || "other";
+    const found = groups.find((group) => group.family === family);
+    if (found) found.accounts.push(account);
+    else groups.push({ family, accounts: [account] });
+  }
+  return groups;
+}
 
 /**
  * اختيار حساب التحويل — **خيارٌ واحد ببياناته، لا كل الأرقام دفعةً واحدة.**
@@ -584,18 +616,199 @@ const ACCOUNT_KIND_FALLBACK: Record<string, string> = {
  * وهو ما يفرّق «رسمٌ معلَن قبل الدفع» عن «مبلغٌ اكتشفه العميل بعد التحويل» —
  * وثانيهما هو الشكوى التي وُجدت هذه المنصة لتتجنّبها.
  */
+/** بطاقة خيارٍ واحد — يستعملها المُبرَز والمجموعات معاً، فلا نسختان تنحرفان */
+function AccountOption({
+  account,
+  checked,
+  cheapest,
+  showAmount,
+  currency,
+  fmt,
+  t,
+}: {
+  account: PaymentAccountView;
+  checked: boolean;
+  /** أرخص خيارٍ في القائمة — ولا يُمرَّر `true` إلا حين تختلف العمولات فعلاً */
+  cheapest: boolean;
+  /** يُظهر المطلوب على السطر نفسه — لا يُطلب إلا حين تختلف الأرقام (ن‑٩ ب-٤) */
+  showAmount: boolean;
+  currency: string;
+  fmt: LocaleFormatter;
+  t: Tx;
+}) {
+  const Icon = ACCOUNT_ICON[account.kind] ?? Wallet;
+  const inputId = `transfer-account-${account.id}`;
+  const kindLabel = t(
+    `pay.accountKind.${account.kind}`,
+    ACCOUNT_KIND_FALLBACK[account.kind] ?? ""
+  );
+
+  return (
+    <li
+      className={cn(
+        "relative flex flex-col rounded-2xl border border-border bg-card text-card-foreground",
+        /**
+         * ⚠ **بلا `transition-colors` هنا — مقيسٌ لا مفترَض.**
+         * مع الانتقال يترك كروم البطاقةَ المتروكة **عالقةً ملوّنة**:
+         * تبديل الاختيار يُبطل مطابقة `:has(:checked)` في منتصف الانتقال
+         * فتتجمّد القيمة المُستوفاة (‏`oklab(0.65 …)` = اللون الأساسي) على
+         * عنصرٍ لم يعد مختاراً — فيظهر خياران مُحدَّدان في عين العميل وهو
+         * يحوّل مالاً. قيس حياً: بحذف الصنف وحده تبع التلوينُ الاختيارَ
+         * ذهاباً وإياباً. والكشف فوريّ أصلاً فلا شيء يُفقد.
+         */
+        "has-[:checked]:border-primary has-[:checked]:bg-primary/5 has-[:checked]:shadow-sm has-[:checked]:shadow-primary/10",
+        // 🖨 الورقة تحمل الحساب المختار وحده — بقية الخيارات أسماءٌ بلا
+        // أرقام على الورق، وحضورها يشوّش على من يحوّل من الورقة.
+        "print:hidden has-[:checked]:print:flex"
+      )}
+    >
+      <input
+        id={inputId}
+        type="radio"
+        name={TRANSFER_GROUP}
+        // ⚠ القيمة ليست زينة: `RememberTransferAccount` يقرؤها ليكتب التفضيل
+        value={account.id}
+        defaultChecked={checked}
+        className="peer absolute top-5 start-4 size-4 shrink-0 accent-primary"
+      />
+      <label
+        htmlFor={inputId}
+        className="flex cursor-pointer items-center gap-2.5 p-4 ps-11"
+      >
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+          <Icon className="size-5" aria-hidden="true" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-bold">
+            {account.label}
+            {cheapest ? (
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                {t("pay.cheapest", "الأوفر")}
+              </span>
+            ) : null}
+          </span>
+          {kindLabel ? (
+            <span className="text-xs leading-5 text-muted-foreground">{kindLabel}</span>
+          ) : null}
+        </span>
+
+        {/*
+          🔴 **الرقم على السطر نفسه — وهو ما يقلب الشاشة من قائمة إلى مقارنة.**
+          ولا يُصيَّر إلا حين تختلف الأرقام فعلاً: ثلاثة أسطر تحمل الرقم نفسه
+          ليست مقارنة بل ضجيج، والرقم حينها مكتوبٌ في عنوان القسم أصلاً.
+        */}
+        {showAmount ? (
+          <span className="flex shrink-0 flex-col items-end">
+            <span className="text-sm font-extrabold">
+              {fmt.money(account.dueWithFee, currency)}
+            </span>
+            <span className="text-[11px] leading-4 text-muted-foreground">
+              {account.fee > 0
+                ? t("pay.feePlus", "+{amount}", { amount: fmt.money(account.fee, currency) })
+                : t("pay.feeNone", "بلا عمولة")}
+            </span>
+          </span>
+        ) : null}
+      </label>
+
+      {/* البيانات لا تُصيَّر إلا للمختار — والكشف بـCSS وحدها */}
+      <div className="hidden flex-col gap-3 px-4 pb-4 ps-11 peer-checked:flex">
+        <div className="flex items-center gap-2">
+          <span
+            dir="ltr"
+            className="min-w-0 flex-1 truncate rounded-xl bg-muted px-3 py-2 text-start font-mono text-sm"
+          >
+            {account.handle}
+          </span>
+          <CopyButton
+            value={account.handle}
+            label={t("pay.accountCopyLabel", "رقم {label}", { label: account.label })}
+          />
+        </div>
+
+        {account.holderName ? (
+          <p className="text-xs leading-5 text-muted-foreground">
+            {t("pay.accountHolder", "باسم:")}{" "}
+            <span className="font-medium text-foreground">{account.holderName}</span>
+          </p>
+        ) : null}
+
+        {/*
+          المبلغ الذي يحوّله العميل إلى **هذا** الحساب. وسطر العمولة لا
+          يُصيَّر إلا حين توجد فعلاً: «عمولة التحويل ٠» على حسابٍ بلا
+          عمولة سؤالٌ لا معلومة، ويجعل العميل يبحث عن رسمٍ لا وجود له.
+        */}
+        <dl className="flex flex-col gap-1.5 border-t border-border/70 pt-3 text-sm">
+          {account.fee > 0 ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">
+                  {t("pay.feeBase", "المطلوب للرحلة")}
+                </dt>
+                <dd>{fmt.money(account.dueWithFee - account.fee, currency)}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">{t("pay.fee", "عمولة التحويل")}</dt>
+                <dd className="font-medium">
+                  {t("pay.feePlus", "+{amount}", {
+                    amount: fmt.money(account.fee, currency),
+                  })}
+                </dd>
+              </div>
+            </>
+          ) : null}
+          <div className="flex items-center justify-between gap-3">
+            <dt className="font-semibold">{t("pay.dueOnAccount", "المطلوب تحويله الآن")}</dt>
+            <dd className="text-base font-extrabold">
+              {fmt.money(account.dueWithFee, currency)}
+            </dd>
+          </div>
+        </dl>
+
+        {account.fee > 0 ? (
+          <p className="text-xs leading-5 text-muted-foreground">
+            {t(
+              "pay.feeNote",
+              "عمولة تحويل هذا الحساب — تختلف من حساب لآخر، فاختر ما يناسبك. وهي ثابتة على حجزك هذا مهما تغيّرت لاحقاً."
+            )}
+          </p>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
 function AccountChooser({
   accounts,
+  preferredId,
+  anyFee,
   currency,
   fmt,
   t,
 }: {
   accounts: PaymentAccountView[];
+  /** الخيار الذي يبدأ مختاراً — المتذكَّر إن بقي معروضاً، وإلا الأرخص */
+  preferredId: string | null;
+  /** تختلف العمولات فعلاً؟ يحكم ظهور الأرقام على السطور ووسم «الأوفر» */
+  anyFee: boolean;
   currency: string;
   fmt: LocaleFormatter;
   t: Tx;
 }) {
+  // ⚠ حارس فراغٍ صريح: `strict` هنا بلا `noUncheckedIndexedAccess`، فـ`accounts[0]`
+  //   يُكتب كأنه موجود دائماً ولا يُنبّه المترجمُ على قائمةٍ فارغة. والمنادي يحرس
+  //   بـ`accounts.length > 0` اليوم — وهذا السطر يبقى صحيحاً لو تغيّر ذلك غداً.
+  const primary = accounts.find((account) => account.id === preferredId) ?? accounts[0];
+  if (!primary) return null;
+
   const single = accounts.length === 1;
+  const rest = accounts.filter((account) => account.id !== primary.id);
+  const groups = groupByFamily(rest);
+
+  // «الأوفر» لا يُقال إلا حين يعني شيئاً: بلا عمولاتٍ مضبوطة كل الخيارات سواء،
+  // ووسمُ أحدها «الأوفر» حينئذٍ ادّعاءُ فرقٍ لا وجود له (القاعدة ١٥).
+  const cheapestId = anyFee ? (accounts[0]?.id ?? null) : null;
+  const cheapestRest = anyFee && rest.length > 0 ? rest[0] : null;
 
   return (
     <fieldset className="flex flex-col gap-2.5">
@@ -605,128 +818,89 @@ function AccountChooser({
           : t("pay.accountsLegend", "اختر الحساب الذي ستحوّل إليه")}
       </legend>
 
+      {/*
+        ── تدرّجٌ لا مساواة (ن‑٩ ب-١) ────────────────────────────────────────
+        شكوى بدر: «أشعر بالزحام… رغم أن الهدف من تعدد الخيارات هو التسهيل».
+        والوسيلة كانت تعمل ضد الهدف: في الدفع **كل خيارٍ إضافي قرارٌ يُلقى على
+        العميل وهو ممسكٌ بمحفظته**. فواحدٌ مُبرَز — المتذكَّر أو الأوفر — والباقي
+        خلف كشفٍ يفتحه من أراد المقارنة.
+
+        و`<details>` وسمٌ أصلي: يعمل بلا جافاسكربت، ويعلن حالته لقارئ الشاشة،
+        ولا يحتاج `aria-expanded` نكتبه بأيدينا فينحرف عن الحقيقة.
+      */}
       <ul className="flex flex-col gap-2.5">
-        {accounts.map((account, index) => {
-          const Icon = ACCOUNT_ICON[account.kind] ?? Wallet;
-          const inputId = `transfer-account-${account.id}`;
-          const kindLabel = t(
-            `pay.accountKind.${account.kind}`,
-            ACCOUNT_KIND_FALLBACK[account.kind] ?? ""
-          );
-
-          return (
-            <li
-              key={account.id}
-              className={cn(
-                "relative flex flex-col rounded-2xl border border-border bg-card text-card-foreground",
-                /**
-                 * ⚠ **بلا `transition-colors` هنا — مقيسٌ لا مفترَض.**
-                 * مع الانتقال يترك كروم البطاقةَ المتروكة **عالقةً ملوّنة**:
-                 * تبديل الاختيار يُبطل مطابقة `:has(:checked)` في منتصف الانتقال
-                 * فتتجمّد القيمة المُستوفاة (‏`oklab(0.65 …)` = اللون الأساسي) على
-                 * عنصرٍ لم يعد مختاراً — فيظهر خياران مُحدَّدان في عين العميل وهو
-                 * يحوّل مالاً. قيس حياً: بحذف الصنف وحده تبع التلوينُ الاختيارَ
-                 * ذهاباً وإياباً. والكشف فوريّ أصلاً فلا شيء يُفقد.
-                 */
-                "has-[:checked]:border-primary has-[:checked]:bg-primary/5 has-[:checked]:shadow-sm has-[:checked]:shadow-primary/10",
-                // 🖨 الورقة تحمل الحساب المختار وحده — بقية الخيارات أسماءٌ بلا
-                // أرقام على الورق، وحضورها يشوّش على من يحوّل من الورقة.
-                "print:hidden has-[:checked]:print:flex"
-              )}
-            >
-              <input
-                id={inputId}
-                type="radio"
-                name="transfer-account"
-                defaultChecked={index === 0}
-                className="peer absolute top-5 start-4 size-4 shrink-0 accent-primary"
-              />
-              <label
-                htmlFor={inputId}
-                className="flex cursor-pointer items-center gap-2.5 p-4 ps-11"
-              >
-                <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                  <Icon className="size-5" aria-hidden="true" />
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-sm font-bold">{account.label}</span>
-                  {kindLabel ? (
-                    <span className="text-xs leading-5 text-muted-foreground">{kindLabel}</span>
-                  ) : null}
-                </span>
-              </label>
-
-              {/* البيانات لا تُصيَّر إلا للمختار — والكشف بـCSS وحدها */}
-              <div className="hidden flex-col gap-3 px-4 pb-4 ps-11 peer-checked:flex">
-                <div className="flex items-center gap-2">
-                  <span
-                    dir="ltr"
-                    className="min-w-0 flex-1 truncate rounded-xl bg-muted px-3 py-2 text-start font-mono text-sm"
-                  >
-                    {account.handle}
-                  </span>
-                  <CopyButton
-                    value={account.handle}
-                    label={t("pay.accountCopyLabel", "رقم {label}", { label: account.label })}
-                  />
-                </div>
-
-                {account.holderName ? (
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {t("pay.accountHolder", "باسم:")}{" "}
-                    <span className="font-medium text-foreground">{account.holderName}</span>
-                  </p>
-                ) : null}
-
-                {/*
-                  المبلغ الذي يحوّله العميل إلى **هذا** الحساب. وسطر العمولة لا
-                  يُصيَّر إلا حين توجد فعلاً: «عمولة التحويل ٠» على حسابٍ بلا
-                  عمولة سؤالٌ لا معلومة، ويجعل العميل يبحث عن رسمٍ لا وجود له.
-                */}
-                <dl className="flex flex-col gap-1.5 border-t border-border/70 pt-3 text-sm">
-                  {account.fee > 0 ? (
-                    <>
-                      <div className="flex items-center justify-between gap-3">
-                        <dt className="text-muted-foreground">
-                          {t("pay.feeBase", "المطلوب للرحلة")}
-                        </dt>
-                        <dd>{fmt.money(account.dueWithFee - account.fee, currency)}</dd>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <dt className="text-muted-foreground">
-                          {t("pay.fee", "عمولة التحويل")}
-                        </dt>
-                        <dd className="font-medium">
-                          {t("pay.feePlus", "+{amount}", {
-                            amount: fmt.money(account.fee, currency),
-                          })}
-                        </dd>
-                      </div>
-                    </>
-                  ) : null}
-                  <div className="flex items-center justify-between gap-3">
-                    <dt className="font-semibold">
-                      {t("pay.dueOnAccount", "المطلوب تحويله الآن")}
-                    </dt>
-                    <dd className="text-base font-extrabold">
-                      {fmt.money(account.dueWithFee, currency)}
-                    </dd>
-                  </div>
-                </dl>
-
-                {account.fee > 0 ? (
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {t(
-                      "pay.feeNote",
-                      "عمولة تحويل هذا الحساب — تختلف من حساب لآخر، فاختر ما يناسبك. وهي ثابتة على حجزك هذا مهما تغيّرت لاحقاً."
-                    )}
-                  </p>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
+        <AccountOption
+          account={primary}
+          checked
+          cheapest={primary.id === cheapestId}
+          showAmount={anyFee}
+          currency={currency}
+          fmt={fmt}
+          t={t}
+        />
       </ul>
+
+      {rest.length > 0 ? (
+        <details className="pay-more group rounded-2xl border border-dashed border-border">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium marker:content-none hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            <span className="flex items-center gap-2">
+              <Wallet className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              {t("pay.moreMethods", "طرق دفع أخرى ({count})", {
+                count: fmt.digits(rest.length),
+              })}
+            </span>
+            {/* الأرخص خلف الكشف يُعلَن على غلافه — وإلا صار الإخفاء إخفاءَ ثمن */}
+            {cheapestRest ? (
+              <span className="text-xs font-semibold text-primary">
+                {t("pay.moreFrom", "من {amount}", {
+                  amount: fmt.money(cheapestRest.dueWithFee, currency),
+                })}
+              </span>
+            ) : null}
+          </summary>
+
+          <div className="flex flex-col gap-4 border-t border-border px-3 pb-3 pt-3">
+            {groups.map((group) => (
+              <div key={group.family} className="flex flex-col gap-2">
+                {/*
+                  عنوان العائلة (ن‑٩ ب-٢) — والمفتاح يأتي من القاعدة، فعائلةٌ
+                  جديدة تظهر بمجموعتها بلا نشرة. والاحتياطي اسمُها كما وصل.
+
+                  ⚠ **و`h3` لا `h4` — رتبةٌ مقيسة لا مختارة.** الكتلة كلها تحت
+                  «ادفع … لتأكيد الحجز» وهي `h2`، فـ`h4` كانت تقفز رتبةً
+                  (٢→٤): من يتنقّل بالعناوين في قارئ الشاشة يسمع «عنوان مستوى
+                  ٤» فيظنّ أنه فوّت قسماً بينهما. والرتبة الصحيحة هي رتبة
+                  «بعد التحويل: ارفع الإيصال» نفسها — كلاهما قسمٌ من الدفع.
+                  والشكل من الأصناف لا من الوسم، فلا يتغيّر بكسل.
+                */}
+                <h3 className="px-1 text-xs font-semibold text-muted-foreground">
+                  {t(
+                    `pay.accountFamily.${group.family}`,
+                    ACCOUNT_FAMILY_FALLBACK[group.family] ?? group.family
+                  )}
+                </h3>
+                <ul className="flex flex-col gap-2.5">
+                  {group.accounts.map((account) => (
+                    <AccountOption
+                      key={account.id}
+                      account={account}
+                      checked={false}
+                      cheapest={account.id === cheapestId}
+                      showAmount={anyFee}
+                      currency={currency}
+                      fmt={fmt}
+                      t={t}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+
+      {/* يكتب التفضيل ولا يُصيَّر شيئاً — المنتقي يبقى خادمياً بالكامل */}
+      <RememberTransferAccount groupName={TRANSFER_GROUP} />
     </fieldset>
   );
 }
@@ -845,9 +1019,15 @@ function ReceiptCard({
  *   • **`footer`** — تذييل الموقع العام. اللوحة لا تملك تذييلاً فليس في القواعد
  *     العامة، وهو هنا صفحتان من روابط وشبكات اجتماعية على ورقة رحلة. (وقاعدته
  *     مكانها الطبيعي تلك الكتلة يوم يلتقي البناءان.)
- *   • **`fieldset`** — منتقي وسيلة الدفع جزيرة عميل (`PaymentMethodChoice`)
- *     لا نملك تعليم داخلها بصنف من هنا، وإخفاء `input` وحده يترك تسمياته
- *     نصّاً معلّقاً بلا خيار يُختار.
+ *   • **منتقي وسيلة الدفع** (`PaymentMethodChoice`) — تسمياتٌ بلا مدخلات على
+ *     الورق (القاعدة المشتركة تُسقط `input`)، فيذهب كاملاً بصنف `no-print`.
+ *
+ *     🔴 **وكانت القاعدة `fieldset` عارياً — فكانت تبتلع منتقي الحسابات معه.**
+ *     `AccountChooser` وسمُه `fieldset` كذلك، فكل أرقام التحويل كانت تسقط من
+ *     الورقة رغم أن التعليق أدناه يَعِد بطبعها، ورغم `has-[:checked]:print:flex`
+ *     على البطاقة المختارة: أصلٌ بـ`display:none !important` لا يُنقَض من ذرّيته.
+ *     أي أن من يطبع صفحته ليحوّل من الورقة كان يخرج بورقةٍ **بلا رقمٍ واحد** —
+ *     وهو نقيض `lib/export-types.ts` §٤ نصّاً. فصار الحجب على المنتقي وحده.
  *   • **مقاسات هذه الورقة وحدها** — بطنُ الصفحة وبطاقاتها وترويستها.
  *   • **تعويض ما يذهب مع اللون**: مؤشّر الحالة أربع دوائر يفرّق بينها اللون وحده،
  *     فيُحاط الحالي بإطار، ويُكشف معه سطر `print-only` يقول الحالة بالكلمات.
@@ -860,7 +1040,15 @@ function ReceiptCard({
 const PRINT_CSS = `
 @media print {
   footer { display: none !important; }
-  .print-sheet fieldset { display: none !important; }
+  /* كشف «طرق دفع أخرى» يُفتح على الورق: البطاقة المختارة قد تكون داخله،
+     وقاعدة \`has-[:checked]:print:flex\` لا تنفع داخل كشفٍ مطويّ. والغلاف
+     نفسه يذهب — لا معنى لزرّ فتحٍ على ورقة. */
+  .print-sheet details.pay-more { border: 0 !important; }
+  .print-sheet details.pay-more > summary { display: none !important; }
+  .print-sheet details.pay-more::details-content {
+    content-visibility: visible !important;
+    block-size: auto !important;
+  }
   .print-sheet .print-only { display: block !important; }
   .print-sheet [aria-current="step"] { outline: 1px solid #000 !important; }
   .print-sheet .sheet-hero { padding-top: 0 !important; padding-bottom: 8px !important; }
@@ -875,8 +1063,77 @@ const PRINT_CSS = `
 `;
 
 /* ------------------------------------------------------------------ */
+/* حياةٌ في بطاقة الحالة — ن‑٩ (د)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * حركتان مختلفتان لأن الحالتين مختلفتان — قرار بدر بعد عرض السبب:
+ *
+ * | الحالة | المعالجة | لماذا |
+ * |---|---|---|
+ * | **بانتظار الدفع** | نبضٌ مستمر | هنا الإلحاح الحقيقي، ومعه العدّاد |
+ * | **مؤكَّد** | حركةٌ واحدة عند الوصول ثم سكون | علامةُ ثقةٍ لا تنبيه |
+ *
+ * **الحركة الدائمة تقول «انتبه»**، ووضعُها على حجزٍ مؤكَّد تصرخ حيث لا شيء
+ * يستدعي — ويقرأ قارئُ الشاشة اضطرابها بلا خبر. **وسكونُ المؤكَّد يقرأ «راقٍ»
+ * لا «ناقص»**، وهو أقرب إلى واجهة الشركات الكبرى التي طلبها.
+ *
+ * ── وثلاثة قيود بنيوية، لا انضباطية ───────────────────────────────────────
+ *
+ * ١. **كل شيء داخل `prefers-reduced-motion: no-preference`.** والإطارات نفسها
+ *    مُعرَّفة داخله، فمن طلب تقليل الحركة **لا يصله تعريفٌ أصلاً** — لا حركة
+ *    تُلغى بقاعدةٍ ثانية قد تُنسى.
+ * ٢. **والبديل لونٌ وأيقونة لا حذف.** الحالة الصامدة هي الحالة النهائية للحركة
+ *    (ظهورٌ كامل)، فغياب الحركة يترك البطاقة كما هي بأيقونتها ولونها — لا
+ *    فراغاً ولا عنصراً عالقاً على `opacity: 0`.
+ * ٣. **ولا لونٍ واحد هنا.** الإطارات تحرّك `transform` و`opacity` وحدهما،
+ *    واللونُ يأتي من صنف Tailwind على العنصر نفسه (`bg-primary/…`) — أي من
+ *    رموز اللوحة. فتغييرُ بدر لألوانه يتبعه النبض بلا لمس هذا الملف.
+ */
+const MOTION_CSS = `
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes bk-pulse-ring {
+    0%   { transform: scale(0.9); opacity: 0.55; }
+    70%  { transform: scale(1.75); opacity: 0; }
+    100% { transform: scale(1.75); opacity: 0; }
+  }
+  .bk-pulse-ring { animation: bk-pulse-ring 2.4s cubic-bezier(0.24, 0.6, 0.3, 1) infinite; }
+
+  /* ⚠ بلا opacity في هذا الإطار — مقيسٌ لا مفترَض.
+     كان يبدأ من opacity:0 مع fill-mode:both، فالعنصر معدومٌ قبل أن تبدأ
+     الحركة: قِيس حياً opacity = 0 على الدرع لحظة أول تصيير. وأي سببٍ يمنع
+     الإطار من العمل — امتدادٌ يحقن CSS، أو خطأ تصييرٍ في وسم النمط — يترك
+     بطاقة «حجزك مؤكد» بلا علامتها، وهو بعينه ما نُهي عنه: البديل لونٌ
+     وأيقونة، لا حذفٌ للحالة. فالمقياس وحده يتحرك هنا، والتلاشي تحمله الحلقة
+     — وهي زخرفةٌ غيابُها لا ينقص خبراً. */
+  @keyframes bk-arrive-mark {
+    0%   { transform: scale(0.62); }
+    55%  { transform: scale(1.08); }
+    100% { transform: scale(1); }
+  }
+  .bk-arrive { animation: bk-arrive-mark 620ms cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+
+  @keyframes bk-arrive-ring {
+    0%   { transform: scale(0.85); opacity: 0.5; }
+    100% { transform: scale(1.95); opacity: 0; }
+  }
+  .bk-arrive-ring { animation: bk-arrive-ring 900ms ease-out 120ms both; }
+}
+`;
+
+/* ------------------------------------------------------------------ */
 /* الصفحة                                                               */
 /* ------------------------------------------------------------------ */
+
+/**
+ * نافذة العدّاد — ن‑٩ (ج): «ولا يظهر إلا حيث يعمل الكنس فعلاً».
+ *
+ * `booking_hold_until` تأخذ الأبعد من (الإنشاء + المهلة) و(الموعد − المهلة)،
+ * فحجزُ رحلةٍ بعد شهرٍ محفوظٌ قرابة الشهر. وعدّادٌ يقول «باقٍ ٢٩ يوماً» ليس
+ * كذباً لكنه **تهديدٌ بلا سبب** على من لا يقترب موعده — وهو ما نُهي عنه نصاً.
+ * فدون هذه النافذة تبقى الجملة بالتاريخ وحدها، وداخلها يظهر العدّاد.
+ */
+const COUNTDOWN_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export default async function BookingStatusPage({ params }: PageParams) {
   const { token } = await params;
@@ -987,6 +1244,31 @@ export default async function BookingStatusPage({ params }: PageParams) {
   );
 
   /**
+   * نصّ ن‑٧ — «أرسل تفاصيل رحلتك» على بطاقة التأكيد وحدها.
+   *
+   * وهو غير نصّ المشاركة أعلاه بقصد: ذاك يقول «هذه صفحتي» لمن يحفظها لنفسه،
+   * وهذا يقول **ما يحتاجه الغريب**: متى، ومن أين إلى أين، وبأي رقم يسأل عنها.
+   *
+   * 🔒 **وما ليس فيه هو نصف تصميمه:**
+   *   • **لا مبلغ ولا عمولة** — من يستقبل الضيف لا شأن له بما دفعه، وثمنُ
+   *     الرحلة في يد طرفٍ ثالث بابُ سؤالٍ لا نفتحه (**D-19**).
+   *   • **ولا هاتف** — ولا يحتاج حذفاً: `0049` قنّعت `customer_phone` و
+   *     `customer_whatsapp` داخل `get_booking_by_token`، فالصفحة لا تملكهما.
+   *
+   * والحقول الغائبة تسقط بسطورها: حجزٌ بلا موعد لا يُنتج سطر «الموعد: —».
+   */
+  const tripShareLines = [
+    t("confirmed.shareLineTrip", "رحلة {origin} ← {dest}", {
+      origin: originLabel,
+      dest: destLabel,
+    }),
+    pickupLabel ? t("confirmed.shareLineWhen", "الموعد: {value}", { value: pickupLabel }) : null,
+    t("confirmed.shareLineRef", "رقم الحجز: {value}", { value: reference }),
+    bookingUrl,
+  ].filter((line): line is string => typeof line === "string" && line.trim().length > 0);
+  const tripShareText = tripShareLines.join("\n");
+
+  /**
    * الخطوة الحالية على المؤشر بالكلمات — للورقة المطبوعة وحدها. المصدر هو
    * `STATUS_POSITION` و`STATUS_STEPS` نفساهما اللذان يرسمان المؤشر على الشاشة،
    * فلا تنحرف الورقة عنه بجدول تسميات ثانٍ. و«ملغي» (‏موضعه -1) لا يدخل هنا
@@ -1063,6 +1345,17 @@ export default async function BookingStatusPage({ params }: PageParams) {
    */
   const holdPassed = holdWindowPassed(hold.holdUntil);
 
+  /**
+   * أيُعرض العدّاد؟ — يُقرَّر على الخادم بموعدٍ **من القاعدة** لا بحسابٍ موازٍ.
+   * والشرط شرطان: مهلةٌ لم تنقضِ بعد، وموعد الكنس داخل النافذة أعلاه.
+   */
+  const holdUntilMs = hold.holdUntil === null ? NaN : Date.parse(hold.holdUntil);
+  const showCountdown =
+    hold.enabled &&
+    !holdPassed &&
+    Number.isFinite(holdUntilMs) &&
+    holdUntilMs - Date.now() <= COUNTDOWN_WINDOW_MS;
+
   // حسابات الاستقبال المتاحة للمبلغ المطلوب — تُفلترها SQL بحدودها اليومية/الشهرية.
   // التوكن جزء من النداء: الصيغة المقصورة على التوكن هي وحدها الممنوحة للزائر،
   // فلا تُعدّ أرقام المحافظ من متصفح بلا حجز قائم بانتظار الدفع.
@@ -1077,6 +1370,10 @@ export default async function BookingStatusPage({ params }: PageParams) {
       .map((row) => ({
         id: readText(row, "id") ?? "",
         kind: readText(row, "kind") ?? "wallet",
+        // العائلة تُشتقّ في القاعدة (`0070`)، والسقوط على `kind` ليس تجميلاً:
+        // قاعدةٌ بلا الهجرة لا تُرجع العمود، فيصير كل نوعٍ مجموعتَه — وهو
+        // بالضبط السلوك الآمن (لا حساب يسقط من الشاشة).
+        family: readText(row, "family") ?? readText(row, "kind") ?? "other",
         label: readText(row, "label") ?? t("pay.accountFallbackLabel", "حساب تحويل"),
         handle: readText(row, "handle") ?? "",
         holderName: readText(row, "holder_name", "holderName"),
@@ -1096,6 +1393,20 @@ export default async function BookingStatusPage({ params }: PageParams) {
    * تعرض رقمين مختلفين للشيء نفسه بلا شرح — وهو ما ينهي ثقة القارئ في كليهما.
    */
   const anyFee = accounts.some((account) => account.fee > 0);
+
+  /**
+   * الخيار الذي يبدأ مختاراً — ن‑٩ (ب-٣): «العائد لا يُعيد القرار».
+   *
+   * 🔒 والكوكي **مرشَّحة بالقائمة لا مصدَّقة**: `preferredAccountId` لا تقبل إلا
+   * معرّفاً موجوداً في ما أرجعته `available_payment_accounts` بالفعل. فحسابٌ
+   * أطفأه بدر بعد آخر زيارة — أو قيمةٌ ملفَّقة — تسقط بلا أثر ويعود الاختيار
+   * إلى الأول (وهو الأرخص بعد `0070`).
+   */
+  const remembered = (await cookies()).get(TRANSFER_ACCOUNT_COOKIE)?.value ?? null;
+  const preferredId = preferredAccountId(
+    accounts.map((account) => account.id),
+    remembered
+  );
 
   const receiptAccounts: ReceiptAccountOption[] = accounts.map((account) => ({
     id: account.id,
@@ -1134,7 +1445,14 @@ export default async function BookingStatusPage({ params }: PageParams) {
         ) : null}
 
         {accounts.length > 0 ? (
-          <AccountChooser accounts={accounts} currency={currency} fmt={fmt} t={t} />
+          <AccountChooser
+            accounts={accounts}
+            preferredId={preferredId}
+            anyFee={anyFee}
+            currency={currency}
+            fmt={fmt}
+            t={t}
+          />
         ) : (
           <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm leading-7">
             <Info className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
@@ -1154,6 +1472,7 @@ export default async function BookingStatusPage({ params }: PageParams) {
               amountDue={amountDue}
               currency={currency}
               accounts={receiptAccounts}
+              defaultAccountId={preferredId}
               locale={locale}
             />
           </div>
@@ -1173,6 +1492,7 @@ export default async function BookingStatusPage({ params }: PageParams) {
           المشتركة قبل إضافات `PRINT_CSS` أعلاه */}
       <main id="main" className="print-sheet flex-1">
         <style>{PRINT_CSS}</style>
+        <style>{MOTION_CSS}</style>
 
         {/* الترويسة: رقم الحجز بارزاً */}
         <section className="site-hero-bg relative overflow-hidden">
@@ -1811,7 +2131,19 @@ export default async function BookingStatusPage({ params }: PageParams) {
             >
               <div className="flex flex-col gap-2">
                 <h2 className="flex items-center gap-2 text-base font-bold">
-                  <Wallet className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                  {/*
+                    ن‑٩ (د): **النبض هنا وحده** — «بانتظار الدفع» هي الحالة التي
+                    فيها إلحاحٌ حقيقي، والحلقة تنبض ما دام المال لم يصل. وهي
+                    `aria-hidden` لأنها لا تحمل خبراً: الخبر في العنوان وفي
+                    جملة المهلة تحته.
+                  */}
+                  <span className="relative grid size-5 shrink-0 place-items-center">
+                    <span
+                      aria-hidden="true"
+                      className="bk-pulse-ring absolute inset-0 rounded-full bg-primary/40"
+                    />
+                    <Wallet className="relative size-5 text-primary" aria-hidden="true" />
+                  </span>
                   {gateways.length > 0
                     ? tPay("heading", "ادفع {amount} لتأكيد الحجز", {
                         amount: fmt.money(amountDue, currency),
@@ -1842,21 +2174,36 @@ export default async function BookingStatusPage({ params }: PageParams) {
                       قائم أمامه، ولا «محفوظ حتى» فذلك وعدٌ بماضٍ.
                 */}
                 {holdUntilLabel ? (
-                  <p className="flex items-start gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-7">
-                    <Clock className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
-                    <span>
-                      {holdPassed
-                        ? t(
-                            "pay.holdPassed",
-                            "انقضت مهلة حفظ هذا الحجز، وقد يُلغى تلقائياً في أي وقت. إن كنت قد حوّلت فارفع الإيصال الآن، وإلا فتواصل معنا بذكر رقم حجزك."
-                          )
-                        : t(
-                            "pay.holdUntil",
-                            "حجزك محفوظ لك حتى {value} — أتمّ التحويل وارفع الإيصال قبله، فبعده قد يُلغى تلقائياً ويعود موعده متاحاً لغيرك.",
-                            { value: holdUntilLabel }
-                          )}
-                    </span>
-                  </p>
+                  <div className="flex flex-col gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3">
+                    <p className="flex items-start gap-2 text-sm leading-7">
+                      <Clock className="mt-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span>
+                        {holdPassed
+                          ? t(
+                              "pay.holdPassed",
+                              "انقضت مهلة حفظ هذا الحجز، وقد يُلغى تلقائياً في أي وقت. إن كنت قد حوّلت فارفع الإيصال الآن، وإلا فتواصل معنا بذكر رقم حجزك."
+                            )
+                          : t(
+                              "pay.holdUntil",
+                              "حجزك محفوظ لك حتى {value} — أتمّ التحويل وارفع الإيصال قبله، فبعده قد يُلغى تلقائياً ويعود موعده متاحاً لغيرك.",
+                              { value: holdUntilLabel }
+                            )}
+                      </span>
+                    </p>
+
+                    {/*
+                      ن‑٩ (ج): العدّاد **إضافةٌ على الجملة لا بديلٌ عنها**.
+                      الجملة بالتاريخ الكامل بتوقيت القاهرة هي ما يصل من لا
+                      سكربت عنده وما يُطبع على الورقة؛ والعدّاد يعيش في المتصفح
+                      وحده ويذهب مع الطباعة (`PRINT_HIDDEN_CLASS`) — رقمٌ يتغيّر
+                      كل ثانية لا معنى له على ورق.
+                    */}
+                    {showCountdown && hold.holdUntil ? (
+                      <div className={`${PRINT_HIDDEN_CLASS} ps-6`}>
+                        <HoldCountdown holdUntil={hold.holdUntil} locale={locale} />
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
 
@@ -1898,8 +2245,20 @@ export default async function BookingStatusPage({ params }: PageParams) {
               className="flex flex-col gap-4 rounded-3xl border border-primary/30 bg-primary/5 p-5 sm:p-6"
             >
               <div className="flex items-start gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
-                  <ShieldCheck className="size-5" aria-hidden="true" />
+                {/*
+                  ن‑٩ (د): **حركةٌ واحدة عند الوصول ثم سكون** — علامةُ ثقةٍ لا
+                  تنبيه. والحلقة تتلاشى مرةً ولا تتكرر، والدرع يستقر ولا يتحرك
+                  بعدها. وما يبقى بعد الحركة (وبلا حركةٍ أصلاً) هو نفسه: درعٌ
+                  على لون العلامة.
+                */}
+                <span className="relative grid size-10 shrink-0 place-items-center">
+                  <span
+                    aria-hidden="true"
+                    className="bk-arrive-ring absolute inset-0 rounded-full bg-primary/40"
+                  />
+                  <span className="bk-arrive relative grid size-10 place-items-center rounded-full bg-primary text-primary-foreground">
+                    <ShieldCheck className="size-5" aria-hidden="true" />
+                  </span>
                 </span>
                 <div className="flex flex-col gap-1.5">
                   <h2 className="text-base font-bold">
@@ -1917,6 +2276,58 @@ export default async function BookingStatusPage({ params }: PageParams) {
                   </p>
                 </div>
               </div>
+
+              {/*
+                ══════════════════════════════════════════════════════════════
+                 ن‑٧ — «أرسل تفاصيل رحلتك»، **هنا وحدها**
+                ══════════════════════════════════════════════════════════════
+
+                قرار بدر: لا زرّ مشاركةٍ عائم في كل صفحة، بل في **لحظة المشاركة
+                الحقيقية** — حجزٌ تأكّد، وصاحبه يريد أن يخبر من ينتظره أو من
+                يستقبله. وقبل التأكيد لا شيء يُرسَل: من يشارك حجزاً لم يُدفع
+                يشارك مهمّةً معلّقة لا خبراً.
+
+                ولا يُصيَّر بعد انتهاء الرحلة كذلك: تفاصيل رحلةٍ تمّت خبرٌ فات.
+
+                🔒 **والفرق عن شريط «احفظ هذا الرابط» أعلى الصفحة مقصود:** ذاك
+                يقول للعميل «هذا مفتاحك فاحفظه»، وهذا يقول «أرسله لمن يحتاجه» —
+                ولذلك يحمل معه **تنبيهاً صريحاً** بأن من يفتحه يرى الصفحة.
+                المشاركة قرارُ العميل، ووظيفتنا أن يكون مطّلعاً حين يتخذه.
+              */}
+              {status !== "completed" ? (
+                <div
+                  className={`${PRINT_HIDDEN_CLASS} flex flex-col gap-2 rounded-2xl border border-border bg-card px-4 py-3.5 text-card-foreground`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm font-bold">
+                      {t("confirmed.shareTitle", "أرسل تفاصيل رحلتك")}
+                    </p>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <TripShare
+                        text={tripShareText}
+                        url={bookingUrl}
+                        title={t("confirmed.shareCardTitle", "تفاصيل رحلة {reference}", {
+                          reference,
+                        })}
+                        fallbackHref={waShareHref(tripShareText)}
+                        label={t("confirmed.shareCta", "مشاركة")}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                      />
+                      <CopyButton
+                        value={tripShareText}
+                        label={t("confirmed.shareCopyLabel", "تفاصيل الرحلة")}
+                        variant="inline"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs leading-6 text-muted-foreground">
+                    {t(
+                      "confirmed.shareNote",
+                      "الموعد والمسار ورقم الحجز — بلا أي مبلغ. ومعها رابط المتابعة، ومن يفتحه يرى هذه الصفحة، فأرسله لمن تثق به وحده."
+                    )}
+                  </p>
+                </div>
+              ) : null}
 
               {/* زرّا التواصل أداتان لا معلومة — يذهبان بالطباعة، ويقوم مقامهما
                   سطر التذييل المطبوع أسفل الورقة وفيه الهاتف مكتوباً */}

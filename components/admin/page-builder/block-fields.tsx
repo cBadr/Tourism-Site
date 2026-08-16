@@ -19,6 +19,10 @@ import {
   SPACING_OPTIONS,
   THEME_COLOR_LABELS,
   THEME_COLOR_OPTIONS,
+  TYPING_HOLD_LABELS,
+  TYPING_HOLD_OPTIONS,
+  TYPING_SPEED_LABELS,
+  TYPING_SPEED_OPTIONS,
   VIDEO_SUGGESTIONS,
   fieldLabel,
 } from "@/lib/page-builder/registry";
@@ -529,14 +533,30 @@ function StyleFields({
     onChange({ ...content, [STYLE_FIELD]: next });
   };
 
+  /**
+   * 🆕 ن‑٤ — عنوان الصندوق يتبع ما فيه. كتلةٌ لا تحمل إلا مقابض الحركة
+   * (‏`hero`) كان عنوانها «التنسيق» يعِد بألوانٍ وتباعدٍ لا وجود لهما، ونصّ
+   * المساعدة يشرح رموز الثيم لمن لا يرى منها حقلاً واحداً.
+   */
+  const hasFormat = keys.some(
+    (key) => key === "tone" || key === "background" || key === "spacing" || key === "hideOnMobile"
+  );
+
   return (
     <div className="space-y-3 rounded-lg border border-dashed border-border p-3">
       <div className="flex items-center gap-1.5">
-        <span className="text-sm font-medium">التنسيق</span>
-        <HelpTip>
-          رموز من ثيم العلامة لا ألوان مكتوبة — الرمز يتبع ألوان الهوية إن تغيّرت، واللون
-          المكتوب في المحتوى يبقى على حاله ويكسر هوية أي علامة أخرى تُطلق على هذا النظام.
-        </HelpTip>
+        <span className="text-sm font-medium">{hasFormat ? "التنسيق" : "أثر الكتابة على العنوان"}</span>
+        {hasFormat ? (
+          <HelpTip>
+            رموز من ثيم العلامة لا ألوان مكتوبة — الرمز يتبع ألوان الهوية إن تغيّرت، واللون
+            المكتوب في المحتوى يبقى على حاله ويكسر هوية أي علامة أخرى تُطلق على هذا النظام.
+          </HelpTip>
+        ) : (
+          <HelpTip>
+            إيقاع الأثر على «الجُمل المتناوبة» أعلاه. ولا يعمل شيءٌ منه ما دام الحقل فارغاً —
+            ومن طلب تقليل الحركة من نظامه يرى النصّ كاملاً فوراً بلا أي حركة.
+          </HelpTip>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -595,6 +615,70 @@ function StyleFields({
           </div>
         )}
 
+        {/* ── ن‑٤: إيقاع أثر الكتابة — قوائم مغلقة لا أرقام مللي ثانية ──── */}
+        {keys.includes("typingSpeed") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-typing-speed`} className="text-xs text-muted-foreground">
+              سرعة الكتابة
+            </Label>
+            <select
+              id={`${idPrefix}-typing-speed`}
+              className={fieldControlClass}
+              value={style.typingSpeed ?? "normal"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ typingSpeed: e.target.value as never })}
+            >
+              {TYPING_SPEED_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {TYPING_SPEED_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {keys.includes("typingHold") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-typing-hold`} className="text-xs text-muted-foreground">
+              مهلة الثبات قبل المحو
+            </Label>
+            <select
+              id={`${idPrefix}-typing-hold`}
+              className={fieldControlClass}
+              value={style.typingHold ?? "normal"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ typingHold: e.target.value as never })}
+            >
+              {TYPING_HOLD_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {TYPING_HOLD_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {keys.includes("typingErase") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-typing-erase`} className="text-xs text-muted-foreground">
+              سرعة المحو
+            </Label>
+            <select
+              id={`${idPrefix}-typing-erase`}
+              className={fieldControlClass}
+              value={style.typingErase ?? "normal"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ typingErase: e.target.value as never })}
+            >
+              {TYPING_SPEED_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {TYPING_SPEED_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {keys.includes("spacing") && (
           <div className="space-y-1.5">
             <Label htmlFor={`${idPrefix}-spacing`} className="text-xs text-muted-foreground">
@@ -620,6 +704,28 @@ function StyleFields({
           </div>
         )}
       </div>
+
+      {keys.includes("typingLoop") && (
+        /**
+         * 🔴 **الافتراضي «يقف»** — قرار بدر صراحةً: حركةٌ لا تنتهي على أول ما
+         * تراه العين تشتّت عميلاً يملأ نموذج الحجز أسفلها مباشرة. فالمربّع
+         * غير مؤشَّر ما لم يطلب المالك التكرار بيده.
+         */
+        <Label className="flex w-fit cursor-pointer items-center gap-2 text-sm font-normal">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={style.typingLoop === true}
+            disabled={disabled}
+            onChange={(e) => patchStyle({ typingLoop: e.target.checked ? true : undefined })}
+          />
+          يتكرّر بلا توقف
+          <HelpTip>
+            بلا تأشير: يكتب الجُمل مرة واحدة ويقف عند آخرها — وهو الافتراضي. وبالتأشير يعود
+            إلى الأولى بلا نهاية، وهي حركة دائمة بجوار نموذج الحجز فاختَرها بقصد.
+          </HelpTip>
+        </Label>
+      )}
 
       {keys.includes("hideOnMobile") && (
         <Label className="flex w-fit cursor-pointer items-center gap-2 text-sm font-normal">

@@ -440,9 +440,23 @@ function CounterField({
   fieldHeight: string;
 }) {
   return (
+    /**
+     * 🔴 **حلقة التركيز على الغلاف لا على الحقل — وهي إصلاح غيابٍ مقيس.**
+     *
+     * الحقل الرقمي يحمل `outline-none` بحقّ: حلقةٌ داخل حبّة العدّاد تصطدم
+     * بحدّها. **لكنها لم تُستبدل بشيء** — والقياس على الصفحة الحيّة بعد تركيزٍ
+     * حقيقي من لوحة المفاتيح: `:focus-visible` يتطابق، و`outline-style: none`،
+     * و`box-shadow: none`، والغلاف بلا `focus-within`. أي أن من يصل عدد
+     * الركاب بالـTab **لا يرى شيئاً يقول أين هو** (‏٢٫٤٫٧ AA).
+     *
+     * و`has-[input:focus-visible]` هو النمط القائم في المستودع لهذه الحالة
+     * بعينها (بطاقة الخدمة في `components/site/services.tsx`): الهدف الظاهر
+     * للمستخدم هو الحبّة كاملة لا الرقم في وسطها، فالحلقة تحيط ما يراه.
+     */
     <div
       className={cn(
         "flex items-center justify-between gap-2 rounded-2xl border border-input bg-background px-2",
+        "has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring/60",
         fieldHeight
       )}
     >

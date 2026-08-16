@@ -229,7 +229,12 @@ begin
       -- فيُترجَم. أما `src` و`poster` و`video` فحقولٌ **غير نصّية** لا تدخل هذه
       -- القائمة — وإلا دخل «‎/img/hero-chauffeur.avif» طابور المترجم، ومترجمٌ
       -- مجتهد قد «يعرّبه» فتختفي الصورة.
-      ('hero',          'system',  'home-only',     false, null,          array['badge','headline','sub','scrollLabel','imageAlt'], array['title'], '{}'::text[], array['src','poster','video'], null),
+      -- 🆕 ن‑٤ (‏`0071`): `typingPrefix` و`typingLines` نصّان يُقرآن ويُترجَمان —
+      -- الجزء الثابت من العنوان والجُمل المتناوبة بعده. وإيقاع الأثر (سرعة ·
+      -- مهلة · محو · تكرار) **ليس هنا**: رموزٌ تحت `content.style` المحجوز
+      -- بالاسم في `i18n_reserved_content_key`، فلا صفَّ ترجمةٍ لقيمة «normal»
+      -- ولا عمودَ جديد في هذا الجدول.
+      ('hero',          'system',  'home-only',     false, null,          array['badge','headline','typingPrefix','typingLines','sub','scrollLabel','imageAlt'], array['title'], '{}'::text[], array['src','poster','video'], null),
       ('columns',       'layout',  'any',           true,  4,             '{}'::text[],                    null,                   '{}'::text[],    null,                            null),
       -- `src` في `non_text_fields` شرطٌ لا زينة بعد `0065`: القاعدة (د) في
       -- `block_registry_check` تقرأ `required_fields` على اتحاد القوائم.
@@ -237,7 +242,9 @@ begin
       -- ── كتل م‑٢ الثلاث (‏`0061`) ──────────────────────────────────────
       -- الشعارات بيانات نظام لا `items` — والمبرر تغيّر في م‑٧: الشكل صار
       -- مقنَّناً، وبقاؤها في الإعدادات نطاقٌ (قائمةٌ واحدة للموقع) لا بنية.
-      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','note'],           null,                   '{}'::text[],    null,                            null),
+      -- 🔴 `disclaimer` خانةٌ ثالثة (‏`0072`): شرط الاستعمال لا يشارك النثر
+      -- التحريري مكانه، لأن الخانة الواحدة خسرته صامتاً حين كُتب فوقه.
+      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','note','disclaimer'], null,                '{}'::text[],    null,                            null),
       -- 🔴 `{items}` إلزاميةً = «الكتلة تُشحن والأرقام لا» (قرار بدر ٣)
       ('stat-band',     'content', 'any',           false, null,          array['title'],                  array['value','suffix','label'], array['items'], null,             null),
       -- بلا سعر (قرار بدر ١) — **قائم**. أمّا «بلا صورة» فنُقض بأمر بدر

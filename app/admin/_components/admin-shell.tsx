@@ -9,6 +9,7 @@ import {
   BarChart3,
   Bell,
   Car,
+  ChevronDown,
   ClipboardList,
   Coins,
   ConciergeBell,
@@ -43,6 +44,32 @@ import { cn } from "@/lib/utils";
  * هيكل لوحة التحكم — RTL: الشريط الجانبي على اليمين (أول عنصر في الـ flex).
  * العناصر المؤجلة معطلة مع شارة «قريباً» ورقم مرحلتها من docs/ROADMAP.md.
  * اسم العلامة يصل prop من الـ layout الخادمي (انضباط الـ Whitelabel).
+ *
+ * ── تجميع القائمة (قرار بدر 2026-08-17) ────────────────────────────────────
+ * ٢٣ بنداً مسطّحاً صارت بندين متصدّرين + خمس مجموعات قابلة للطيّ. وثلاث قواعد
+ * تحكم السلوك، وكسر أيٍّ منها يجعل التجميع أسوأ من القائمة المسطّحة التي حلّ محلها:
+ *
+ * (١) **الافتراضي: الكل مفتوح.** شريطٌ يخفي نصف بنوده عند أول فتح يُخفي شاشات
+ *     لا يعرف المالك أنها موجودة أصلاً.
+ * (٢) **الطيّ يُحفظ على الجهاز** (`localStorage`) — تفضيل عرضٍ لا بيانات، فلا
+ *     يستحق عموداً في القاعدة ولا يُزامَن بين الأجهزة.
+ * (٣) **المجموعة التي تحوي الصفحة الحالية تُفتح تلقائياً** ولو طواها المالك.
+ *
+ * ── تمييز العنوان عن الوجهة (ملاحظة بدر بعد أول نظرة) ──────────────────────
+ * البنية كانت صحيحة والعين تقرأ ٢٣ سطراً لا خمسة أقسام. والعلاج **بلا زخرفة
+ * ولا خطوط فاصلة** — أربعة فروق تتراكم:
+ *
+ * (أ) **الوجهات تُزاح للداخل والعناوين تبقى خارجها** (`ps-3` على كل حاوية
+ *     روابط). الإزاحة أقوى إشارة احتواءٍ في الواجهات، وكلفتها صفر.
+ * (ب) **فراغ فوق العنوان أكبر بخمسة أضعاف من الفراغ بين روابطه** (`mt-5`
+ *     مقابل `space-y-1`) — التقارب يجمع أكثر مما يجمع أي إطار.
+ * (ج) **حجمٌ ولونٌ أخفت**: ١١px بلون `muted-foreground` مقابل ١٤px بلون النص
+ *     الكامل، وبلا أيقونة تتصدّره — فليس له عمود الأيقونات الذي للوجهات.
+ * (د) **لا حبّة تمرير للعنوان**: الرابط يُضاء بخلفيةٍ كاملة لأنه يذهب بك إلى
+ *     مكان، والعنوان يغيّر لونه فقط — لأنه لا يذهب بك إلى شيء.
+ *
+ * ⚠ ولا تباعد حروف ولا «uppercase» على العربية: تباعد الحروف يفكّ اتصال
+ * الكلمة الموصولة، والعربية بلا حالة أحرف أصلاً.
  */
 
 type NavItem = {
@@ -77,73 +104,223 @@ type NavItem = {
   phase?: string;
 };
 
-const NAV_ITEMS: NavItem[] = [
+/**
+ * مجموعة قابلة للطيّ في القائمة الجانبية.
+ *
+ * `id` **إنجليزي وثابت** لأنه مفتاح الحفظ في `localStorage`: تغيير العنوان
+ * العربي غداً يجب ألا يُفقد المالك حالة الطيّ التي ضبطها على جهازه.
+ */
+type NavGroup = {
+  id: string;
+  label: string;
+  items: NavItem[];
+};
+
+/**
+ * بندان بلا مجموعة يتصدّران القائمة: هما ما يُفتح كل صباح، فوضعهما خلف عنوانٍ
+ * قابل للطيّ يضع نقرةً زائدة أمام أكثر شاشتين استعمالاً في اللوحة.
+ */
+const TOP_ITEMS: NavItem[] = [
   { label: "لوحة المعلومات", icon: LayoutDashboard, href: "/admin" },
   // «الإحصائيات» بعد «لوحة المعلومات» مباشرة: لوحة المعلومات صورة اليوم، وهذه
   // اتجاه الفترة وتفصيلها لكل قسم من الأقسام الستة (المرحلة ١٠). البند يبقى
-  // فعالاً على مساراتها الفرعية كلها (فحص startsWith أدناه).
+  // فعالاً على مساراتها الفرعية كلها (isItemActive أدناه).
   { label: "الإحصائيات", icon: BarChart3, href: "/admin/stats" },
-  { label: "الطلبات", icon: ClipboardList, href: "/admin/orders" },
-  { label: "طلبات الأسعار", icon: MessageSquareQuote, href: "/admin/quote-requests" },
-  { label: "المحتوى", icon: FileText, href: "/admin/content" },
-  // «اللغات» بعد «المحتوى» مباشرة: الترجمة تعيش على المحتوى نفسه — كل مفتاح في
-  // طابورها أصله نص عربي حُرِّر في الشاشة السابقة.
-  { label: "اللغات", icon: Languages, href: "/admin/languages" },
-  { label: "الأسطول", icon: Car, href: "/admin/fleet" },
-  { label: "التسعير", icon: Coins, href: "/admin/pricing" },
-  // «الخدمات الإضافية» بين «التسعير» و«الخصومات» عمداً: الخدمة **مكوّن من
-  // مكوّنات السعر لا طبقة تسويق** — كرسي الأطفال والواي فاي بندٌ يشتريه العميل
-  // ويُقيَّد على حجزه، لا حملةٌ تحفيزية. فموضعها مع شاشتَي بناء السعر (الأسطول
-  // والتسعير) لا مع الخصومات والبانرات.
-  // ⚠ وفي المعادلة موضعها بعد الخصم (`total = ride_total − discount + extras`)
-  // — أي أن ترتيب القائمة هنا يتبع **طبيعة الشاشة** لا ترتيب الحدود، بخلاف
-  // «الخصومات» أدناه التي علّلنا موضعها بموضعها في المعادلة. مذكور صراحةً حتى
-  // لا يُقرأ التناقض سهواً.
-  { label: "الخدمات الإضافية", icon: ConciergeBell, href: "/admin/extras" },
-  // «الخصومات» بعد «التسعير» مباشرة: الرؤية تصنّف الخصومات والتحفيز **مكمّلات
-  // للتسعير** لا قسماً مستقلاً (VISION.md:76 داخل قسم «آلية التسعير»). والخصم
-  // نفسه طبقة تقع بعد بناء السعر، فموضعه في القائمة يتبع موضعه في المعادلة.
-  // البند يبقى فعالاً على مساراته الفرعية (شاشة الكوبون والبانرات) بفحص
-  // startsWith أدناه.
-  { label: "الخصومات", icon: TicketPercent, href: "/admin/discounts" },
-  // «الولاء» ملاصقة لـ«الخصومات» لأنهما التوأم الذي تصنّفه الرؤية مكمّلات للتسعير
-  // (VISION.md:76 داخل قسم «آلية التسعير»)، ولأنهما في المعادلة **طبقتان
-  // متتاليتان تقتسمان أرضية هامشٍ واحدة**: الكوبون ثم النقاط، بسقفٍ واحد لا
-  // سقفين يُجمعان. فمن يضبط إحداهما يحتاج أن يرى الأخرى على بُعد سطر.
-  { label: "الولاء والنقاط", icon: Sparkles, href: "/admin/loyalty" },
-  { label: "حسابات الدفع", icon: CreditCard, href: "/admin/payment-accounts" },
-  // «المدفوعات» بعد «حسابات الدفع» مباشرة: الشاشتان وجها تحصيل واحد — الحسابات
-  // للتحويل اليدوي، وهذه للبوابات الإلكترونية ومطابقة جلساتها (المرحلة ٩).
-  { label: "المدفوعات", icon: Banknote, href: "/admin/payments" },
-  { label: "الإشعارات", icon: Bell, href: "/admin/notifications" },
-  { label: "المتعهدون", icon: Handshake, href: "/admin/subcontractors" },
-  // «الإسناد» بعد «المتعهدون» مباشرة: الشاشتان وجهان لعلاقة واحدة — من الشركاء،
-  // ثم كيف تصل إليهم الرحلة.
-  { label: "الإسناد", icon: Radio, href: "/admin/dispatch" },
-  // «أسباب فشل الرحلة» بعد «الإسناد» مباشرة وقبل «المالية»: هذا الكتالوج يُقرأ
-  // في اللحظة التي تلي الإسناد — رحلةٌ أُسندت ثم لم تُنفَّذ — **وأثره مالي على
-  // المتعهد** (لا شيء · دفع كامل · خصم). فموضعه بين مَن ينفّذ ومَن يُحاسَب.
-  // وهو شاشة إعدادٍ تُفتح مرات معدودة في العمر، فلا تتصدّر شاشات العمل اليومي.
-  { label: "أسباب فشل الرحلة", icon: AlertTriangle, href: "/admin/failure-reasons" },
-  // «المالية» فُعِّلت في المرحلة ٧: الخزينة والمصروفات ومقاصة المتعهدين وكشوف
-  // الحساب. البند يبقى فعالاً على مساراتها الفرعية كلها (فحص startsWith أدناه).
-  { label: "المالية", icon: Wallet, href: "/admin/finance" },
-  // ⚠ بندا المرحلة ١٠ التاليان تبنيهما شاشتان يملكهما وكيلان آخران في نفس
-  // المرحلة (`/admin/integrations` معرّفات القياس، و`/admin/seo` مركز السيو).
-  // أُضيفا هنا لأن ملف القائمة يملكه وكيل واحد، وشاشة بلا مدخل في التنقل =
-  // شاشة لم تُبنَ (النمط ٣ في handover/LESSONS.md). **عند الدمج: تأكد أن
-  // الصفحتين موجودتان فعلاً وإلا احذف بندهما** — رابط ٤٠٤ ظاهر أهون من شاشة
-  // مخفية، لكن لا هذا ولا ذاك يُترك.
-  { label: "الربط الخارجي", icon: Plug, href: "/admin/integrations" },
-  { label: "مركز السيو", icon: Search, href: "/admin/seo" },
-  // «السجلات» مع بندَي النظام في ذيل المجموعة (وضع الصيانة والإعدادات) لا مع
-  // شاشات العمل: هذه شاشة **قراءة محضة** لتاريخ المنصة — من فعل وماذا ومتى —
-  // لا طابور عملٍ يُفتح كل صباح. وموضعها قبل «وضع الصيانة» مباشرةً لأنها أول ما
-  // يُفتح عند التحقيق في حادثة، وآخر ما يُفتح في يوم عادي.
-  { label: "السجلات", icon: ScrollText, href: "/admin/logs" },
-  { label: "وضع الصيانة", icon: Wrench, href: "/admin/maintenance" },
-  { label: "الإعدادات", icon: Settings, href: "/admin/settings" },
 ];
+
+/**
+ * المجموعات الخمس وترتيب بنودها — **أقرّهما بدر نصّاً في 2026-08-17**.
+ *
+ * ⚠ والتعليقات أدناه تشرح الترتيب القائم لا ترتيباً أفضل مقترحاً: بعض البنود
+ * غيّرت جيرانها بالتجميع (الأسطول انتقل من جوار «التسعير» إلى «المتعهدون»،
+ * و«الإسناد» من جوار «المتعهدون» إلى «التشغيل»)، وذلك **قرار مالكٍ لا سهو**،
+ * فلا يُعاد إلى ما كان باجتهاد جلسةٍ لاحقة تقرأ التعليق القديم.
+ */
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: "ops",
+    label: "التشغيل",
+    // طابور العمل اليومي: ما يصل من العميل، ثم كيف يُسنَد، ثم ما أُبلِغ عنه.
+    items: [
+      { label: "الطلبات", icon: ClipboardList, href: "/admin/orders" },
+      { label: "طلبات الأسعار", icon: MessageSquareQuote, href: "/admin/quote-requests" },
+      // «الإسناد» هنا لا مع «المتعهدون»: الشاشة **فعلٌ يومي على رحلةٍ بعينها**
+      // لا إدارةٌ لعلاقة الشريك — فموضعها مع الطابور الذي تخدمه.
+      { label: "الإسناد", icon: Radio, href: "/admin/dispatch" },
+      { label: "الإشعارات", icon: Bell, href: "/admin/notifications" },
+    ],
+  },
+  {
+    id: "partners",
+    label: "المتعهدون",
+    items: [
+      { label: "المتعهدون", icon: Handshake, href: "/admin/subcontractors" },
+      // «الأسطول» مع الشركاء لا مع «التسعير»: المركبات تُدار مع مَن يقودها.
+      { label: "الأسطول", icon: Car, href: "/admin/fleet" },
+      // «أسباب فشل الرحلة» كتالوج يُقرأ في اللحظة التي تلي الإسناد — رحلةٌ
+      // أُسندت ثم لم تُنفَّذ — **وأثره مالي على المتعهد** (لا شيء · دفع كامل ·
+      // خصم). وهو شاشة إعدادٍ تُفتح مرات معدودة في العمر، فذيل المجموعة موضعه.
+      { label: "أسباب فشل الرحلة", icon: AlertTriangle, href: "/admin/failure-reasons" },
+    ],
+  },
+  {
+    id: "money",
+    label: "المال",
+    items: [
+      // «المالية» فُعِّلت في المرحلة ٧: الخزينة والمصروفات ومقاصة المتعهدين
+      // وكشوف الحساب. تتصدّر المجموعة لأنها حصيلة ما تحتها. والبند يبقى فعالاً
+      // على مساراتها الفرعية كلها (isItemActive أدناه).
+      { label: "المالية", icon: Wallet, href: "/admin/finance" },
+      // «المدفوعات» و«حسابات الدفع» متلاصقتان: وجها تحصيلٍ واحد — الأولى
+      // للبوابات الإلكترونية ومطابقة جلساتها (المرحلة ٩)، والثانية للتحويل اليدوي.
+      { label: "المدفوعات", icon: Banknote, href: "/admin/payments" },
+      { label: "حسابات الدفع", icon: CreditCard, href: "/admin/payment-accounts" },
+      { label: "التسعير", icon: Coins, href: "/admin/pricing" },
+      // «الخصومات» بعد «التسعير» مباشرة: الرؤية تصنّف الخصومات والتحفيز
+      // **مكمّلات للتسعير** لا قسماً مستقلاً (VISION.md:76 داخل قسم «آلية
+      // التسعير»). والخصم نفسه طبقة تقع بعد بناء السعر، فموضعه في القائمة يتبع
+      // موضعه في المعادلة. والبند يبقى فعالاً على مساراته الفرعية (شاشة الكوبون
+      // والبانرات).
+      { label: "الخصومات", icon: TicketPercent, href: "/admin/discounts" },
+      // «الولاء» ملاصقة لـ«الخصومات» لأنهما التوأم الذي تصنّفه الرؤية مكمّلات
+      // للتسعير، ولأنهما في المعادلة **طبقتان متتاليتان تقتسمان أرضية هامشٍ
+      // واحدة**: الكوبون ثم النقاط، بسقفٍ واحد لا سقفين يُجمعان. فمن يضبط
+      // إحداهما يحتاج أن يرى الأخرى على بُعد سطر.
+      { label: "الولاء والنقاط", icon: Sparkles, href: "/admin/loyalty" },
+      // «الخدمات الإضافية» في ذيل «المال» وهي مع ذلك **مكوّن من مكوّنات السعر
+      // لا طبقة تسويق** — كرسي الأطفال والواي فاي بندٌ يشتريه العميل ويُقيَّد
+      // على حجزه. وموضعها هنا يوافق موضعها في المعادلة نفسها:
+      // `total = ride_total − discount + extras` — آخر حدٍّ يُضاف.
+      { label: "الخدمات الإضافية", icon: ConciergeBell, href: "/admin/extras" },
+    ],
+  },
+  {
+    id: "content",
+    label: "المحتوى",
+    items: [
+      { label: "المحتوى", icon: FileText, href: "/admin/content" },
+      // «اللغات» بعد «المحتوى» مباشرة: الترجمة تعيش على المحتوى نفسه — كل مفتاح
+      // في طابورها أصله نص عربي حُرِّر في الشاشة السابقة.
+      { label: "اللغات", icon: Languages, href: "/admin/languages" },
+      { label: "مركز السيو", icon: Search, href: "/admin/seo" },
+    ],
+  },
+  {
+    id: "system",
+    label: "الإعدادات",
+    items: [
+      { label: "الإعدادات", icon: Settings, href: "/admin/settings" },
+      // «السجلات» شاشة **قراءة محضة** لتاريخ المنصة — من فعل وماذا ومتى — لا
+      // طابور عملٍ يُفتح كل صباح: أول ما يُفتح عند التحقيق في حادثة، وآخر ما
+      // يُفتح في يوم عادي.
+      { label: "السجلات", icon: ScrollText, href: "/admin/logs" },
+      { label: "وضع الصيانة", icon: Wrench, href: "/admin/maintenance" },
+      { label: "الربط الخارجي", icon: Plug, href: "/admin/integrations" },
+    ],
+  },
+];
+
+/** المسارات الفرعية (محرر المحتوى مثلاً) تُبقي بند القائمة الأم فعالاً */
+function isItemActive(item: NavItem, pathname: string): boolean {
+  if (!item.href) return false;
+  return (
+    pathname === item.href || (item.href !== "/admin" && pathname.startsWith(`${item.href}/`))
+  );
+}
+
+/** تفضيل عرضٍ على هذا الجهاز لا بيانات — فـ localStorage محلّه، لا عمود في القاعدة */
+const NAV_COLLAPSED_KEY = "tours01:admin:nav-collapsed";
+
+/** مرجع ثابت لـ«لا مجموعة مطويّة» — يمنع دورة تصيير في useSyncExternalStore */
+const NONE_COLLAPSED: readonly string[] = [];
+
+/**
+ * ── مخزن حالة الطيّ: خارج React عمداً ──────────────────────────────────────
+ *
+ * `localStorage` نظامٌ خارجي، فالقراءة منه `useSyncExternalStore` لا
+ * `useState` + `useEffect`. وثلاث فوائد ملموسة لا تفضيلُ أسلوب:
+ *
+ * (١) **لا خطأ ترطيب**: الخادم يرى `getServerSnapshot` (لا شيء مطويّ) وهو
+ *     نفسه ما يرسمه أول رسمٍ في المتصفح، ثم يُصحَّح بعد الترطيب.
+ * (٢) **نسختا الشريط** (الثابت ودرج الموبايل) تقرآن مصدراً واحداً، فلا تنحرفان.
+ * (٣) **تبويبٌ ثانٍ للوحة** يطوي مجموعةً ⇒ حدث `storage` يحدّث هذا التبويب.
+ */
+let collapsedSnapshot: readonly string[] | null = null;
+const collapsedListeners = new Set<() => void>();
+
+function parseCollapsed(raw: string | null): readonly string[] {
+  if (!raw) return NONE_COLLAPSED;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return NONE_COLLAPSED;
+    // ترشيح المعرّفات المجهولة: مجموعةٌ حُذفت أو أُعيدت تسميتها لا تُبقي حالةً معلّقة
+    const known = new Set(NAV_GROUPS.map((group) => group.id));
+    const ids = parsed.filter((id): id is string => typeof id === "string" && known.has(id));
+    return ids.length > 0 ? ids : NONE_COLLAPSED;
+  } catch {
+    return NONE_COLLAPSED; // قيمة تالفة — القائمة تفتح كاملة، وهو الافتراضي الآمن
+  }
+}
+
+/** اللقطة تُحفظ بمرجعها: `useSyncExternalStore` يقارن بالمرجع لا بالمحتوى */
+function getCollapsedSnapshot(): readonly string[] {
+  if (collapsedSnapshot === null) {
+    try {
+      collapsedSnapshot = parseCollapsed(window.localStorage.getItem(NAV_COLLAPSED_KEY));
+    } catch {
+      collapsedSnapshot = NONE_COLLAPSED; // متصفح يمنع التخزين — القائمة تعمل بلا حفظ
+    }
+  }
+  return collapsedSnapshot;
+}
+
+function getCollapsedServerSnapshot(): readonly string[] {
+  return NONE_COLLAPSED;
+}
+
+function commitCollapsed(next: readonly string[]) {
+  collapsedSnapshot = next;
+  try {
+    window.localStorage.setItem(NAV_COLLAPSED_KEY, JSON.stringify(next));
+  } catch {
+    /* تجاهُل مقصود: الطيّ يعمل في الجلسة الحالية ولا يُحفظ — ولا شيء ينكسر */
+  }
+  for (const listener of collapsedListeners) listener();
+}
+
+/** حدث `storage` يصل من **تبويب آخر** فقط — التبويب الكاتب لا يستقبله بنفسه */
+function onCollapsedStorage(event: StorageEvent) {
+  if (event.key !== NAV_COLLAPSED_KEY) return;
+  collapsedSnapshot = null; // تُعاد القراءة عند أول getSnapshot بعدها
+  for (const listener of collapsedListeners) listener();
+}
+
+function subscribeCollapsed(listener: () => void): () => void {
+  // مستمع نافذةٍ واحد مهما تعدّد المشتركون (نسختا الشريط): مستمعٌ لكل مشترك
+  // يُطلق موجة إشعارات مكرّرة على كل حدث
+  if (collapsedListeners.size === 0) window.addEventListener("storage", onCollapsedStorage);
+  collapsedListeners.add(listener);
+  return () => {
+    collapsedListeners.delete(listener);
+    if (collapsedListeners.size === 0) window.removeEventListener("storage", onCollapsedStorage);
+  };
+}
+
+function toggleCollapsedGroup(groupId: string) {
+  const current = getCollapsedSnapshot();
+  commitCollapsed(
+    current.includes(groupId)
+      ? current.filter((id) => id !== groupId)
+      : [...current, groupId]
+  );
+}
+
+/** فتح مجموعةٍ بعينها — بلا إشعارٍ إن كانت مفتوحة أصلاً، فلا تصيير بلا سبب */
+function expandCollapsedGroup(groupId: string) {
+  const current = getCollapsedSnapshot();
+  if (!current.includes(groupId)) return;
+  commitCollapsed(current.filter((id) => id !== groupId));
+}
 
 const PAGE_TITLES: Record<string, string> = {
   "/admin": "لوحة المعلومات",
@@ -205,12 +382,55 @@ const PAGE_TITLES: Record<string, string> = {
 function SidebarContent({
   brandName,
   pathname,
+  collapsedGroups,
+  onToggleGroup,
   onNavigate,
 }: {
   brandName: string;
   pathname: string;
+  collapsedGroups: readonly string[];
+  onToggleGroup: (groupId: string) => void;
   onNavigate?: () => void;
 }) {
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon;
+    if (item.href) {
+      const active = isItemActive(item, pathname);
+      return (
+        <Link
+          key={item.label}
+          href={item.href}
+          onClick={onNavigate}
+          aria-current={active ? "page" : undefined}
+          className={cn(
+            "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+            active ? "bg-primary text-primary-foreground" : "text-sidebar-foreground hover:bg-muted"
+          )}
+        >
+          <Icon className="size-4 shrink-0" />
+          <span className="truncate">{item.label}</span>
+        </Link>
+      );
+    }
+    return (
+      <div
+        key={item.label}
+        aria-disabled="true"
+        title={`يُفعَّل في المرحلة ${item.phase} من خارطة الطريق`}
+        className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-muted-foreground/70 select-none"
+      >
+        <Icon className="size-4 shrink-0 opacity-60" />
+        <span className="truncate">{item.label}</span>
+        <Badge
+          variant="outline"
+          className="ms-auto shrink-0 px-1.5 text-[10px] text-muted-foreground"
+        >
+          قريباً · م{item.phase}
+        </Badge>
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="flex h-14 shrink-0 items-center px-4">
@@ -220,47 +440,66 @@ function SidebarContent({
         </Link>
       </div>
       <Separator />
-      <nav aria-label="التنقل الرئيسي" className="flex-1 space-y-1 overflow-y-auto p-3">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          if (item.href) {
-            // المسارات الفرعية (محرر المحتوى مثلاً) تُبقي بند القائمة الأم فعالاً
-            const active =
-              pathname === item.href ||
-              (item.href !== "/admin" && pathname.startsWith(`${item.href}/`));
-            return (
-              <Link
-                key={item.label}
-                href={item.href}
-                onClick={onNavigate}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-sidebar-foreground hover:bg-muted"
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                <span className="truncate">{item.label}</span>
-              </Link>
-            );
-          }
+      <nav aria-label="التنقل الرئيسي" className="flex-1 overflow-y-auto p-3">
+        {/* البندان المتصدّران يأخذان **إزاحة الوجهات نفسها** رغم أنهما بلا
+            مجموعة: القاعدة التي تقرأها العين هي «كل ما يُنقَر للانتقال على خطٍّ
+            واحد، والعناوين وحدها خارجه». ولو تُركا على خط العناوين لصار
+            «لوحة المعلومات» و«التشغيل» في مرتبةٍ واحدة وهما ليسا كذلك. */}
+        <div className="space-y-1 ps-3">{TOP_ITEMS.map(renderItem)}</div>
+
+        {NAV_GROUPS.map((group) => {
+          const expanded = !collapsedGroups.includes(group.id);
+          const hasActive = group.items.some((item) => isItemActive(item, pathname));
+          const panelId = `admin-nav-${group.id}`;
+          // mt-5 فوق كل مجموعة مقابل space-y-1 بين روابطها: الفجوة قبل العنوان
+          // خمسة أضعاف الفجوة داخله، فتقرأ العين «قسم جديد» قبل أن تقرأ الكلمة
           return (
-            <div
-              key={item.label}
-              aria-disabled="true"
-              title={`يُفعَّل في المرحلة ${item.phase} من خارطة الطريق`}
-              className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-muted-foreground/70 select-none"
-            >
-              <Icon className="size-4 shrink-0 opacity-60" />
-              <span className="truncate">{item.label}</span>
-              <Badge
-                variant="outline"
-                className="ms-auto shrink-0 px-1.5 text-[10px] text-muted-foreground"
+            <div key={group.id} className="mt-5">
+              {/* عنوان المجموعة زرٌّ حقيقي لا <div> بمستمع نقر: يصله Tab، ويعمل
+                  بالمسافة وEnter، ويُعلن حالته بـ aria-expanded. وحلقة التركيز
+                  بـ ring-offset-sidebar كي تبقى مرئية على أرضية الشريط نفسها.
+                  **أخفتُ شكلاً وأقوى دلالةً** — لا العكس. */}
+              <button
+                type="button"
+                onClick={() => onToggleGroup(group.id)}
+                aria-expanded={expanded}
+                aria-controls={panelId}
+                // (١) بلا `rounded`+`hover:bg`: الحبّة الكاملة عند التمرير وعدٌ
+                //     بالانتقال، وهذا الزر لا ينقل. يبقى `rounded-sm` لشكل حلقة
+                //     التركيز وحدها.
+                // (٢) بلا tracking: تباعد الحروف عادةٌ لاتينية، وفي العربية
+                //     يباعد حروفَ الكلمة الموصولة فيُضعف قراءتها.
+                className="flex w-full items-center gap-1.5 rounded-sm px-3 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
               >
-                قريباً · م{item.phase}
-              </Badge>
+                {/* الكلمة أولاً والسهم في الطرف — لا العكس: بهذا يبدأ العنوان
+                    من **حافة أبعد للخارج من عمود أيقونات الوجهات**، فيختلف
+                    ظلّ السطر كله لا حجم خطّه وحده. وسهمٌ متصدّر كان سيدفع
+                    الكلمة إلى داخل العمود فيضيع أثر الإزاحة. */}
+                <span className="truncate">{group.label}</span>
+                {/* نقطة على العنوان حين تُطوى مجموعةٌ فيها الصفحة الحالية. لا يصل
+                    إلى هذه الحالة إلا الطيّ اليدوي بعد الوصول (الفتح التلقائي
+                    يمنع ما عداه)، ومن يصل إليها يحتاج أثراً يقول: قسمك هنا. */}
+                {hasActive && !expanded && (
+                  <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
+                )}
+                <ChevronDown
+                  aria-hidden
+                  className={cn(
+                    "ms-auto size-3.5 shrink-0 transition-transform duration-150",
+                    // مفتوحة: السهم لأسفل. مطويّة: يستدير ليشير في اتجاه
+                    // القراءة — يساراً في RTL ويميناً في LTR. ودورانان لا
+                    // واحد لأن الاصطلاح نفسه **ينعكس** بانعكاس الاتجاه.
+                    !expanded && "ltr:-rotate-90 rtl:rotate-90"
+                  )}
+                />
+              </button>
+              {/* hidden لا إزالة من الشجرة: يبقى العنصر الذي يشير إليه
+                  aria-controls موجوداً، ولا تُفقد الروابط من الـ DOM.
+                  و`ps-3` هي الإزاحة التي تجعل الاحتواء مرئياً — منطقية لا
+                  يسارية، فتنقلب مع الاتجاه بلا سطر ثانٍ. */}
+              <div id={panelId} hidden={!expanded} className="mt-1 space-y-1 ps-3">
+                {group.items.map(renderItem)}
+              </div>
             </div>
           );
         })}
@@ -298,6 +537,30 @@ export function AdminShell({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  // ── حالة طيّ مجموعات القائمة ───────────────────────────────────────────────
+  // تُقرأ هنا لا داخل SidebarContent: المكوّن يُصيَّر **مرتين** (الشريط الثابت
+  // ودرج الموبايل)، والاشتراك في مكان واحد يبقيهما على قيمة واحدة.
+  const collapsedGroups = React.useSyncExternalStore(
+    subscribeCollapsed,
+    getCollapsedSnapshot,
+    getCollapsedServerSnapshot
+  );
+
+  const activeGroupId = React.useMemo(
+    () =>
+      NAV_GROUPS.find((group) => group.items.some((item) => isItemActive(item, pathname)))?.id ??
+      null,
+    [pathname]
+  );
+
+  // المجموعة التي تحوي الصفحة الحالية تُفتح ولو طواها المالك — فلا يضيع أحد داخل
+  // قسمٍ لا يراه. والفتح **يُكتب في التخزين** لا يُفرض عند العرض فقط: لو فُرض
+  // عرضاً لبقي زر العنوان لا يستجيب للنقر ما دام المستخدم داخل القسم، وهو عطبٌ
+  // ظاهر. وبعد الفتح التلقائي يستطيع طيّه بيده، ويبقى مطويّاً حتى يعود إليه.
+  React.useEffect(() => {
+    if (activeGroupId) expandCollapsedGroup(activeGroupId);
+  }, [activeGroupId]);
 
   const isLogin =
     pathname === "/admin/login" ||
@@ -353,7 +616,12 @@ export function AdminShell({
     <div className="flex min-h-dvh bg-muted/30">
       {/* الشريط الجانبي الثابت — يمين الشاشة في RTL (أول عنصر) */}
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-e border-border bg-sidebar text-sidebar-foreground lg:flex">
-        <SidebarContent brandName={brandName} pathname={pathname} />
+        <SidebarContent
+          brandName={brandName}
+          pathname={pathname}
+          collapsedGroups={collapsedGroups}
+          onToggleGroup={toggleCollapsedGroup}
+        />
       </aside>
 
       {/* درج الموبايل */}
@@ -379,6 +647,8 @@ export function AdminShell({
             <SidebarContent
               brandName={brandName}
               pathname={pathname}
+              collapsedGroups={collapsedGroups}
+              onToggleGroup={toggleCollapsedGroup}
               onNavigate={() => setOpen(false)}
             />
           </aside>
