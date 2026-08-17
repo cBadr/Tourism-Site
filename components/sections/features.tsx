@@ -7,7 +7,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { SectionHeading } from "@/components/site/section-heading";
-import { iconFor } from "@/components/sections/icons";
+import { iconFor, type IconComponent } from "@/components/sections/icons";
+import { RAIL_GRID_3, Rail, RailItem } from "@/components/sections/rail";
 import { FlowRail, FlowRoad } from "@/components/motion";
 import { createFormatter } from "@/components/booking/format";
 import { cn } from "@/lib/utils";
@@ -50,10 +51,20 @@ export async function FeaturesSection({
   if (items.length === 0) return null;
 
   const t = await getT("sections.features", locale);
-  const isSteps = style?.featuresLayout === "steps";
+  const layout = style?.featuresLayout ?? "cards";
+  const isSteps = layout === "steps";
+  const isCompact = layout === "compact";
+  const isRail = layout === "rail";
 
   return (
-    <section className="bg-muted/40 py-16 md:py-24">
+    <section
+      className={cn(
+        "bg-muted/40 py-16 md:py-24",
+        /* المضغوط يقصّ الإيقاع الرأسي كما يقصّ البطاقات — وإلا بقي نصفُ المكسب
+           في الحشو حول قائمةٍ صارت أقصر من حشوها */
+        isCompact && "py-12 md:py-24"
+      )}
+    >
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         {content.title ? (
           <SectionHeading
@@ -70,6 +81,50 @@ export async function FeaturesSection({
 
         {isSteps ? (
           <StepsFlow items={items} locale={locale} spaced={Boolean(content.title)} />
+        ) : isCompact ? (
+          /* ═══ صفوفٌ مضغوطة ═══════════════════════════════════════════════
+             الأيقونة والعنوان على سطرٍ واحد والنصّ تحته، بلا بطاقةٍ ولا إطار
+             ولا ظل. وهي لغة `why-us` المضغوطة نفسها — ولغةُ التصميم نفسه في
+             `#promise`: شارةٌ صغيرة، `<h3>`، ثم `<p>`، بلا صندوق. */
+          <ul
+            role="list"
+            className={cn(
+              "grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-3",
+              content.title && "mt-8 md:mt-14"
+            )}
+          >
+            {featureCards(items).map((card) => (
+              <li key={card.key} className="flex items-start gap-3">
+                <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  {card.Icon ? <card.Icon className="size-5" aria-hidden="true" /> : null}
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold leading-6">{card.item.title}</h3>
+                  {card.item.text ? (
+                    <p className="mt-1 text-pretty text-sm leading-6 text-muted-foreground">
+                      {card.item.text}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : isRail ? (
+          /* ═══ سكةٌ أفقية ═════════════════════════════════════════════════
+             نفس بطاقات `cards` حرفاً، داخل `Rail` المستوردة — لا نسخةَ ثالثة
+             من القالب ولا سكةَ رابعة (القاعدة الذهبية ١٢). */
+          <Rail
+            id="featuresRail"
+            label={content.title ?? t("eyebrow", "المزايا")}
+            gridClassName={RAIL_GRID_3}
+            className={cn(content.title && "mt-10 md:mt-14")}
+          >
+            {featureCards(items).map((card) => (
+              <RailItem key={card.key}>
+                <FeatureCard card={card} className="h-full" />
+              </RailItem>
+            ))}
+          </Rail>
         ) : (
           <div
             className={cn(
@@ -77,30 +132,76 @@ export async function FeaturesSection({
               content.title && "mt-10 md:mt-14"
             )}
           >
-            {items.map((item) => {
-              /* المجهول يغيب ولا ينهار — والافتراضي هو الرمز الذي كان محفوراً */
-              const Icon = iconFor(item.icon, CircleCheck);
-              return (
-                <Card
-                  key={item.title}
-                  className="rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]"
-                >
-                  <CardHeader>
-                    <div className="mb-3 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
-                      {Icon ? <Icon className="size-6" aria-hidden="true" /> : null}
-                    </div>
-                    <CardTitle className="text-lg font-bold">{item.title}</CardTitle>
-                    {item.text ? (
-                      <CardDescription className="leading-7">{item.text}</CardDescription>
-                    ) : null}
-                  </CardHeader>
-                </Card>
-              );
-            })}
+            {featureCards(items).map((card) => (
+              <FeatureCard key={card.key} card={card} />
+            ))}
           </div>
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * نموذج البطاقة — العنصر ورمزُه محلولاً.
+ *
+ * 🔴 **ووجودُه شرطُ لِنت لا ترفٌ تنظيمي.** `<Icon />` حيث `Icon` ثابتٌ **محلي**
+ * أُسنِد أثناء التصيير يرفضه مُصرِّف React بـ«‏Cannot create components during
+ * render» — وهو مقيسٌ لا مُفترَض: أمسكه `pnpm lint` على هذا الملف بعينه.
+ * وبقيةُ العارضات تنجو منه لأنها `async` (مكوّنات خادم يتخطّاها المُصرِّف)،
+ * وهذه ليست كذلك. فالرمز يُقرأ **بخاصية** (`card.Icon`) لا بمُعرِّف — وهو نفس
+ * شكل `why-us.tsx` (`point.Icon`) و`services.tsx` (نموذج `Card`) حرفاً.
+ */
+type FeatureCardModel = {
+  key: string;
+  item: NonNullable<SectionContentMap["features"]["items"]>[number];
+  /* المجهول يغيب ولا ينهار — والافتراضي هو الرمز الذي كان محفوراً */
+  Icon: IconComponent | null;
+};
+
+function featureCards(
+  items: NonNullable<SectionContentMap["features"]["items"]>
+): FeatureCardModel[] {
+  return items.map((item, index) => ({
+    key: (item as { _k?: string })._k ?? `${item.title}-${index}`,
+    item,
+    Icon: iconFor(item.icon, CircleCheck),
+  }));
+}
+
+/**
+ * بطاقة الميزة الواحدة — **قالبٌ واحد يخدم `cards` و`rail` معاً**.
+ *
+ * ⚠ وكانت مكتوبةً داخل حلقة `cards`. ولمّا صار للقسم شكلٌ ثانٍ يستعمل البطاقة
+ * نفسها، كان الطريق المعتاد أن تُنسخ — وهي الطريقة التي وُلد بها نصفُ عيوب هذا
+ * المستودع (النمط ٤ في `LESSONS.md`): نسختان تبدآن متطابقتين ثم تنحرفان عند
+ * أول إصلاح.
+ */
+function FeatureCard({
+  card,
+  className,
+}: {
+  card: FeatureCardModel;
+  className?: string;
+}) {
+  const { item } = card;
+  return (
+    <Card
+      className={cn(
+        "rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]",
+        className
+      )}
+    >
+      <CardHeader>
+        <div className="mb-3 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
+          {card.Icon ? <card.Icon className="size-6" aria-hidden="true" /> : null}
+        </div>
+        <CardTitle className="text-lg font-bold">{item.title}</CardTitle>
+        {item.text ? (
+          <CardDescription className="leading-7">{item.text}</CardDescription>
+        ) : null}
+      </CardHeader>
+    </Card>
   );
 }
 

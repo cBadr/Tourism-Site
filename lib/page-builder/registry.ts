@@ -383,6 +383,8 @@ export const TYPING_HOLD_LABELS: Record<TypingHoldToken, string> = {
 export const FEATURES_LAYOUT_LABELS: Record<FeaturesLayoutToken, string> = {
   cards: "بطاقات (شبكة)",
   steps: "خطوات مرقَّمة على مسار",
+  compact: "صفوف مضغوطة (بلا بطاقات)",
+  rail: "سكة أفقية على الجوال",
 };
 
 /** شكل «لماذا نحن»: صفوفٌ مضغوطة أم عرضٌ بصريّ أوسع */

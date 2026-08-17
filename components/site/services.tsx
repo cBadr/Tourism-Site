@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import Image from "next/image";
 import { FileText } from "lucide-react";
 import {
@@ -15,6 +14,7 @@ import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getLocalizedServices, getT } from "@/lib/i18n/content";
 import { iconFor, type IconComponent } from "@/components/sections/icons";
 import { safeMediaSrc } from "@/components/sections/image";
+import { RAIL_GRID_3, Rail, RailItem } from "@/components/sections/rail";
 import type { SectionContentMap } from "@/lib/content-types";
 import { internalPath, localeHref } from "./links";
 import { SectionHeading } from "./section-heading";
@@ -143,7 +143,30 @@ export async function ServicesSection({
           }
         />
 
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 md:mt-16">
+        {/**
+         * 🆕 **سكةٌ أفقية على الجوال — بأمر بدر بعد أن فتح الموقع المنشور على
+         * هاتفه:** «الجزء الخاص بالخدمات في واجهة الموبايل، خلينا نعمله بنفس
+         * الطريقة بتاعت المسارات و الأسطول».
+         *
+         * وهو **أكبر مكسبٍ باقٍ على الجوال**: ٢٠٤٣ بكسل مقيسة عند ٣٧٥ عرضاً —
+         * أطول من الأسطول قبل تحويله، وأطول قسمٍ في الصفحة كلها.
+         *
+         * والآلية **مستوردة لا مكتوبة**: نفس `Rail` التي تحمل المسارات
+         * والأسطول — ثالثةُ سكةٍ بصفر سطرٍ منسوخ (القاعدة الذهبية ١٢).
+         *
+         * 🔒 **و`RAIL_GRID_3` ليست تخميناً**: شبكة التصميم (`.svcx__grid`)
+         * ثلاثة أعمدة فوق ‎١٠٠٠px، وهو تخطيط هذا القسم القائم حرفاً
+         * (`lg:grid-cols-3`). فالسكة **لا تغيّر المكتب ببكسل** — تغيّر ما دون
+         * `md` وحده. وستُّ خدماتٍ في ثلاثة أعمدة = صفّان مكتملان بلا خانةٍ
+         * فارغة، وهي العلّة نفسها التي يعالجها التصميم بمدّ البطاقة الأخيرة
+         * حين تكون الأعمدة عمودين.
+         */}
+        <Rail
+          id="servicesRail"
+          label={t("railLabel", "خدماتنا")}
+          gridClassName={RAIL_GRID_3}
+          className="mt-12 md:mt-16"
+        >
           {cards.map((card) => {
             const quoteHref =
               card.quoteSlug && QUOTE_ONLY_SERVICES.has(card.quoteSlug)
@@ -175,8 +198,29 @@ export async function ServicesSection({
                    * سطرين من نصّ، فيضيع تخطيط `bento` الذي تقوم عليه الشبكة
                    * في التصميم. وبلا صورة يبقى الارتفاع من المحتوى كما كان.
                    */
+                  /**
+                   * 🔴 `isolate` **شرطُ عمل الرابط الممدود، لا زينة** — والعلّة
+                   * أُمسكت بقياسٍ حيّ عند تحويل القسم إلى سكة (2026-08-17).
+                   *
+                   * كان `CardHeader` يحمل `relative z-10` ليعلو الصورة، فصار
+                   * **هو** الكتلةَ الحاويةَ لـ`after:inset-0` بدل البطاقة —
+                   * لأن `inset` يُحلّ على أقرب سلفٍ **موضَّع**. فهدف النقر لم
+                   * يكن «البطاقة كاملة» كما يَعِد التعليق أسفله، بل شريط
+                   * الترويسة وحده: مقيسٌ بمسحٍ بخمسة صفوف × ثلاثة أعمدة على
+                   * الصفحة الحيّة — **الصفّان العلويان والصفّ السفلي يقعان خارج
+                   * الرابط**، أي أعلى ٤٠٪ من البطاقة وأسفل ٨٪ منها لا تفتح شيئاً.
+                   *
+                   * وهو عيبٌ سابقٌ لهذا التغيير (وُلد مع صور م‑٧)، لكنه يتفاقم
+                   * بالسكة: البطاقة صارت ٢٥٦ بكسل بدل ٣٤٣.
+                   *
+                   * والعلاج أن تعود البطاقة كتلةً حاوية: `isolate` تنشئ عليها
+                   * سياق تكديس (وهو ما يفعله التصميم حرفاً في `.svcx__a`:
+                   * `position:relative; isolation:isolate`)، فتنزل الصورة إلى
+                   * `-z-10` داخله، وتستغني الترويسة عن `relative` — فيُحلّ
+                   * `inset-0` على البطاقة وتصير كلها هدفاً.
+                   */
                   card.src
-                    ? "min-h-64 justify-end border-transparent bg-transparent text-white ring-white/15"
+                    ? "isolate min-h-64 justify-end border-transparent bg-transparent text-white ring-white/15"
                     : null
                 )}
               >
@@ -190,13 +234,23 @@ export async function ServicesSection({
                 {card.src ? (
                   <span
                     aria-hidden={card.alt === "" ? "true" : undefined}
-                    className="absolute inset-0 z-0"
+                    /* `-z-10` داخل سياق `isolate` أعلاه — لا تهرب خلف البطاقة */
+                    className="absolute inset-0 -z-10"
                   >
                     <Image
                       src={card.src}
                       alt={card.alt}
                       fill
-                      sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 384px"
+                      /**
+                       * 🔴 مقيسٌ على السكة لا على الشبكة التي كانت.
+                       *
+                       * كان `100vw` تحت ٦٤٠ — والبطاقة صارت **٢٥٦ بكسل**
+                       * (`w-64`) لا عرض الشاشة. وترْكُه كان يُبقي `next/image`
+                       * يطلب نسخة `w=750` (مقيسة على الصفحة الحيّة) لبطاقةٍ
+                       * ثلثَ ذلك العرض — أي بطاقةٌ تقصر على الهاتف **وتحمّل
+                       * البايتات نفسها**، فلا يربح صاحب الشبكة الضعيفة شيئاً.
+                       */
+                      sizes="(max-width: 767px) 256px, (max-width: 1023px) 50vw, 384px"
                       quality={55}
                       className="object-cover transition-transform duration-500 group-hover/card:scale-105"
                     />
@@ -204,7 +258,9 @@ export async function ServicesSection({
                   </span>
                 ) : null}
 
-                <CardHeader className={card.src ? "relative z-10 mt-auto" : undefined}>
+                {/* بلا `relative`: الصورة تحتها بـ`-z-10` فتعلوها بلا تموضع،
+                    والبطاقة تبقى الكتلة الحاوية للرابط الممدود */}
+                <CardHeader className={card.src ? "mt-auto" : undefined}>
                   {Icon ? (
                     <div
                       className={cn(
@@ -279,12 +335,18 @@ export async function ServicesSection({
             );
 
             /*
-             * البطاقة هي عنصر الشبكة مباشرةً — بلا غلاف — فتبقى محتفظةً
-             * بتمدّدها. و`Fragment` هنا لحمل المفتاح وحده، بلا عقدة DOM.
+             * ⚠ **كان `<Fragment>` بلا عقدة DOM** لأن البطاقة كانت عنصر الشبكة
+             * مباشرةً. والسكة تشترط `<li>` — لأنها `role="list"` ولأن
+             * `snap-start` و`w-64` يقعان على العنصر لا على البطاقة. و`RailItem`
+             * هي تلك الـ`<li>` بعرضها الموحَّد.
+             *
+             * وتمدّد البطاقة لم يُفقد: حاوية السكة `flex` بمحاذاة `stretch`
+             * الافتراضية، فتتمدد الـ`<li>` إلى أطول أخواتها و`h-full` على
+             * البطاقة (وهي عليها أصلاً) تملؤها. ونفس الشيء داخل الشبكة فوق `md`.
              */
-            return <Fragment key={card.key}>{body}</Fragment>;
+            return <RailItem key={card.key}>{body}</RailItem>;
           })}
-        </div>
+        </Rail>
       </div>
     </section>
   );
