@@ -54,21 +54,38 @@ const LEGAL_SLUGS: ReadonlySet<string> = new Set(LEGAL_PAGES.map((page) => page.
  * **مفتوحاً**، و`FooterAccordionSync` يطويه على الجوال بعد الترطيب — فالفشل
  * يقع إلى «كما كان» لا إلى «محجوب».
  *
- * ⚠ و`keepOpen` لا يُطوى على أي عرض — وهو العمود الذي فيه «تابع حجزك».
+ * ⚠ **والأكورديون صار أحادي الفتح** بأمر بدر (2026-08-17): فتحُ عمودٍ يطوي
+ * إخوته. **وهذا لا يغيّر ما يخرج من الخادم بحرف** — الأعمدة الأربعة كلها
+ * `open` في الـHTML، والطيّ إلى واحدٍ يقع بعد الترطيب. ولو صُيِّر واحدٌ مفتوحاً
+ * من الخادم لضاع **ثلاثون** رابطاً من الزاحف بدل خمسة عشر.
+ *
+ * ⚠ و`defaultOpen` **بدايةٌ لا تثبيت**: العمود الذي يبدأ مفتوحاً على الجوال،
+ * ويُطوى كأي عمودٍ آخر. وسبق أن كان مثبَّتاً لأن «تابع حجزك» فيه — وفتحُه
+ * افتراضياً يفي بذلك حرفاً: الرابط مرئيٌّ لحظة الوصول، والفرق أن الزائر يملك
+ * طيّه الآن.
  */
 function FooterLinkColumn({
   title,
   links,
-  keepOpen = false,
+  defaultOpen = false,
 }: {
   title: string;
   links: { href: string; label: string }[];
-  keepOpen?: boolean;
+  defaultOpen?: boolean;
 }) {
   if (links.length === 0) return null;
   return (
     <nav aria-label={title} className="border-t border-border/60 md:border-t-0">
-      <details data-ftr-acc open {...(keepOpen ? { "data-ftr-keep": "" } : null)} className="group">
+      <details
+        data-ftr-acc
+        /*
+          `open` على الأربعة جميعاً — لا على هذا وحده. والسمة أدناه تقول
+          «ابدأ من هنا **بعد** الترطيب» ولا تقول «الوحيد المفتوح في الـHTML».
+        */
+        open
+        {...(defaultOpen ? { "data-ftr-default": "" } : null)}
+        className="group"
+      >
         <summary
           className={cn(
             "flex cursor-pointer list-none items-center justify-between gap-2 py-3 text-sm font-bold",
@@ -278,11 +295,11 @@ export async function SiteFooter({
             ) : null}
           </div>
 
-          {/* 🔒 أول الأعمدة ولا يُطوى: «تابع حجزك» ودخول العملاء و«حجوزاتي» */}
+          {/* أول الأعمدة و**المفتوح ابتداءً**: «تابع حجزك» ودخول العملاء و«حجوزاتي» */}
           <FooterLinkColumn
             title={t("booking", "حجزك وحسابك")}
             links={bookingLinks}
-            keepOpen
+            defaultOpen
           />
           <FooterLinkColumn title={t("sections", "أقسام الموقع")} links={sectionLinks} />
           <FooterLinkColumn title={t("services", "خدماتنا")} links={serviceLinks} />

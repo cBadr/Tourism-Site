@@ -217,6 +217,7 @@
         "decrease": "Decrease bags",
         "increase": "Increase bags",
         "note": "We only show classes that fit both your passengers and your bags — more bags may hide a smaller class.",
+        "followsPassengers": "We assumed one bag per passenger until you change it — erring wider is safer: a class that cannot take your bags is never shown to you.",
         "capNote": "Our largest vehicle takes {max}.",
         "atCap": "That is the most our largest vehicle can take ({max}). For more bags we arrange more than one vehicle — contact us or request a quote."
       },
@@ -224,14 +225,13 @@
         "label": "Trip type",
         "roundTrip": "Round trip",
         "roundTripNote": "The price includes the return leg.",
+        "awaitingSchedule": "The price includes the return leg — set the pickup and return times so the prices are recalculated.",
         "oneWayNote": "One-way trip."
       },
       "schedule": {
         "heading": "Pickup and return times",
-        "pickupDate": "Pickup date",
-        "pickupTime": "Pickup time",
-        "returnDate": "Return date",
-        "returnTime": "Return time",
+        "pickupAt": "Pickup time",
+        "returnAt": "Return time",
         "emptyNote": "Choose your return time: if it is on the same day the driver waits for you and the waiting is charged at your class's hourly rate; if it is on another day there is no waiting — the round-trip factor alone prices the return.",
         "otherDayNote": "Return on another day — no waiting hours; the round-trip factor alone prices the return leg.",
         "sameDayNote": "Same-day return — {hours} of waiting are charged at your class's hourly rate in the prices below.",

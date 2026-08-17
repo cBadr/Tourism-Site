@@ -82,11 +82,36 @@ import {
  * (٤) **ولا سعر يُحسب هنا.** الرقم الوحيد الذي يولد في هذا الملف هو تقدير ساعات
  *     الانتظار للعرض (‏`estimateWaitingHours`) — ساعات لا مال، ولا يُرسَل، ويُستبدل
  *     برقم القاعدة فور وصول العرض.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  الضغط البصري — **عرضٌ فقط، والحمولة لم تتغيّر بحرف**
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * النموذج كان يرصّ حقوله رأسياً فيطول على الجوال. وما تغيّر هنا **شكلُ الجمع
+ * لا المجموع**: نفس المُدخلات بالضبط تصل `/api/quote` بنفس الأسماء والأنواع
+ * (‏`payload` أدناه لم يُمسّ)، ونفس دوال التحويل تبنيها.
+ *
+ * (أ) **الركاب والحقائب في صفٍّ واحد**، وشرحُهما أسفل الصفّ بعرضه كاملاً بدل
+ *     عمودين ضيّقين — النص نفسه حرفياً، ويبقى مربوطاً بـ`aria-describedby`.
+ *
+ * (ب) **الحقائب تتبع عدد الركاب حتى يلمسها العميل** — التعليل الكامل عند
+ *     `luggageDefault` أدناه، وهو **قرار سلامة تشغيلية لا تفضيلاً بصرياً**.
+ *
+ * (ج) **قلبُ «عودة» يُعيد حساب السعر أمام العين** — التعليل عند
+ *     `requoteAfterToggle`.
+ *
+ * (د) **التاريخ والساعة حقلٌ واحد لكل اتجاه** (`datetime-local`). ⚠ وهو **دمجٌ
+ *     بصري لا استبدالُ منطق**: الحقل يُشطر إلى `date` و`time` ويُمرَّر إلى
+ *     **`toIsoFromCairoInputs` نفسها** — فمسار التحويل إلى توقيت القاهرة يبقى
+ *     واحداً كما تفرض ترويسة `checkout/datetime.ts`، وأرضيةُ المهلة تبقى
+ *     مشتقّةً من `booking_min_pickup_at()` وحدها بلا معادلة ثانية.
  */
 
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 350;
 const MIN_PASSENGERS = 1;
+/** عدد الركاب المبدئي — ومنه تشتقّ الحقائب مبدئياً (انظر `luggageDefault`) */
+const DEFAULT_PASSENGERS = 2;
 
 /**
  * الحدّ الأعلى المطلق الذي يقبله `/api/quote` — **سقف ارتداد لا سقف أسطول**.
@@ -411,6 +436,25 @@ function PlaceField({
 }
 
 /* ------------------------------------------------------------------ */
+/* شطر قيمة datetime-local إلى الحقلين اللذين يعرفهما مسار التحويل      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `<input type="datetime-local">` يُخرج "YYYY-MM-DDTHH:mm" (وقد يُلحق ثوانيَ).
+ *
+ * 🔒 **ولا يُبنى منه تاريخٌ هنا إطلاقاً.** الشطر وحده، ثم يمضي الجزآن إلى
+ * `toIsoFromCairoInputs` — الدالة الوحيدة المسموح لها بتفسير ما كتبه العميل على
+ * ساعة القاهرة. وأي `new Date(value)` في هذا الملف كان سيفسّره **بمنطقة جهاز
+ * الزائر**، وهو بعينه العطل الذي عولج في الدفعة م‑٢.
+ */
+function splitLocalDateTime(value: string): [string, string] {
+  if (!value) return ["", ""];
+  const [date = "", rest = ""] = value.split("T");
+  // الثواني تُقصّ: مُحلِّل الوقت يقبل HH:mm، والحقل لا يعرض ثوانيَ أصلاً
+  return [date, rest.slice(0, 5)];
+}
+
+/* ------------------------------------------------------------------ */
 /* عدّاد رقمي (ركاب · حقائب)                                            */
 /* ------------------------------------------------------------------ */
 
@@ -532,13 +576,17 @@ export function SearchWidget({
   const [origin, setOrigin] = React.useState<GeoPlace | null>(null);
   const [destinationText, setDestinationText] = React.useState("");
   const [destination, setDestination] = React.useState<GeoPlace | null>(null);
-  const [passengers, setPassengers] = React.useState(2);
-  const [luggage, setLuggage] = React.useState(0);
+  const [passengers, setPassengers] = React.useState(DEFAULT_PASSENGERS);
+  const [luggage, setLuggage] = React.useState(DEFAULT_PASSENGERS);
+  /**
+   * لمس العميل حقلَ الحقائب ⇒ الرقم صار ملكه ويتوقف عن تتبّع الركاب.
+   * راية لا رقم: قيمةٌ تعود فتُصحّح ما ضبطه المستخدم أسوأ من افتراضٍ رديء.
+   */
+  const [luggageTouched, setLuggageTouched] = React.useState(false);
   const [roundTrip, setRoundTrip] = React.useState(false);
-  const [pickupDate, setPickupDate] = React.useState("");
-  const [pickupTime, setPickupTime] = React.useState("");
-  const [returnDate, setReturnDate] = React.useState("");
-  const [returnTime, setReturnTime] = React.useState("");
+  /** قيمة `datetime-local` — "YYYY-MM-DDTHH:mm" — للذهاب وللعودة */
+  const [pickupLocal, setPickupLocal] = React.useState("");
+  const [returnLocal, setReturnLocal] = React.useState("");
   const [quantities, setQuantities] = React.useState<Record<string, number>>({});
   const [extrasOpen, setExtrasOpen] = React.useState(false);
 
@@ -596,10 +644,18 @@ export function SearchWidget({
   }, []);
 
   const leadFloor = lead?.enabled ? minInputValues(lead.minPickupAt) : null;
-  /** أرضية حقل التاريخ: الأبعد من «اليوم» و«يوم أقرب موعد متاح» */
-  const minDate = leadFloor && leadFloor.date > todayValue ? leadFloor.date : todayValue;
-  /** وأرضية الساعة في يوم الأرضية وحده — الحقل لا يعرف التاريخ */
-  const minPickupTime = leadFloor && pickupDate === leadFloor.date ? leadFloor.time : undefined;
+  /**
+   * أرضية حقل `datetime-local` — **لحظةٌ واحدة** بدل «تاريخٌ ثم ساعةٌ مشروطة».
+   *
+   * وهي المكسب الصامت للدمج: حقلا التاريخ والساعة المنفصلان كانا يفرضان الساعة
+   * **في يوم الأرضية وحده** (‏`pickupDate === leadFloor.date`) لأن حقل الوقت لا
+   * يعرف أي يومٍ اختير. أما الحقل الواحد فيقارن اللحظة باللحظة.
+   *
+   * 🔒 والمصدر واحدٌ كما كان: `minInputValues(lead.minPickupAt)` — أي
+   * `booking_min_pickup_at()` نفسها التي يفرضها `create_booking`، مقرَّبةً لأعلى
+   * إلى الدقيقة. **ولا معادلة مهلةٍ تُحسب في المتصفح** (النمط ٨ في `LESSONS.md`).
+   */
+  const pickupMin = leadFloor ? `${leadFloor.date}T${leadFloor.time}` : `${todayValue}T00:00`;
 
   const fieldHeight = compact ? "h-11" : "h-12";
   const hasExtras = extras.length > 0;
@@ -618,6 +674,35 @@ export function SearchWidget({
     typeof maxLuggage === "number" && Number.isFinite(maxLuggage) && maxLuggage >= 1
       ? Math.min(Math.trunc(maxLuggage), MAX_LUGGAGE)
       : MAX_LUGGAGE;
+
+  /* ---------------------------------------------------------------- */
+  /* 🔴 الحقائب تتبع الركاب حتى يلمسها العميل — سلامةٌ تشغيلية لا تجميل */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 🔴 **المبدئي حقيبةٌ لكل راكب، لا حقيبةٌ واحدة.** والسبب أن عدد الحقائب
+   * **مُدخل أهلية**: `quote_price` تُسقط كل فئة لا تتسع له (D-12).
+   *
+   * والخطر ليس في المبالغة بل في **التقليل**: من يحجز لأربعة ويترك الرقم على
+   * واحدة يرى السيدان، فيحجزها، ثم يصل ومعه أربع حقائب لا تتسع. **والعطل يقع
+   * عند الاستلام لا في النموذج** — متعهدٌ بُثَّت له رحلةٌ بسعةٍ غير كافية، أي
+   * رحلةٌ فاشلة بأثرٍ ماليٍّ حقيقي (تعويض، أو سيارةٌ ثانية، أو إلغاء).
+   *
+   * فالافتراض يميل إلى **السعة الأكبر**، والعميل يُنقصه بضغطةٍ واحدة.
+   *
+   * ⚠ **ويتوقف عن التتبّع فور أن يلمسه** (‏`luggageTouched`): قيمةٌ تعود فتغلب
+   * ما ضبطه المستخدم أسوأ من افتراضٍ رديء — يكتب ٢ لأربعة ركاب فيقفز الرقم
+   * إلى ٤ من تحت يده، فلا يفهم أنه يملك الحقل أصلاً.
+   *
+   * والضبط **أثناء التصيير** لا في تأثير: نمط «تعديل الحالة عند تغيّر المُدخل»
+   * الموثّق في React والمستعمل في هذا الملف نفسه لسقف الركاب — بلا وميضٍ يرى
+   * فيه العميل الرقم القديم لجزء من الثانية.
+   */
+  const luggageDefault = Math.min(passengers, luggageCap);
+  if (!luggageTouched && luggage !== luggageDefault) setLuggage(luggageDefault);
+  /** الحقائب ما زالت على المبدئي المشتقّ — عندها وحدها يُقال للعميل من أين جاء */
+  const luggageFollowsPassengers = !luggageTouched;
+
   /** بلغ العميل سقف الأسطول فعلاً — عندها وحدها يُقال له ما البديل */
   const luggageAtCap = luggage >= luggageCap;
   /** والسقف معلوم من الأسطول لا مجرد ثابت واجهة — فلا نُعلن رقماً لا نعرفه */
@@ -663,6 +748,12 @@ export function SearchWidget({
   // مواعيد الرحلة تُجمع هنا **للذهاب والعودة وحدها** — لأنها وحدها تغيّر السعر
   // (منها تُشتق ساعات الانتظار). ورحلة الاتجاه الواحد تبقى كما كانت: موعدها
   // يُجمع في مسار الحجز.
+  //
+  // 🔒 والحقل الواحد يُشطر إلى ما كان يُكتب في حقلين، ثم يمرّ بـ
+  // `toIsoFromCairoInputs` **نفسها**: التحويل إلى توقيت القاهرة يبقى في مسارٍ
+  // واحد، فلا يتكرر عطل «ساعةٌ ناقصة عند من يحجز من الخليج».
+  const [pickupDate, pickupTime] = splitLocalDateTime(pickupLocal);
+  const [returnDate, returnTime] = splitLocalDateTime(returnLocal);
   const pickupAt = roundTrip ? toIsoFromLocalInputs(pickupDate, pickupTime) : null;
   const returnAt = roundTrip ? toIsoFromLocalInputs(returnDate, returnTime) : null;
 
@@ -704,7 +795,53 @@ export function SearchWidget({
     selection.map((item) => `${item.slug}:${item.qty}`).join(","),
   ].join("|");
   const [quotedInputsKey, setQuotedInputsKey] = React.useState<string | null>(null);
-  const staleInputs = result !== null && quotedInputsKey !== null && quotedInputsKey !== inputsKey;
+  /**
+   * ⚠ و`!pending`: التحذير يقول «اضغط احسب السعر» — وهي نصيحةٌ خاطئة والزرّ
+   * يعمل بالفعل. وقد صار يقع فعلاً بعد إعادة الحساب التلقائية أدناه: كان يومض
+   * ثانيةً كاملة أثناء النداء الذي يُبطله.
+   */
+  const staleInputs =
+    result !== null && quotedInputsKey !== null && quotedInputsKey !== inputsKey && !pending;
+
+  /* ---------------------------------------------------------------- */
+  /* ⚠ قلبُ «عودة» يحرّك السعر — فيجب أن يتحرك السعر أمام العين         */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * ⚠ الذهاب والعودة يضرب الإجمالي بـ`round_trip_factor` (‏١٫٨ اليوم). ومن
+   * يقلب المفتاح بلا أن ينتبه إلى أثر ذلك يكتشفه **في أسوأ لحظة**: عند الدفع.
+   *
+   * وكان السلوك القديم يقول له بشريطٍ أصفر «اضغط احسب السعر» — أي يترك على
+   * الشاشة رقماً صار كاذباً وينتظر منه فعلاً. فصار قلبُ المفتاح **وحده** يُعيد
+   * النداء تلقائياً فتتغيّر البطاقات أمامه.
+   *
+   * 🔒 وهو **مقصورٌ على هذا المفتاح** لا على كل مُدخل: تحذير «بيانات قديمة»
+   * يبقى كما هو لبقية الحقول، فلا يتحول النموذج إلى بثٍّ متصل على `/api/quote`.
+   * وشرطه أن يكون على الشاشة سعرٌ أصلاً (‏`result !== null`) — قبل أول حساب
+   * لا شيء ليتحرك.
+   *
+   * ⚠ وقلبُه **تشغيلاً** يحتاج موعدَي الرحلة (وهما مُدخلان سعريان منذ 0031)،
+   * فالنداء ينتظرهما ولا يسقط: الدَّين يبقى قائماً حتى يكتمل الموعدان ثم يُنفَّذ.
+   * وحتى ذلك الحين يقول السطرُ أسفل المفتاح ما ينتظره — لا صمت.
+   *
+   * 🔧 و**مرجعٌ لا حالة**: هذا الدَّين لا يُرسم على الشاشة (ما يُرسم مشتقٌّ في
+   * `awaitingSchedule` أدناه)، فحالةٌ له تعني تصييراً زائداً؛ والراية تُرفع في
+   * **معالج الحدث** حيث ينتمي القرار، لا في تأثير.
+   */
+  const requoteOwed = React.useRef(false);
+
+  /**
+   * ما يُقال للعميل حين قلب المفتاح ولم يكتمل الموعدان — **مشتقٌّ لا مخزَّن**:
+   * سعرٌ معروض + ذهابٌ وعودة + موعدٌ ناقص = الأسعار أعلاه لا تشمل العودة بعد.
+   */
+  const awaitingSchedule = roundTrip && result !== null && (pickupAt === null || returnAt === null);
+
+  /**
+   * أحدث نسخة من `runQuote` بمغلَّفها الطازج — تأثيرُ إعادة النداء لا يستطيع
+   * أن يضعها في اعتمادياته (تُبنى في كل تصيير فتدور الحلقة). والتأثيران
+   * معرَّفان **بعد** `runQuote` لأن قراءتها قبل تعريفها تُجمّد نسخةً واحدة.
+   */
+  const runQuoteRef = React.useRef<((o: { silent: boolean }) => Promise<void>) | null>(null);
 
   function updatePassengers(next: number) {
     if (!Number.isFinite(next)) return;
@@ -714,6 +851,9 @@ export function SearchWidget({
 
   function updateLuggage(next: number) {
     if (!Number.isFinite(next)) return;
+    // ⚠ كل مسار تعديلٍ يمرّ من هنا (الزرّان والكتابة اليدوية معاً)، فاللمسة
+    // تُسجَّل مرةً واحدة في موضعٍ واحد — ولا يبقى مسارٌ يغيّر الرقم بلا تسجيل.
+    setLuggageTouched(true);
     setLuggage(Math.min(luggageCap, Math.max(0, Math.round(next))));
   }
 
@@ -723,11 +863,25 @@ export function SearchWidget({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await runQuote({ silent: false });
+  }
+
+  /**
+   * نداء التسعير — **جسمُ الإرسال كما كان حرفياً**، استُخرج من `handleSubmit`
+   * ليناديه شيئان لا واحد: زرّ «احسب السعر»، وإعادةُ الحساب بعد قلب «عودة».
+   *
+   * و`silent` يخصّ **التحقق وحده**: النداء التلقائي لا يصرخ في وجه العميل
+   * «حدد تاريخ الانطلاق» لحظةَ ما قلب المفتاح وهو لم يصل إلى الحقل بعد.
+   * أما الخطأ الآتي من الخادم فيُعرض في الحالتين — إخفاؤه يترك على الشاشة
+   * سعراً لا يخصّ ما هو مضبوطٌ الآن.
+   */
+  async function runQuote({ silent }: { silent: boolean }) {
     setHint(null);
     setError(null);
     setRescue(null);
 
     if (!origin) {
+      if (silent) return;
       setHint(
         t(
           "hints.pickOrigin",
@@ -737,6 +891,7 @@ export function SearchWidget({
       return;
     }
     if (!destination) {
+      if (silent) return;
       setHint(
         t(
           "hints.pickDestination",
@@ -749,14 +904,17 @@ export function SearchWidget({
     // مواعيد الذهاب والعودة شرط لعرض سعر صادق: بدونها لا تعرف القاعدة إن كان
     // انتظارٌ يُحتسب، فيظهر سعر أقل مما سيُثبَّت عند الحجز.
     if (roundTrip && !pickupAt) {
+      if (silent) return;
       setHint(t("hints.pickPickup", "حدد تاريخ ووقت الانطلاق لنحسب رحلة العودة بدقة."));
       return;
     }
     if (roundTrip && !returnAt) {
+      if (silent) return;
       setHint(t("hints.pickReturn", "حدد تاريخ ووقت العودة — أو اختر «ذهاب فقط»."));
       return;
     }
     if (returnBeforePickup) {
+      if (silent) return;
       setHint(t("hints.returnOrder", "موعد العودة يجب أن يكون بعد موعد الانطلاق."));
       return;
     }
@@ -888,6 +1046,27 @@ export function SearchWidget({
     }
   }
 
+  // تحديث المرجع بعد كل تصيير — ويسبق تأثير إعادة النداء في الترتيب، فيقرأ
+  // ذاك النسخة الطازجة في نفس الالتزام.
+  React.useEffect(() => {
+    runQuoteRef.current = runQuote;
+  });
+
+  /**
+   * إعادة الحساب بعد قلب «عودة» — التعليل الكامل عند `requoteOwed`.
+   *
+   * والتأثير هنا في محلّه بالتعريف: **مزامنةٌ مع نظامٍ خارجي** (نداء التسعير)
+   * لا اشتقاقُ حالةٍ من حالة. ولا `setState` في جسمه — الدَّين مرجعٌ، والحالة
+   * التي تتغيّر تتغيّر داخل `runQuote` بعد أن يردّ الخادم.
+   */
+  React.useEffect(() => {
+    if (!requoteOwed.current || pending) return;
+    // ذهابٌ وعودة بلا موعدين (أو بترتيبٍ مقلوب): يبقى الدَّين حتى يكتملا
+    if (roundTrip && (pickupAt === null || returnAt === null || returnBeforePickup)) return;
+    requoteOwed.current = false;
+    void runQuoteRef.current?.({ silent: true });
+  }, [pending, roundTrip, pickupAt, returnAt, returnBeforePickup]);
+
   // إظهار النتائج للزائر فور وصولها — مهم خاصة في نسخة البطل المضغوطة.
   // وبطاقة الإنقاذ نتيجةٌ كالعروض: من لا يراها يظن أن الضغطة لم تفعل شيئاً.
   React.useEffect(() => {
@@ -945,8 +1124,23 @@ export function SearchWidget({
           />
         </div>
 
-        {/* عدد الركاب + عدد الحقائب */}
-        <div className="grid gap-4 sm:grid-cols-2">
+        {/*
+          ══════════════════════════════════════════════════════════════════
+           صفٌّ واحد: ركاب · حقائب · «عودة» — والشرح أسفله بعرض الصفّ كاملاً
+          ══════════════════════════════════════════════════════════════════
+
+          **لماذا عمودان على الجوال لا ثلاثة:** على ٣٧٥ بكسل يصير العمود الثالث
+          ~١١٤ بكسل، والعدّاد فيه زرّان (٣٦ لكلٍّ) ورقمٌ بينهما — فيضيق هدف
+          اللمس. **والحقائب بالذات لا يجوز أن تصير فيّاضة**: التقليل فيها عطلٌ
+          يقع عند الاستلام (انظر `luggageDefault`)، فحقلٌ يصعب ضبطه يدفع العميل
+          إلى تركه. فالعدّادان يقتسمان الصفّ، والمفتاح تحتهما بعرضٍ كامل — وعند
+          `sm` فأعلى تتسع الثلاثة في صفٍّ واحد.
+
+          **والشرح خرج من العمودين إلى أسفل الصفّ**: النص نفسه حرفياً، لكنه في
+          عمودٍ ضيّق يصير أربعة أسطر بدل سطرين — أي أن التوزيع على عمودين كان
+          سيُطيل النموذج لا يقصّره. وربطُه بالحقل يبقى بـ`aria-describedby`.
+        */}
+        <div className="grid gap-3 sm:grid-cols-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={passengersId} className="text-sm font-medium">
               {t("passengers.label", "عدد الركاب")}
@@ -962,30 +1156,6 @@ export function SearchWidget({
               describedBy={passengersNoteId}
               fieldHeight={fieldHeight}
             />
-            {/*
-              نفس بنية نص الحقائب حرفياً: شرحٌ دائم، ثم — عند السقف وحده — ما
-              البديل. والبديل يُقال **قبل** الاصطدام لا بعده، ولا يُعلَن رقمٌ
-              للأسطول ما لم يُقرأ فعلاً (`passengerCapKnown`).
-            */}
-            <p id={passengersNoteId} className="text-xs leading-5 text-muted-foreground">
-              {t("passengers.note", "الأطفال يُحسبون ضمن العدد — الحالي: {current}.", {
-                current: fmt.passengers(passengers),
-              })}
-              {passengerCapKnown ? (
-                <>
-                  {" "}
-                  {passengersAtCap
-                    ? t(
-                        "passengers.atCap",
-                        "وهذا أقصى ما تتسع له أكبر سيارة لدينا ({max}). لمجموعة أكبر نرتّب أكثر من سيارة — اطلب عرض سعر.",
-                        { max: fmt.passengers(passengerCap) }
-                      )
-                    : t("passengers.capNote", "وأكبر سيارة لدينا تتسع لـ{max}.", {
-                        max: fmt.passengers(passengerCap),
-                      })}
-                </>
-              ) : null}
-            </p>
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -1004,59 +1174,37 @@ export function SearchWidget({
               describedBy={luggageNoteId}
               fieldHeight={fieldHeight}
             />
-            {/*
-              شرحٌ لا ترشيح: الفئة التي لا تتسع للحقائب **لا تعود من القاعدة**
-              أصلاً (D-12)، فلا نُخفي هنا فئةً ولا نُظهرها — نقول للعميل لماذا
-              قد تختفي فئة كان يتوقعها.
-
-              والسطر الثاني يقول ما يحدث عند السقف **قبل** أن يصطدم به: العدّاد
-              يقف عند أكبر ما يحمله الأسطول، وما فوقه لا تُنتج له الحاسبة عرضاً
-              أصلاً — فالبديل قناةٌ بشرية لا محاولة ثانية بالرقم نفسه.
-            */}
-            <p id={luggageNoteId} className="text-xs leading-5 text-muted-foreground">
-              {t(
-                "luggage.note",
-                "نعرض الفئات التي تتسع لركابك وحقائبك معاً — زيادة الحقائب قد تُخفي فئة أصغر."
-              )}
-              {luggageCapKnown ? (
-                <>
-                  {" "}
-                  {luggageAtCap
-                    ? t(
-                        "luggage.atCap",
-                        "وهذا أقصى ما تحمله أكبر سيارة لدينا ({max}). لحقائب أكثر نرتّب لك أكثر من سيارة — تواصل معنا أو اطلب عرض سعر.",
-                        { max: fmt.bags(luggageCap) }
-                      )
-                    : t("luggage.capNote", "وأكبر سيارة لدينا تتسع لـ{max}.", {
-                        max: fmt.bags(luggageCap),
-                      })}
-                </>
-              ) : null}
-            </p>
           </div>
-        </div>
 
-        {/* نوع الرحلة */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5 sm:col-span-1">
+          {/*
+            «عودة» مفتاحٌ واحد لا خيارَين — والعنوان مُدمجٌ في نصّه، فسطرُ
+            «نوع الرحلة» فوقه كان يشغل ارتفاعاً ليقول ما يقوله المفتاح نفسه.
+            وعلى الجوال يأخذ الصفّ كاملاً (‏`col-span-2`) فيبقى هدفُ لمسٍ مريح.
+          */}
+          <div className="col-span-2 flex flex-col gap-1.5 sm:col-span-1">
             <span className="text-sm font-medium leading-none">
               {t("tripType.label", "نوع الرحلة")}
             </span>
             <label
               className={cn(
-                "flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-input bg-background px-3",
+                "flex cursor-pointer items-center justify-between gap-2 rounded-2xl border border-input bg-background px-3",
                 fieldHeight
               )}
             >
-              <span className="flex items-center gap-2 text-sm font-medium">
+              <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
                 <Repeat className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                {t("tripType.roundTrip", "ذهاب وعودة")}
+                <span className="truncate">{t("tripType.roundTrip", "ذهاب وعودة")}</span>
               </span>
               <span className="relative inline-flex shrink-0 items-center">
                 <input
                   type="checkbox"
                   checked={roundTrip}
-                  onChange={(event) => setRoundTrip(event.target.checked)}
+                  onChange={(event) => {
+                    setRoundTrip(event.target.checked);
+                    // الدَّين يُرفع هنا — في معالج الحدث حيث وقع القرار — ولا
+                    // يُرفع إلا وعلى الشاشة سعرٌ يمكن أن يتحرك أمام العين.
+                    if (result !== null) requoteOwed.current = true;
+                  }}
                   className="peer sr-only"
                 />
                 <span
@@ -1070,12 +1218,86 @@ export function SearchWidget({
                 />
               </span>
             </label>
-            <p className="text-xs leading-5 text-muted-foreground">
-              {roundTrip
-                ? t("tripType.roundTripNote", "السعر يشمل رحلة العودة.")
-                : t("tripType.oneWayNote", "رحلة باتجاه واحد.")}
-            </p>
           </div>
+        </div>
+
+        {/*
+          شرحُ العدّادين والمفتاح — بعرض الصفّ كاملاً، والنصوص كما كانت حرفياً.
+          `role="status"` لأن سطر الحقائب يتغيّر تلقائياً مع عدد الركاب: تغيُّرٌ
+          صامت في نصٍّ يشرح رقماً تحرّك من نفسه يترك قارئ الشاشة بلا خبر.
+        */}
+        <div className="-mt-1 flex flex-col gap-1 text-xs leading-5 text-muted-foreground">
+          {/*
+            شرحٌ دائم، ثم — عند السقف وحده — ما البديل. والبديل يُقال **قبل**
+            الاصطدام لا بعده، ولا يُعلَن رقمٌ للأسطول ما لم يُقرأ فعلاً.
+          */}
+          <p id={passengersNoteId}>
+            {t("passengers.note", "الأطفال يُحسبون ضمن العدد — الحالي: {current}.", {
+              current: fmt.passengers(passengers),
+            })}
+            {passengerCapKnown ? (
+              <>
+                {" "}
+                {passengersAtCap
+                  ? t(
+                      "passengers.atCap",
+                      "وهذا أقصى ما تتسع له أكبر سيارة لدينا ({max}). لمجموعة أكبر نرتّب أكثر من سيارة — اطلب عرض سعر.",
+                      { max: fmt.passengers(passengerCap) }
+                    )
+                  : t("passengers.capNote", "وأكبر سيارة لدينا تتسع لـ{max}.", {
+                      max: fmt.passengers(passengerCap),
+                    })}
+              </>
+            ) : null}
+          </p>
+
+          {/*
+            شرحٌ لا ترشيح: الفئة التي لا تتسع للحقائب **لا تعود من القاعدة**
+            أصلاً (D-12)، فلا نُخفي هنا فئةً ولا نُظهرها — نقول للعميل لماذا قد
+            تختفي فئة كان يتوقعها. ويُضاف إليه — ما دام الرقم مشتقّاً لا مختاراً
+            — من أين جاء، حتى لا يبدو أنه ظهر بلا سبب.
+          */}
+          <p id={luggageNoteId} role="status">
+            {luggageFollowsPassengers
+              ? t(
+                  "luggage.followsPassengers",
+                  "قدّرناها حقيبة لكل راكب حتى تعدّلها — والأوسع أأمن: فئة لا تتسع لحقائبك لا تُعرض عليك أصلاً."
+                )
+              : t(
+                  "luggage.note",
+                  "نعرض الفئات التي تتسع لركابك وحقائبك معاً — زيادة الحقائب قد تُخفي فئة أصغر."
+                )}
+            {luggageCapKnown ? (
+              <>
+                {" "}
+                {luggageAtCap
+                  ? t(
+                      "luggage.atCap",
+                      "وهذا أقصى ما تحمله أكبر سيارة لدينا ({max}). لحقائب أكثر نرتّب لك أكثر من سيارة — تواصل معنا أو اطلب عرض سعر.",
+                      { max: fmt.bags(luggageCap) }
+                    )
+                  : t("luggage.capNote", "وأكبر سيارة لدينا تتسع لـ{max}.", {
+                      max: fmt.bags(luggageCap),
+                    })}
+              </>
+            ) : null}
+          </p>
+
+          {/*
+            ⚠ أثر المفتاح على السعر يُقال **عنده**، لا بعد ثلاث لفّات.
+            وحين يكون على الشاشة سعرٌ سابق، السطر يقول ماذا يجري الآن:
+            «يُعاد الحساب» أو «ينتظر الموعدين» — ثم تتغيّر البطاقات فعلاً.
+          */}
+          <p role="status" className={cn(awaitingSchedule && "font-medium text-primary")}>
+            {roundTrip
+              ? awaitingSchedule
+                ? t(
+                    "tripType.awaitingSchedule",
+                    "السعر يشمل رحلة العودة — حدد موعدي الذهاب والعودة ليُعاد حساب الأسعار."
+                  )
+                : t("tripType.roundTripNote", "السعر يشمل رحلة العودة.")
+              : t("tripType.oneWayNote", "رحلة باتجاه واحد.")}
+          </p>
         </div>
 
         {/*
@@ -1091,76 +1313,68 @@ export function SearchWidget({
               {t("schedule.heading", "موعد الذهاب والعودة")}
             </p>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            {/*
+              حقلٌ واحد لكل اتجاه بدل أربعة — **دمجٌ بصري لا تبديلُ منطق**:
+              • التحويل: يُشطر ويمرّ بـ`toIsoFromCairoInputs` نفسها (أعلاه).
+              • الأرضية: `pickupMin` من `booking_min_pickup_at()` وحدها.
+              • الترتيب: أرضية العودة هي لحظةُ الذهاب نفسها، والحارس المنطقي
+                (‏`returnBeforePickup`) باقٍ كما هو خلفها للمساواة تحديداً.
+            */}
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${uid}-pickup-date`} className="text-sm font-medium">
-                  {t("schedule.pickupDate", "تاريخ الانطلاق")}
+                <Label htmlFor={`${uid}-pickup-at`} className="text-sm font-medium">
+                  {t("schedule.pickupAt", "موعد الانطلاق")}
                 </Label>
                 <input
-                  id={`${uid}-pickup-date`}
-                  type="date"
-                  min={minDate}
-                  value={pickupDate}
-                  onChange={(event) => setPickupDate(event.target.value)}
+                  id={`${uid}-pickup-at`}
+                  type="datetime-local"
+                  min={pickupMin}
+                  value={pickupLocal}
+                  onChange={(event) => setPickupLocal(event.target.value)}
                   aria-describedby={scheduleNoteId}
                   className={cn(
                     "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
                     fieldHeight
                   )}
                 />
+                {/*
+                  🔴 صدى بأرقام اللغة — والحقل الأصلي **لا يضمنها**: منتقي
+                  المتصفح يرسم بلغة الجهاز لا بلغة الصفحة، فيرى العميل العربي
+                  «09/14/2026» في حقلٍ كل ما حوله بالعربية. فالصدى هو ما يُقرأ
+                  فعلاً، وهو من `fmt.dateTime` — نفس مُنسّق بقية الشاشة، وبتوقيت
+                  القاهرة، فيرى العميل اللحظة التي ستُحجز له لا التي كتبها جهازه.
+                */}
+                {pickupAt ? (
+                  <p className="text-xs leading-5 text-primary">{fmt.dateTime(pickupAt)}</p>
+                ) : null}
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${uid}-pickup-time`} className="text-sm font-medium">
-                  {t("schedule.pickupTime", "ساعة الانطلاق")}
+                <Label htmlFor={`${uid}-return-at`} className="text-sm font-medium">
+                  {t("schedule.returnAt", "موعد العودة")}
                 </Label>
                 <input
-                  id={`${uid}-pickup-time`}
-                  type="time"
-                  min={minPickupTime}
-                  value={pickupTime}
-                  onChange={(event) => setPickupTime(event.target.value)}
+                  id={`${uid}-return-at`}
+                  type="datetime-local"
+                  min={pickupLocal || pickupMin}
+                  value={returnLocal}
+                  onChange={(event) => setReturnLocal(event.target.value)}
                   aria-describedby={scheduleNoteId}
                   className={cn(
                     "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
                     fieldHeight
                   )}
                 />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${uid}-return-date`} className="text-sm font-medium">
-                  {t("schedule.returnDate", "تاريخ العودة")}
-                </Label>
-                <input
-                  id={`${uid}-return-date`}
-                  type="date"
-                  min={pickupDate || minDate}
-                  value={returnDate}
-                  onChange={(event) => setReturnDate(event.target.value)}
-                  aria-describedby={scheduleNoteId}
-                  className={cn(
-                    "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-                    fieldHeight
-                  )}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${uid}-return-time`} className="text-sm font-medium">
-                  {t("schedule.returnTime", "ساعة العودة")}
-                </Label>
-                <input
-                  id={`${uid}-return-time`}
-                  type="time"
-                  value={returnTime}
-                  onChange={(event) => setReturnTime(event.target.value)}
-                  aria-describedby={scheduleNoteId}
-                  className={cn(
-                    "w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
-                    fieldHeight
-                  )}
-                />
+                {returnAt ? (
+                  <p
+                    className={cn(
+                      "text-xs leading-5",
+                      returnBeforePickup ? "text-destructive" : "text-primary"
+                    )}
+                  >
+                    {fmt.dateTime(returnAt)}
+                  </p>
+                ) : null}
               </div>
             </div>
 
