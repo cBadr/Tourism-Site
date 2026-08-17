@@ -28,6 +28,7 @@
 --   (النمط ٩ في LESSONS.md، والقاعدة ١٩، ونظير (ن-٧) في payment_tests.sql.)
 --
 -- المرجع: supabase/migrations/0084_quote_request_structured.sql
+--         supabase/migrations/0098_quote_request_lead_time.sql (‏القسم د-ب)
 --         lib/place-search-types.ts (‏SERVICE_BOUNDS — مصر وحدها)
 -- ============================================================================
 
@@ -384,6 +385,87 @@ begin
   end if;
 
   raise notice '✔ (د) الموعد مطلوب ومستقبلي، والركاب داخل مدىً معقول';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (د-ب) 🔴 أدنى مهلة قبل الانطلاق تُفرض في القاعدة (هجرة 0098)
+--
+-- ── ما يحرسه هذا القسم بالضبط ─────────────────────────────────────────────
+-- نموذج `/quote-request` صار حقلاً واحداً (`datetime-local`) بأرضيةٍ (`min`) من
+-- `booking_min_pickup_at()` وسطرٍ يقول «نحتاج مهلة N دقيقة على الأقل».
+-- و**خاصية `min` تلميحٌ لا حارس**: تُتجاوَز بالكتابة اليدوية، وبمن يترك النموذج
+-- مفتوحاً حتى يزحف «الآن»، وبنداءٍ مباشر بلا متصفح — والدالة ممنوحة لـ`anon`.
+-- فبلا هذا الحارس تعلن الشاشةُ قيداً لا تفرضه القاعدة (النمط ٢ في LESSONS).
+--
+-- ── ولماذا التأكيدان معاً لا واحدٌ ────────────────────────────────────────
+-- «الأرضية − دقيقة تُرفض» يفشل لو نُزع الحارس. و«الأرضية بالضبط تُقبل» يفشل لو
+-- كُتبت المقارنة `<=` بدل `<` — أي لو صار ما تعرضه الشاشة بوصفه «أقرب موعد
+-- متاح» مرفوضاً عند الضغط. فكلٌّ منهما يحرس عطلاً لا يمسكه الآخر.
+--
+-- ⚠ **والتوقع يُشتق من نفس مُدخل الكود المُختبَر** (LESSONS §٥): الحدّ يُقرأ من
+--   `booking_min_pickup_at()` نفسها لا من ١٢٠ دقيقة مكتوبة هنا — فتغييرُ المالك
+--   للإعداد من اللوحة لا يُسقط الاختبار.
+--
+-- ⚠ **ولا يُلمس أي إعداد**: لا يُشعل هذا القسم مهلةً ولا يطفئها، فلا احتياطَ
+--   استرجاعٍ ينقلب (درسُ `payment_tests.sql` في 2026-08-16: احتياطٌ كان `'true'`
+--   فأشعل بوابة الدفع أكثر من يوم وكل تشغيلٍ أخضر). وحين تكون المهلة مطفأةً
+--   بقرار المالك يُعلن التخطّي صراحةً — لا يُخترع قيدٌ لقياسه.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_name  constant text := 'عميل QR_TESTS_FIXTURE د-ب';
+  v_lead  integer;
+  v_floor timestamptz;
+  v_res   record;
+  v_row   record;
+  v_hint  text;
+  v_ok    boolean;
+begin
+  select t.min_lead_minutes into v_lead from public.trip_config() t;
+  v_floor := public.booking_min_pickup_at();
+
+  if coalesce(v_lead, 0) <= 0 or v_floor is null then
+    raise notice '  ↳ (د-ب) تخطٍّ: أدنى المهلة مطفأة بقرار المالك (min_lead_minutes=%)',
+      coalesce(v_lead, 0);
+    return;
+  end if;
+
+  -- (د-ب-١) موعدٌ داخل النافذة يُرفض برمزٍ مخصوص — لا برمزٍ جامع
+  v_ok := false;
+  begin
+    perform 1 from public.create_quote_request(
+      null, v_name, '01000000010', 'تفاصيل',
+      'ميدان التحرير', 30.0444, 31.2357, null, null, null,
+      v_floor - interval '1 minute', 2, null);
+  exception when others then
+    v_ok := true; get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+  if not v_ok or v_hint is distinct from 'lead-time' then
+    raise exception
+      '(د-ب-١) 🔴 موعدٌ داخل نافذة المهلة (% دقيقة) قُبل — أرضية المنتقي زينة (رُفض=% رمز=%)',
+      v_lead, v_ok, coalesce(v_hint, 'بلا');
+  end if;
+
+  -- (د-ب-٢) والأرضية **بالضبط** مقبولة: `<` لا `<=` — وهي اللحظة التي تعرضها
+  --         الشاشة بوصفها «أقرب موعد متاح»، فرفضُها يجعل الشاشة تكذب بالعكس.
+  --         و`now()` طابعُ بدء المعاملة، والحارس يقرأ الطابع نفسه ⇒ مقارنةٌ
+  --         حاسمة لا تسابق ساعةً.
+  select * into v_res from public.create_quote_request(
+    null, v_name, '01000000010', 'تفاصيل',
+    'ميدان التحرير', 30.0444, 31.2357, null, null, null,
+    v_floor, 2, null);
+
+  select * into v_row from public.quote_requests q where q.id = v_res.id;
+  if not found or v_row.pickup_at is distinct from v_floor then
+    raise exception
+      '(د-ب-٢) 🔴 «أقرب موعد متاح» نفسه رُفض أو لم يُحفظ كما أُرسل (توقعنا % وحصلنا %)',
+      v_floor, coalesce(v_row.pickup_at::text, 'بلا صف');
+  end if;
+
+  raise notice
+    '✔ (د-ب) حارس المهلة حيّ: الأرضية−دقيقة تُرفض بـlead-time، والأرضية نفسها تُقبل (% دقيقة)',
+    v_lead;
 end;
 $$;
 

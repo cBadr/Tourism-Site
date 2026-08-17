@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Inbox, Mail, MessageCircle, Smartphone, type LucideIcon } from "lucide-react";
 
 import { Notice } from "@/components/portal/portal-ui";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { REACHING_CHANNELS, type PartnerChannel } from "@/lib/partner-alerts-types";
 import { saveAlertPrefs } from "./actions";
+import { CHANNEL_META, STATE_LABELS, STATE_TONE, STATE_HINT } from "./channel-meta";
 import type { ChannelState, PartnerAlertsView } from "./data";
 
 /**
@@ -31,64 +31,20 @@ import type { ChannelState, PartnerAlertsView } from "./data";
  */
 
 /* ------------------------------------------------------------------ */
-/* التسميات — يقرؤها هذا النموذج والصفحة معاً                           */
+/* التسميات والأوسمة — تعيش في `channel-meta.ts` لا هنا                 */
+/*                                                                    */
+/* 🔴 كانت معرَّفةً في هذا الملف، و`page.tsx` **الخادمية** تستورد منه       */
+/* `CHANNEL_META`. وقيمةٌ تُصدَّر من وحدة `"use client"` لا تعبر إلى الخادم:  */
+/* ما يراه الخادم **مرجعُ عميل** لا الكائن (مقيسٌ: `typeof === "function"` */
+/* و`.telegram === undefined`)، فترمي `CHANNEL_META[channel].label`      */
+/* وتسقط `/portal/notifications` بـ٥٠٠ — وذلك يقع **أول ما يربط متعهدٌ**  */
+/* تليجرامه، لأن ذلك السطر في فرع «أنت متاح» وحده. الشرح كاملاً مقيساً في  */
+/* ترويسة `channel-meta.ts`.                                           */
+/*                                                                    */
+/* ⚠ **ولا تُعاد تصديرها من هنا.** إعادةُ التصدير تُبقي الباب الذي وقع منه   */
+/* العيب مفتوحاً: يستوردها ملفٌّ خادميٌّ من هذا المسار غداً فتعود ٥٠٠ بعينها.  */
+/* فالمسار الوحيد إليها `./channel-meta`، والخادمُ والعميل سواءٌ فيه.        */
 /* ------------------------------------------------------------------ */
-
-export const CHANNEL_META: Record<
-  PartnerChannel,
-  { label: string; icon: LucideIcon; what: string; href?: "/portal/inbox"; hrefLabel?: string }
-> = {
-  telegram: {
-    label: "تليجرام",
-    icon: MessageCircle,
-    what: "رسالة فورية على هاتفك بكل عرض رحلة — وهي أسرع القنوات وأقلها كلفة عليك.",
-  },
-  webpush: {
-    label: "إشعارات المتصفح",
-    icon: Smartphone,
-    what: "تنبيه من المتصفح على الجهاز الذي تسجّله، ولو كانت الصفحة مغلقة.",
-  },
-  inbox: {
-    label: "صندوق البورتال",
-    icon: Inbox,
-    what: "سجلٌّ لكل ما أُرسل إليك داخل هذه المنصة — للمراجعة والرجوع.",
-    href: "/portal/inbox",
-    hrefLabel: "افتح الصندوق",
-  },
-  email: {
-    label: "البريد الإلكتروني",
-    icon: Mail,
-    what: "نسخة من العرض على بريدك المسجَّل في ملفك.",
-  },
-};
-
-export const STATE_LABELS: Record<ChannelState, string> = {
-  reaching: "متصلة",
-  "logged-only": "تسجيل فقط",
-  "needs-link": "غير مربوطة",
-  "provider-dark": "معطّلة من الإدارة",
-  off: "مطفأة",
-};
-
-const STATE_TONE: Record<ChannelState, string> = {
-  reaching:
-    "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100",
-  "logged-only": "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-100",
-  "needs-link": "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100",
-  "provider-dark": "bg-muted text-muted-foreground",
-  off: "bg-muted text-muted-foreground",
-};
-
-/** ما يقوله كل وسم بلغة الفعل: ما المطلوب منك، أو أنه لا مطلوب. */
-const STATE_HINT: Record<ChannelState, string> = {
-  reaching: "تصلك عليها عروض الرحلات الآن.",
-  "logged-only":
-    "تُسجَّل لك هنا ولا تنبّهك — ولذلك لا تُحسب قناةً تبلغك، ولا تكفي وحدها لتكون متصلاً.",
-  "needs-link": "مفعَّلة وينقصها ربطٌ من طرفك — اتبع الخطوات أدناه.",
-  "provider-dark":
-    "مفعَّلة عندك ومتوقفة عند المنصة — لا شيء مطلوب منك، ولا تُحسب في حالتك حتى تعمل.",
-  off: "أطفأتَها، فلا يصلك عليها شيء.",
-};
 
 export function ChannelStateBadge({ state }: { state: ChannelState }) {
   return (

@@ -10,7 +10,19 @@ import { Card } from "@/components/ui/card";
 import { REACHING_CHANNELS, type PartnerChannel } from "@/lib/partner-alerts-types";
 import { PushSetup } from "../_components/push-setup";
 import { portalSetupAccess } from "../_lib/session";
-import { CHANNEL_META, ChannelsForm } from "./channels-form";
+/**
+ * 🔴 التسميات من الوحدة المحيّدة لا من `./channels-form`.
+ *
+ * هذه الصفحة **خادمية**، و`channels-form.tsx` يبدأ بـ`"use client"`. وقيمةٌ
+ * تُصدَّر من وحدة عميل لا تعبر إلى الخادم: ما يراه الخادم مرجعُ عميل لا الكائن —
+ * مقيسٌ حياً (2026-08-17): `typeof CHANNEL_META === "function"` و
+ * `CHANNEL_META.telegram === undefined`. فكان `CHANNEL_META[channel].label`
+ * أدناه يرمي TypeError فتسقط الصفحة كلها بـ٥٠٠، **أول ما يربط متعهدٌ تليجرامه**
+ * — لأن ذلك السطر في فرع «أنت متاح» وحده، وقبل أول ارتباطٍ لم يكن أحدٌ بالغاً.
+ * التفصيل في ترويسة `channel-meta.ts`.
+ */
+import { channelLabel } from "./channel-meta";
+import { ChannelsForm } from "./channels-form";
 import { loadPartnerAlerts, type PartnerAlertsView } from "./data";
 import { TelegramCard } from "./telegram-card";
 
@@ -58,6 +70,15 @@ const ERROR_MESSAGES: Record<string, string> = {
     "حساب تليجرام هذا مربوط بحساب آخر في المنصة. المحادثة الواحدة تخصّ جهة واحدة — افتح تليجرام بحساب خاص بشركتك، اضغط «ابدأ» من الرابط أعلاه، ثم أعد المحاولة.",
   "telegram-is-ops":
     "حساب تليجرام هذا مستعمَل لاستقبال إشعارات إدارة المنصة، فلا يصلح لاستقبال عروض رحلاتك — رسائل الإدارة تحتوي بيانات لا تخصّك. استخدم حساباً مستقلاً لهذه الشركة ثم أعد المحاولة.",
+  /*
+   * ⚠ الاتجاه المعاكس لا يُنشأ من هذه الشاشة — `portal_set_telegram_chat_id`
+   * تكتب على `subcontractors` فترفع `telegram-taken` أو `telegram-is-ops` وحدهما.
+   * ومع ذلك يُترجَم هنا لأن `readTelegramBindCode` **يُرجعه بنوعه**: رمزٌ يعبر
+   * ولا تقابله جملة يصل الشريكَ «حدث خطأ غير متوقع» — وخريطةٌ ناقصةٌ عن رمزٍ
+   * ممكنٍ في العقد هي بعينها الثغرة التي أوجدت 0097.
+   */
+  "ops-telegram-taken":
+    "حساب تليجرام هذا محجوز كوجهة إشعارات لإدارة المنصة، فلا يمكن ربطه بحسابك. استخدم حساباً مستقلاً لهذه الشركة ثم أعد المحاولة — ولا شيء تغيّر في ربطك الحالي.",
   /** رمزٌ قديم من قبل 0057 — يبقى مترجَماً كي لا يظهر رابطٌ محفوظ بلا رسالة */
   taken:
     "حساب تليجرام هذا مربوط بحساب آخر. لكل شريك حسابه — استخدم حسابك أنت ثم أعد المحاولة.",
@@ -90,7 +111,7 @@ function missingSteps(view: PartnerAlertsView): string[] {
       );
     }
     if (state === "off") {
-      steps.push(`فعّل قناة «${CHANNEL_META[channel].label}» في التفضيلات أدناه.`);
+      steps.push(`فعّل قناة «${channelLabel(channel)}» في التفضيلات أدناه.`);
     }
   }
   return steps;
@@ -144,7 +165,7 @@ function AvailabilityCard({ view }: { view: PartnerAlertsView }) {
       </div>
       <p className="text-sm leading-relaxed">
         تصلك عروض الرحلات على:{" "}
-        <b>{reaching.map((channel) => CHANNEL_META[channel].label).join(" · ")}</b>.
+        <b>{reaching.map((channel) => channelLabel(channel)).join(" · ")}</b>.
       </p>
     </Card>
   );

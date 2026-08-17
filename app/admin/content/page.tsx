@@ -23,6 +23,8 @@ import {
   sectionCountLabel,
   StatusBanners,
 } from "./_components/fields";
+import { NAV_LABEL_MAX } from "@/components/site/links";
+import { NavBarCard } from "./_components/nav-bar-card";
 import { builderPublicPath } from "@/lib/page-builder/registry";
 import { togglePublished } from "./[id]/actions";
 import { getAdminContent } from "./loader";
@@ -40,6 +42,22 @@ const hasSupabaseEnv = () =>
  */
 const GROUP_ORDER: string[] = Array.from(new Set<string>([...KIND_ORDER, "landing"]));
 const GROUP_LABELS: Record<string, string> = KIND_LABELS;
+
+/**
+ * رسائل أخطاء إجراءات الشريط العلوي فوق المشتركة.
+ *
+ * ورسالةُ `navLinkAccount` تشرح **لماذا** لا تكتفي بـ«ممنوع»: المالك الذي يمنعه
+ * النظام من شيءٍ يبدو معقولاً يحتاج أن يعرف ما حُرس، وإلا التمس طريقاً آخر إليه.
+ */
+const NAV_ERROR_MESSAGES: Record<string, string> = {
+  ...COMMON_ERROR_MESSAGES,
+  navLinkLabel: "تسمية البند حقل إلزامي.",
+  navLinkLabelLong: `تسمية البند أطول من ${NAV_LABEL_MAX} حرفاً — الشريط العلوي يقرأه الزائر في لمحة، فاكتب كلمة أو كلمتين.`,
+  navLinkHref:
+    "الرابط غير صالح: اكتب مساراً داخلياً يبدأ بشرطة مائلة واحدة (‏/book أو /#services) أو عنواناً كاملاً يبدأ بـhttp.",
+  navLinkAccount:
+    "روابط حساب العميل (‏/account…) لا تُضاف إلى الشريط: مدخل «دخول العملاء» مركّب في الترويسة وفي درج الجوال وفي التذييل بنيوياً، فلا يُحذف بنقرة. وبند حرّ إليه يصنع نسخة ثانية قابلة للحذف تظنها الأصل.",
+};
 
 const KIND_DESCRIPTIONS: Record<string, string> = {
   home: "صفحة الموقع الأولى — أقسامها تُرتّب وتُحرَّر من هنا.",
@@ -147,10 +165,13 @@ export default async function ContentListPage({ searchParams }: PageProps<"/admi
         readOnly={readOnly}
         saved={saved}
         error={error}
-        errorMessages={COMMON_ERROR_MESSAGES}
+        errorMessages={NAV_ERROR_MESSAGES}
       />
 
       <PagePulse data={pulse} />
+
+      {/* الشريط العلوي — الدفعة ج: الترويسة صارت تُبنى من القاعدة كالتذييل */}
+      <NavBarCard readOnly={readOnly} />
 
       {GROUP_ORDER.map((kind) => {
         const group = pages

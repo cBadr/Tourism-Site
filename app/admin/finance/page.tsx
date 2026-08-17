@@ -281,7 +281,7 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
             icon={TrendingUp}
             help={
               <>
-                مجموع أسعار الرحلات التي بلغت حالة «منفذ» داخل الفترة، بسعر العميل
+                مجموع أسعار الرحلات التي بلغت حالة «تم التنفيذ» داخل الفترة، بسعر العميل
                 المحفوظ لحظة الحجز. <span className="font-semibold">استحقاق لا تحصيل</span>:
                 الرحلة تُحتسب إيراداً يوم نُفّذت حتى لو كان جزء من مالها ما زال مع السائق.
               </>

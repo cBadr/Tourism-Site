@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
@@ -667,10 +668,14 @@ export default async function LanguagesPage({ searchParams }: PageProps<"/admin/
               العربية (<code dir="ltr">{DEFAULT_LOCALE}</code>) هي الأصل: لا تُضاف ولا
               تُعطَّل، وروابطها تبقى بلا بادئة إلى الأبد.
             </span>
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              أضف اللغة
-            </Button>
+            <SaveButton
+              label="أضف اللغة"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم تُضَف"
+              disabled={readOnly}
+            />
           </div>
         </Card>
       </form>

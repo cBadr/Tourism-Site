@@ -76,7 +76,7 @@
     },
 
     "fleet": {
-      "eyebrow": "Our fleet",
+      "eyebrow": "Fleet",
       "title": "A vehicle class for every group size",
       "description": "Tell us how many passengers you have and we will suggest the right class — from a light solo ride to a full group.",
       "railLabel": "Fleet classes"
@@ -180,8 +180,8 @@
       "railLabel": "Popular routes"
     },
     "logoStrip": {
-      "title": "Vehicle classes available in our fleet",
-      "listLabel": "Fleet brands"
+      "title": "Makes you will find across the available classes",
+      "listLabel": "Car makes"
     }
   },
 
@@ -248,7 +248,7 @@
         "orderNote": "The return time must be after the pickup time."
       },
       "extras": {
-        "toggle": "Extra services"
+        "heading": "Extra services"
       },
       "services": {
         "unitPrice": "{price} per unit",
@@ -354,10 +354,15 @@
         "customer": "Your details",
         "payment": "Payment"
       },
-      "stepStatus": "Step {index}",
+      "stepStatus": "Step {index} of {total}",
+      "stepCurrent": "current step",
+      "stepDone": "completed",
+      "stepFilled": "already filled in",
+      "stepPending": "not reached yet",
+      "editStep": "Edit",
       "trip": {
         "heading": "Pickup time",
-        "timeZoneNote": "All times are Cairo time (Egypt) — enter the pickup time as it is in Egypt, not in your own time zone.",
+        "timeZoneNote": "All times are {zone} time — enter the pickup time as it is there, not in your own time zone.",
         "date": "Date",
         "time": "Time",
         "pickupAt": "Pickup",
@@ -376,6 +381,9 @@
         "phone": "Phone number",
         "phonePlaceholder": "01xxxxxxxxx",
         "sameWhatsapp": "My WhatsApp number is the same as my phone number",
+        "echoLead": "We will call and message you on",
+        "echoConfirm": "Yes, this is my number and I receive WhatsApp on it too.",
+        "whatsappHint": "Is your WhatsApp on a different number? Clear the box and a field appears for it.",
         "whatsapp": "WhatsApp number"
       },
       "payment": {
@@ -394,11 +402,16 @@
         "afterConfirm": "After you confirm, your booking page opens with the available transfer accounts, where you upload the receipt for our team to review. The final amounts are locked in on that page.",
         "holdUntil": "And your booking stays held for you until {value} so you can complete the transfer — after that it may be cancelled automatically and its slot released to someone else."
       },
+      "summary": {
+        "planDeposit": "Deposit",
+        "planFull": "Full amount"
+      },
       "errors": {
         "pickupRequired": "Choose the pickup date and time.",
         "pickupPast": "The pickup time must be in the future.",
         "nameTooShort": "Enter your full name (at least 3 characters).",
         "phoneInvalid": "Enter a valid phone number so we can reach you about the trip.",
+        "phoneUnconfirmed": "Confirm your phone number is written correctly — or clear the box and enter your WhatsApp number.",
         "whatsappInvalid": "That WhatsApp number is not valid.",
         "createFailed": "We could not create the booking right now. Please try again.",
         "network": "We could not reach the server. Check your internet connection and try again."
@@ -496,8 +509,8 @@
         "destinationPlaceholder": "Leave empty for tours and daily rentals",
         "destinationHelp": "An itinerary with several stops? Leave this empty and list the stops in the notes.",
         "pickup": "Pick-up time",
-        "pickupDate": "Trip date",
-        "pickupTime": "Trip time",
+        "timeZoneNote": "All times are {zone} time — enter the pickup time as it is there, not in your own time zone.",
+        "leadNote": "We need at least {minutes} minutes to arrange your trip — the earliest available time is {value}.",
         "passengers": "Passengers",
         "luggage": "Bags (optional)",
         "service": "Service type",
@@ -536,6 +549,7 @@
           "destinationUnresolved": "Choose the destination from the search results, or clear the field if the trip has no single destination.",
           "pickupRequired": "Set the trip date and time.",
           "pickupPast": "The trip time must be in the future.",
+          "pickupTooSoon": "We need at least {minutes} minutes before pickup — the earliest available time is {value}.",
           "passengersInvalid": "Enter the number of passengers (at least one).",
           "sendFailed": "We could not send your request right now. Please try again.",
           "network": "We could not reach the server. Check your internet connection and try again."
@@ -613,7 +627,8 @@
         "totalWithExtras": "Total including add-ons",
         "dueNow": "Due now",
         "remaining": "Remaining with the driver",
-        "remainingNote": "The remainder is collected in cash by the driver on the day of the trip."
+        "remainingNote": "The remainder is collected in cash by the driver on the day of the trip.",
+        "foldSummary": "Cost breakdown"
       },
       "extras": {
         "sectionLabel": "Add-on services",
@@ -645,13 +660,27 @@
       "pay": {
         "sectionLabel": "Complete the payment",
         "heading": "Transfer {amount} to confirm your booking",
-        "holdUntil": "Your booking is held for you until {value} — complete the transfer and upload the receipt before then, after which it may be cancelled automatically and its slot released to someone else.",
-        "holdPassed": "The hold on this booking has expired, and it may be cancelled automatically at any time. If you have already transferred, upload the receipt now; otherwise contact us quoting your booking number.",
+        "holdUntil": "Held for you until {value} — after that it may be cancelled and its slot released.",
+        "holdPassed": "The hold has expired and this booking may be cancelled at any time. If you have already transferred, upload the receipt now; otherwise contact us with your booking number.",
         "noAccounts": "We will contact you to confirm the payment method — your booking is saved under the number above.",
         "uploadHeading": "After the transfer: upload the receipt",
         "accountFallbackLabel": "Transfer account",
         "accountHolder": "In the name of:",
-        "accountCopyLabel": "the {label} number"
+        "accountCopyLabel": "the {label} number",
+        "accountFamily": {
+          "wallet": "E-wallets",
+          "bank": "Bank accounts",
+          "card": "Cards",
+          "cash": "Cash",
+          "other": "Other methods"
+        },
+        "accountFamilyOne": {
+          "wallet": "E-wallet",
+          "bank": "Bank account",
+          "card": "Card",
+          "cash": "Cash",
+          "other": "Other method"
+        }
       },
       "review": {
         "sectionLabel": "Review status",
@@ -912,10 +941,10 @@
     "sandboxBadge": "Test mode",
     "manual": {
       "label": "Manual transfer — wallet or InstaPay",
-      "hint": "You transfer from your own app and upload a photo of the receipt, and our team confirms your booking after reviewing it."
+      "hint": "Transfer from your app and upload the receipt — we confirm after review."
     },
     "gateway": {
-      "hint": "You are taken to the secure payment page, and your booking is confirmed as soon as the bank's confirmation arrives.",
+      "hint": "A secure payment page — confirmed as soon as the bank confirms.",
       "pay": "Continue to payment",
       "starting": "Opening the payment page…",
       "startingStatus": "Opening the payment page",

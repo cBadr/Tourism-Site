@@ -29,9 +29,9 @@ export const DISPATCH_STATUSES: DispatchStatus[] = [
 export const DISPATCH_STATUS_LABELS: Record<DispatchStatus, string> = {
   queued: "في الطابور",
   broadcasting: "بثّ جارٍ",
-  assigned: "مُسند",
-  manual: "إسناد يدوي",
-  cancelled: "متوقف",
+  assigned: "تم الإسناد",
+  manual: "بانتظار إسناد يدوي",
+  cancelled: "تم الإلغاء",
 };
 
 export const DISPATCH_STATUS_HINTS: Record<DispatchStatus, string> = {
@@ -85,10 +85,10 @@ const OFFER_STATUSES: TripOfferStatus[] = [
 
 export const OFFER_STATUS_LABELS: Record<TripOfferStatus, string> = {
   pending: "بانتظار الرد",
-  accepted: "قَبِل",
-  rejected: "رفض",
+  accepted: "تم القبول",
+  rejected: "تم الرفض",
   expired: "انتهت المهلة",
-  revoked: "أُغلق",
+  revoked: "تم الإغلاق",
 };
 
 export const OFFER_STATUS_HINTS: Record<TripOfferStatus, string> = {
@@ -311,7 +311,7 @@ export const DISPATCH_ERRORS: Record<string, string> = {
   broadcasting:
     "هناك موجة مفتوحة على هذا الطلب الآن، وقاعدة البيانات ترفض فتح موجة جديدة قبل انتهاء مهلتها. انتظر انتهاء المهلة، أو اضغط «تشغيل دورة الإسناد الآن» في شاشة الإسناد لتُنهي المهل المنتهية وتفتح الموجة التالية.",
   bstatus:
-    "البث لا يبدأ إلا على حجز «مؤكد» — أي بعد اعتماد التحويل. اعتمد التحويل أولاً من بطاقة الإجراءات.",
+    "البث لا يبدأ إلا على حجز «تم التأكيد» — أي بعد اعتماد التحويل. اعتمد التحويل أولاً من بطاقة الإجراءات.",
   assigned:
     "الطلب مُسند بالفعل: قاعدة «أول قابل يفوز» أغلقته أمام الجميع. لإسناده لمتعهد آخر يلزم إجراء إعادة إسناد صريح.",
   nopartners:

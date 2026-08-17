@@ -31,8 +31,8 @@ export const controlClass =
 
 export const SUB_STATUS_LABELS: Record<SubcontractorStatus, string> = {
   pending: "قيد المراجعة",
-  approved: "معتمد",
-  suspended: "موقوف",
+  approved: "تم الاعتماد",
+  suspended: "تم الإيقاف",
 };
 
 const SUB_STATUS_TONE: Record<SubcontractorStatus, string> = {
@@ -60,9 +60,9 @@ export function SubStatusBadge({
 
 export const LIST_STATUS_LABELS: Record<PriceListStatus, string> = {
   draft: "مسودة",
-  pending: "قيد الاعتماد",
-  approved: "معتمدة",
-  rejected: "مرفوضة",
+  pending: "قيد المراجعة",
+  approved: "تم الاعتماد",
+  rejected: "تم الرفض",
 };
 
 /** ما تعنيه كل حالة **للمتعهد** لا للإدارة — الفرق هو كل الفرق في نبرة البورتال */

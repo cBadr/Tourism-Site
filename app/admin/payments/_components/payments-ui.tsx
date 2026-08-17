@@ -30,19 +30,19 @@ export const INTENT_STATUSES: PaymentIntentStatus[] = [
 ];
 
 export const INTENT_STATUS_LABELS: Record<PaymentIntentStatus, string> = {
-  created: "أُنشئت",
+  created: "تم الإنشاء",
   pending: "عند المزوّد",
-  succeeded: "ناجحة",
-  failed: "فاشلة",
-  cancelled: "ملغاة",
-  expired: "منتهية",
+  succeeded: "تم الدفع",
+  failed: "لم يتم الدفع",
+  cancelled: "تم الإلغاء",
+  expired: "انتهت المهلة",
 };
 
 export const INTENT_STATUS_HINTS: Record<PaymentIntentStatus, string> = {
   created: "أُنشئت الجلسة في قاعدتنا ولم يصل العميل إلى صفحة المزوّد بعد.",
   pending: "العميل عند المزوّد الآن. لا شيء مؤكد حتى يصل الـ webhook الموقّع.",
   succeeded:
-    "وصل تأكيد موقّع من المزوّد: أُنشئ مدفوع معتمد فقُيِّد في الدفتر تلقائياً وانتقل الحجز إلى «مؤكد» وبدأ البث.",
+    "وصل تأكيد موقّع من المزوّد: أُنشئ مدفوع معتمد فقُيِّد في الدفتر تلقائياً وانتقل الحجز إلى «تم التأكيد» وبدأ البث.",
   failed:
     "رفض المزوّد العملية (رصيد أو بطاقة أو تحقق ثلاثي الأبعاد) — الحجز باقٍ بانتظار الدفع ويستطيع العميل إعادة المحاولة.",
   cancelled: "أغلق العميل صفحة الدفع أو تراجع قبل إتمامها.",

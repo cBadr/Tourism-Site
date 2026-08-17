@@ -13,7 +13,14 @@ import { countLabel, Notice, SubStatusBadge } from "@/components/portal/portal-u
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { OnboardingReadiness, OnboardingStep, StepWeight } from "../_lib/onboarding";
+import type { OnboardingReadiness } from "../_lib/onboarding";
+/**
+ * 🔒 من الوحدة المحيّدة لا من وحدة القياس: `isPromptWeight` **قيمة** يقرؤها هذا
+ * المكوّن وعدّادُ «ما ينقصك» معاً، و`onboarding.ts` عليه `server-only`. والقاعدة
+ * المدفوعة اليوم: ما يقرؤه أكثر من موضع يعيش في وحدةٍ لا `"use client"` عليها ولا
+ * `server-only` — فلا يُقطع طريقُه إلى أيٍّ من الجهتين.
+ */
+import { isPromptWeight, type OnboardingStep, type StepWeight } from "../_lib/readiness-settle";
 
 /**
  * معالج التجهيز — الشاشة الوحيدة التي تجيب سؤال الشريك الأول: **«ما الذي يمنع
@@ -32,6 +39,13 @@ import type { OnboardingReadiness, OnboardingStep, StepWeight } from "../_lib/on
  * (٣) **لا شريط تقدّم بنسبة مئوية.** النسبة تُغري بالاكتمال الشكلي، والمقياس
  *     الحقيقي ثنائي: إما أن كل ما يمنع البثّ أُنجز أو لا.
  *
+ * (٤) 🔴 **وهذا المعالج مُطالَبةٌ لا لافتة: لا يُركَّب إذا لم يبقَ ما يُطالَب به.**
+ *     كان يبقى على شريكٍ تامّ التجهيز فيصير قائمةَ صحٍّ مشطوبةً بستة أسطر — ضجيجاً
+ *     يجعل الشريك يشكّ أصلاً في أنه يستقبل عروضاً (شكوى المالك، ملاحظة ٢). فالقرار
+ *     في `page.tsx`: تامٌّ ⇒ سطرُ حالةٍ هادئ (‏`ReadinessStateCard`)، وناقصٌ ⇒ هذا
+ *     المعالج. **وشرط الاكتمال واحدٌ مقيسٌ في `_lib/onboarding.ts`** ولا يُشتقّ
+ *     هنا ولا هناك — تعريفان لـ«مكتمل» يفترقان، فيُخفى الشريط عن ناقص.
+ *
  * ولا حساب هنا إطلاقاً: كل ما يُعرض محسوبٌ في `_lib/onboarding.ts` من صفوف
  * القاعدة، وهذه الشاشة تنسّق وتعرض (D-05 بروحه: المنطق ليس في الواجهة).
  */
@@ -43,17 +57,23 @@ import type { OnboardingReadiness, OnboardingStep, StepWeight } from "../_lib/on
  */
 const WEIGHT_LABEL: Record<StepWeight, string> = {
   blocking: "يمنع وصول العروض",
+  // ولا تقول «يمنع»: `dispatch_pool` تُقدّم البالغين وتعود إليه إن لم يكن فيهم
+  // أحد (الاحتياطي المقروء في ترويسة `_lib/onboarding.ts`)
+  reach: "يتخطّاك التوزيع إلى غيرك",
   contact: "تحتاجه الإدارة لتبلغك بعد الإسناد",
   later: "يوقفك بعد قبول أول رحلة",
   optional: "دخلٌ متروك",
 };
 
 /**
- * والنبرة تتبع اللحظة أيضاً: الكهرمانيّ للمانع وحده كي يبقى مسموعاً، والسماويّ
- * لما يقع بعد القبول، والبنفسجيّ الهادئ لتنبيهٍ لا رفض فيه، والرماديّ لما يحسّن.
+ * والنبرة تتبع اللحظة أيضاً: الكهرمانيّ لما يقف بين الشريك وعملٍ يصله كي يبقى
+ * مسموعاً، والسماويّ لما يقع بعد القبول، والبنفسجيّ الهادئ لتنبيهٍ لا رفض فيه،
+ * والرماديّ لما يحسّن.
  */
 const WEIGHT_TONE: Record<StepWeight, string> = {
   blocking:
+    "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
+  reach:
     "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
   contact:
     "border-violet-300 bg-violet-100 text-violet-900 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-100",
@@ -85,9 +105,11 @@ function StepIcon({ step }: { step: OnboardingStep }) {
       <HelpCircle className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
     );
   }
-  // 🔒 مثلث الإنذار حكرٌ على المانع وحده. `contact` و`later` و`optional` تأخذ
-  //    الدائرة الهادئة عمداً: إنذارٌ يعلو على كل بندٍ ناقص لا يعود إنذاراً.
-  if (step.weight === "blocking") {
+  // 🔒 مثلث الإنذار لما يقف بين الشريك وعملٍ يصله **قبل** أن يقبل شيئاً، وهما
+  //    اثنان لا واحد: `blocking` يمنع، و`reach` يُقدّم غيره عليه. و`contact`
+  //    و`later` و`optional` تأخذ الدائرة الهادئة عمداً: إنذارٌ يعلو على كل بندٍ
+  //    ناقص لا يعود إنذاراً.
+  if (isPromptWeight(step.weight)) {
     return (
       <AlertTriangle
         className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
@@ -158,15 +180,37 @@ function StepRow({ step }: { step: OnboardingStep }) {
  * بعدُ هو النمط ٢ في `LESSONS.md` حرفياً.
  */
 function WizardHeadline({ data, debtBlocked }: { data: OnboardingReadiness; debtBlocked: boolean }) {
-  const { stage, blockingLeft, waitingOnAdmin } = data;
+  const { stage, promptLeft, waitingOnAdmin, degraded } = data;
   const readyToReceive = data.readyToReceive && !debtBlocked;
 
+  /*
+    🔴 «تعذّرت القراءة» **قبل كل شيء آخر، ولا تُترجَم إلى عدد.**
+
+    وسببه مقيسٌ في المتصفح لا مستنتَج: بمعطياتِ `degraded` طبعت هذه الترويسة
+    حرفياً «حسابك معتمد، لكن ٠ من البنود ما زالت تمنع وصول العروض إليك» — لأن
+    الفرع الأخير يعدّ `todo` وحدها، وبندُ «لا نعرف» ليس `todo`. والعطل قديمٌ
+    مستقلٌّ عن هذا التغيير (كان يقع بـ`blockingLeft` كذلك)، لكنه صار أقرب للوقوع
+    حين دخلت قراءةُ القنوات في `degraded` — فأُصلح هنا.
+
+    ويشمل الفرع المرحلتين قصداً: المدعوُّ كان يقرأ «أنهيت كل ما عليك» على قياسٍ
+    ناقص، وهو وعدٌ أسوأ من العدد.
+  */
+  if (degraded && promptLeft === 0) {
+    return (
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        لم يبقَ عليك بندٌ <span className="font-semibold text-foreground">نعرفه</span>، لكن قراءةً
+        واحدة على الأقل تعذّرت — فلا نؤكّد لك جاهزيتك على قياسٍ ناقص. البنود التي تحتها علامة
+        استفهام أدناه هي ما لم نستطع الحكم عليه.
+      </p>
+    );
+  }
+
   if (stage === "onboarding") {
-    return blockingLeft > 0 ? (
+    return promptLeft > 0 ? (
       <p className="text-sm leading-relaxed text-muted-foreground">
         حسابك قيد المراجعة، ولا داعي للانتظار بلا عمل: جهّز ملفك وأسطولك وسائقيك وأسعارك الآن،
         وكل ما تحفظه محفوظ ويبدأ العمل فور الاعتماد. بقي عليك{" "}
-        <span className="font-semibold text-foreground">{countLabel(blockingLeft)}</span> من البنود
+        <span className="font-semibold text-foreground">{countLabel(promptLeft)}</span> من البنود
         التي تمنع وصول العروض.
       </p>
     ) : (
@@ -177,6 +221,11 @@ function WizardHeadline({ data, debtBlocked }: { data: OnboardingReadiness; debt
     );
   }
 
+  /*
+    🔒 شبكةُ أمان لا فرعٌ يُرى في الطريق العادي: الصفحة **لا تركّب هذا المعالج
+    أصلاً** حين يكتمل التجهيز، بل تعرض بطاقة الحالة الهادئة (‏`ReadinessStateCard`).
+    ويبقى الفرع مكتوباً كي لا يقع سطحٌ جديدٌ غداً على «بقي عليك ٠ من البنود».
+  */
   if (readyToReceive) {
     return (
       <p className="text-sm leading-relaxed text-muted-foreground">
@@ -191,7 +240,7 @@ function WizardHeadline({ data, debtBlocked }: { data: OnboardingReadiness; debt
     `portal_offers` تُسقط عروض من بلغ سقفه، فالجملة «حسابك جاهز» أمام شريك محجوب
     وعدٌ بأثرٍ لا يقع — والتفصيل والمبلغ في بطاقة الحساب فوقها، فلا يُكرَّر هنا.
   */
-  if (debtBlocked && blockingLeft === 0) {
+  if (debtBlocked && promptLeft === 0) {
     return (
       <p className="text-sm leading-relaxed text-muted-foreground">
         تجهيزك مكتمل من طرفك، لكن العروض متوقفة عنك الآن بسبب رصيدك مع المنصة — التفصيل والمبلغ
@@ -208,10 +257,24 @@ function WizardHeadline({ data, debtBlocked }: { data: OnboardingReadiness; debt
     );
   }
 
+  /*
+    🔒 آخرُ شبكةِ أمان قبل الفرع العدديّ: كل مسارٍ يصل هنا بـ`promptLeft = 0`
+    يطبع «٠ من البنود». والمسار الوحيد الممكن اليوم هو `pausedByChoice` مع حجبٍ
+    بالدين — يمسكه فرع الدين أعلاه — لكن الشرط يبقى مكتوباً لأن كلفةَ خطئه جملةٌ
+    عبثية على شاشةٍ تشرح للشريك سبب انقطاع عمله.
+  */
+  if (promptLeft === 0) {
+    return (
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        حسابك معتمد ولا بندَ ناقصاً من طرفك. وحالتك الكاملة في بطاقة «حالة الحساب» أسفل الصفحة.
+      </p>
+    );
+  }
+
   return (
     <p className="text-sm leading-relaxed text-muted-foreground">
       حسابك معتمد، لكن{" "}
-      <span className="font-semibold text-foreground">{countLabel(blockingLeft)}</span> من البنود ما
+      <span className="font-semibold text-foreground">{countLabel(promptLeft)}</span> من البنود ما
       زالت تمنع وصول العروض إليك. عالجها بالترتيب أدناه — كل واحد منها شرطٌ في القاعدة لا توصية.
     </p>
   );
@@ -225,7 +288,7 @@ export function OnboardingWizard({
   /** من `portal_balance().blocked` — شرطٌ رابع خارج قياس التجهيز، انظر `WizardHeadline` */
   debtBlocked?: boolean;
 }) {
-  const { stage, sub, steps, blockingLeft, degraded } = data;
+  const { stage, sub, steps, promptLeft, degraded } = data;
   const readyToReceive = data.readyToReceive && !debtBlocked;
 
   return (
@@ -236,7 +299,7 @@ export function OnboardingWizard({
           {stage === "onboarding" ? "تجهيز حسابك" : "جاهزيتك لاستقبال العروض"}
         </h3>
         <SubStatusBadge status={sub.status} />
-        {blockingLeft === 0 && !degraded && !debtBlocked ? (
+        {promptLeft === 0 && !degraded && !debtBlocked ? (
           <span className="ms-auto text-xs text-emerald-700 dark:text-emerald-400">
             لا شيء يمنع البثّ من طرفك
           </span>

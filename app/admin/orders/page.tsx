@@ -20,6 +20,7 @@ import {
   relativeTime,
   StatusBadge,
   STATUS_HINTS,
+  STATUS_LABELS,
   toLatinDigits,
 } from "./_components/booking-ui";
 
@@ -43,18 +44,23 @@ const LIST_COLUMNS =
 /**
  * تبويبات الترشيح — «مُسند» يظهر ضمن «الكل» ويأخذ تبويبه في المرحلة ٦ مع الإسناد.
  *
- * و«فاشلة» (‏0051) لها تبويبها من اليوم: هي **مقياسُ جودة تشغيل** لا حالةً عابرة
- * — «كم رحلة خابت هذا الشهر؟» سؤالٌ يُسأل، وتركُها مبعثرةً في «الكل» يجعله سؤالاً
- * بلا شاشة. وموضعها بعد «ملغي» لأن كليهما نهاية طريق.
+ * و«لم يتم التنفيذ» (‏0051) لها تبويبها من اليوم: هي **مقياسُ جودة تشغيل** لا حالةً
+ * عابرة — «كم رحلة خابت هذا الشهر؟» سؤالٌ يُسأل، وتركُها مبعثرةً في «الكل» يجعله
+ * سؤالاً بلا شاشة. وموضعها بعد «تم الإلغاء» لأن كليهما نهاية طريق.
+ *
+ * 🔒 **والتسمية تُقرأ من `STATUS_LABELS` ولا تُكتب هنا**: نسخةٌ ثانيةٌ من نفس
+ * القاموس هي ما جعل `failed` تتخلّف عن أخواتها الست حين طُبِّق نمط «تم + مصدر»
+ * (‏قرار المالك 2026-08-17) — أُصلح موضعٌ وبقي الآخر «فاشلة». و`key` يبقى
+ * **المعرِّف الإنجليزي المخزَّن** لأنه يسافر في `?status=` ويصل الاستعلام كما هو.
  */
 const TABS: { key: string; label: string; status: AdminBookingStatus | null }[] = [
   { key: "all", label: "الكل", status: null },
-  { key: "pending_payment", label: "بانتظار الدفع", status: "pending_payment" },
-  { key: "under_review", label: "قيد المراجعة", status: "under_review" },
-  { key: "confirmed", label: "مؤكد", status: "confirmed" },
-  { key: "completed", label: "منفذ", status: "completed" },
-  { key: "cancelled", label: "ملغي", status: "cancelled" },
-  { key: "failed", label: "فاشلة", status: "failed" },
+  { key: "pending_payment", label: STATUS_LABELS.pending_payment, status: "pending_payment" },
+  { key: "under_review", label: STATUS_LABELS.under_review, status: "under_review" },
+  { key: "confirmed", label: STATUS_LABELS.confirmed, status: "confirmed" },
+  { key: "completed", label: STATUS_LABELS.completed, status: "completed" },
+  { key: "cancelled", label: STATUS_LABELS.cancelled, status: "cancelled" },
+  { key: "failed", label: STATUS_LABELS.failed, status: "failed" },
 ];
 
 const MAX_ROWS = 100;

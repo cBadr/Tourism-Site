@@ -326,7 +326,7 @@ export default async function DispatchPage({ searchParams }: PageProps<"/admin/d
           valueDir="ltr"
         />
         <KpiCard
-          title="مُسند"
+          title="تم الإسناد"
           value={numberText(counts.assigned)}
           sub="طلبات وجدت منفّذها"
           icon={UserCheck}

@@ -30,9 +30,9 @@ export const SUBCONTRACTOR_STATUSES: SubcontractorStatus[] = [
 ];
 
 export const SUB_STATUS_LABELS: Record<SubcontractorStatus, string> = {
-  pending: "بانتظار الاعتماد",
-  approved: "معتمد",
-  suspended: "موقوف",
+  pending: "قيد المراجعة",
+  approved: "تم الاعتماد",
+  suspended: "تم الإيقاف",
 };
 
 /** شرح مختصر لكل حالة — يظهر في التلميحات وعناوين التبويبات */
@@ -78,9 +78,9 @@ export const PRICE_LIST_STATUSES: PriceListStatus[] = [
 
 export const LIST_STATUS_LABELS: Record<PriceListStatus, string> = {
   draft: "مسودة",
-  pending: "بانتظار المراجعة",
-  approved: "معتمدة",
-  rejected: "مرفوضة",
+  pending: "قيد المراجعة",
+  approved: "تم الاعتماد",
+  rejected: "تم الرفض",
 };
 
 export const LIST_STATUS_HINTS: Record<PriceListStatus, string> = {

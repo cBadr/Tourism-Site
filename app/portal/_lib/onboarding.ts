@@ -5,6 +5,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { toArabicDigits } from "@/components/booking/format";
 import type { PriceListStatus } from "@/lib/subcontractor-types";
+/**
+ * 🔒 **الإتاحة تُقرأ ولا تُشتقّ من جديد.** `loadPartnerAlerts` هي القارئ الوحيد
+ * لـ`portal_alert_prefs()`، وتلك تعيد `reachable/willing` من **نفس**
+ * `partner_availability()` التي يقرؤها `dispatch_pool` عبر `partner_available()`.
+ * فاستيرادها هنا — بدل إعادة عدّ القنوات — هو ما يمنع مصدرَي حقيقة يفترقان يوم
+ * تتغيّر إحداهما (النمط ٢ في `LESSONS.md`: شاشةٌ تقول «مستقبِل» وحوضٌ يتخطّاه).
+ * والملف مُذاكَر بـ`cache()`، فقراءته من هنا ومن شاشة القنوات نداءٌ واحد للطلب.
+ */
+import { loadPartnerAlerts } from "../notifications/data";
 import { isPriceListStatus } from "./data";
 import { portalSetupAccess, type PortalStage, type PortalSub } from "./session";
 
@@ -30,11 +39,26 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
  * | بندُ سعرٍ لفئة الحجز في تلك القائمة | `dispatch_pool` (‏`join price_list_items`) |
  * | **مركبة نشطة من نفس الفئة** | `dispatch_pool` (‏`exists … and v.active`) |
  * | ألا يكون فوق سقف الدين | `portal_offers` |
+ * | **قناةٌ تبلغه** (‏`partner_available`) | `dispatch_pool` — **ترجيحٌ لا منعٌ**، انظر أدناه |
  *
  * والشرط الرابع هو الفخّ الصامت: قائمةٌ معتمَدة لفئةٍ لا مركبة نشطة فيها **لا
  * تُنتج عرضاً واحداً أبداً**، ولا شيء في الشاشة كان يقول ذلك. المقيس حياً لحظة
  * الكتابة: شريكٌ معتمَد بقائمتين معتمدتين تسعّران `sedan` و`suv` و**صفر مركبات**
  * — أي حسابٌ مكتملٌ في الظاهر لا يمكن أن يصله شيء.
+ *
+ * ### والقناة شرطٌ سادس بوزنٍ **مختلف** — قرأناه بحرفه فلم نبالغ فيه
+ * آخر سطرين في `dispatch_pool` (‏`pg_get_functiondef`، 2026-08-17):
+ *
+ *     where r.avail
+ *        or not exists (select 1 from ranked r2 where r2.avail)   -- ← الاحتياطي
+ *
+ * فمن لا قناةَ له **لا يُمنع** بل يُؤخَّر: يُقدَّم عليه كل من يمكن بلوغه، ولا يصله
+ * شيء إلا إذا لم يكن في الحوض بالغٌ واحد. ولذلك وزنه `reach` لا `blocking` —
+ * ووسمُه `blocking` كان سيكون كذبةً قابلة للقياس اليوم بالذات: القاعدة فيها
+ * **شريكٌ واحد**، فالاحتياطي يعمل له دائماً.
+ *
+ * ⚠ ومع ذلك يمنع «الاكتمال»: شريكٌ فصل تليجرامه يقرأ «أنت مستقبِلٌ للعروض» وهو
+ * يُتخطَّى — وهو بعينه العطل الذي أُصلح، مقلوباً.
  *
  * ### والسائقون ليسوا شرطاً للعرض — وهذا بالضبط سبب إفرادهم ببندٍ من طبقة أخرى
  * لا تذكرهم `dispatch_pool` إطلاقاً، فهم لا يمنعون بثاً؛ لكن `set_trip_crew`
@@ -64,11 +88,25 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 /* ------------------------------------------------------------------ */
 
 /**
+ * الأنواع تُعاد من الوحدة المحيّدة `readiness-settle.ts` — و**إعادةُ تصدير نوعٍ
+ * آمنة**: النوع يُمحى في الترجمة فلا يعبر حداً أصلاً. المحظور إعادةُ تصدير
+ * **قيمة** من ملفٍّ عميل، وهو ما لا يقع هنا: `readiness-settle` محيّدة وهذا الملف
+ * خادميّ. والفائدة أن أربعة مواضع استيراد قائمة لم تتغيّر بحرف.
+ */
+export type { OnboardingStep, StepHref, StepState, StepWeight } from "./readiness-settle";
+// وسطران لا سطر: الأعلى للمستوردين من خارج الملف، وهذا لما يُستعمل داخله وحده
+import type { OnboardingStep, StepState } from "./readiness-settle";
+import { settleReadiness } from "./readiness-settle";
+
+/**
  * وزن البند — **متى** يعضّ تركُه؟ لا كم هو مهم.
  *
  * والترتيب زمنيّ لا تفضيليّ، وكل درجة مشدودة إلى موضعٍ في القاعدة يمكن قراءته:
  * - `blocking`: بدونه **لا يصل عرضٌ واحد** — شرطٌ في `dispatch_pool` أو فيما
- *   تستدعيه (`coverage_matches`). هذه وحدها تُعدّ في «ما ينقصك».
+ *   تستدعيه (`coverage_matches`).
+ * - `reach`: العرض **يُنشأ** له وقد لا يبلغه: `dispatch_pool` تقرأ
+ *   `partner_available` وتقدّم عليه كل بالغٍ، ولا تصل إليه إلا حين لا يوجد بالغٌ
+ *   واحد (الاحتياطي في ترويسة الملف). فالكلفة حقيقية والمنع ليس مطلقاً.
  * - `contact`: لا يمنع عرضاً ولا يرفض إجراءً، لكنه يُطلب **بعد الإسناد**: به
  *   تبلغك الإدارة حين تُسنَد إليك رحلة. لا تعرفه القاعدة شرطاً، ولذلك لا يُعدّ
  *   في «ما ينقصك» — ووسمُه بغير ذلك هو الكذبة التي أُصلحت (انظر ترويسة الملف).
@@ -79,41 +117,43 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
  * ⚠ والفارق بين `contact` و`later` ليس ترفاً: الأول تنبيهٌ لا رفض فيه، والثاني
  * بابٌ يُغلق في وجه الشريك بعد أن يكون قد التزم برحلة عميلٍ دفع. ضمُّهما تحت وسمٍ
  * واحد كان سيُنقص صدق أحدهما لا محالة.
+ *
+ * و`blocking` و`reach` وحدهما يُعدّان في «ما ينقصك» (‏`promptLeft`)، لأنهما وحدهما
+ * ما يقف بين الشريك وعملٍ يصله **قبل** أن يقبل شيئاً. والقرار نفسه (‏`isPromptWeight`)
+ * في الوحدة المحيّدة كي يقرأه العدّاد والمعالج من نسخةٍ واحدة.
+ *
+ * والتعريفات الحرفية لـ`StepWeight` و`StepState` و`StepHref` و`OnboardingStep`
+ * في `readiness-settle.ts`، وهذا الملف يعيد تصديرها أعلاه.
  */
-export type StepWeight = "blocking" | "contact" | "later" | "optional";
-
-/**
- * حالة البند — وثلاثتها مختلفة قصداً، لا مترادفات:
- * - `done`: تمّ.
- * - `todo`: ينتظر **الشريك** — وله دائماً رابطٌ ينجزه.
- * - `waiting`: أنجزه الشريك وينتظر **الإدارة**؛ لا إجراء منه، ولا يُعرض كنقص.
- * - `unknown`: تعذّرت القراءة (هجرة ناقصة أو خطأ) — «لا نعرف» لا «صفر»
- *   (القاعدة الذهبية ١٥ في `INDEX.md`).
- */
-export type StepState = "done" | "todo" | "waiting" | "unknown";
-
-/** وجهات المعالج — اتحادٌ حرفيّ كي يقبله `Link` في Next 16 بلا `as` */
-export type StepHref = "/portal/profile" | "/portal/fleet" | "/portal/drivers" | "/portal/prices";
-
-export type OnboardingStep = {
-  key: string;
-  title: string;
-  /** جملة واحدة تقول ماذا يفعل الآن، أو لماذا لا شيء مطلوب منه */
-  body: string;
-  weight: StepWeight;
-  state: StepState;
-  href: StepHref | null;
-  cta: string | null;
-};
 
 export type OnboardingReadiness = {
   stage: PortalStage;
   sub: PortalSub;
   steps: OnboardingStep[];
-  /** بنود `blocking` المتبقية على الشريك — عدّاد «ما ينقصك» */
-  blockingLeft: number;
-  /** هل كل ما يمنع البثّ أُنجز من طرفه؟ (قد يبقى انتظار الإدارة) */
+  /**
+   * بنود `blocking` و`reach` التي ما زالت على الشريك — عدّاد «ما ينقصك».
+   *
+   * ⚠ كان اسمه `blockingLeft` ويعدّ `blocking` وحدها. وتوحيدُه عدّاداً واحداً
+   * مقصود: عدّادان على شاشةٍ واحدة يجعلان «بقي عليك ٠ من البنود» تُطبع فوق قائمةٍ
+   * فيها بندٌ أحمر — وهو ما كان يقع حرفياً لو بقي `reach` خارج العدّ.
+   */
+  promptLeft: number;
+  /**
+   * **الشرط الوحيد لإخفاء شريط الجاهزية**: معتمَدٌ، ولا شيء ناقصاً منه، ولا شيء
+   * عند الإدارة، ولا قراءةٌ تعذّرت، **و**قناةٌ تبلغه، **و**لم يوقف الاستقبال بنفسه.
+   *
+   * 🔒 ولا يُعاد اشتقاق شيء من هذا في الواجهة: تعريفان لـ«مكتمل» يفترقان يوماً،
+   * فيُخفى الشريط عن شريكٍ ناقص أو يبقى على شريكٍ تامّ — وهو العطل نفسه بوجهيه.
+   */
   readyToReceive: boolean;
+  /**
+   * تامُّ التجهيز **وأوقف الاستقبال بإرادته** (`accepting_offers = false`).
+   *
+   * وهذه ليست حالةَ نقصٍ فلا تُعرض قائمةَ تحقّق: لا شيء ينقصه ولا زرَّ إصلاح —
+   * لكنها ليست حالةَ اكتمالٍ أيضاً، فقولُ «أنت مستقبِلٌ للعروض» لمن أوقفها بنفسه
+   * كذبٌ صريح. ولذلك سطرٌ ثالثٌ هادئ يسمّي ما فعله ويدلّه على عكسه.
+   */
+  pausedByChoice: boolean;
   /** أُنجز كل ما عليه ولم يبقَ إلا اعتماد الإدارة */
   waitingOnAdmin: boolean;
   /** تعذّرت قراءة جدولٍ أو أكثر — الشاشة تقول ذلك بدل أن تعدّه صفراً */
@@ -167,7 +207,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
   if (!access.ok) return null;
   const { supabase, sub, stage } = access;
 
-  const [vehiclesRes, driversRes, listsRes, classTitles] = await Promise.all([
+  const [vehiclesRes, driversRes, listsRes, classTitles, alerts] = await Promise.all([
     supabase
       .from("subcontractor_vehicles")
       .select("class_slug, active")
@@ -175,12 +215,23 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     supabase.from("subcontractor_drivers").select("active").eq("subcontractor_id", sub.id),
     supabase.from("price_lists").select("id, status").eq("subcontractor_id", sub.id),
     loadClassTitles(supabase),
+    // الإتاحة من قارئها الوحيد — انظر تعليق الاستيراد أعلى الملف
+    loadPartnerAlerts(),
   ]);
 
   // «لا نعرف» ≠ «صفر»: أي فشل قراءة يُعلَّم ويُقال، ولا يُترجَم إلى بندٍ ناقص
   const vehiclesKnown = !vehiclesRes.error;
   const driversKnown = !driversRes.error;
   const listsKnown = !listsRes.error;
+  /**
+   * `hidden` (قاعدةٌ قبل 0054) و`failed` (خطأ نداء) كلتاهما «لا نعرف» لا «غير
+   * متصل»: وسمُ شريكٍ بالانقطاع بسبب نداءٍ فشل يرسله يطارد قناةً تعمل أصلاً.
+   */
+  const reachKnown = alerts.state === "ready";
+  const reachable = reachKnown ? alerts.view.reachable : null;
+  // الافتراض `true` هو افتراض القاعدة نفسها (`coalesce(pr.accepting_offers, true)`)،
+  // فلا يُقال «أوقفتَ الاستقبال» لمن لا صفَّ تفضيلات له بعد — وهي حالة كل شريك جديد
+  const willing = reachKnown ? alerts.view.willing : true;
 
   let activeVehicles = 0;
   let totalVehicles = 0;
@@ -239,7 +290,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
       ? [...activeVehicleClasses].filter((slug) => !pricedClasses.has(slug)).map(label).sort()
       : [];
 
-  const degraded = !vehiclesKnown || !driversKnown || !listsKnown || !itemsKnown;
+  const degraded = !vehiclesKnown || !driversKnown || !listsKnown || !itemsKnown || !reachKnown;
 
   /* -------------------------------------------------------------- */
   /* البنود                                                          */
@@ -332,7 +383,31 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     });
   }
 
-  // (٥) السائقون — طبقةٌ ثانية: لا تمنع العرض، وتوقفك بعد أن تكون قد قبلته
+  /*
+    (٥) القناة التي تبلغه — البند الذي يجعل الإخفاء صادقاً.
+
+    ولماذا هو هنا لا في شاشة القنوات وحدها؟ لأن الشريط يُخفى عند الاكتمال، ومن
+    فصل تليجرامه بعد أن اكتمل سيقرأ سطراً هادئاً يقول «أنت مستقبِل» ولا شيء غيره
+    — والقاعدة تكون قد بدأت تقدّم غيره عليه. فالبند هو ما يُعيد الشريط.
+
+    ولا يُذكر «صندوق البورتال» قناةً: `partner_availability` تحصر البالغ في
+    (telegram · webpush · email) وتستثني `inbox` صراحةً — قُرئت حيّةً.
+  */
+  steps.push({
+    key: "reach",
+    title: "قناة تنبيه واحدة على الأقل",
+    weight: "reach",
+    state: !reachKnown ? "unknown" : reachable ? "done" : "todo",
+    href: "/portal/notifications",
+    cta: "اربط قناة",
+    body: !reachKnown
+      ? "تعذّرت قراءة قنواتك الآن، فلا نستطيع الحكم على هذا البند — حدّث الصفحة."
+      : reachable
+        ? "قناةٌ واحدة على الأقل تبلغك بالعرض، وهي التي يقرؤها التوزيع نفسه."
+        : "لا قناة واحدة تستطيع أن تبلغك بعرض رحلة، فالتوزيع يقدّم عليك من يمكن بلوغه. وصندوق البورتال وحده لا يُحسب: يُسجّل ولا ينبّه، وللعرض مهلة تنتهي قبل أن تنظر.",
+  });
+
+  // (٦) السائقون — طبقةٌ ثانية: لا تمنع العرض، وتوقفك بعد أن تكون قد قبلته
   steps.push({
     key: "drivers",
     title: "سائق نشط واحد على الأقل",
@@ -349,7 +424,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
           : "لا يمنعك فراغ السجلّ من استقبال العروض، لكنك بعد قبول أول رحلة ستُطالَب بتسجيل سائقها ولن تجد من تختار — والدقائق حينها ثمينة.",
   });
 
-  // (٦) دخلٌ متروك — تحسينٌ لا نقص، ولذلك `optional` ولا يدخل عدّاد «ما ينقصك»
+  // (٧) دخلٌ متروك — تحسينٌ لا نقص، ولذلك `optional` ولا يدخل عدّاد «ما ينقصك»
   if (vehicleWithoutPrice.length > 0) {
     steps.push({
       key: "unpriced-classes",
@@ -362,7 +437,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     });
   }
 
-  // (٧) اعتماد الحساب — بندٌ للمدعوّ وحده، ويقع أخيراً لأنه آخر ما يقع زمنياً
+  // (٨) اعتماد الحساب — بندٌ للمدعوّ وحده، ويقع أخيراً لأنه آخر ما يقع زمنياً
   if (stage === "onboarding") {
     steps.push({
       key: "approval",
@@ -375,20 +450,21 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     });
   }
 
-  const blockingLeft = steps.filter(
-    (step) => step.weight === "blocking" && step.state === "todo"
-  ).length;
-  const blockingWaiting = steps.filter(
-    (step) => step.weight === "blocking" && step.state === "waiting"
-  ).length;
+  /**
+   * الحسم في الوحدة المحيّدة لا هنا — وهو ما جعل شرطَ الإخفاء **قابلاً للقياس**
+   * بلا جلسة شريك: نفس الدالة تُستدعى من `node` على أرقامٍ مقروءةٍ من القاعدة.
+   * (‏`readiness-settle.ts` — والسبب الثاني: `isPromptWeight` يقرؤها المعالج أيضاً.)
+   */
+  const settled = settleReadiness({ stage, steps, degraded, willing });
 
   return {
     stage,
     sub,
     steps,
-    blockingLeft,
-    readyToReceive: stage === "active" && blockingLeft === 0 && blockingWaiting === 0 && !degraded,
-    waitingOnAdmin: blockingLeft === 0 && blockingWaiting > 0,
+    promptLeft: settled.promptLeft,
+    readyToReceive: settled.readyToReceive,
+    pausedByChoice: settled.pausedByChoice,
+    waitingOnAdmin: settled.waitingOnAdmin,
     degraded,
     counts: {
       activeVehicles,

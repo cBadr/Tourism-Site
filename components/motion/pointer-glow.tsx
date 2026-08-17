@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import styles from "./motion.module.css";
+import { pointerGlowHostClass } from "./classes";
 
 /* ============================================================
    وهجٌ يتبع المؤشّر على بطاقات الخدمات
@@ -25,8 +26,14 @@ export function PointerGlowLayer({ className }: { className?: string }) {
   return <span className={cn(styles.pointerGlow, className)} aria-hidden="true" />;
 }
 
-/** صنف البطاقة الحاضنة — هو ما يُظهر الوهج عند التحويم والتركيز. */
-export const pointerGlowHostClass = styles.pointerGlowHost;
+/* صنف البطاقة الحاضنة (‏`pointerGlowHostClass`) يعيش في `./classes` — وحدةٌ
+   محيّدة يقرؤها الخادم والعميل معاً.
+
+   🔴 **ولا يُعاد تصديرُه من هنا. أبداً.** هذا الملفّ يبدأ بـ`"use client"`، وأي
+   قيمةٍ تعبر منه إلى مكوّنٍ خادمي تصل **مرجعَ عميل** لا نصّاً: `typeof` يساوي
+   `"function"`، وكل قراءةِ خاصيةٍ `undefined`، و`clsx` يُسقطها صامتاً. وهذا بعينه
+   ما أطفأ وهج `components/site/why-us.tsx` (‏القياس كامل في `./classes`).
+   وإعادةُ التصدير لا تُصلح شيئاً — بل تُخفي الخطأ لأن المستورد لا يرى فرقاً. */
 
 /**
  * حاوية الشبكة: تلتقط حركة المؤشّر مرّة واحدة وتوزّعها على البطاقة تحته.
@@ -45,7 +52,7 @@ export function PointerGlowGrid({
   as?: "div" | "ul" | "ol" | "section";
 }) {
   const ref = useRef<HTMLElement>(null);
-  const selector = cardSelector ?? `.${styles.pointerGlowHost}`;
+  const selector = cardSelector ?? `.${pointerGlowHostClass}`;
 
   useEffect(() => {
     const grid = ref.current;

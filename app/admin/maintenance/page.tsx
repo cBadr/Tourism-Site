@@ -135,6 +135,7 @@ export default async function MaintenancePage({
         contactLabels={maintenanceContactLinks(state).map((link) => link.label)}
         maxLength={MAX_MAINTENANCE_MESSAGE}
         disabled={readOnly}
+        errorMessages={ERROR_MESSAGES}
       />
 
       <Card className="space-y-3 p-5">

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, Info, Plus, Power, PowerOff, Save, ShieldAlert, Trash2 } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { toArabicDigits } from "@/components/booking/format";
@@ -460,10 +461,16 @@ export default async function RedirectsPage({
               />
               يعمل فور الحفظ
             </Label>
-            <Button type="submit" disabled={disabled}>
-              <Plus />
-              إضافة التحويل
-            </Button>
+            <SaveButton
+              label="إضافة التحويل"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم يُضَف"
+              disabled={disabled}
+              errorMessages={ERROR_MESSAGES}
+              savedMessages={{ "1": "أُضيف التحويل ويعمل على الموقع العام فوراً." }}
+            />
           </div>
         </form>
       </Card>

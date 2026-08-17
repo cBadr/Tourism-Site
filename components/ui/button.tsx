@@ -9,8 +9,24 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        /*
+          🔴 `border-input` لا `border-border` — وهذا **نفس عيب `WCAG 1.4.11`**
+          الذي أُصلح في `globals.css` §١ (ز)، مقلوباً: الرمز صُحِّح، وهذا المكوّن
+          كان يقرأ الرمز الآخر.
+
+          حدُّ الزرّ المحدَّد **هو** ما يميّزه عنصرَ تحكّم — لا زخرفة — فيلزمه ٣:١
+          على الأرضية المجاورة. والمقيس قبل: `--border` الفاتح `#DED5C3` على
+          الأرضية `#F5F1E8` = **1.29** (والداكن كان سليماً سلفاً لأن السطر كان
+          يحمل نقض `dark:border-input`). فالعائلة الفاتحة وحدها كانت ترسب،
+          و`/admin` و`/portal` فاتحان **بقرار** — أي أن الرسوب كان على أكثر
+          الشاشات استعمالاً.
+
+          وبعد النقل يقرأ الزرّ الرمزَ المصحَّح في العائلتين: `#827969` = **3.81**
+          فاتحاً، و`#697C77` = **4.35** داكناً. ونُقض `dark:border-input` **حُذف
+          لأنه صار تكراراً حرفياً** لا لأنه خطأ — وتركُه رمزٌ ثانٍ لشيءٍ واحد.
+        */
         outline:
-          "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border-input bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:bg-input/30 dark:hover:bg-input/50",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:

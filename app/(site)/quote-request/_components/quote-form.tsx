@@ -2,9 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useTimeZone } from "next-intl";
 import {
   CalendarClock,
   CircleCheck,
+  Clock,
   LoaderCircle,
   Luggage,
   MapPin,
@@ -18,15 +20,19 @@ import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { ServiceDef } from "@/lib/site-config";
 import type { GeoPlace } from "@/lib/pricing-types";
 import type { PlaceSearchSettings } from "@/lib/place-search-types";
+import { DEFAULT_SITE_TIME_ZONE, timeZoneLabel } from "@/lib/site-timezone";
 import { useT } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import { createFormatter } from "@/components/booking/format";
 import { PlaceField } from "@/components/booking/place-field";
 import {
   minInputValues,
+  splitLocalDateTime,
   todayInputValue,
   toIsoFromCairoInputs,
 } from "@/components/booking/checkout/datetime";
+import { previewLeadTime } from "@/components/booking/checkout/lead-time-action";
+import type { LeadTime } from "@/components/booking/checkout/lead-time";
 import type { QuoteTripPrefill } from "../_lib/prefill";
 
 /**
@@ -51,10 +57,38 @@ import type { QuoteTripPrefill } from "../_lib/prefill";
  * الزمالك» سعرٌ نلتزم به ولا نعرف مسافته. والوجهة **اختيارية** لأن الجولة
  * والإيجار اليومي بلا وجهةٍ واحدة، لكنها إن ذُكرت فبالشرط نفسه.
  *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 موعد الانطلاق **حقلٌ واحد** (`datetime-local`) — شكوى المالك بعينها
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * كان حقلَين («تاريخ الرحلة» و«وقت الرحلة») في شبكةٍ من عمودين. ونزل الدمج في
+ * الحاسبة (`search-widget.tsx`) ثم في مسار الحجز (`checkout/checkout.tsx`)
+ * فبقيت هذه الصفحة وحدها على الشكل القديم — **مفهومٌ واحد بشكلين**، وهو التفاوت
+ * الذي سأل عنه المالك. والدالة المشتركة `splitLocalDateTime` كانت قد نُقلت إلى
+ * `checkout/datetime.ts` ووُصفت «مصدراً واحداً للنموذجين»: صحيحٌ **للدالة**،
+ * وهذا الملف يستوردها — لكن **الواجهة** كانت ما زالت مفترقة.
+ *
+ * 🔒 **وهو دمجٌ بصريّ لا تبديلُ منطق** — والأربعة التي فرضها الدمج في `checkout`
+ *    تنزل هنا بحرفها، من نفس الملفات لا من نظائر:
+ *   • **منطقة الموقع**: القيمة تُشطر بـ`splitLocalDateTime` ثم تمضي إلى
+ *     `toIsoFromCairoInputs` **نفسها** — ولا `new Date(value)` بحال، فتلك
+ *     تفسّره بمنطقة **جهاز الزائر**.
+ *   • **أرضية المهلة**: `min` من `booking_min_pickup_at()` عبر `previewLeadTime`
+ *     — لا معادلةَ مهلةٍ تُحسب هنا. وحقلٌ واحد يقارن **لحظةً بلحظة**، بينما
+ *     الحقلان المنفصلان كانا لا يستطيعان تقييد الساعة إلا في يوم الأرضية.
+ *   • **الأرقام العربية**: سطرُ صدىً أسفل الحقل من `fmt.dateTime` — منتقي
+ *     المتصفح يرسم بلغة **الجهاز**، فالصدى هو ما يُقرأ فعلاً.
+ *   • **وسم التوقيت**: من `timeZoneLabel(useTimeZone())` لا «القاهرة» محفورة
+ *     (‏D-59 — المنطقة إعداد مالك).
+ *
+ * 🔴 **وخاصية `min` تلميحٌ لا حارس.** الحاجز في `create_quote_request` (هجرة
+ *    0098) — الدالة ممنوحة لـ`anon` فلا يكفي حارسٌ في `/api/quote-request`، وذاك
+ *    المسار يرفض مبكراً برسالةٍ تسمّي أقرب موعد متاح.
+ *
  * ── والموعد يمرّ بمسار التحويل الواحد ─────────────────────────────────────
- * `toIsoFromCairoInputs` هي الدالة نفسها التي يحوّل بها الحجز حقلَي التاريخ
- * والوقت — فما يكتبه العميل **وقتُ الموقع** لا وقتُ جهازه. ومسارا تحويلٍ لقيمةٍ
- * واحدة هو صنف العيب الذي يتكرر في هذا المستودع، فلا يُفتح ثانٍ.
+ * `toIsoFromCairoInputs` هي الدالة نفسها التي يحوّل بها الحجز موعده — فما يكتبه
+ * العميل **وقتُ الموقع** لا وقتُ جهازه. ومسارا تحويلٍ لقيمةٍ واحدة هو صنف العيب
+ * الذي يتكرر في هذا المستودع، فلا يُفتح ثانٍ.
  *
  * ── حمولة بطاقة الإنقاذ ────────────────────────────────────────────────────
  * ما يصل من الرابط **اقتراحُ تعبئة لا واقعة**: الاسم يملأ نصّ الحقل، ويبقى على
@@ -101,6 +135,13 @@ export function QuoteRequestForm({
 }) {
   const t = useT("pages.quoteRequest.form");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
+  /**
+   * منطقة الموقع من next-intl — **نفس القيمة** التي قرأها `i18n/request.ts` من
+   * `public.site_time_zone()`، لا مسارٌ ثانٍ. والدوال الصرفة في `datetime.ts`
+   * تقرأ الوحدة المشتركة التي يملؤها `SiteTimeZoneSync` من الجذر نفسه.
+   * (نظير `checkout.tsx` حرفاً بحرف — D-59: المنطقة إعداد مالك لا «القاهرة».)
+   */
+  const activeTimeZone = useTimeZone() ?? DEFAULT_SITE_TIME_ZONE;
   const uid = React.useId();
 
   const [serviceSlug, setServiceSlug] = React.useState(defaultService ?? "");
@@ -111,19 +152,24 @@ export function QuoteRequestForm({
   const [destText, setDestText] = React.useState(tripPrefill?.to ?? "");
   const [destination, setDestination] = React.useState<GeoPlace | null>(null);
 
-  // الموعد: حقلان يقرؤهما العميل، وتحويلٌ واحد إلى لحظةٍ مطلقة عند الإرسال.
-  // والاتجاه المعاكس (لحظة ⇐ حقلين) له دالته الجاهزة `minInputValues` — تقرأ
-  // بمنطقة الموقع لا بمنطقة الجهاز، وهي جارة `toIsoFromCairoInputs` في نفس
-  // الملف بقصد: مسار تحويلٍ واحد للاتجاهين (القاعدة ١٢).
-  //
-  // والحساب في **مُهيّئٍ كسول** لا في `useMemo`: القيمة تُقرأ مرةً واحدة عند
-  // التركيب، وبعدها الحقل ملك العميل. و`useMemo` هنا كان يَعِد بتحديثٍ لا يقع.
-  const [pickupDate, setPickupDate] = React.useState(
-    () => (tripPrefill?.pickupAt ? (minInputValues(tripPrefill.pickupAt)?.date ?? "") : "")
-  );
-  const [pickupTime, setPickupTime] = React.useState(
-    () => (tripPrefill?.pickupAt ? (minInputValues(tripPrefill.pickupAt)?.time ?? "") : "")
-  );
+  /**
+   * الموعد: **حقلٌ واحد** يقرؤه العميل (`datetime-local`)، وتحويلٌ واحد إلى لحظةٍ
+   * مطلقة عند الإرسال. والاتجاه المعاكس (لحظة ⇐ قيمة الحقل) بـ`minInputValues` —
+   * تقرأ بمنطقة الموقع لا بمنطقة الجهاز، وهي جارة `toIsoFromCairoInputs`
+   * و`splitLocalDateTime` في نفس الملف بقصد: مسار تحويلٍ واحد للاتجاهين.
+   *
+   * والحساب في **مُهيّئٍ كسول** لا في `useMemo`: القيمة تُقرأ مرةً واحدة عند
+   * التركيب، وبعدها الحقل ملك العميل. و`useMemo` هنا كان يَعِد بتحديثٍ لا يقع.
+   *
+   * 🔒 وحمولة بطاقة الإنقاذ تنجو بحرفها: نفس `minInputValues` التي كانت تملأ
+   * الحقلين تملأ الحقل الواحد — تُضمّ نتيجتاها بـ`T` وهي بعينها الصيغة التي
+   * يشطرها `splitLocalDateTime` عند الإرسال، فلا تحويلَ ثالثاً بينهما.
+   */
+  const [pickupLocal, setPickupLocal] = React.useState(() => {
+    if (!tripPrefill?.pickupAt) return "";
+    const parts = minInputValues(tripPrefill.pickupAt);
+    return parts ? `${parts.date}T${parts.time}` : "";
+  });
 
   const [passengers, setPassengers] = React.useState(
     tripPrefill?.passengers ? String(tripPrefill.passengers) : "1"
@@ -139,19 +185,93 @@ export function QuoteRequestForm({
   const [submitting, setSubmitting] = React.useState(false);
   const [reference, setReference] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
+  const [lead, setLead] = React.useState<LeadTime | null>(null);
 
   const fieldHeight = "h-12";
   const fieldClass =
     "h-12 w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
-  /** أرضية حقل التاريخ بتوقيت الموقع — لا بتوقيت جهاز الزائر */
-  const minDate = React.useMemo(() => todayInputValue(), []);
+  /** أرضية اليوم بتوقيت الموقع — لا بتوقيت جهاز الزائر. سقوطُ `pickupMin` أدناه. */
+  const todayValue = React.useMemo(() => todayInputValue(), []);
+
+  /**
+   * أرضية المنتقي من `booking_min_pickup_at()` وحدها، وبلا معادلة هنا.
+   *
+   * تُقرأ عند تركيب النموذج، وهي أبكر لحظةٍ ينفع فيها الجواب. **ولا تُعاد
+   * القراءة بمؤقّت**: «الآن» يزحف فمن يترك الصفحة مفتوحة نصف ساعة قد تسمح له
+   * أرضيته القديمة بموعدٍ صار محظوراً — و**من يمنعه حينها القاعدة** بحارس 0098
+   * برسالةٍ صريحة، لا شاشةٌ تتحرك تحت يده. (وفي `checkout` تُعاد القراءة لأن
+   * العميل يعود إلى الخطوة الأولى، ولا خطوات هنا.)
+   *
+   * 🔒 والفشل يعيد `enabled: false` فتبقى الأرضية اليوم وحده — والحارس في
+   * القاعدة هو الذي يمنع، لا هذه القراءة.
+   */
+  React.useEffect(() => {
+    let alive = true;
+    void previewLeadTime()
+      .then((result) => {
+        if (alive) setLead(result);
+      })
+      .catch(() => {
+        // الصمت الآمن: تبقى الأرضية بلا تشديد، والقاعدة ترفض ما لا يجوز
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const leadFloor = lead?.enabled ? minInputValues(lead.minPickupAt) : null;
+  /**
+   * أرضية الحقل الواحد — **لحظةٌ واحدة** بدل «تاريخٌ ثم ساعةٌ مشروطة بيومه».
+   *
+   * وهي المكسب الصامت للدمج: الحقلان المنفصلان كانا لا يستطيعان تقييد الساعة
+   * إلا في يوم الأرضية (‏`<input type="time">` لا يعرف أي يومٍ اختير)، فمن اختار
+   * الغد كان منتقي الساعة عنده بلا حدٍّ أصلاً — وهنا تُقارن اللحظة باللحظة.
+   */
+  const pickupMin = leadFloor ? `${leadFloor.date}T${leadFloor.time}` : `${todayValue}T00:00`;
+
+  /**
+   * الشطر ثم `toIsoFromCairoInputs` — **نفس المسار ونفس المُدخلين** اللذين كان
+   * يتلقّاهما من الحقلين المنفصلين، فالناتج ISO لا يتغيّر بحرف.
+   *
+   * ⚠ **و`useMemo` هنا شرطُ لِنت لا تحسينُ أداء**، وهو مقيسٌ لا مُخمَّن: نداءٌ
+   *   صريحٌ لـ`toIsoFromCairoInputs` في نطاق التصيير يجعل مُحلِّل
+   *   `react-hooks/purity` يَعُدّ المكوِّن كلَّه مُنفَّذاً في التصيير، فيرفض قراءة
+   *   الساعة (`Date.now()`) **داخل معالج الإرسال** — وهي قراءةٌ صحيحة لا تقع في
+   *   تصييرٍ أبداً. جرّبتُ البديلين: إخراج التحقق إلى دالةٍ مستقلة **لا يُسكته**،
+   *   و`useMemo` يُسكته. والقيمة لا تتقادم: `SiteTimeZoneSync` يضبط المنطقة
+   *   **أثناء التصيير** كأول ابنٍ في المزوّد (لا في `useEffect`)، فهي مستقرّةٌ
+   *   قبل أن يُصيَّر هذا الحقل — والتابعان الوحيدان هما ما يكتبه العميل.
+   */
+  const [pickupDate, pickupTime] = splitLocalDateTime(pickupLocal);
+  const pickupIso = React.useMemo(
+    () => toIsoFromCairoInputs(pickupDate, pickupTime),
+    [pickupDate, pickupTime]
+  );
 
   function isPhoneValid(value: string): boolean {
     const trimmed = value.trim();
     if (!PHONE_PATTERN.test(trimmed)) return false;
     const digits = trimmed.replace(/\D/g, "");
     return digits.length >= 8 && digits.length <= 15;
+  }
+
+  /**
+   * الخطأ يزول بأول لمسةٍ للحقل، لا عند الإرسال — نظير `clearFieldError` في
+   * `checkout.tsx` (ملاحظة المالك ٣). ويُرجَع **نفسُ الكائن** حين لا شيء يُمحى:
+   * الدالة تُنادى مع كل تغيير، وكائنٌ جديد في كل مرة يُعيد تصيير الشجرة بلا
+   * تغيّرٍ ظاهر.
+   *
+   * ⚠ ومحصورةٌ الآن على حقل الموعد — وهو الحقل الذي مسّته هذه الدفعة. وبقية
+   *   الحقول تُنظَّف عند الإرسال كما كانت؛ توسيعُها تغييرٌ في سلوكٍ لم يُطلَب.
+   */
+  function clearFieldError(...keys: (keyof FieldErrors)[]) {
+    setErrors((current) => {
+      if (keys.every((key) => current[key] === undefined)) return current;
+      const next = { ...current };
+      for (const key of keys) delete next[key];
+      return next;
+    });
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -173,11 +293,34 @@ export function QuoteRequestForm({
       );
     }
 
-    const pickupIso = toIsoFromCairoInputs(pickupDate, pickupTime);
-    if (!pickupIso) {
+    /**
+     * 🔒 **نفس اللحظة التي يعرضها الصدى تحت الحقل** — لا نداءُ تحويلٍ ثانٍ.
+     *
+     * والصدى هو ما رآه العميل وأقرّه بضغطة الإرسال، فالتحقق والإرسال يجب أن
+     * يقعا على **عين ما رآه**. ولو أُعيد النداء هنا لصار للقيمة موضعا حسابٍ —
+     * وهو صنف العيب الذي يتكرر في هذا المستودع (النمط ٨) حتى لو تطابق الناتج
+     * اليوم.
+     */
+    const iso = pickupIso;
+    if (!iso) {
       found.pickup = t("errors.pickupRequired", "حدّد تاريخ الرحلة ووقتها.");
-    } else if (Date.parse(pickupIso) <= Date.now()) {
+    } else if (Date.parse(iso) <= Date.now()) {
       found.pickup = t("errors.pickupPast", "موعد الرحلة يجب أن يكون في المستقبل.");
+      /**
+       * 🔒 أدنى المهلة — **طبقةٌ ثانية لا الحارس.** الحدّ المقارَن به هو ما
+       * أرجعته القاعدة (`booking_min_pickup_at()`) لا حاصلَ ضربٍ يُحسب هنا،
+       * فلا يفترق ما تمنعه الشاشة عمّا ترفضه `create_quote_request` (‏0098).
+       * وما هنا يوفّر رحلةَ شبكة، وخاصية `min` تُتجاوَز بالكتابة اليدوية.
+       */
+    } else if (lead?.enabled && lead.minPickupAt !== null) {
+      const floor = Date.parse(lead.minPickupAt);
+      if (Number.isFinite(floor) && Date.parse(iso) < floor) {
+        found.pickup = t(
+          "errors.pickupTooSoon",
+          "نحتاج مهلة {minutes} دقيقة على الأقل قبل الانطلاق — أقرب موعد متاح {value}.",
+          { minutes: fmt.digits(lead.leadMinutes), value: fmt.dateTime(lead.minPickupAt) ?? "" }
+        );
+      }
     }
 
     const paxNumber = Number(passengers);
@@ -215,7 +358,9 @@ export function QuoteRequestForm({
           destination: destination
             ? { label: destination.label, lat: destination.lat, lng: destination.lng }
             : null,
-          pickupAt: pickupIso,
+          // اللحظة التي اجتازت التحقق أعلاه بعينها — ISO بلاحقة `Z` دائماً،
+          // والمسار الخادميّ يرفض ما وصل بلا منطقة زمنية صريحة
+          pickupAt: iso,
           passengers: paxNumber,
           luggage:
             luggageNumber !== null && Number.isInteger(luggageNumber) && luggageNumber >= 0
@@ -342,33 +487,105 @@ export function QuoteRequestForm({
           )}
         </div>
 
+        {/*
+          🔴 موعد الانطلاق **حقلٌ واحد** — شكوى المالك، والدمج نفسه الذي نزل في
+          الحاسبة ومسار الحجز فبقيت هذه الصفحة خارجه.
+
+          و`<label>` لا `<span>`: نقرةٌ على الاسم تفتح المنتقي، وهو ما لا يعطيه
+          نصٌّ مجاور. ولا `sm:grid-cols-2` بعده — العمودان كانا وعاءَ حقلَين،
+          وحقلٌ واحد بعرضٍ كامل هو الشكل نفسه على ٣٧٥ وعلى ١٢٨٠، فالتفاوت بين
+          الجوال والحاسوب زال من أصله لا بشرطٍ جديد.
+        */}
         <div className="flex flex-col gap-1.5">
-          <span className="flex items-center gap-1.5 text-sm font-medium">
+          <label
+            htmlFor={`${uid}-pickup-at`}
+            className="flex w-fit items-center gap-1.5 text-sm font-medium"
+          >
             <CalendarClock className="size-4 text-muted-foreground" aria-hidden="true" />
             {t("pickup", "موعد الانطلاق")}
-          </span>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <input
-              id={`${uid}-date`}
-              type="date"
-              min={minDate}
-              value={pickupDate}
-              onChange={(event) => setPickupDate(event.target.value)}
-              aria-invalid={errors.pickup ? true : undefined}
-              aria-label={t("pickupDate", "تاريخ الرحلة")}
-              className={fieldClass}
-            />
-            <input
-              id={`${uid}-time`}
-              type="time"
-              value={pickupTime}
-              onChange={(event) => setPickupTime(event.target.value)}
-              aria-invalid={errors.pickup ? true : undefined}
-              aria-label={t("pickupTime", "وقت الرحلة")}
-              className={fieldClass}
-            />
-          </div>
-          {fieldError(errors.pickup)}
+          </label>
+
+          {/*
+            🔴 وسم التوقيت — من يحجز من الخليج أو أوروبا لا يعرف من تلقاء نفسه
+            أن المكتوب يُفسَّر بتوقيت الموقع، والمنتقي في المتصفح لا يقول منطقةً
+            بحال. وثمن الالتباس سائقٌ يصل بساعة خطأ. واسم المنطقة من ICU بلغة
+            الزائر (‏`timeZoneLabel`) لا «مصر» محفورةً — فمالكُ نسخةٍ يبدّل
+            منطقته لا يبقى السطر يكذّب إعداده (D-59).
+          */}
+          <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-3 py-2 text-xs leading-6 text-muted-foreground">
+            <Clock className="mt-1 size-3.5 shrink-0 text-primary" aria-hidden="true" />
+            {t(
+              "timeZoneNote",
+              "المواعيد كلها على {zone} — اكتب موعد الانطلاق كما هو هناك لا بتوقيت بلدك.",
+              { zone: timeZoneLabel(activeTimeZone, locale) }
+            )}
+          </p>
+
+          <input
+            id={`${uid}-pickup-at`}
+            type="datetime-local"
+            min={pickupMin}
+            value={pickupLocal}
+            onChange={(event) => {
+              setPickupLocal(event.target.value);
+              // الخطأ يزول بأول لمسة، لا عند الإرسال
+              clearFieldError("pickup");
+            }}
+            aria-invalid={errors.pickup ? true : undefined}
+            aria-describedby={
+              errors.pickup
+                ? `${uid}-pickup-error`
+                : leadFloor
+                  ? `${uid}-lead-note`
+                  : undefined
+            }
+            className={fieldClass}
+          />
+
+          {/*
+            🔴 صدى بأرقام لغة الزائر — والحقل الأصلي **لا يضمنها**: منتقي المتصفح
+            يرسم بلغة الجهاز لا بلغة الصفحة، فيرى العميل العربي «09/14/2026» في
+            حقلٍ كل ما حوله بالعربية. والصدى من `fmt.dateTime` — نفس مُنسّق بقية
+            الشاشة، وبمنطقة الموقع، فيرى اللحظة التي سنقرأها له لا التي كتبها
+            جهازه.
+          */}
+          {pickupIso ? (
+            <p className="text-xs leading-5 text-primary">{fmt.dateTime(pickupIso)}</p>
+          ) : null}
+
+          {/*
+            🔒 «أقرب موعد متاح» يُقال **قبل** المحاولة لا بعدها: `min` يمنع
+            الاختيار لكنه صامت — من يضغط على يومٍ رمادي لا يعرف لماذا رُفض،
+            والمنتقي على الجوال قد لا يُظهر الحدّ أصلاً. ولا يظهر السطر حين تكون
+            المهلة مطفأة: إعلانُ قيدٍ لا وجود له هو «شاشةٌ تَعِد بغير ما تفعله
+            القاعدة» مقلوبةً.
+          */}
+          {leadFloor && lead?.enabled ? (
+            <p
+              id={`${uid}-lead-note`}
+              className="flex items-start gap-2 text-xs leading-6 text-muted-foreground"
+            >
+              <Clock className="mt-1 size-3.5 shrink-0 text-primary" aria-hidden="true" />
+              {t(
+                "leadNote",
+                "نحتاج مهلة {minutes} دقيقة على الأقل لتجهيز رحلتك — أقرب موعد متاح {value}.",
+                {
+                  minutes: fmt.digits(lead.leadMinutes),
+                  value: fmt.dateTime(lead.minPickupAt) ?? "",
+                }
+              )}
+            </p>
+          ) : null}
+
+          {errors.pickup ? (
+            <p
+              id={`${uid}-pickup-error`}
+              className="flex items-start gap-1.5 text-xs leading-5 text-destructive"
+            >
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {errors.pickup}
+            </p>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

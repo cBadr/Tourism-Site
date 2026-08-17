@@ -45,7 +45,7 @@ function DriverCard({ driver }: { driver: PortalDriver }) {
         <IdCard className="size-4 shrink-0 text-primary" aria-hidden="true" />
         <h3 className="font-heading text-base font-bold">{driver.name || "سائق بلا اسم"}</h3>
         <Badge variant={driver.active ? "default" : "secondary"}>
-          {driver.active ? "في الخدمة" : "موقوف"}
+          {driver.active ? "في الخدمة" : "خارج الخدمة"}
         </Badge>
         <form action={toggleDriver.bind(null, driver.id)} className="ms-auto">
           <Button

@@ -29,6 +29,14 @@ type PageRow = {
   meta: Page["meta"] | null;
   published: boolean;
   sort: number;
+  /**
+   * حقول الشريط العلوي — تصل ضمن `select("*")` منذ هجرة `0094`.
+   * والأنواع تسمح بـ`null`/`undefined` لأن قاعدةً لم تُطبَّق عليها الهجرة بعد
+   * لا تُرجع الأعمدة أصلاً، وشاشةُ التحرير يجب أن تُفتح لا أن تسقط.
+   */
+  nav_show: boolean | null;
+  nav_sort: number | null;
+  nav_label: string | null;
 };
 
 type SectionRow = {
@@ -51,6 +59,9 @@ function mapPage(row: PageRow, sections: SectionRow[]): PageWithSections {
     meta: row.meta ?? { title: null, description: null },
     published: row.published,
     sort: row.sort,
+    navShow: row.nav_show === true,
+    navSort: typeof row.nav_sort === "number" ? row.nav_sort : 0,
+    navLabel: typeof row.nav_label === "string" ? row.nav_label : null,
     sections: sections
       .filter((s) => s.page_id === row.id)
       .sort((a, b) => a.sort - b.sort)

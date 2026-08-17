@@ -874,10 +874,10 @@ const BOOKING_COLUMNS = [
 const BOOKING_STATUS_LABELS: Record<string, string> = {
   pending_payment: "بانتظار الدفع",
   under_review: "قيد المراجعة",
-  confirmed: "مؤكد",
-  assigned: "مُسند",
-  completed: "منفذ",
-  cancelled: "ملغي",
+  confirmed: "تم التأكيد",
+  assigned: "تم الإسناد",
+  completed: "تم التنفيذ",
+  cancelled: "تم الإلغاء",
 };
 
 /** مرآة `PLAN_LABELS` — خطة الدفع المجمَّدة في الحجز */

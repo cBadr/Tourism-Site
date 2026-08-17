@@ -2,14 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Blocks, ChevronDown, ChevronUp, ExternalLink, Plus, Trash2 } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { SECTION_TYPE_LABELS } from "@/lib/content-types";
+import { NAV_LABEL_MAX } from "@/components/site/links";
+import { getSiteNav } from "@/lib/site-nav";
 import {
   COMMON_ERROR_MESSAGES,
   Field,
@@ -48,7 +51,18 @@ export default async function ContentEditorPage({
     ...COMMON_ERROR_MESSAGES,
     title: "عنوان الصفحة حقل إلزامي.",
     type: "نوع القسم المطلوب غير معروف.",
+    navLabel: `اختصار الشريط العلوي أطول من ${NAV_LABEL_MAX} حرفاً — والاختصار غرضه أن يقصر عن عنوان الصفحة، فاكتب كلمة أو كلمتين أو اتركه فارغاً.`,
   };
+
+  /**
+   * حالة الشريط من **دالة القاعدة نفسها** التي تُصيّر الشريط للزائر — لا عدٌّ
+   * ثانٍ في TypeScript. فالسقف الذي يُحذَّر عنده هو السقف الذي يُقاس به، والعدّ
+   * يحسب الصفحات المُعلَّمة والبنود الحرّة معاً كما يراهما الزائر بالضبط.
+   */
+  const nav = await getSiteNav();
+  const navHasThisPage = nav.items.some(
+    (item) => item.kind === "page" && item.id === page.id
+  );
 
   const iconButton = (extra?: string) =>
     cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), extra);
@@ -177,6 +191,103 @@ export default async function ContentEditorPage({
           />
         </Card>
 
+        {/*
+         * ══ الشريط العلوي (الدفعة ج · هجرة `0094`) ══════════════════════════
+         *
+         * كان التذييل يُبنى من القاعدة والترويسة قائمةً في الكود — فصفحةٌ تُنشر
+         * تظهر أسفل الموقع ولا تظهر أعلاه. وهذه الخانة هي ما أزال الفرق.
+         *
+         * وموضعها **في محرر الصفحة** لا في شاشةٍ مستقلة بحجّة واحدة: القرار
+         * قرارُ صفحةٍ بعينها («أتظهر هذه في الأعلى؟») تماماً كقرار نشرها، فيقع
+         * حيث يقع أخوه. وقائمةُ الشريط كاملةً وبنودُه الحرّة تُدار من
+         * `/admin/content` — والبطاقة أدناه تحمل الرابط إليها.
+         */}
+        <Card className="space-y-4 p-5">
+          <div>
+            <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+              الشريط العلوي
+              <HelpTip>
+                شريط التنقّل أعلى كل صفحة في الموقع. الصفحات لا تظهر فيه تلقائياً — فهو
+                قائمة منتقاة بعدد محدود، بخلاف التذييل الذي يعرض كل صفحة منشورة. وما
+                تختاره هنا يظهر في الشريط على الحاسوب وفي درج القائمة على الجوال معاً.
+              </HelpTip>
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {nav.count} من {nav.cap} بنود مستعملة الآن.{" "}
+              <Link href="/admin/content" className="text-primary hover:underline">
+                إدارة الشريط كاملاً
+              </Link>
+            </p>
+          </div>
+
+          {/*
+           * ⚠ صفحةٌ بلا مسارٍ عامّ لا تصلح بنداً — ولا تُعرض لها الخانة أصلاً.
+           * خانةٌ تُعلَّم ولا تُنتج رابطاً هي بعينها ما تصفه اللوحة كذباً على
+           * المالك: يظنّ أنه أظهر صفحةً وهي غائبة بلا خطأ ولا سجلّ.
+           */}
+          {pagePath === null ? (
+            <p className="rounded-xl border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              هذه الصفحة بلا مسار عام، فلا يمكن إضافتها إلى الشريط.
+            </p>
+          ) : (
+            <>
+              {/*
+               * 🔴 التحذير يُعرض على الصفحة **غير** المُعلَّمة كذلك — لأن اللحظة
+               * التي يحتاجه فيها المالك هي اللحظة التي **يهمّ** فيها بالإضافة،
+               * لا التي أضاف فيها. وتحذيرٌ يظهر بعد الحفظ نصيحةٌ متأخرة.
+               */}
+              {(nav.overCap || (!navHasThisPage && nav.count >= nav.cap)) && (
+                <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-relaxed">
+                  <strong>الشريط ممتلئ.</strong> فيه {nav.count} بنداً والمقاس المريح{" "}
+                  {nav.cap} — وقيس أن ما بعدها يلتف سطرين على الشاشات المتوسطة
+                  بالإنجليزية. أضِف إن أردت (لا شيء يمنعك)، والأفضل أن تُخفي بنداً أولاً
+                  أو تختصر تسمية طويلة.
+                </p>
+              )}
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    الظهور في الشريط
+                    <HelpTip>
+                      التسمية تُشتق من عنوان الصفحة — فتُترجَم مرة واحدة معها ولا تحتاج
+                      إدخالاً ثانياً. وإلغاء نشر الصفحة يُخفيها من الشريط تلقائياً.
+                    </HelpTip>
+                  </span>
+                  <Label className="flex h-8 cursor-pointer items-center gap-2 text-sm font-normal">
+                    <input
+                      type="checkbox"
+                      name="nav_show"
+                      defaultChecked={page.navShow === true}
+                      disabled={readOnly}
+                      className="size-4 accent-primary"
+                    />
+                    أظهر في الشريط العلوي
+                  </Label>
+                </div>
+
+                <Field
+                  label="الترتيب في الشريط"
+                  name="nav_sort"
+                  type="number"
+                  defaultValue={String(page.navSort ?? 0)}
+                  disabled={readOnly}
+                  help="الأصغر أولاً. البنود الحالية على ١٠ و٢٠ و٣٠… فاكتب ٢٥ ليقع البند بين الثاني والثالث."
+                />
+              </div>
+
+              <Field
+                label="اختصار التسمية (اختياري)"
+                name="nav_label"
+                defaultValue={page.navLabel ?? ""}
+                disabled={readOnly}
+                maxLength={NAV_LABEL_MAX}
+                help={`الفارغ يستخدم عنوان الصفحة. اكتب اختصاراً حين يكون العنوان أطول من أن يُقرأ في شريط — «الشروط» بدل «الشروط والأحكام». ${NAV_LABEL_MAX} حرفاً كحد أقصى.`}
+              />
+            </>
+          )}
+        </Card>
+
         {/* الأقسام بترتيب العرض */}
         <div className="flex items-center gap-1.5">
           <h3 className="font-heading text-base font-bold">أقسام الصفحة</h3>
@@ -275,9 +386,12 @@ export default async function ContentEditorPage({
           <p className="me-auto text-xs text-muted-foreground">
             الحفظ يشمل حقول الصفحة ومحتوى كل الأقسام معاً.
           </p>
-          <Button type="submit" disabled={readOnly}>
-            حفظ التغييرات
-          </Button>
+          <SaveButton
+            label="حفظ التغييرات"
+            disabled={readOnly}
+            errorMessages={errorMessages}
+            savedMessages={{ "1": "حُفظ التغيير وانعكس على الموقع العام فوراً." }}
+          />
         </div>
       </form>
 
@@ -310,10 +424,16 @@ export default async function ContentEditorPage({
                 ))}
               </select>
             </div>
-            <Button type="submit" variant="outline" disabled={readOnly}>
-              <Plus />
-              إضافة قسم
-            </Button>
+            <SaveButton
+              label="إضافة قسم"
+              icon={<Plus />}
+              variant="outline"
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم يُضَف"
+              disabled={readOnly}
+              errorMessages={errorMessages}
+            />
           </div>
         </Card>
       </form>

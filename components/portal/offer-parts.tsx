@@ -394,9 +394,9 @@ export function CustomerContact({
 /* ------------------------------------------------------------------ */
 
 const TRIP_STATUS_LABELS: Record<string, string> = {
-  assigned: "مُسندة إليك",
-  completed: "منفَّذة",
-  cancelled: "ملغاة",
+  assigned: "تم الإسناد إليك",
+  completed: "تم التنفيذ",
+  cancelled: "تم الإلغاء",
   confirmed: "بانتظار الإسناد",
 };
 
@@ -411,7 +411,7 @@ const TRIP_STATUS_TONE: Record<string, string> = {
 };
 
 /**
- * شارة حالة الرحلة. الحالة المجهولة (أو الغائبة عن نتيجة الدالة) تُقرأ «مُسندة
+ * شارة حالة الرحلة. الحالة المجهولة (أو الغائبة عن نتيجة الدالة) تُقرأ «تم الإسناد
  * إليك» لأن `portal_trips()` لا تُرجع إلا المُسند أصلاً — لا نخترع حالة لم تصل.
  */
 export function TripStatusChip({ status }: { status: string | null }) {

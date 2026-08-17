@@ -542,7 +542,7 @@ export default async function AdminHomePage() {
           {(awaitingReview ?? 0) > 0 && (
             <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
               {toArabicDigits(awaitingReview ?? 0)} إيصال ينتظر اعتمادك — الحجز لا يتحول إلى
-              «مؤكد» ولا يبدأ بثه قبل ذلك.
+              «تم التأكيد» ولا يبدأ بثه قبل ذلك.
             </p>
           )}
         </Card>

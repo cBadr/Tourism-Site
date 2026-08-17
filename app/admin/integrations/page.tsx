@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, Info, ShieldCheck, XCircle } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import type { FunnelEvent } from "@/lib/analytics-types";
@@ -241,9 +241,12 @@ export default async function IntegrationsPage({
 
         <Separator />
         <div className="flex items-center justify-end gap-3">
-          <Button type="submit" disabled={!wired}>
-            حفظ معرّفات الربط
-          </Button>
+          <SaveButton
+            label="حفظ معرّفات الربط"
+            disabled={!wired}
+            errorMessages={errorMessages}
+            savedMessages={{ "1": "حُفظت معرّفات الربط — الوسوم تُحمَّل على الموقع العام فوراً." }}
+          />
         </div>
       </form>
 

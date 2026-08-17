@@ -31,8 +31,8 @@ export const metadata = { title: "إحصائيات المتعهدين" };
 
 const PARTNER_STATUS_LABELS: Record<string, string> = {
   pending: "قيد المراجعة",
-  approved: "معتمد",
-  suspended: "موقوف",
+  approved: "تم الاعتماد",
+  suspended: "تم الإيقاف",
 };
 
 /** أعلى عدد شركاء يظهر في مقارنة الأشرطة — الجدول تحته يحمل الباقي */

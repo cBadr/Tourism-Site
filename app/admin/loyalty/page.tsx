@@ -1,8 +1,8 @@
 import { Flame, Power, ScrollText, ShieldAlert, Sparkles } from "lucide-react";
 
 import { formatDateTimeLabel } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { blankRead, hasSupabaseEnv, readStatsCurrency, type StatsFailure } from "@/lib/stats/read";
@@ -272,9 +272,7 @@ function SettingsCard({
         </div>
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={readOnly}>
-            حفظ الإعدادات
-          </Button>
+          <SaveButton label="حفظ الإعدادات" disabled={readOnly} />
         </div>
       </form>
     </Card>

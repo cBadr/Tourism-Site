@@ -14,6 +14,7 @@ import {
   formatDateTimeLabel,
   formatMoney,
 } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -475,9 +476,7 @@ export default async function CouponPage({
               />
 
               <div className="flex justify-end">
-                <Button type="submit" disabled={readOnly}>
-                  حفظ الشروط
-                </Button>
+                <SaveButton label="حفظ الشروط" disabled={readOnly} errorMessages={ERROR_MESSAGES} />
               </div>
             </Card>
           </form>

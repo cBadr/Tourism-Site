@@ -48,9 +48,9 @@ const hasSupabaseEnv = () =>
 
 const TABS: { key: string; label: string; status: SubcontractorStatus | null }[] = [
   { key: "all", label: "الكل", status: null },
-  { key: "pending", label: "بانتظار الاعتماد", status: "pending" },
-  { key: "approved", label: "معتمد", status: "approved" },
-  { key: "suspended", label: "موقوف", status: "suspended" },
+  { key: "pending", label: "قيد المراجعة", status: "pending" },
+  { key: "approved", label: "تم الاعتماد", status: "approved" },
+  { key: "suspended", label: "تم الإيقاف", status: "suspended" },
 ];
 
 const MAX_ROWS = 100;

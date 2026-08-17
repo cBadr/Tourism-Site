@@ -21,7 +21,7 @@
  */
 
 export { DUR, EASE, EASE_BACK, DESIGN_ONLY, TIMING, HERO_VIDEO_MIN_WIDTH } from "./tokens";
-export { fx } from "./classes";
+export { fx, pointerGlowHostClass } from "./classes";
 
 export { usePrefersReducedMotion, prefersReducedMotionNow } from "./use-reduced-motion";
 export { useInViewOnce } from "./use-in-view";
@@ -33,6 +33,10 @@ export { Marquee } from "./marquee";
 export { HeroMedia, Sparks, PulseDot, kenBurnsClass, scrollCueClass } from "./hero-ambience";
 export { HeroVideo, type HeroVideoSource } from "./hero-video";
 export { FlowRoad, FlowRail } from "./flow-road";
-export { PointerGlowGrid, PointerGlowLayer, pointerGlowHostClass } from "./pointer-glow";
+/* ⚠ `pointerGlowHostClass` يُصدَّر من `./classes` أعلاه لا من هنا — والسبب مقيسٌ
+   ومكتوبٌ هناك: قيمةٌ من وحدة `"use client"` تصل الخادمَ مرجعَ عميل لا نصّاً.
+   وهذا البرميل نفسه **محيَّد ويجب أن يبقى كذلك**: `"use client"` في أعلاه يُسقط
+   `fx` و`pointerGlowHostClass` و`DUR` وكلَّ ثابتٍ يمرّ عبره في اللحظة نفسها. */
+export { PointerGlowGrid, PointerGlowLayer } from "./pointer-glow";
 export { RailDots } from "./rail-dots";
 export { SlideUpBar } from "./slide-up-bar";

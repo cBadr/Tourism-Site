@@ -48,14 +48,23 @@ import { getSiteTimeZone } from "@/lib/site-timezone.server";
 /**
  * عامل الإشعارات — قلب أنبوب Outbox (قرار ٦ من خارطة الطريق).
  *
- * دورة العمل: اقرأ أقدم ٥٠ إشعاراً في الطابور ← احسب قنوات كل إشعار من
+ * دورة العمل: **طالِب** بأقدم ٥٠ إشعاراً في الطابور ← احسب قنوات كل إشعار من
  * الإعدادات ← صُغ الرسالة بالعربية ← سلّمها لكل قناة ← سجّل النتيجة على الصف
  * (الحالة + عدّاد المحاولات + نص السبب). **لا يرمي استثناءً أبداً** ويرجع
  * ملخّصاً دائماً — لأن مستدعيه إما زر في اللوحة أو مهمة مجدولة، وانهياره
  * الصامت أسوأ من فشل مُبلَّغ عنه.
  *
+ * 🔴 **«طالِب» لا «اقرأ» — وهذا فرقٌ مقيس** (هجرة 0099). كانت الدورة تقرأ
+ * `status = 'queued'` بنداءٍ عادي ثم تُسلّم ثم تكتب الحالة في نداءٍ ثالث، وكلُّ
+ * نداء PostgREST معاملةٌ وحده (D-48). فقُيس بوصلتين متزامنتين: **رأت كلٌّ منهما
+ * الصفوف الثلاثة نفسها، وبعد أن كتبت الاثنتان بقي `attempts = 1`** — أي تسليمٌ
+ * حقيقيٌّ مكرَّر لا أثرَ له في السجل. و`trip_offered` يذهب إلى تليجرام متعهدٍ
+ * حقيقي: عرضُ رحلةٍ يصل مرتين لا يُستدعى. والمطالبة الآن بيانٌ واحد في Postgres
+ * (`claim_notifications`) لا تتابعُ نداءات في TypeScript.
+ *
  * قرارات مقصودة:
- * - يعمل بعميل الخدمة (service_role) لأن المهمة نظامية بلا مستخدم مسجَّل.
+ * - يعمل بعميل الخدمة (service_role) لأن المهمة نظامية بلا مستخدم مسجَّل — وهو
+ *   الدور **الوحيد** الممنوح تنفيذَ المطالبة (0099 §٣).
  * - قناة «لوحة التحكم» مُسلَّمة بحكم وجود الصف نفسه (الجرس يقرأه)، فلا تدخل
  *   في حساب النجاح/الفشل. حالة الصف تعكس القنوات الخارجية وحدها، وإلا لظهرت
  *   كل الإشعارات «أُرسلت» بينما لم يصل تليجرام ولا بريد.
@@ -79,7 +88,14 @@ const TIME_BUDGET_MS = 20_000;
  */
 const DEFAULT_CHANNELS = ["dashboard", "telegram", "email"];
 
-/** قفل داخل نفس العملية يمنع تداخل دورتين (زر اللوحة + مهمة مجدولة) */
+/**
+ * قفلٌ داخل نفس العملية يمنع تداخل دورتين (زر اللوحة + مهمة مجدولة).
+ *
+ * ⚠ **وليس ضماناً، ولا يجوز الاعتماد عليه**: متغيّرٌ في وحدةٍ داخل عمليةٍ واحدة.
+ * عمليتان (‏`pm2` بأكثر من نسخة، أو دالةٌ بلا حالة على المنصّة) تحملان علَمَين
+ * مستقلَّين لا يرى أحدهما الآخر. الضمانُ الحقيقي في القاعدة: `claim_notifications`
+ * (0099). وهذا يبقى لأنه يوفّر رحلةً إلى القاعدة في الحالة الشائعة.
+ */
 let running = false;
 
 // ---------------------------------------------------------------------------
@@ -630,9 +646,19 @@ async function writeResult(
   errorText: string | null,
   escalation?: string,
   /** حصيلة كل قناة — تُخزَّن كما حُسبت، ولا تُذاب في جملة (0077) */
-  channelOutcomes?: ChannelOutcome[]
+  channelOutcomes?: ChannelOutcome[],
+  /**
+   * هل جاء الصفُّ من المطالبة الذرّية؟ (0099)
+   *
+   * 🔒 **والعدّاد يملكه واحدٌ لا اثنان**: المطالبة ترفعه لحظة الحجز، فرفعُه هنا
+   * ثانيةً يعدّ المحاولة الواحدة مرتين — ويخفي ما وُجد العدّاد ليكشفه (محاولةٌ
+   * مات صاحبها قبل أن يكتب حصيلتها كانت ستُحسب صفراً). وفي مسار التراجع لا
+   * مطالبةَ أصلاً، فالرفع يبقى هنا كما كان حرفياً.
+   */
+  claimed = false
 ): Promise<boolean> {
-  const attempts = typeof record.attempts === "number" ? record.attempts + 1 : 1;
+  const attempts =
+    typeof record.attempts === "number" ? record.attempts + (claimed ? 0 : 1) : 1;
   /** ما كان يُكتب قبل 0077 — وهو درجة التراجع الوسطى بعينها */
   const legacy: Record<string, unknown> = {
     status,
@@ -649,6 +675,19 @@ async function writeResult(
     // مصفوفةٌ دائماً (القيد في القاعدة يفرض ذلك) — و«صفر قناة خارجية» تُكتب `[]`
     // لا `null`: الفرق بين «لا قناة» و«قبل 0077» يجب أن يبقى مقروءاً في الشاشة.
     channel_outcomes: channelOutcomes ?? [],
+    /**
+     * 🔒 وإفراجُ الحجز **في نفس البيان** الذي يكتب الحالة النهائية (0099).
+     *
+     * ولا يفتح ذلك نافذةً: مطالبةٌ متزامنة تقرأ الصفَّ إمّا قبل البيان
+     * (‏`queued` + `claimed_at` حديثة ⇒ تتخطّاه) أو بعده (حالةٌ نهائية ⇒
+     * تتخطّاه). ولا حالةَ ثالثة — البيان واحد.
+     *
+     * والفائدة: زرُّ «إعادة المحاولة» عند المالك يجعل الصفَّ مطالَباً به **فوراً**
+     * لا بعد انقضاء المهلة. ولذلك موضعُه الدرجة الأولى وحدها: قاعدةٌ بلا 0099
+     * ترفض العمود، وإدخاله في الدرجة الوسطى كان سيُسقط معه `attempts` و`error`
+     * — أي سببَ الفشل نفسه.
+     */
+    claimed_at: null,
   };
 
   const first = await supabase.from("notifications").update(full).eq("id", record.id).select("id");
@@ -692,12 +731,173 @@ function isMissingTable(code: string | undefined): boolean {
   return code === "42P01" || code === "PGRST205";
 }
 
+/** رمز «الدالة غير موجودة» من Postgres (42883) أو من كاش مخطط PostgREST (PGRST202) */
+function isMissingFunction(code: string | undefined): boolean {
+  return code === "42883" || code === "PGRST202";
+}
+
+/**
+ * حجزُ الدفعة — **مطالبةٌ ذرّية في القاعدة** (هجرة 0099).
+ *
+ * `claim_notifications(p_limit)` بيانٌ واحد: انتقاءٌ بـ`FOR UPDATE SKIP LOCKED`
+ * وتحديثٌ يضبط `claimed_at` ويرفع `attempts`، ويُرجع الصفوف في النفس نفسه. فلا
+ * لحظةَ فراغٍ بين «رأيتُه» و«حجزتُه»، والعاملُ الخاسر **لا يأخذ شيئاً** بدل أن
+ * ينتظر أو يُكرّر.
+ *
+ * ⚠ **والمعامِلات تُترك لافتراضات القاعدة بقصد**: مهلةُ الرؤية (٣ دقائق) وسقفُ
+ * المحاولات (٥) رقمان لسياسةٍ لا لعرضٍ، ومكانُهما الهجرة — فلا ينحرف رقمٌ هنا
+ * عن رقمٍ هناك، ولا يُعاد نشرُ التطبيق لتغيير مهلة (D-05 بروحه).
+ *
+ * ── ولماذا تراجعٌ إلى القراءة القديمة؟ ──────────────────────────────────────
+ *
+ * المنشور على الخادم قد يسبق الهجرة. وبلا تراجعٍ يصير أثر النشر «صفر إشعارٍ
+ * يُرسَل إطلاقاً» — أي تحويلُ «أُرسل مرتين» إلى «لم يُرسل أبداً»، وهي مقايضةٌ
+ * أسوأ: عرضُ رحلةٍ لا يصل يُفقد حجزاً. فالغيابُ يُكتشف برمز الدالة المفقودة
+ * وحده (‏42883/PGRST202) — لا بأي خطأٍ آخر — ويُعلَن في `claim` من الملخّص.
+ */
+type ClaimMode = "atomic" | "legacy";
+
+type ClaimedBatch = {
+  records: NotificationRecord[];
+  mode: ClaimMode;
+  /** سببٌ يمنع الدورة أصلاً — يُرفع كما هو إلى الملخّص ويرفع ٥٠٣ في المسار */
+  reason?: string;
+};
+
+async function claimBatch(supabase: SupabaseClient, limit: number): Promise<ClaimedBatch> {
+  const claim = await supabase.rpc("claim_notifications", { p_limit: limit });
+
+  if (!claim.error) {
+    return { records: (claim.data ?? []) as NotificationRecord[], mode: "atomic" };
+  }
+
+  // خطأٌ ليس «الدالة مفقودة» يبقى خطأً: لا يُبتلع ولا يُهرَّب إلى مسار التراجع
+  if (!isMissingFunction(claim.error.code)) {
+    return {
+      records: [],
+      mode: "atomic",
+      reason: isMissingTable(claim.error.code) ? "no-table" : "read-failed",
+    };
+  }
+
+  const queue = await supabase
+    .from("notifications")
+    .select("*")
+    .eq("status", "queued")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (queue.error) {
+    return {
+      records: [],
+      mode: "legacy",
+      reason: isMissingTable(queue.error.code) ? "no-table" : "read-failed",
+    };
+  }
+
+  return { records: (queue.data ?? []) as NotificationRecord[], mode: "legacy" };
+}
+
+/**
+ * 🔴 إفراجٌ عن حجزِ ما لم يُلمس — إصلاحُ المراجعة العدائية (2026-08-17).
+ *
+ * ── العطب كما قِيس، لا كما يُظنّ ─────────────────────────────────────────────
+ *
+ * `claim_notifications` ترفع `attempts` **لحظة الحجز** لكل صفٍّ تأخذه (٥٠ صفاً)،
+ * وحلقةُ التسليم تتوقف عند `TIME_BUDGET_MS`. فكلُّ صفٍّ حُجز ولم تُلمس شريحتُه
+ * **يحرق محاولةً لم يشترِها تسليم**، ويُقفَل ٣ دقائق (مهلةُ الرؤية) بدل دقيقة.
+ * وبعد خمسِ مرات ينقله البند (أ) من الدالة إلى `failed` بنصٍّ يقول للمالك
+ * «أُوقف تلقائياً بعد ٥ محاولةِ إرسال» — **وعددُ محاولات التسليم الحقيقي صفر**.
+ *
+ * والقياس (وصلةٌ واحدة، معاملةٌ أُرجعت): ١٢ صفاً · ٦ دورات حجزٍ بلا كتابةِ
+ * حصيلة ⇒ `failed/attempts=5 ×12` · `delivered_at` صفر. أي عرضُ رحلةٍ يموت
+ * صامتاً داخل نافذة العرض (٣٠ دقيقة) بلا أن يُطرَق بابُ المتعهد مرة.
+ *
+ * ومساراتُ الوصول إليه ليست نظرية، وكلها **قبل** أول فحصٍ للميزانية:
+ *   • `getSiteTimeZone()` و`syncProviderReadiness()` داخل ساعةِ الميزانية
+ *     و**قبل** الحجز — ومضيفٌ جمّد طلباً ٨٠+ ثانية مسجَّلٌ في دفتر العيوب.
+ *   • `loadWorkerSettings()` و`loadPartners()` بعد الحجز وقبل الحلقة: خمسُ
+ *     رحلاتٍ إلى الشبكة، وأيُّ عثرةٍ فيها **ترمي** فتخرج الدورة من `catch`
+ *     الخارجي — والخمسون محجوزةٌ بمحاولةٍ محروقة وصفرِ تسليم.
+ *
+ * ── والإفراج آمنٌ بشرطين، لا بحسن النية ──────────────────────────────────────
+ *
+ * ١. **لا يُفرَج إلا عمّا لم يمرّ بـ`deliverOne` أصلاً** — يُحسب بفارق المعرّفات
+ *    عن `results`، وهي تُدفَع لكل صفٍّ لُمس (نجح أو سقط في الحارس الأخير). فصفٌّ
+ *    سُلّم لا يُفرَج عنه أبداً، ولا يعود التكرارُ من هذا الباب.
+ * ٢. **`claimed_at` تُطابَق حرفياً** — كل صفوف مطالبةٍ واحدة تحمل `now()` نفسها
+ *    (معاملةٌ واحدة). فلو تجاوزت الدورةُ مهلةَ الرؤية وأخذ الصفَّ عاملٌ آخر،
+ *    صارت `claimed_at` غيرَها فلا يمسّه الإفراج — ولا نُحرّر صفاً **قيد الإرسال
+ *    عند غيرنا**. والفشلُ هنا مغلق: عدمُ المطابقة يعني إفراجاً لم يحدث، أي
+ *    سلوكَ اليوم بلا زيادة — ولذلك يُعلَن العدد في الملخّص ولا يُفترض.
+ *
+ * والعدّاد يُرجَع إلى ما قبل الحجز (`attempts - 1`): الدالة تُرجع الصفَّ **بعد**
+ * الرفع، فالقيمةُ التي نراها هي المرفوعة. و`greatest(0)` لأن عدّاداً سالباً
+ * أسوأ من عدّادٍ متسامح.
+ */
+async function releaseUnhandledClaims(
+  supabase: SupabaseClient,
+  rows: readonly NotificationRecord[]
+): Promise<number> {
+  /** (‏`claimed_at`, `attempts`) ⇒ الصفوف — نداءٌ واحد لكل زوج لا لكل صف */
+  const groups = new Map<string, { at: string; attempts: number; ids: string[] }>();
+  for (const row of rows) {
+    const at = typeof row.claimed_at === "string" && row.claimed_at !== "" ? row.claimed_at : null;
+    const attempts = typeof row.attempts === "number" ? row.attempts : null;
+    // بلا الاثنين لا إفراجَ آمن: مسارُ التراجع لا يحجز أصلاً، ومخطَّطٌ بلا
+    // العمودَين ليس فيه ما يُفرَج عنه
+    if (at === null || attempts === null) continue;
+    const key = `${at}|${attempts}`;
+    const group = groups.get(key) ?? { at, attempts, ids: [] };
+    group.ids.push(String(row.id));
+    groups.set(key, group);
+  }
+
+  let released = 0;
+  for (const group of groups.values()) {
+    const res = await supabase
+      .from("notifications")
+      .update({ claimed_at: null, attempts: Math.max(group.attempts - 1, 0) })
+      .in("id", group.ids)
+      .eq("status", "queued")
+      .eq("claimed_at", group.at)
+      .select("id");
+    if (!res.error) released += res.data?.length ?? 0;
+  }
+  return released;
+}
+
 export async function dispatchNotifications(
   options: { limit?: number } = {}
 ): Promise<DispatchSummary> {
   if (running) return emptySummary("already-running");
   running = true;
   const startedAt = Date.now();
+
+  /**
+   * 🔒 حالةُ الحجز **خارج `try`** بقصد: الإفراج يجب أن يعمل من `finally` كذلك.
+   * أرجحُ مسارٍ يترك خمسين صفاً محجوزاً بلا تسليم هو استثناءٌ بين المطالبة
+   * والحلقة (‏`loadWorkerSettings` / `loadPartners` — خمسُ رحلاتٍ إلى الشبكة
+   * ترمي عند أي عثرة)، وهو مسارٌ لا يمرّ بنهاية `try` أبداً.
+   */
+  let claimClient: SupabaseClient | null = null;
+  let claimedRows: readonly NotificationRecord[] = [];
+  let claimedAtomically = false;
+  const handledIds = new Set<string>();
+  let releasedCount = 0;
+
+  const releaseStranded = async (): Promise<number> => {
+    if (!claimedAtomically || claimClient === null || claimedRows.length === 0) return 0;
+    const stranded = claimedRows.filter((row) => !handledIds.has(String(row.id)));
+    claimedRows = [];
+    if (stranded.length === 0) return 0;
+    try {
+      return await releaseUnhandledClaims(claimClient, stranded);
+    } catch {
+      // العقد: لا استثناء يخرج من هذه الدالة — وفشلُ الإفراج يعيد سلوك اليوم لا أسوأ
+      return 0;
+    }
+  };
 
   try {
     /**
@@ -711,6 +911,7 @@ export async function dispatchNotifications(
 
     const supabase = createServiceSupabase();
     if (!supabase) return emptySummary("no-service-client");
+    claimClient = supabase;
 
     /**
      * ⚠ **قبل قراءة الطابور، لا بعد الخروج منه فارغاً.**
@@ -728,22 +929,21 @@ export async function dispatchNotifications(
 
     const limit = Math.min(Math.max(options.limit ?? BATCH_LIMIT, 1), BATCH_LIMIT);
 
-    const queue = await supabase
-      .from("notifications")
-      .select("*")
-      .eq("status", "queued")
-      .order("created_at", { ascending: true })
-      .limit(limit);
+    // 🔴 حجزٌ ذرّي لا قراءة — التفصيل عند `claimBatch` (هجرة 0099)
+    const batch = await claimBatch(supabase, limit);
+    if (batch.reason) return { ...emptySummary(batch.reason), claim: batch.mode };
 
-    if (queue.error) {
-      return emptySummary(isMissingTable(queue.error.code) ? "no-table" : "read-failed");
-    }
-
-    const records = (queue.data ?? []) as NotificationRecord[];
+    const records = batch.records;
+    // 🔒 من هذه اللحظة، كلُّ صفٍّ محجوزٌ **مسؤوليّتنا**: ما لا نُسلّمه نُفرِج عنه
+    claimedRows = records;
+    claimedAtomically = batch.mode === "atomic";
     // والطابور الفارغ دورةٌ ناجحة — لكنها تُبلّغ عن فشل المزامنة إن وقع،
     // فلا يمرّ العطبُ الصامت الذي يغيّر حساب الإتاحة على الشبكة كلها
     if (records.length === 0) {
-      return emptySummary(providersSynced ? "empty-queue" : "providers-stale", true);
+      return {
+        ...emptySummary(providersSynced ? "empty-queue" : "providers-stale", true),
+        claim: batch.mode,
+      };
     }
 
     const settings = await loadWorkerSettings(supabase);
@@ -781,7 +981,8 @@ export async function dispatchNotifications(
               outcome.status,
               errorText,
               outcome.escalation,
-              outcome.channels
+              outcome.channels,
+              batch.mode === "atomic"
             );
             return { outcome, wrote };
           } catch (err) {
@@ -791,7 +992,10 @@ export async function dispatchNotifications(
               supabase,
               record,
               "failed",
-              `عامل الإرسال: ${reason}`
+              `عامل الإرسال: ${reason}`,
+              undefined,
+              undefined,
+              batch.mode === "atomic"
             );
             return {
               outcome: {
@@ -807,13 +1011,21 @@ export async function dispatchNotifications(
       );
       for (const item of done) {
         results.push(item.outcome);
+        // 🔒 «لُمس» لا «نجح»: صفٌّ مرّ بـ`deliverOne` (أو بالحارس الأخير) كُتبت
+        //    حصيلتُه بحالةٍ نهائية، فلا يُفرَج عنه ولا يُسلَّم ثانيةً
+        handledIds.add(String(item.outcome.id));
         if (!item.wrote) writeFailures += 1;
       }
     }
 
+    // 🔴 وما قطعته الميزانية يُفرَج عنه هنا — لا يُترك محجوزاً بمحاولةٍ محروقة
+    releasedCount = await releaseStranded();
+
     return {
       ok: true,
       ranAt: new Date().toISOString(),
+      claim: batch.mode,
+      released: releasedCount,
       processed: results.length,
       sent: results.filter((r) => r.status === "sent").length,
       skipped: results.filter((r) => r.status === "skipped").length,
@@ -824,9 +1036,22 @@ export async function dispatchNotifications(
       results,
     };
   } catch (err) {
-    // العقد: لا استثناء يخرج من هذه الدالة إطلاقاً
-    return emptySummary(err instanceof Error ? `worker-error: ${err.message}` : "worker-error");
+    /**
+     * 🔴 وهذا هو المسار الذي كان يقتل الدفعة كلها بصمت: استثناءٌ بعد المطالبة
+     * وقبل الحلقة (‏`loadWorkerSettings` أو `loadPartners` — خمسُ رحلاتٍ إلى
+     * الشبكة، و`fetch` يرمي على عثرةٍ ولا يعيد `{ error }`). فالخمسون محجوزةٌ
+     * بمحاولةٍ محروقة وصفرِ تسليم، وخمسُ عثراتٍ تُنقلها إلى `failed` بلا أن
+     * يُطرَق بابُ متعهدٍ مرة. فيُفرَج عنها هنا قبل الخروج.
+     */
+    releasedCount = await releaseStranded();
+    const summary = emptySummary(
+      err instanceof Error ? `worker-error: ${err.message}` : "worker-error"
+    );
+    return { ...summary, released: releasedCount };
   } finally {
+    // شبكةُ أمانٍ أخيرة: أيُّ مخرجٍ لم يُفرِج (‏`return` مبكر بعد المطالبة) يُفرِج
+    // هنا. و`claimedRows` تُفرَّغ عند أول إفراج فلا يتكرّر النداء.
+    await releaseStranded();
     running = false;
   }
 }

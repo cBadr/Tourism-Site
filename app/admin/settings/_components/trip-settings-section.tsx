@@ -3,6 +3,7 @@ import { ExternalLink, PlayCircle, Timer } from "lucide-react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -624,9 +625,13 @@ export async function TripSettingsSection({ wired }: { wired: boolean }) {
         </Label>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" disabled={!canEdit}>
-            حفظ إعدادات الرحلات
-          </Button>
+          <SaveButton
+            label="حفظ إعدادات الرحلات"
+            disabled={!canEdit}
+            savedMessages={{
+              trip: "حُفظت إعدادات الرحلات — المنطقة الزمنية سارية فوراً، والمهلة من الكنس التالي.",
+            }}
+          />
           <span className="text-xs text-muted-foreground">
             تُحفظ مفاتيح هذا القسم وحدها — بقية إعدادات الصفحة لها زر حفظ مستقل.
           </span>

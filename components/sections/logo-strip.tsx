@@ -185,9 +185,28 @@ export async function LogoStripSection({
   if (logos.length === 0) return null;
 
   const t = await getT("sections.logoStrip", locale);
-  const title = content.title ?? t("title", "الفئات المتاحة في أسطولنا");
+  const title = content.title ?? t("title", "ماركات تجدها في الفئات المتاحة");
   /* نثرٌ تحريري: الغياب والفراغ كلاهما يعني «لا تعرضه» */
   const note = content.note ?? "";
+  /**
+   * 🔴 **تسمية القائمة صارت من `content` (‏`0101`) — وكانت محفورةً هنا وحدها.**
+   *
+   * كان السطر `label={t("listLabel", "ماركات الأسطول")}` **بلا `content.` قبله
+   * إطلاقاً**: أي أن `aria-label` المصيَّر على الموقع الحيّ لا يُغيَّر من اللوحة
+   * ولا من القاعدة — نقضٌ لشرط المالك «التحكم في كل شيء من لوحة التحكم»،
+   * **وحمولةُ الصياغة التي كُتبت `0095` لإزالتها**: النشاط وسيطٌ لا يملك مركبةً
+   * ولا يوظّف سائقاً، فالأسطول بضمير الملك ادّعاءُ ما لا يُملَك. و`0095` أصلحت
+   * المحتوى في القاعدة ولم تجد لهذه التسمية صفّاً تُصلحه، لأنها لم تكن فيها.
+   *
+   * ⚠ **والفراغ يعيد الافتراضي — لا كـ`title` أعلاه.** `title` الفارغ يعني «لا
+   * عنوان» ويسقط `<h2>` كله، وذاك اختيارٌ مرئيٌّ يراه صاحبه. وهذه **اسمٌ لا
+   * يُرى**: و`Marquee` تُسقط `aria-label` كاملاً عند الفراغ (لا تكتبه فارغاً)،
+   * فيمرّ قارئ الشاشة على عشرة شعارات بلا ما يقول له ما هذه القائمة — انحدارٌ
+   * لا يظهر لمن سبّبه لأن الحقل غير مرئيٍّ أصلاً. **ونصُّ المساعدة في اللوحة
+   * يقول هذا السلوك حرفاً**، وهو الفرق عن `disclaimer` المحذوف: عِلّةُ ذاك كانت
+   * الصمت لا `||`.
+   */
+  const listLabel = (content.listLabel ?? "").trim() || t("listLabel", "ماركات السيارات");
 
   const effect = style?.logoEffect ?? "mono";
   const logoClass = LOGO_EFFECT_CLASS[effect];
@@ -221,7 +240,7 @@ export async function LogoStripSection({
         durationSec={SPEED_SEC[style?.marqueeSpeed ?? "normal"]}
         reverse={style?.marqueeDirection === "reverse"}
         pauseOnHover={style?.marqueePause !== false}
-        label={t("listLabel", "ماركات الأسطول")}
+        label={listLabel}
       >
         {logos.map((logo) => {
           /**

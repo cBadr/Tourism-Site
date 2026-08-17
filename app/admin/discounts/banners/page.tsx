@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Megaphone, Plus, Power, PowerOff } from "lucide-react";
 
 import { formatDateTimeLabel } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -230,9 +231,12 @@ function BannerCard({
         />
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={readOnly}>
-            حفظ البانر
-          </Button>
+          <SaveButton
+            label="حفظ البانر"
+            disabled={readOnly}
+            errorMessages={ERROR_MESSAGES}
+            savedMessages={{ "1": "حُفظ البانر وظهر على الموقع العام فوراً." }}
+          />
         </div>
       </form>
     </Card>
@@ -407,10 +411,15 @@ export default async function BannersPage({
           </div>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              إضافة البانر
-            </Button>
+            <SaveButton
+              label="إضافة البانر"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم يُضَف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

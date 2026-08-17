@@ -10,6 +10,7 @@ import {
   type PaymentFeeKind,
 } from "@/lib/payment-fee-types";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { safeMediaSrc } from "@/components/sections/image";
 
 /**
  * إجراءات شاشة حسابات الدفع والخزينة — إدارة `payment_accounts` (محافظ وانستا باي
@@ -71,6 +72,16 @@ const isFeeBound = (error: { code?: string; message?: string } | null | undefine
   error?.code === "23514" && (error.message ?? "").includes("payment_accounts_fee_chk");
 
 /**
+ * وقيد `payment_accounts_image_internal_chk` (الهجرة `0093`) يُبلَّغ بـ23514 كذلك —
+ * فيُفرَّق بالاسم نفسه. **ولا يُتوقَّع أن يقع من هذه الشاشة أصلاً**: `readAccount`
+ * ترفض قبله برمز `image` ورسالةٍ عربية. وهو هنا لأن الرمز يصل من كل كاتب، ومن
+ * يكتب من محرر SQL يجب أن يقرأ سببه لا «نفِّذ هجرة المرحلة ٧».
+ */
+const isImageBound = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "23514" &&
+  (error.message ?? "").includes("payment_accounts_image_internal_chk");
+
+/**
  * نسخة الحقول بلا ما تضيفه هجرة المرحلة ٧ — **للمحاولة الثانية وحدها**.
  *
  * ⚠ ولا تُتَّهم هذه الدالة بابتلاع المفتاح: مناداتها مشروطة بـ`isMissingColumn`
@@ -88,6 +99,13 @@ function withoutFeeFields(fields: Record<string, unknown>): Record<string, unkno
   const legacy: Record<string, unknown> = { ...fields };
   delete legacy.fee_kind;
   delete legacy.fee_value;
+  return legacy;
+}
+
+/** ونظيرتها لعمود العلامة (الهجرة `0093`) — بالشرط نفسه حرفياً */
+function withoutMarkField(fields: Record<string, unknown>): Record<string, unknown> {
+  const legacy: Record<string, unknown> = { ...fields };
+  delete legacy.image_url;
   return legacy;
 }
 
@@ -129,6 +147,8 @@ type AccountFields = {
   /** عمولة التحويل (الهجرة `0066`) — تُضاف لفاتورة العميل ولا تدخل سعر الرحلة */
   fee_kind: PaymentFeeKind;
   fee_value: number;
+  /** علامة الوسيلة (البند ١٢، الهجرة `0093`) — مسارٌ داخلي أو `null` */
+  image_url: string | null;
 };
 
 const FEE_KINDS: PaymentFeeKind[] = ["none", "fixed", "percent"];
@@ -198,6 +218,28 @@ function readAccount(formData: FormData, prefix = ""): AccountFields | string {
   if (!(FEE_KINDS as string[]).includes(feeKindRaw)) return "feekind";
   const feeKind = feeKindRaw as PaymentFeeKind;
 
+  /**
+   * علامة الوسيلة (البند ١٢) — **الحارس مفوَّضٌ لا مستنسَخ** (الذهبية ١٢).
+   *
+   * `safeMediaSrc` هي التي تقرّر على صفحة الحجز أيُصيَّر المسار أم يُسقَط، فرفضُه
+   * هنا يعني أن المالك يرى سبب الرفض **عند الحفظ** بدل أن يحفظ قيمةً تختفي
+   * صامتةً على الموقع (النمط ٣ في LESSONS: ميزةٌ لا وجود لها عند مالكها).
+   *
+   * ⚠ **ثم تضييقٌ إلى المسار الداخلي وحده**، لأنه ما يقبله قيد الجدول
+   * `payment_accounts_image_internal_chk`: `safeMediaSrc` تقبل كذلك رابطاً مطلقاً من
+   * نطاق Supabase، والقاعدة لا تعرف نطاقها فلا تتحقق منه. والتضييق هنا لا هناك كي
+   * **لا يقع المالك على رفضٍ من Postgres بلا جملة عربية**.
+   *
+   * والفارغ يعني `null` — «بلا علامة» قرارٌ صالح يعيد البطاقة إلى أيقونة عائلتها.
+   */
+  const imageRaw = text(formData, p("image_url"));
+  let imageUrl: string | null = null;
+  if (imageRaw !== null) {
+    const safe = safeMediaSrc(imageRaw);
+    if (safe === null || !safe.startsWith("/")) return "image";
+    imageUrl = safe;
+  }
+
   const feeValueRaw = num(formData, p("fee_value")) ?? 0;
   if (!Number.isFinite(feeValueRaw) || feeValueRaw < 0) return "feevalue";
   if (feeKind === "percent" && feeValueRaw > PAYMENT_FEE_MAX_PERCENT) return "feepercent";
@@ -218,6 +260,7 @@ function readAccount(formData: FormData, prefix = ""): AccountFields | string {
     // القيمة تُقرَّب إلى قرشين كعمود `numeric(12,2)` نفسه — لا تقريبَ مالٍ هنا،
     // بل مطابقةُ دقةِ العمود كي لا يُحفظ ما لا يُخزَّن
     fee_value: feeKind === "none" ? 0 : Math.round(feeValueRaw * 100) / 100,
+    image_url: imageUrl,
   };
 }
 
@@ -232,18 +275,20 @@ const writeErrorCode = (error: { code?: string; message?: string } | null | unde
     ? "exists"
     : isFeeBound(error)
       ? "feebound"
-      : isKindRejected(error?.code)
-        ? "kindnew"
-        : isGatewayExposure(error?.code)
-          ? "gateway"
-          : isDeadFee(error?.code)
-            ? "feedead"
-            : "save";
+      : isImageBound(error)
+        ? "image"
+        : isKindRejected(error?.code)
+          ? "kindnew"
+          : isGatewayExposure(error?.code)
+            ? "gateway"
+            : isDeadFee(error?.code)
+              ? "feedead"
+              : "save";
 
 /**
- * كتابةٌ بتدهور رشيق حول هجرتين: `0015` (‏`customer_facing`) و`0066` (عمودا
- * العمولة). ترتيب التراجع من الأحدث إلى الأقدم — فقاعدةٌ بلا `0066` تحفظ بقية
- * البيانات ومفتاح الظهور، وقاعدةٌ بلا `0015` تحفظ الأساسيات.
+ * كتابةٌ بتدهور رشيق حول ثلاث هجرات: `0015` (‏`customer_facing`) و`0066` (عمودا
+ * العمولة) و`0093` (‏`image_url`). ترتيب التراجع من الأحدث إلى الأقدم — فقاعدةٌ بلا
+ * `0093` تحفظ العمولة والظهور، وبلا `0066` تحفظ الظهور، وبلا `0015` تحفظ الأساسيات.
  *
  * ⚠ ومشروطٌ بـ`isMissingColumn` وحده (‏42703 / PGRST204): رفضُ قيدٍ أو مُشغّل
  *   يخرج من هنا برمزه فيصل الشاشة رسالةً بعينها — **لا يُعاد بحقول أقل**، وإلا
@@ -257,11 +302,15 @@ async function writeWithFallbacks(
   }>
 ) {
   let res = await write(fields);
+  // `0093` أولاً — أحدث الهجرات الثلاث
   if (res.error && isMissingColumn(res.error.code)) {
-    res = await write(withoutFeeFields(fields));
+    res = await write(withoutMarkField(fields));
   }
   if (res.error && isMissingColumn(res.error.code)) {
-    res = await write(withoutTreasuryFields(withoutFeeFields(fields)));
+    res = await write(withoutMarkField(withoutFeeFields(fields)));
+  }
+  if (res.error && isMissingColumn(res.error.code)) {
+    res = await write(withoutMarkField(withoutTreasuryFields(withoutFeeFields(fields))));
   }
   return res;
 }

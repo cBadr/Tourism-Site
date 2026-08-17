@@ -12,7 +12,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 
 /**
  * إجراءات طابور المراجعة: اعتماد ترجمة صف واحد (بنشرها أو بدونه)، ونشر كل
- * المراجَع في اللغة دفعةً واحدة.
+ * المراجَع في اللغة دفعةً واحدة، و**اعتماد كل المسودات ونشرها** دفعةً واحدة.
  *
  * **الاعتماد والنشر يقعان داخل `review_translation` و`publish_locale` في
  * Postgres لا هنا.** السبب ليس أناقة: قاعدة الحالات (مسودة ← مراجَعة ← منشورة)
@@ -24,6 +24,12 @@ import { createServerSupabase } from "@/lib/supabase/server";
  * معرِّفاً أصلاً لأنه لم يُكتب في `translations` قط. عندها نكتبه مسودةً أولاً
  * ثم نعتمده بمعرّفه الحقيقي — فالمراجع يكتب ترجمته من الطابور مباشرة بلا
  * انتظار دورة ترجمة آلية.
+ *
+ * ⚠ **و`publishDrafts` لا تستثني نفسها من القاعدة أعلاه.** طلب المالك زرّاً
+ * واحداً ينشر المسودات، **والحلّ ليس أن تكتب الواجهة `published` في الجدول** بل
+ * أن تُعتمد الصفوف باسمه ثم تُنشر بالمسار القائم — وذلك كله داخل
+ * `review_and_publish_drafts` (هجرة `0100`). فالمالك يضغط ضغطةً واحدة،
+ * و`updated_by` يحفظ جواب «من اعتمد هذا النص؟».
  */
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -187,4 +193,55 @@ export async function publishReviewed(formData: FormData) {
   revalidatePath("/", "layout");
   clearPublicCaches();
   redirect(returnUrl(formData, locale, `bulk=${count}`));
+}
+
+/** عددٌ من حصيلة `jsonb` — كل ما ليس رقماً محدوداً يصير صفراً لا `NaN` في الرابط */
+function countOf(data: unknown, key: string): number {
+  if (data === null || typeof data !== "object") return 0;
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+/**
+ * «انشر كل المسودات» — طلب المالك 2026-08-17.
+ *
+ * الحصيلة **تُنقل بأرقامها في الرابط** لا برقمٍ واحد، لأن الوعد الذي قطعناه له
+ * أن يعرف **ما لم يحدث ولماذا**: زرٌّ يقول «تم» وهو يتخطّى أربعين صفاً صامتاً
+ * أسوأ من لا زرّ. والرمز `saved` يفرّق حالتين ليختلف نصّ الشريط بجوار الزرّ:
+ * `bulkall` نُشر كل مؤهَّل بلا استثناء، و`bulkpart` استُثني شيء (آليّ أو قديم
+ * أو فارغ) فالتفصيل في شريط أعلى الصفحة.
+ */
+export async function publishDrafts(formData: FormData) {
+  const supabase = await createServerSupabase();
+
+  const rawLocale = field(formData, "locale");
+  const locale = rawLocale && LOCALE_PATTERN.test(rawLocale) ? rawLocale.toLowerCase() : null;
+  if (!locale || locale === DEFAULT_LOCALE) redirect("/admin/languages?error=locale");
+  if (!supabase) redirect(returnUrl(formData, locale, "error=env"));
+
+  const { data, error } = await supabase.rpc("review_and_publish_drafts", { p_locale: locale });
+  if (error) redirect(returnUrl(formData, locale, `error=${errorCode(error)}`));
+
+  const approved = countOf(data, "approved");
+  const published = countOf(data, "published");
+  const machine = countOf(data, "skippedMachine");
+  const stale = countOf(data, "skippedStale");
+  const blank = countOf(data, "skippedBlank");
+  const staleReviewed = countOf(data, "staleReviewed");
+
+  const partial = machine + stale + blank + staleReviewed > 0;
+  const qs = new URLSearchParams({
+    saved: partial ? "bulkpart" : "bulkall",
+    ap: String(approved),
+    pb: String(published),
+    mt: String(machine),
+    st: String(stale),
+    bl: String(blank),
+    sr: String(staleReviewed),
+  });
+
+  revalidatePath("/admin/languages", "layout");
+  revalidatePath("/", "layout");
+  clearPublicCaches();
+  redirect(returnUrl(formData, locale, qs.toString()));
 }

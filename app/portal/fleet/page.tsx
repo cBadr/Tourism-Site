@@ -91,7 +91,7 @@ function VehicleCard({
         <CarFront className="size-4 shrink-0 text-primary" aria-hidden="true" />
         <h3 className="font-heading text-base font-bold">{vehicle.label || "مركبة بلا اسم"}</h3>
         <Badge variant={vehicle.active ? "default" : "secondary"}>
-          {vehicle.active ? "في الخدمة" : "متوقفة"}
+          {vehicle.active ? "في الخدمة" : "خارج الخدمة"}
         </Badge>
         <form action={toggleVehicle.bind(null, vehicle.id)} className="ms-auto">
           <Button

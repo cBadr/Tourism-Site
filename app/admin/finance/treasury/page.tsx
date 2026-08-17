@@ -12,6 +12,7 @@ import { ExportLink } from "@/components/admin/export-link";
 import { PrintButton } from "@/components/admin/print-button";
 import { PrintHeader } from "@/components/admin/print-header";
 import { toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -601,9 +602,13 @@ export default async function TreasuryPage({
 
               <Separator />
               <div className="flex justify-end">
-                <Button type="submit" disabled={readOnly}>
-                  تسجيل التسوية
-                </Button>
+                <SaveButton
+                  label="تسجيل التسوية"
+                  savedLabel="تم التسجيل"
+                  pendingLabel="جارٍ التسجيل…"
+                  failedLabel="لم تُسجَّل"
+                  disabled={readOnly}
+                />
               </div>
             </Card>
           </form>

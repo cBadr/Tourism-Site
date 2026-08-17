@@ -2,6 +2,9 @@ import { trackFunnel } from "@/lib/analytics/emit";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { SERVICES } from "@/lib/site-config";
 import { isWithinServiceArea } from "@/lib/place-search-types";
+import { readLeadTime } from "@/components/booking/checkout/lead-time";
+import { createFormatter } from "@/components/booking/format";
+import { getSiteTimeZone } from "@/lib/site-timezone.server";
 
 /**
  * POST /api/quote-request — طلب عرض سعر لما هو خارج الحاسبة الفورية
@@ -22,6 +25,16 @@ import { isWithinServiceArea } from "@/lib/place-search-types";
  *    ثلاثيّين (تسمية + إحداثيتان) من نفس مكوّن البحث الذي يستعمله ويدجت الحجز،
  *    ومن أرسل تسميةً بلا إحداثيات رُفض. والتوقيع الرباعي القديم **أُسقط** في
  *    0084 فلا يبقى بابٌ خلفيّ يُدرج طلباً بلا نقطة.
+ *
+ * ── وما تغيّر في 0098: **أدنى المهلة تُفرض هنا وفي القاعدة** ────────────────
+ * صار حقل الموعد في النموذج حقلاً واحداً (`datetime-local`) بأرضية `min` من
+ * `booking_min_pickup_at()` — وخاصية `min` **تلميحٌ لا حارس**. فالحاجز في
+ * `create_quote_request` (‏0098)، وما في هذا الملف رفضٌ مبكر برسالةٍ تسمّي أقرب
+ * موعد متاح بدل رمزٍ عامّ. والحدّ في الموضعين من **نفس الدالة** فلا ينحرفان.
+ *
+ * 🔴 وموعدُ الانطلاق يُرفض إن وصل **بلا منطقة زمنية صريحة**: نصٌّ ساذج
+ *    (`2026-08-21T18:45`) يفسّره `Date.parse` بتوقيت **الخادم** فيهبط في الصف
+ *    بفارق ساعتين. التفصيل عند `ISO_WITH_ZONE` وعند `pickupMs`.
  *
  * كان هنا سقوط إلى إدراج مباشر عند غياب الدالة؛ حُذف: صلاحية INSERT على
  * `public.quote_requests` سُحبت من anon وسياستها المتساهلة أُسقطت، فلم يكن
@@ -47,6 +60,15 @@ const MAX_PASSENGERS = 200;
 const MAX_LUGGAGE = 400;
 
 const PHONE_PATTERN = /^[+\d\s()-]{8,20}$/;
+
+/**
+ * ISO **بمنطقة زمنية صريحة** حصراً (‏`Z` أو `±hh:mm`) — انظر تعليل `pickupMs` أدناه.
+ * ونسخةٌ ثانيةٌ من نفس النمط في `_lib/prefill.ts` **بقصد**: هذا ملفٌّ خادميّ لا
+ * يستورد من `app/(site)`، والتعبير أربعة أسطر ومعياره RFC 3339 لا قرارَ منتجٍ
+ * يتغيّر. وتوحيدهما في وحدةٍ ثالثة كلفةٌ بلا مكسب.
+ */
+const ISO_WITH_ZONE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/;
 
 const SERVICE_SLUGS = new Set(SERVICES.map((service) => service.slug));
 
@@ -145,6 +167,15 @@ const VALIDATION_MESSAGES: Record<string, string | undefined> = {
   "out-of-area": "نخدم داخل مصر فقط حالياً — اختر مكاناً داخل نطاق التشغيل.",
   "invalid-pickup": "حدّد تاريخ الرحلة ووقتها.",
   "pickup-past": "موعد الرحلة يجب أن يكون في المستقبل.",
+  /**
+   * 🔒 حارس أدنى المهلة (هجرة 0098) — رسالةٌ احتياطية بلا رقمٍ ولا موعد.
+   *
+   * المسار أدناه يرفض قبل النداء برسالةٍ تحمل الرقم و«أقرب موعد متاح» معاً؛
+   * وهذه تُستعمل حين يصل الرفض من القاعدة وحدها — أي حين تعذّرت قراءة المهلة
+   * في المسار (بلا `SUPABASE_SERVICE_ROLE_KEY`) أو حين زحف «الآن» بين القراءة
+   * والنداء. فهي عامة بقصد: لا تخترع رقماً لم تقرأه.
+   */
+  "lead-time": "موعد الرحلة أقرب من مهلة التجهيز التي نحتاجها. اختر موعداً أبعد قليلاً.",
   "invalid-passengers": "اكتب عدد الركاب (واحد على الأقل).",
   "invalid-luggage": "عدد الحقائب غير صالح.",
 };
@@ -251,12 +282,60 @@ export async function POST(request: Request) {
   }
 
   const pickupRaw = typeof raw.pickupAt === "string" ? raw.pickupAt.trim() : "";
-  const pickupMs = pickupRaw ? Date.parse(pickupRaw) : Number.NaN;
+  /**
+   * 🔴 **بمنطقة زمنية صريحة حصراً** — وإلا فُسِّرت بمنطقة **الخادم**.
+   *
+   * `Date.parse("2026-08-21T18:45")` (بلا لاحقة) يفسّرها زمن التشغيل بالتوقيت
+   * المحلي للعملية، وهو UTC على الخادم بينما الموعد الذي كتبه العميل قاهري —
+   * فيهبط في الصف بفارق ساعتين أو ثلاث، ويصل السائق في الساعة الخطأ. والنموذج
+   * يبني القيمة بـ`toIsoFromCairoInputs` ثم `toISOString()` فيصل دائماً بلاحقة
+   * `Z`؛ فالتشدّد هنا **لا يفقد حالةً حقيقية** ويغلق الالتباس على أي مستدعٍ آخر.
+   *
+   * والنمط نفسه المستعمل في `app/(site)/quote-request/_lib/prefill.ts`
+   * (‏`ISO_WITH_ZONE`) بنفس التعليل حرفياً.
+   */
+  const pickupMs =
+    pickupRaw && ISO_WITH_ZONE.test(pickupRaw) ? Date.parse(pickupRaw) : Number.NaN;
   if (!Number.isFinite(pickupMs)) {
     return errorJson("invalid-input", VALIDATION_MESSAGES["invalid-pickup"]!, 400);
   }
   if (pickupMs <= Date.now()) {
     return errorJson("invalid-input", VALIDATION_MESSAGES["pickup-past"]!, 400);
+  }
+
+  /**
+   * 🔒 أدنى مهلة قبل الانطلاق — **رفضٌ مبكر برسالةٍ تدلّ، والحاجز في القاعدة.**
+   *
+   * الحدّ من `readLeadTime()` أي من `booking_min_pickup_at()` نفسها التي يفرضها
+   * `create_quote_request` بعد 0098 و`create_booking` قبلها — فلا معادلةَ مهلةٍ
+   * تُحسب هنا (النمط ٨: مصدران لرقم واحد).
+   *
+   * ⚠ وهذا **ليس** الحارس: خاصية `min` في المتصفح تُتجاوَز، وهذا المسار نفسه
+   *   يُتجاوَز بنداء PostgREST مباشر لأن الدالة ممنوحة لـ`anon`. ما يكسبه العميل
+   *   هنا رسالةٌ تسمّي أقرب موعد متاح بدل رمزٍ عامّ من القاعدة.
+   *
+   * 🔒 وتعذّر القراءة (‏`enabled: false` — بلا مفتاح خدمة أو بهجرةٍ ناقصة) يعني
+   *   أن هذه الطبقة تسقط صامتةً ويبقى حارس القاعدة وحده. والاتجاه المتساهل هنا
+   *   صحيحٌ بالضبط لأن الحاجز ليس هنا.
+   */
+  const lead = await readLeadTime();
+  if (lead.enabled && lead.minPickupAt !== null) {
+    const floorMs = Date.parse(lead.minPickupAt);
+    if (Number.isFinite(floorMs) && pickupMs < floorMs) {
+      // المنطقة تُضبط قبل التنسيق — الدوال الصرفة لا تستطيع `await`
+      // (نفس ما يفعله `/api/admin/export` و`lib/notifications/dispatch.ts`)
+      await getSiteTimeZone();
+      // ورسائل هذا المسار عربية بأسرها، فالأرقام هندية كأخواتها لا لاتينية
+      const fmt = createFormatter("ar");
+      const nearest = fmt.dateTime(lead.minPickupAt);
+      return errorJson(
+        "invalid-input",
+        nearest
+          ? `نحتاج مهلة ${fmt.digits(lead.leadMinutes)} دقيقة على الأقل قبل الانطلاق — أقرب موعد متاح ${nearest}.`
+          : VALIDATION_MESSAGES["lead-time"]!,
+        400
+      );
+    }
   }
 
   const passengers = parseCount(raw.passengers, 1, MAX_PASSENGERS);

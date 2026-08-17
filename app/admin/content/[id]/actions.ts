@@ -8,6 +8,7 @@ import {
   SECTION_TYPE_LABELS,
   type SectionType,
 } from "@/lib/content-types";
+import { NAV_LABEL_MAX } from "@/components/site/links";
 import { ITEM_PRESERVED_KEYS } from "@/lib/page-builder/item-keys";
 
 /**
@@ -266,9 +267,38 @@ export async function savePage(pageId: string, formData: FormData) {
   };
   const published = formData.get("published") != null;
 
+  /**
+   * ── حقول الشريط العلوي (هجرة `0094`) ─────────────────────────────────────
+   *
+   * `nav_label` **يُكتب `null` عند الفراغ لا `""`**: القيد
+   * `pages_nav_label_shape` يرفض النصّ الفارغ عمداً، ولأن «لا تجاوز» يجب أن
+   * يكون له شكلٌ واحد في القاعدة — وإلا صار `''` و`null` حالتين يفترق تفسيرهما
+   * في `site_nav` وفي فهرس الترجمة.
+   *
+   * و`nav_sort` يُقرأ صحيحاً أو صفراً: حقلُ رقمٍ يكتب فيه المالك حرفاً لا يجوز
+   * أن يُسقط الحفظ كلَّه (‏العنوان والنشر والميتا معه).
+   */
+  const navShow = formData.get("nav_show") != null;
+  const navLabel = str(formData, "nav_label") ?? null;
+  const navSortRaw = Number.parseInt(String(formData.get("nav_sort") ?? ""), 10);
+  const navSort = Number.isFinite(navSortRaw) ? navSortRaw : 0;
+
+  // 🔒 الطول يُفحص هنا **قبل** الرحلة لا لأن القاعدة لا تفحصه (‏القيد
+  //    `pages_nav_label_shape` يرفضه)، بل لأن ارتدادَ القيد يعطي `error=save`
+  //    العامّة — فيقرأ المالك «فشل الحفظ» ولا يعرف أن السبب حرفان زائدان.
+  if (navLabel !== null && navLabel.length > NAV_LABEL_MAX)
+    redirect(editorUrl(pageId, "error=navLabel"));
+
   const pageRes = await supabase
     .from("pages")
-    .update({ title, published, meta })
+    .update({
+      title,
+      published,
+      meta,
+      nav_show: navShow,
+      nav_sort: navSort,
+      nav_label: navLabel,
+    })
     .eq("id", pageId)
     .select("id");
   if (pageRes.error || !pageRes.data || pageRes.data.length === 0)

@@ -586,7 +586,7 @@ export async function DispatchPanel({
 
           {status === null && bookingStatus !== "confirmed" && bookingStatus !== "assigned" && (
             <p className="no-print text-sm leading-relaxed text-muted-foreground">
-              لا دورة بث لهذا الحجز: البث لا يُفتح إلا على حجز «مؤكد». اعتمد التحويل أولاً من
+              لا دورة بث لهذا الحجز: البث لا يُفتح إلا على حجز «تم التأكيد». اعتمد التحويل أولاً من
               بطاقة الإجراءات، وسيبدأ البث تلقائياً إن كان{" "}
               <span className="font-medium">البدء التلقائي</span> مفعّلاً في{" "}
               <Link href="/admin/dispatch" className="text-primary hover:underline">

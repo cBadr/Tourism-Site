@@ -1,9 +1,9 @@
 import { AlertTriangle, CheckCircle2, KeyRound, MapPin, XCircle } from "lucide-react";
 
 import { fieldControlClass } from "@/app/admin/content/_components/fields";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -527,9 +527,11 @@ export default async function PlaceSearchPage({
 
           <Separator />
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              حفظ إعدادات بحث الأماكن
-            </Button>
+            <SaveButton
+              label="حفظ إعدادات بحث الأماكن"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

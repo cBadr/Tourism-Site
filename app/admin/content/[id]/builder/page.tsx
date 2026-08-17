@@ -2,10 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PenLine } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { BuilderEditor } from "@/components/admin/page-builder/builder-editor";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Field, StatusBanners, TextareaField } from "../../_components/fields";
@@ -166,9 +166,12 @@ export default async function PageBuilderScreen({
           </Label>
 
           <div className="flex justify-end">
-            <Button type="submit" variant="outline" size="sm" disabled={data.access !== "edit"}>
-              حفظ بيانات الصفحة
-            </Button>
+            <SaveButton
+              label="حفظ بيانات الصفحة"
+              variant="outline"
+              size="sm"
+              disabled={data.access !== "edit"}
+            />
           </div>
         </Card>
       </form>

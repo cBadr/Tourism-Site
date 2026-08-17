@@ -1144,6 +1144,210 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ن) 🔴 والحارس يُقاس على **الشكل الذي يُصدره العميل** — لا على شكلٍ نكتبه (0097)
+--
+-- ── العيب الذي أوجد هذا القسم، مقيساً لا مستنتجاً (2026-08-17) ───────────────
+--
+-- شكوى المالك: «انهيار النظام بعد ربط التليجرام الخاص بالمتعهد». ولم يكن حارسُ
+-- `0057` ميّتاً — كان **يعمل في اللحظة الخطأ**.
+--
+-- مخرجُ الأمان في مُشغِّلَي `0057` مكتوبٌ `tg_op = 'UPDATE' and new… is not
+-- distinct from old…`. وهو صحيحٌ حرفياً ومعطَّلٌ عملياً، لأن الواجهة لا ترسل
+-- `UPDATE`: ‏`supabase-js` ‏`.upsert(rows, { onConflict })` يصير في PostgREST
+-- `insert … on conflict (key) do update`، وPostgres يُطلق **`BEFORE INSERT`**
+-- قبل أن يكتشف التصادم — فيدخل الحارس بـ`tg_op = 'INSERT'` وبلا `old`، ويفحص
+-- عموداً **لم تتغيّر قيمته** فيرفع رفضاً على حفظٍ لم يمسّ شيئاً.
+--
+-- والأثر: متعهدٌ مربوطٌ على محادثة التشغيل نفسها (حالةُ بدر المقيسة في `0057`)
+-- يجعل `/admin/settings` **غير قابلةٍ للحفظ إطلاقاً** — `saveSettings` يرفع
+-- `brand` (وفيه أربعةٌ وثلاثون لوناً) و`contact` و`socials` و`company` و
+-- `notifications` في **دفعةٍ واحدة**، فرفضُ صفٍّ يُسقط الخمسة.
+--
+-- ⚠ **ولماذا نجا من القسم (ل) أعلاه؟** لأن كل تأكيدٍ فيه يكتب `update` بيده —
+-- (ل-٤) و(ل-٦) كلاهما `update`. فالفحص كان يقيس شكلَ SQL الذي **نكتبه نحن**، لا
+-- الشكلَ الذي **يُصدره العميل** في كل ضغطة حفظ. ولذلك كلُّ نداءٍ هنا يستعمل
+-- `insert … on conflict do update` بحرفه.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_a        constant uuid := 'a5700000-0000-4000-8000-00000000006a';
+  v_b        constant uuid := 'a5700000-0000-4000-8000-00000000006b';
+  v_chat     constant text := '-9007199254740961';
+  v_other    constant text := '-9007199254740962';
+  v_settings jsonb;
+  v_ok       boolean;
+  v_hint     text;
+begin
+  begin
+    insert into public.subcontractors (id, company_name, phone, status)
+    values (v_a, 'TG_UPSERT أ', '01000005761', 'approved'),
+           (v_b, 'TG_UPSERT ب', '01000005762', 'approved');
+
+    -- ══ يُبنى التصادمُ الموروث: متعهدٌ على محادثة التشغيل نفسها ═══════════════
+    -- وتعطيلُ المُشغِّل لحظةً هو الطريقة الوحيدة الصادقة لمحاكاة صفٍّ كُتب **قبل**
+    -- وجود الحارس (نفس أسلوب (ل-٦))؛ والـDDL معاملاتيٌّ فيرجع معنا.
+    update public.site_settings
+       set value = jsonb_set(value, '{telegramChatId}', to_jsonb(v_chat))
+     where key = 'notifications';
+
+    alter table public.subcontractors disable trigger subcontractors_telegram_guard;
+    update public.subcontractors set telegram_chat_id = v_chat where id = v_a;
+    alter table public.subcontractors enable trigger subcontractors_telegram_guard;
+
+    select ss.value into v_settings from public.site_settings ss where ss.key = 'notifications';
+
+    -- (ن-١) 🔴 العَرَض بحرفه: المالك يضغط «حفظ الإعدادات» بلا أن يلمس حقل تليجرام
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.site_settings (key, value) values ('notifications', v_settings)
+      on conflict (key) do update set key = excluded.key, value = excluded.value;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if not v_ok then
+      raise exception '(ن-١) upsert لوجهةٍ **لم تتغيّر** رُفض بـ[%] — شاشة الإعدادات كلها تموت: العلامة والألوان والتواصل والشركة في الدفعة نفسها',
+        coalesce(v_hint, '∅');
+    end if;
+
+    -- (ن-٢) ونفس المخرج على `subcontractors`: صفٌّ متصادمٌ موروث يُرفع كاملاً
+    --       بـupsert فيمرّ — ولولاه لعجز المالك عن إيقاف ذلك المتعهد
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.subcontractors (id, company_name, phone, status, telegram_chat_id)
+      values (v_a, 'TG_UPSERT أ٢', '01000005761', 'suspended', v_chat)
+      on conflict (id) do update
+        set company_name     = excluded.company_name,
+            status           = excluded.status,
+            telegram_chat_id = excluded.telegram_chat_id;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if not v_ok then
+      raise exception '(ن-٢) upsert لصفِّ متعهدٍ بمحادثته نفسها رُفض بـ[%]', coalesce(v_hint, '∅');
+    end if;
+    if not exists (select 1 from public.subcontractors where id = v_a and status = 'suspended') then
+      raise exception '(ن-٢) مرّ ولم يكتب — التأكيد يقيس نجاحاً وهمياً';
+    end if;
+
+    -- ══ وما يبقى مرفوضاً بحرفه — وإلا كان (ن-١) و(ن-٢) قد أُرضيا بإضعاف الحارس ══
+
+    -- (ن-٣) محادثةُ الأول لا تُنقل إلى الثاني، ولو جاءت بـupsert
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.subcontractors (id, company_name, phone, status, telegram_chat_id)
+      values (v_b, 'TG_UPSERT ب', '01000005762', 'approved', v_chat)
+      on conflict (id) do update set telegram_chat_id = excluded.telegram_chat_id;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ن-٣) محادثةٌ واحدة قُبلت لمتعهدَين عبر upsert — كلٌّ يقرأ مستحق الآخر (D-20)';
+    end if;
+    if v_hint is distinct from 'telegram-taken' then
+      raise exception '(ن-٣) خرج بـ[%] لا بـtelegram-taken', coalesce(v_hint, '∅');
+    end if;
+
+    -- (ن-٤) وإدراجٌ **جديد** فعلاً بمحادثةٍ مأخوذة يُرفض — فقراءةُ المخزَّن لم
+    --       تصنع باباً لمن لا صفَّ له
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.subcontractors (id, company_name, phone, status, telegram_chat_id)
+      values ('a5700000-0000-4000-8000-00000000006c', 'TG_UPSERT ج', '01000005763', 'approved', v_chat);
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ن-٤) صفٌّ جديد قُبل بمحادثةٍ مأخوذة — الفرع INSERT صار بلا حارس';
+    end if;
+    if v_hint is distinct from 'telegram-taken' then
+      raise exception '(ن-٤) خرج بـ[%] لا بـtelegram-taken', coalesce(v_hint, '∅');
+    end if;
+
+    -- (ن-٥) والاتجاه المعاكس عبر upsert: وجهةُ التشغيل على محادثةِ متعهدٍ مربوط
+    update public.subcontractors set telegram_chat_id = v_other where id = v_b;
+
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.site_settings (key, value)
+      values ('notifications', jsonb_set(v_settings, '{telegramChatId}', to_jsonb(v_other)))
+      on conflict (key) do update set value = excluded.value;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ن-٥) وجهةُ التشغيل قُبلت على محادثةِ متعهدٍ مربوط عبر upsert — كلُّ عميلٍ في القاعدة كان سيُكشف';
+    end if;
+    if v_hint is distinct from 'ops-telegram-taken' then
+      raise exception '(ن-٥) خرج بـ[%] لا بـops-telegram-taken', coalesce(v_hint, '∅');
+    end if;
+
+    /*
+     * (ن-٦) 🔬 الطفرة — «ماذا يثبت (ن-١) فعلاً؟»
+     *
+     * يُعاد جسمُ مُشغِّل `0057` **بحرفه قبل 0097** (مخرجُ الأمان على `tg_op =
+     * 'UPDATE'` وحده)، ويُثبَت أن الكتابة التي مرّت في (ن-١) **تُرفض** حينئذ.
+     * فلو مرّت الطفرة بلا فرق لكان (ن-١) تأكيداً ميّتاً يزيّن التقرير.
+     * والـDDL معاملاتيٌّ، فالإرجاع يعيد الدالة المُصلَحة بلا خطوة تنظيف.
+     */
+    create or replace function public.site_settings_ops_telegram_guard()
+    returns trigger language plpgsql security definer set search_path = ''
+    as $mut$
+    declare v_new text; v_old text; v_who text;
+    begin
+      if new.key <> 'notifications' then return new; end if;
+      v_new := nullif(btrim(coalesce(new.value ->> 'telegramChatId', '')), '');
+      v_old := case when tg_op = 'UPDATE'
+                    then nullif(btrim(coalesce(old.value ->> 'telegramChatId', '')), '') end;
+      if v_new is null or v_new is not distinct from v_old then return new; end if;
+      select s.company_name into v_who from public.subcontractors s
+       where btrim(coalesce(s.telegram_chat_id, '')) = v_new limit 1;
+      if v_who is not null then
+        raise exception 'طفرة (ن-٦): جسم 0057 قبل الإصلاح' using hint = 'ops-telegram-taken';
+      end if;
+      return new;
+    end;
+    $mut$;
+
+    -- التصادم يُعاد كما كان في (ن-١): الأول على وجهة التشغيل، والوجهة لم تتغيّر
+    update public.site_settings
+       set value = jsonb_set(value, '{telegramChatId}', to_jsonb(v_chat))
+     where key = 'notifications';
+    select ss.value into v_settings from public.site_settings ss where ss.key = 'notifications';
+    alter table public.subcontractors disable trigger subcontractors_telegram_guard;
+    update public.subcontractors set telegram_chat_id = v_chat where id = v_a;
+    alter table public.subcontractors enable trigger subcontractors_telegram_guard;
+
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.site_settings (key, value) values ('notifications', v_settings)
+      on conflict (key) do update set key = excluded.key, value = excluded.value;
+      v_ok := true;
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if v_ok then
+      raise exception '(ن-٦) الطفرة لم تُسقط (ن-١) — أي أن (ن-١) لا يقيس فرعَ INSERT في المُشغِّل بل شيئاً آخر';
+    end if;
+    if v_hint is distinct from 'ops-telegram-taken' then
+      raise exception '(ن-٦) الطفرة سقطت بـ[%] لا بالرمز المتوقع — القياس ليس على ما نظنّ', coalesce(v_hint, '∅');
+    end if;
+
+    raise exception 'TG_UPSERT_TESTS_ROLLBACK';
+  exception
+    when others then
+      if sqlerrm <> 'TG_UPSERT_TESTS_ROLLBACK' then raise; end if;
+  end;
+
+  raise notice '✔ (ن) الحارس مقيسٌ على `insert … on conflict` نفسه: وجهةٌ لم تتغيّر تمرّ (فتُحفظ الإعدادات) · وصفُّ متعهدٍ متصادم يُرفع كاملاً فيمرّ · والنقل والمأخوذة والإدراج الجديد والاتجاه المعاكس كلها تُرفض برموزها · وطفرةٌ أعادت جسم 0057 فسقط (ن-١) — فهو حيّ';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ي) 🔒 لم يبقَ أثر — وهذه **قاعدة الإنتاج نفسها**
 -- ----------------------------------------------------------------------------
 do $$

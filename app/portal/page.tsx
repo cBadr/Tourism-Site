@@ -1,21 +1,20 @@
 import Link from "next/link";
-import { ArrowLeft, CarFront, Coins, IdCard, ReceiptText, ShieldCheck, UserRound } from "lucide-react";
+import { ArrowLeft, CarFront, Coins, IdCard, ReceiptText, UserRound } from "lucide-react";
 
 import {
   countLabel,
-  dateLabel,
   LIST_STATUS_HINTS,
   LIST_STATUS_LABELS,
   NotReadyNotice,
   Notice,
   PageHeading,
-  SubStatusBadge,
 } from "@/components/portal/portal-ui";
 import { Card } from "@/components/ui/card";
 import { getSettings } from "@/lib/settings";
 import type { PriceListStatus } from "@/lib/subcontractor-types";
 import { PortalBalanceCard } from "./_components/balance-card";
 import { OnboardingWizard } from "./_components/onboarding-wizard";
+import { ReadinessStateCard } from "./_components/readiness-state";
 import { loadPortalBalance } from "./_lib/balance";
 import { loadCurrency } from "./_lib/data";
 import { loadOnboarding } from "./_lib/onboarding";
@@ -29,6 +28,13 @@ import { portalSetupAccess } from "./_lib/session";
  * توقفت الرحلات وبكم تعود — يليها **معالج التجهيز** المقيس من القاعدة، ثم شرح
  * صريح لآلية التسعير: فالمتعهد الذي يفهم أن سعره تكلفة لا سعر بيع يُسعّر بدقة،
  * والذي لا يفهمها يضخّم أرقامه فيخسر العروض بلا أن يدري.
+ *
+ * ⚠ **والمعالج مُطالَبةٌ تزول بزوال سببها.** كان يبقى معروضاً بعد اكتمال كل شيء،
+ * فيقرأ الشريك التامّ ستة أسطر مشطوبة ولا يقرأ جملةً واحدة تقول له إنه يستقبل
+ * عروضاً — شكوى المالك بلفظها. فالقرار هنا سطرٌ واحد: تامٌّ ⇒ `ReadinessStateCard`
+ * وحدها، وناقصٌ ⇒ المعالج فوقها. **والشرط `readyToReceive` مقيسٌ في
+ * `_lib/onboarding.ts`** ولا يُشتقّ في هذه الصفحة بحرف — والفرق ليس تجميلاً:
+ * شرطُ إخفاءٍ يُكتب في التصيير ينحرف عن شرط القياس، فيُخفى الشريط عن شريكٍ ناقص.
  *
  * ⚠ **وقائمة التحقق لم تعد تُكتب هنا.** كانت ثلاثة بنود مكتوبة في التصيير
  * (ملف · مركبة · قائمة معتمَدة)، وكانت تعلن «اكتملت كل الخطوات» لشريكٍ لا يمكن
@@ -68,6 +74,28 @@ export default async function PortalDashboardPage() {
   const counts = readiness?.counts.lists ?? { draft: 0, pending: 0, approved: 0, rejected: 0 };
   const totalLists = STATUS_ORDER.reduce((sum, status) => sum + counts[status], 0);
 
+  /*
+    الحجب بسقف الدين لا يُقاس في المعالج ولا يُتجاهَل: يصل من `portal_balance()`
+    كي لا تُقال «حسابك جاهز» لشريكٍ تُسقِط عنه `portal_offers` كل عرض.
+  */
+  const debtBlocked = balance.state === "ready" && balance.balance.blocked;
+
+  /**
+   * 🔒 **شرط إخفاء المعالج — قراءةٌ واحدة بلا اشتقاق.**
+   *
+   * `readyToReceive` و`pausedByChoice` محسوبتان في `_lib/onboarding.ts` من
+   * `settledBase` نفسه (لا نقصَ منه · لا انتظارَ إدارة · لا قراءةَ تعذّرت · قناةٌ
+   * تبلغه)، ويفرّقهما مفتاحُ «أستقبل الطلبات» وحده. وسقفُ الدين يُضرب فيهما هنا
+   * لأنه وحده يصل من نداءٍ مالي لا تقرؤه تلك الوحدة (D-05).
+   *
+   * وحالتان هادئتان لا واحدة: التامُّ المستقبِل، والتامُّ الذي أوقف الاستقبال
+   * بنفسه. وكلتاهما «لا شيء يُطالَب به» ⇒ لا قائمةَ تحقّق. أما الناقص والمحجوب
+   * بالدين والمدعوُّ فالمعالج لهم.
+   */
+  const settled = Boolean(
+    readiness && !debtBlocked && (readiness.readyToReceive || readiness.pausedByChoice)
+  );
+
   return (
     <div className="space-y-6">
       <PageHeading title={`مرحباً، ${sub.companyName || "شريكنا"}`}>
@@ -83,34 +111,17 @@ export default async function PortalDashboardPage() {
       <PortalBalanceCard result={balance} currency={currency} contact={settings.contact} />
 
       {readiness ? (
-        <OnboardingWizard
-          data={readiness}
-          // الحجب بسقف الدين لا يُقاس في المعالج ولا يُتجاهَل: يصل من `portal_balance()`
-          // كي لا تُقال «حسابك جاهز» لشريكٍ تُسقِط عنه `portal_offers` كل عرض
-          debtBlocked={balance.state === "ready" && balance.balance.blocked}
-        />
+        settled ? null : <OnboardingWizard data={readiness} debtBlocked={debtBlocked} />
       ) : (
         <NotReadyNotice what="بيانات جاهزيتك" />
       )}
 
-      {/* بطاقة الحالة تبقى للمعتمَد وحده: المدعوّ يقرأ حالته في المعالج وفي الشريط */}
-      {!onboarding ? (
-        <Card className="gap-3 p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <ShieldCheck className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span className="font-heading text-base font-bold">حالة الحساب</span>
-            <SubStatusBadge status={sub.status} />
-            {sub.createdAt ? (
-              <span className="ms-auto text-xs text-muted-foreground">
-                شريك منذ {dateLabel(sub.createdAt)}
-              </span>
-            ) : null}
-          </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            حسابك معتمد: قوائم أسعارك المعتمدة تدخل تسعير الرحلات التي تغطيها، وتصلك عروض تلك
-            الرحلات في صندوق الطلبات. أبقِ بياناتك وأسعارك محدّثة ليبقى وصول العروض متصلاً.
-          </p>
-        </Card>
+      {/*
+        بطاقة الحالة تبقى للمعتمَد وحده: المدعوّ يقرأ حالته في المعالج وفي الشريط.
+        وجملتُها مقيسة لا ثابتة — انظر ترويسة `readiness-state.tsx`.
+      */}
+      {!onboarding && readiness ? (
+        <ReadinessStateCard data={readiness} debtBlocked={debtBlocked} />
       ) : null}
 
       <div>

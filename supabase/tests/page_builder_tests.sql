@@ -255,7 +255,12 @@ begin
       --    مخفياً. أضافته `0072` خانةً ثانية يعيد فراغُها افتراضيَّها، فعُرض الأمر
       --    على المالك بمخاطره فقرّر خانةً واحدة. ونصُّه محفوظٌ في
       --    `docs/phase-briefs/OWNER-NOTES-2026-08-16.md` لا في الكود.
-      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','note'],           array['name','href','alt'], '{}'::text[], null,                array['src']),
+      -- 🆕 `listLabel` **وسطاً لا في الذيل** (‏`0101`): كانت تسمية `<ul>` الشريط
+      --    لقارئ الشاشة محفورةً في العارضة بلا مسار `content` — تُصيَّر على
+      --    الإنتاج ولا تبلغها اللوحة، ومعها الصياغة التي أزالتها `0095` من
+      --    القاعدة ولم تجد لهذه صفّاً. والترتيب هو ترتيب الخانات في اللوحة،
+      --    والمقارنة أدناه **بالمساواة** فتمسك `{title,note,listLabel}` كذلك.
+      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','listLabel','note'], array['name','href','alt'], '{}'::text[], null,              array['src']),
       -- 🔴 `{items}` إلزاميةً = «الكتلة تُشحن والأرقام لا» (قرار بدر ٣)
       ('stat-band',     'content', 'any',           false, null,          array['title'],                  array['value','suffix','label'], array['items'], null,             null),
       -- بلا سعر (قرار بدر ١) — **قائم**. أمّا «بلا صورة» فنُقض بأمر بدر
@@ -1597,7 +1602,9 @@ begin
      ------------------------------------------------------------------------ */
   insert into public.sections (id, page_id, type, content, sort, visible)
   values (v_logo, v_page, 'logo-strip', jsonb_build_object(
-    'title', 'ماركات الفحص',
+    'title',     'ماركات الفحص',
+    -- 🆕 `0101` — تسميةُ القائمة تُكتب في المحتوى، وهو ما لم يكن ممكناً قبلها
+    'listLabel', 'تسميةُ فحصٍ للقائمة',
     'items', jsonb_build_array(jsonb_build_object(
       '_k',   'n9lgo1',
       'name', 'مرسيدس',
@@ -1635,9 +1642,56 @@ begin
     raise exception '(م-٤ج) مفتاح disclaimer ما زال في الفهرس — الحقل محذوف بقرارٍ لا معطَّل';
   end if;
 
+  /* ------------------------------------------------------------------------
+     (م-٥) 🆕 **`0101` — تسمية القائمة يجب أن تكون قابلةً للتحكّم من اللوحة،
+     لا مجرد عمودٍ في السجل لا يبلغه أحد.**
+
+     🔴 **والفحص يقيس البوابتين اللتين يقع بينهما العطب، لأن واحدةً منهما لا
+     تكفي — وقد كان العطبُ في الثانية بالضبط:**
+
+       (أ) `text_fields` تعلن الحقل  ⇒ اللوحة ترسم له خانة (‏`BlockFields`
+           تحلق على `def.textFields` حرفاً، ولا تعرض ما لا يُعلَن).
+       (ب) والفهرس يقبل قيمتَه       ⇒ التسمية تُترجَم فلا تبقى عربيةً على `/en`.
+
+     ⚠ **وما لا تستطيع مجموعةُ SQL قياسه يُقال صراحةً بدل تركه يُفهم خطأً:** أن
+       **العارضة** تقرأ `content.listLabel` سطرٌ في TSX لا في القاعدة — وهو
+       الطرفُ الذي كان مكسوراً وحده قبل `0101`. فحرسُه `npx tsc` (‏الحقل معلَنٌ
+       في `SectionContentMap`) والنظرُ في المتصفح، **ومجموعةٌ خضراء هنا ليست
+       شهادةً عليه** (‏الدرس المكتوب: مجموعةٌ كاملة مرّت على حارسٍ مكسور لأن
+       تأكيداتها كتبت شكلاً لا يكتبه التطبيق).
+     ------------------------------------------------------------------------ */
+  -- (م-٥أ) الحقل معلَنٌ **بترتيبه**، فاللوحة ترسم له خانة في موضعها
+  select count(*) into v_n
+  from public.block_registry
+  where type = 'logo-strip' and text_fields = array['title', 'listLabel', 'note'];
+  if v_n <> 1 then
+    raise exception '(م-٥أ) logo-strip.text_fields ليست {title,listLabel,note} — لا خانة في اللوحة لتسمية القائمة';
+  end if;
+
+  -- (م-٥ب) والقيمة المكتوبة **في الفهرس بقيمتها** — وهذا هو التأكيد الذي يفشل
+  --        على السلوك القديم: قبل `0101` لا مفتاح `listLabel` في أي صفّ محتوى
+  --        إطلاقاً، لأن التسمية كانت في الكود لا في القاعدة.
+  select count(*) into v_n
+  from public.i18n_corpus_rows() c
+  where c.k = v_logo::text || '.listLabel'
+    and c.src = 'تسميةُ فحصٍ للقائمة';
+  if v_n <> 1 then
+    raise exception '(م-٥ب) تسمية القائمة ليست في الفهرس بقيمتها — تبقى عربيةً على الصفحة الإنجليزية';
+  end if;
+
+  -- (م-٥ج) و`i18n_apply` **تستبدلها فعلاً** — الفهرس بابٌ والتطبيق بابٌ آخر،
+  --        وإغلاق أحدهما لا يشهد على الثاني (نفس مذهب (م-١..٤) أعلاه).
+  select public.i18n_apply(s.content, v_logo::text, jsonb_build_object(
+           v_logo::text || '.listLabel', 'Car makes'))
+    into v_applied
+  from public.sections s where s.id = v_logo;
+  if v_applied ->> 'listLabel' <> 'Car makes' then
+    raise exception '(م-٥ج) تسمية القائمة لم تُترجَم في التطبيق — %', v_applied ->> 'listLabel';
+  end if;
+
   delete from public.pages where id = v_page;
 
-  raise notice '✔ (م-١..٤) وسائط العنصر والشعار خارج الفهرس وخارج التطبيق، و`alt`/`href`/`name` داخلها';
+  raise notice '✔ (م-١..٥) وسائط العنصر والشعار خارج الفهرس وخارج التطبيق، و`alt`/`href`/`name`/`listLabel` داخلها';
 end;
 $$;
 

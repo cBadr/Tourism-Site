@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, FlaskConical, Percent, XCircle } from "luc
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -659,9 +660,14 @@ export default async function PricingPage({ searchParams }: PageProps<"/admin/pr
 
           <Separator />
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              حفظ إعدادات التسعير
-            </Button>
+            <SaveButton
+              label="حفظ إعدادات التسعير"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+              savedMessages={{
+                "1": "حُفظت إعدادات التسعير وانعكست على كل عروض الأسعار فوراً.",
+              }}
+            />
           </div>
         </Card>
       </form>

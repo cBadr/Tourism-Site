@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isMissingTable } from "@/lib/dispatch/settings";
+import { isTelegramBindCode } from "@/lib/partner-alerts-types";
 import {
   DESIGN_PALETTE,
   DESIGN_PALETTE_LIGHT,
@@ -156,6 +157,20 @@ export async function saveSettings(formData: FormData) {
     .from("site_settings")
     .upsert(rows, { onConflict: "key" })
     .select("key");
+
+  /**
+   * 🔴 تصادمُ وجهة التشغيل يُقال باسمه — لا يُبتلع في «فشل الحفظ».
+   *
+   * مُشغِّل `0057` يرفض أن تُضبط وجهة إشعارات التشغيل على محادثةِ متعهدٍ مربوط
+   * (يصله وقتها **كل** إشعار في المنصة، وفيه اسم العميل وهاتفه وهامشنا — D-19)،
+   * ويرفع الرمز في `hint`. وكان يسقط هنا على `error=save`، ورسالتُها
+   * «تأكد أنك مسجل الدخول بحساب دوره admin» — أي أن الشاشة **تتّهم الصلاحيات في
+   * تصادم بيانات**، فيبحث المالك في المكان الخطأ عن عطلٍ ليس هناك.
+   *
+   * والقراءة من `hint` لا من نصّ الرسالة (النمط ١٩: الكاشف الذي يقرأ النصّ يكذب
+   * في الاتجاهين)، وبحارس العقد المشترك لا بنصٍّ مكتوب هنا.
+   */
+  if (isTelegramBindCode(error?.hint)) redirect(`/admin/settings?error=${error.hint}`);
 
   // صفر صفوف مع نجاح ظاهري = RLS رفضت الكتابة (المستخدم ليس admin)
   if (error || !data || data.length === 0) redirect("/admin/settings?error=save");

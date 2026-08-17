@@ -1,7 +1,7 @@
 import { Info, MapPin, Save, ShieldAlert } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -284,10 +284,15 @@ export default async function SeoBusinessPage({
           <p className="me-auto text-xs text-muted-foreground">
             الحقل الفارغ لا يُعلَن — لا يُرسَل فارغاً.
           </p>
-          <Button type="submit" disabled={!wired}>
-            <Save />
-            حفظ بطاقة النشاط
-          </Button>
+          <SaveButton
+            label="حفظ بطاقة النشاط"
+            icon={<Save />}
+            disabled={!wired}
+            errorMessages={ERROR_MESSAGES}
+            savedMessages={{
+              "1": "حُفظت بطاقة النشاط وانعكست على البيانات المنظَّمة في كل صفحة.",
+            }}
+          />
         </div>
       </form>
 

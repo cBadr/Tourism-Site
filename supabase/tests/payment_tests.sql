@@ -2144,6 +2144,273 @@ begin
 end;
 $$;
 
+-- ============================================================================
+-- (ص) علامة الوسيلة — البند ١٢ والهجرة 0093
+--
+-- ما يُختبر ولماذا: أراد بدر صورةً بجانب كل وسيلة دفع («الصورة أبلغ وأسرع في
+-- توصيل المعلومة من المحتوى النصي»)، والقيد غير القابل للتفاوض أن **الموقع يصدر
+-- صفر طلبات خارجية**. وحقلُ صورةٍ حرّ على جدولٍ يكتب فيه المشرف هو بابُ أول طلبٍ
+-- خارجي — ولو وقع مرةً، فقد ذهب عنوان كل زائر ومُحيله إلى نطاقٍ غريب بلا مرور
+-- على أي حارس، وهو قياسٌ من الباب الخلفي لا يراه D-44.
+--
+-- 🔒 **والادّعاء الذي يحرسه هذا القسم:** الشكل مفروضٌ **في القاعدة** لا في
+--    TypeScript. فـ`safeMediaSrc` تحرس التصيير، ويكتب من تحتها كلُّ من لا يمرّ
+--    بها: هجرةٌ قادمة، `service_role`، وسطرُ SQL بيد مشرف.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- (ص-٠) تجهيز: حسابٌ معروض يخصّ هذا القسم وحده
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_mark constant uuid := '9a000000-0000-4000-8000-0000000000e1';
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'payment_accounts'
+      and column_name = 'image_url'
+  ) then
+    raise exception 'شرط مسبق: عمود image_url مفقود — نفّذ 0093_payment_account_mark.sql';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'payment_accounts_image_internal_chk'
+      and conrelid = 'public.payment_accounts'::regclass
+  ) then
+    raise exception 'شرط مسبق: قيد payment_accounts_image_internal_chk مفقود — نفّذ 0093';
+  end if;
+
+  insert into public.payment_accounts
+    (id, kind, label, handle, holder_name, opening_balance, active, sort,
+     customer_facing, fee_kind, fee_value)
+  values
+    (v_mark, 'wallet', 'PAYMENT_TESTS علامة', 'PT-MARK-1', 'اختبار', 0, true, 957,
+     true, 'none', 0)
+  on conflict (id) do update
+    set active = true, customer_facing = true, kind = excluded.kind, sort = excluded.sort;
+
+  perform set_config('tours.p_mark_acc', v_mark::text, false);
+  raise notice '✔ (ص-٠) حساب علامةٍ معروض جاهز';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ص-١) 🔴 القيد يرفض كل شكلٍ يُنتج طلباً خارجياً — **بمحاولة كتابةٍ لكلٍّ منها**
+--
+-- ولا تُقاس صحّةُ قيدٍ بقراءة تعريفه (القاعدة ١٩): تُقاس بأن الكتابة تُرفَض فعلاً.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_acc  uuid := current_setting('tours.p_mark_acc')::uuid;
+  v_bad  text;
+  v_ok   boolean;
+  v_got  text;
+  v_evil constant text[] := array[
+    'https://evil.com/logo.png',        -- نطاق صريح
+    'http://evil.com/logo.png',         -- وبلا تشفير
+    '//evil.com/logo.png',              -- بروتوكولٌ موروث — يُطلب فعلاً من المتصفح
+    'https://cdn.jsdelivr.net/x.svg',   -- «شبكة توصيل» تبدو بريئة، وهي نطاق غريب
+    'javascript:alert(1)',              -- مخطَّطٌ تنفيذي
+    'data:image/svg+xml;base64,AAAA',   -- حمولةٌ مضمَّنة، وSVG يحمل سكربتاً
+    '/img/../../etc/passwd',            -- صعودٌ في الشجرة
+    '/',                                -- شرطةٌ بلا مسار
+    'img/pay.avif'                      -- نسبيٌّ بلا شرطة — يُحلّ على مسار الصفحة
+  ];
+begin
+  foreach v_bad in array v_evil loop
+    v_ok := false;
+    begin
+      update public.payment_accounts set image_url = v_bad where id = v_acc;
+    exception
+      when check_violation then v_ok := true;
+    end;
+    if not v_ok then
+      select pa.image_url into v_got from public.payment_accounts pa where pa.id = v_acc;
+      -- تنظيفٌ فوري: القيمة الخبيثة لا تبقى في الجدول لحظةً بعد كشفها
+      update public.payment_accounts set image_url = null where id = v_acc;
+      raise exception
+        '(ص-١) 🔴 قُبلت علامةٌ تُنتج طلباً خارجياً (%) — والمخزَّن كان %',
+        v_bad, coalesce(v_got, 'NULL');
+    end if;
+  end loop;
+
+  raise notice '✔ (ص-١) القيد رفض تسع صورٍ خبيثة — نطاقاً ومخطَّطاً وصعوداً ونسبياً';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ص-٢) والمقبول مقبول — قيدٌ يرفض كل شيء ليس قيداً بل عطلاً
+--
+-- ⚠ ونصفُ الاختبار هذا: حارسٌ لا يمرّر الصحيح يجعل الميزة **غير موجودة عند
+--   مالكها** (النمط ٣ في LESSONS)، وهو عطلٌ صامت لا يمسكه فحصُ «هل رفض؟».
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_acc  uuid := current_setting('tours.p_mark_acc')::uuid;
+  v_one  text;
+  v_good constant text[] := array[
+    '/img/pay-vodafone-cash.avif',
+    '/img/marks/instapay.webp',
+    '/media/pay/nbk-2026.png'
+  ];
+begin
+  foreach v_one in array v_good loop
+    update public.payment_accounts set image_url = v_one where id = v_acc;
+    if (select pa.image_url from public.payment_accounts pa where pa.id = v_acc)
+       is distinct from v_one then
+      raise exception '(ص-٢أ) مسارٌ داخليٌّ سليم (%) لم يُخزَّن — لا علامة تصل الشاشة', v_one;
+    end if;
+  end loop;
+
+  -- و«بلا علامة» قرارٌ صالح: تعود البطاقة إلى أيقونة عائلتها
+  update public.payment_accounts set image_url = null where id = v_acc;
+  if (select pa.image_url from public.payment_accounts pa where pa.id = v_acc) is not null then
+    raise exception '(ص-٢ب) تعذّر إفراغ العلامة — المالك لا يستطيع حذف صورة';
+  end if;
+
+  raise notice '✔ (ص-٢) ثلاثة مسارات داخلية خُزّنت، والإفراغ يعمل';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ص-٣) 🧬 **طفرة** — الادّعاء أن «القيد هو الرافض»، فيُنزَع القيدُ وحده
+--
+-- بلا هذه الطفرة يبقى (ص-١) مقبولاً حتى لو كان الرفضُ من شيءٍ آخر تماماً (نوعُ
+-- العمود، مُشغّلٌ منسيّ، صلاحية). فيُنزَع **القيدُ بعينه** ويُطلَب من (ص-١) أن
+-- **ينقلب**: القيمة الخبيثة تُخزَّن. فإن بقيت مرفوضة فالاختبار كان يقيس غير ما
+-- يدّعي؛ وإن خُزّنت فقد ثبت أن هذا القيد هو ما يحمي.
+--
+-- 🔒 **والتعريف لا يُستنسخ هنا** (الذهبية ١٢): يُقرأ بـ`pg_get_constraintdef` قبل
+--    النزع ويُعاد بحرفه. فيوم يضيق القيد أو يتوسّع لا يحتاج هذا الاختبار سطراً.
+--
+-- ⚠ **والإعادة مضمونة على كل مسار**: القيمة الخبيثة تُمسح **قبل** إعادة القيد
+--   (وإلا رفض `add constraint` صفَّه هو)، والرفعُ يقع **بعد** الإعادة لا قبلها —
+--   فلا تُترك قاعدة بدر بلا حارسها لأن الاختبار رسب.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_acc    uuid := current_setting('tours.p_mark_acc')::uuid;
+  v_def    text;
+  v_stored boolean := false;
+  v_back   boolean := false;
+begin
+  select pg_get_constraintdef(c.oid) into v_def
+  from pg_constraint c
+  where c.conname = 'payment_accounts_image_internal_chk'
+    and c.conrelid = 'public.payment_accounts'::regclass;
+
+  if v_def is null then
+    raise exception '(ص-٣) القيد غير موجود قبل الطفرة — لا شيء يُزرع فيه';
+  end if;
+
+  alter table public.payment_accounts drop constraint payment_accounts_image_internal_chk;
+
+  begin
+    update public.payment_accounts set image_url = 'https://evil.com/logo.png' where id = v_acc;
+    v_stored := (select pa.image_url from public.payment_accounts pa where pa.id = v_acc)
+                = 'https://evil.com/logo.png';
+  exception
+    when others then v_stored := false;
+  end;
+
+  -- التنظيف ثم الإعادة — بهذا الترتيب حتماً
+  update public.payment_accounts set image_url = null where id = v_acc;
+  execute format(
+    'alter table public.payment_accounts add constraint payment_accounts_image_internal_chk %s',
+    v_def
+  );
+
+  select exists (
+    select 1 from pg_constraint c
+    where c.conname = 'payment_accounts_image_internal_chk'
+      and c.conrelid = 'public.payment_accounts'::regclass
+  ) into v_back;
+
+  if not v_back then
+    raise exception
+      '(ص-٣) 🔴 تعذّرت إعادة القيد بعد الطفرة — قاعدةٌ بلا حارس صورة. أعِدها يدوياً: %',
+      v_def;
+  end if;
+
+  if not v_stored then
+    raise exception
+      '(ص-٣) 🧬 الطفرة لم تُغيّر شيئاً: نُزع القيد وبقي النطاق الخارجي مرفوضاً — '
+      'فـ(ص-١) يقيس شيئاً آخر لا هذا القيد';
+  end if;
+
+  raise notice '✔ (ص-٣) الطفرة قلبت (ص-١) — القيد هو الرافض فعلاً، وعاد بحرفه';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ص-٤) العلامة تصل صفحة التحويل، ولا رقم خزينة يصل معها
+--
+-- توسيعُ نوع إرجاع `available_payment_accounts` يمسّ **القائمة البيضاء** التي
+-- أرستها `0060` وأعاد تثبيتها `0070`. فيُعاد إثباتها بعد العمود العاشر — لا
+-- بمطابقة نصّ بل بأسماء أعمدة الإرجاع الحيّة.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_acc    uuid    := current_setting('tours.p_mark_acc')::uuid;
+  v_b      uuid    := current_setting('tours.p_n9_b')::uuid;
+  v_due    numeric := current_setting('tours.p_n9_due')::numeric;
+  v_token  text;
+  v_names  text[];
+  v_leaked text;
+begin
+  select b.public_token into v_token from public.bookings b where b.id = v_b;
+  update public.payment_accounts set image_url = '/img/pay-vodafone-cash.avif' where id = v_acc;
+
+  -- (أ) تصل مملوءةً للحساب الذي ضُبطت له
+  if not exists (
+    select 1 from public.available_payment_accounts(v_token, v_due) a
+    where a.id = v_acc and a.image_url = '/img/pay-vodafone-cash.avif'
+  ) then
+    raise exception
+      '(ص-٤أ) العلامة لا تصل صفحة التحويل — العمود مضبوط والدالة لا تحمله، فالميزة غير موجودة';
+  end if;
+
+  -- (ب) والغياب يصل `null` لا نصّاً فارغاً: العارضة تفرّق بينهما (`safeMediaSrc`)
+  update public.payment_accounts set image_url = null where id = v_acc;
+  if not exists (
+    select 1 from public.available_payment_accounts(v_token, v_due) a
+    where a.id = v_acc and a.image_url is null
+  ) then
+    raise exception '(ص-٤ب) حسابٌ بلا علامة لم يصل بـ null — الأيقونة الافتراضية لا تظهر';
+  end if;
+
+  -- (ج) 🔒 والقائمة البيضاء ما زالت مغلقة — نفس قائمة 0060/0070 حرفياً
+  select coalesce(p.proargnames, '{}') into v_names
+  from pg_proc p
+  where p.oid = 'public.available_payment_accounts(text, numeric)'::regprocedure;
+
+  select string_agg(x.col, '، ') into v_leaked
+  from unnest(array['daily_headroom', 'monthly_headroom', 'opening_balance',
+                    'daily_cap', 'monthly_cap', 'sort', 'active']) as x(col)
+  where x.col = any (v_names);
+
+  if v_leaked is not null then
+    raise exception
+      '(ص-٤ج) 🔴 طريق الزائر يحمل عمود خزينة (%) — توسيعُ العلامة ثقب القائمة البيضاء',
+      v_leaked;
+  end if;
+
+  -- (د) وحسابٌ محجوب يبقى محجوباً: العلامة ليست شرط ظهورٍ ولا تفتح باباً
+  update public.payment_accounts
+     set image_url = '/img/pay-vodafone-cash.avif', customer_facing = false
+   where id = v_acc;
+  if exists (
+    select 1 from public.available_payment_accounts(v_token, v_due) a where a.id = v_acc
+  ) then
+    raise exception
+      '(ص-٤د) 🔴 حسابٌ customer_facing = false ظهر بعد ضبط علامته — 0070 انتُقضت';
+  end if;
+  update public.payment_accounts set customer_facing = true, image_url = null where id = v_acc;
+
+  raise notice '✔ (ص-٤) العلامة تصل مملوءةً وغائبةً، ولا عمود خزينة دخل معها، والظهور كما كان';
+end;
+$$;
+
 -- ----------------------------------------------------------------------------
 -- (م) التنظيف — لا صف اختبار يبقى، وإعدادات المزوّدين تعود كما كانت
 -- ----------------------------------------------------------------------------
@@ -2154,8 +2421,20 @@ declare
   v_teacc text := current_setting('tours.p_test_account', true);
 begin
   -- إعدادات المزوّدين أولاً: تُعاد حتى لو تعثّر ما بعدها
+  --
+  -- 🔴 والاحتياط هنا `false` لا `true`، وهذا عيبٌ مقيسٌ لا احتمالٌ نظري:
+  -- كان `'true'`، فحين غاب `tours.p_test_enabled` (تعثّرُ المجموعة قبل بلوغ
+  -- التنظيف، أو جلسةٌ أُعيد استخدامها من الـSession pooler بعد أن أفرغه
+  -- السطر ٢٥٠٤) **أشعل التنظيفُ بوابةَ الاختبار بدل أن يطفئها**. ووقع فعلاً في
+  -- 2026-08-16 07:12:45 (‏`audit_log`: `enabled false→true` بلا قرينٍ يُعيدها)،
+  -- فبقيت `payment_providers.test.enabled = true` أكثر من يوم — و`0021` كانت قد
+  -- أطفأتها صراحةً لأنها على موقعٍ منشور «زرُّ تأكيدِ حجزٍ بلا دفع جنيه».
+  --
+  -- والأخطرُ أنها تُخفي نفسها: بعد أن بقيت مشتعلة صار السطر ١٥٦ يحفظ `true`
+  -- كأنه «الأصل»، فكل تشغيلٍ تالٍ يُعيدها `true` بأمانة و`ALL PASSED` أخضر.
+  -- فالاحتياط الآمن لبوابةِ اختبارٍ هو الإطفاء — كما في صفّ `stripe` تحته.
   update public.payment_providers pp
-     set enabled    = coalesce(nullif(current_setting('tours.p_test_enabled', true), ''), 'true')::boolean,
+     set enabled    = coalesce(nullif(current_setting('tours.p_test_enabled', true), ''), 'false')::boolean,
          account_id = nullif(coalesce(v_teacc, ''), '')::uuid
    where pp.provider = 'test';
 
@@ -2244,6 +2523,8 @@ begin
   perform set_config('tours.p_bnofee', '', false);
   perform set_config('tours.p_bfee_due', '', false);
   perform set_config('tours.p_bfee_total', '', false);
+  -- القسم (ص)
+  perform set_config('tours.p_mark_acc', '', false);
   -- القسم (س)
   perform set_config('tours.p_n9_b', '', false);
   perform set_config('tours.p_n9_due', '', false);

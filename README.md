@@ -13,9 +13,9 @@
 ![Supabase](https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
-![Phases](https://img.shields.io/badge/phases-12%2F14-blue)
-![Migrations](https://img.shields.io/badge/migrations-90-informational)
-![Tests](https://img.shields.io/badge/SQL%20suites-29%20green-brightgreen)
+![Phases](https://img.shields.io/badge/phases-13%2F14-blue)
+![Migrations](https://img.shields.io/badge/migrations-99-informational)
+![Tests](https://img.shields.io/badge/SQL%20suites-32%20green-brightgreen)
 ![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
 <div dir="rtl">
@@ -34,7 +34,9 @@
 
 Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a single Next.js 16 application on top of one Supabase (Postgres) project. A customer picks two points and a passenger count, gets an instant final price per eligible vehicle class, books as a guest and pays in full or by deposit; the confirmed booking is then broadcast in timed waves to approved **subcontractors** who cover that route, and the first to accept wins the trip — atomically, enforced by a partial unique index in Postgres. Every money and pricing calculation lives in Postgres functions and views; TypeScript only formats and renders. The system is white-label by construction: no brand string is hardcoded, and a second brand means a separate Supabase project, host and domain — not a `tenant_id`.
 
-Phases 1–12 of 14 are built — **90 migrations applied and 29 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
+Phases 1–13 of 14 are built — **99 migrations applied and 32 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
+
+English is drafted but dark: 877 rows are translated and held as **drafts**, and the storefront hides any locale with nothing published — so `/en` still renders Arabic until the owner approves and publishes. An audit of those drafts confirmed every legal figure matches its Arabic source (261/261 rows on terms, refunds and privacy) and that the Arabic text governs any difference in translation.
 
 Two systems ship **switched off by design** and wait on an owner decision: coupons and loyalty. A loyalty programme that starts itself starts owing money.
 
@@ -58,23 +60,26 @@ Two systems ship **switched off by design** and wait on an owner decision: coupo
 | المجال | ماذا يعمل | المرحلة | الحالة |
 |---|---|---|---|
 | البنية والهوية والأدوار | `site_settings` + `profiles` بأربعة أدوار + RLS على كل جدول + ثيم وإعدادات تُقرأ من القاعدة + سباكة سيو (metadata · robots · sitemap · canonical · JSON-LD) | ١ | 🟨 منشور على الدومين — الباقي **تحقق GSC وتركيب GA4** |
-| الموقع العام ونظام الأقسام | ١٧ صفحة و٩٣ قسماً بمحتوى عربي حقيقي في القاعدة (٦ خدمات · مسارات سيو · من نحن · صفحات الثقة)، عشر عارضات أقسام، ومحرر محتوى كامل في اللوحة | ٢ | 🟨 الكود مكتمل — الباقي **Lighthouse سيو ≥ ٩٠ وتقرير فهرسة GSC**، ولا يُقاسان على `localhost` |
+| الموقع العام ونظام الأقسام | ٢٣ صفحة و١٦٠ قسماً بمحتوى عربي حقيقي في القاعدة (٦ خدمات · مسارات سيو · من نحن · صفحات الثقة)، عشر عارضات أقسام، ومحرر محتوى كامل في اللوحة | ٢ | 🟨 الكود مكتمل — الباقي **Lighthouse سيو ≥ ٩٠ وتقرير فهرسة GSC**، ولا يُقاسان على `localhost` |
 | المسافات والتسعير | محرك مسافات بأربع طبقات (كاش Postgres ← Google Routes ← OSRM ← Haversine ×١٫٣ مُعلَّم تقديراً) + `quote_price` في Postgres: تعريفة كيلومتر · أرضية فئة · ذهاب وعودة · ساعات انتظار · ذروة | ٣ | ✅ |
 | الحجز والدفع المحلي والإشعارات | حجز كضيف بلا حساب + آلة حالات محروسة + محافظ وانستا باي بحدود يومية وشهرية تُفرض في SQL + رفع إيصال وطابور تحقق + أنبوب إشعارات بنمط Outbox | ٤ | ✅ منشورة — والتحصيل الحقيقي ينتظر حساب بوابة |
 | بورتال المتعهدين والتغطية | دعوة واعتماد + أسطول + قوائم أسعار ترسو على نقطتين بنطاق كيلومترات + **قاعدة الدمج**: أرخص متعهد مغطٍّ + الهامش، وإلا التعريفة.<br>**ومعالج تجهيز** يفتح للمدعوّ ملفَّه وأسطوله وسائقيه وقوائمه **قبل الاعتماد** ويُبقي الطلبات مقفلة — فيُعتمد شريكٌ جاهز بدل صفٍّ فارغ، و«ما يمنع البثّ» فيه مشتقٌّ من شرط `dispatch_pool` نفسه لا من تقدير | ٥ | ✅ |
 | البث والإسناد | موجات بسقف تكلفة يتسع + مهلة وحد أقصى من الإعدادات + **قبول ذرّي «أول قابل يفوز»** + طابور إسناد يدوي عند الاستنفاد | ٦ | ✅ |
 | المالية | دفتر واحد `ledger_entries` (append-only) + خزينة + مصروفات + كشوف حساب + تدفق نقدي + **مقاصة المتعهدين** بإشارتيها | ٧ | ✅ |
-| اللغات والترجمة | العربية بلا بادئة + `/en` إعادة كتابة + جداول ترجمة بمسار مسودة ← مراجعة ← نشر + `enabled_locales()` فلا تُعلن لغة بلا محتوى منشور | ٨ | ✅ |
+| اللغات والترجمة | العربية بلا بادئة + `/en` إعادة كتابة + جداول ترجمة بمسار مسودة ← مراجعة ← نشر + `enabled_locales()` فلا تُعلن لغة بلا محتوى منشور.<br>**والإنجليزية مكتوبة ومظلمة**: ٨٧٧ صفاً مسودةً وصفر منشور، وزرُّ «اعتمد كل المسودات وانشرها» يعتمدها باسم المالك ثم ينشرها بالمسار القائم — **ولا يكتب حالةً من الواجهة**، ويرفض كل صفٍّ تغيّر أصله العربي تحته بدل أن يتبنّاه، ويستثني كل ما ليس بشرياً | ٨ | 🟨 مسودات — **النشر قرار المالك**، وأول صفٍّ يُنشر يُظهر اللغة للزوار |
 | بوابات الدفع | طبقة تجريد موحّدة + webhook مصدرَ حقيقة بتوقيع إلزامي وإحكام بمعرّف الحدث + ستة محوّلات حقيقية | ٩ | ✅ المحوّلات **خاملة** حتى تُفتح الحسابات وتُدخل مفاتيحها |
 | الربط الخارجي والإحصائيات | `/admin/integrations` بسبع خدمات قياس تُدار معرّفاتها من اللوحة + `funnel_events` **بلا أي عمود PII** + سبعة عروض `v_stats_*` + **ست** شاشات إحصائيات برسوم SVG مكتوبة يدوياً + مركز سيو مرقّى (ميتاداتا جماعي · مدير `redirects` · فحص بيانات مهيكلة) | ١٠ | 🟨 منشورة — الباقي **فتح حسابات GA4/Clarity/Meta وإدخال معرّفاتها** وجلسة تحقق المالك، لا كود |
-| الخصومات والتحفيز | كوبونات بنسبة أو مبلغ بصلاحية وسقف استخدام لكل عميل، **داخل دالة التسعير** لا فوقها، وبأرضية هامش لا يتخطاها أي مستدعٍ | ١٢أ | ✅ **تُشحن مطفأة** حتى يقرر المالك |
+| الخصومات والتحفيز | كوبونات بنسبة أو مبلغ بصلاحية وسقف استخدام لكل عميل، **داخل دالة التسعير** لا فوقها، وبأرضية هامش لا يتخطاها أي مستدعٍ | ١٢أ | ✅ **شحنت مطفأة، وشغّلها المالك** في 2026-08-17 |
 | حسابات العملاء | تسجيل اختياري + «حجوزاتي» + ربط حجزٍ سابق **بمرجعه وهاتفه**. والحجز كضيف يبقى كما هو: الحساب طبقةُ راحة لا بوابة | ١٢ب | ✅ |
-| الولاء | نقاط على الرحلات المكتملة تُستبدل خصماً، بدفترٍ مُلحَق لا يُمحى منه سطر، **والرصيد يملكه الهاتف المُثبَت** لا الحساب — فعشرة حسابات على هاتفٍ واحد ترى رصيداً واحداً | ١٢ب | ✅ **تُشحن مطفأة** |
+| الولاء | نقاط على الرحلات المكتملة تُستبدل خصماً، بدفترٍ مُلحَق لا يُمحى منه سطر، **والرصيد يملكه الهاتف المُثبَت** لا الحساب — فعشرة حسابات على هاتفٍ واحد ترى رصيداً واحداً | ١٢ب | ✅ **شحنت مطفأة، وشغّلها المالك** في 2026-08-17 بمعدّل ١٫٢٥ نقطة للجنيه |
 | المركبة والسائق بعد الإسناد | المتعهد يسجّل مركبة الرحلة وسائقها من بورتاله، فيراهما العميل على صفحة متابعته — **وهاتف السائق بنافذةٍ ذات طرفين**: يظهر قبل الالتقاء بمهلة تُضبط من اللوحة، ويختفي بعده باثنتي عشرة ساعة | دفعة ٥ | ✅ |
 | الرحلات الفاشلة | حالة `failed` نهائية لا يبلغها إلا `mark_booking_failed`، بكتالوج أسبابٍ مُدار ولقطةٍ مجمَّدة لا تعيد كتابة تقارير الماضي، وأثرٍ ماليٍّ من ست حالات — **و«فشل» ليس «إلغاء»** | موجة ٢ | ✅ |
 | إشعارات المتعهد | التوجيه صار **لكل مستقبِل** لا لإعدادات المالك: تفضيلاتُ كل متعهد وقنواته، تليجرام بربطٍ من البورتال، **دفع ويب** بـVAPID وعامل خدمة، وصندوق وارد — **وصوتُ تنبيهٍ في اللوحة** بمفتاح إيقاف. وحين لا يبلغ المتعهد أحدٌ، يسقط الإشعار إلى فريق التشغيل **برمز سببٍ مخزَّن** | موجة ٣ | ✅ — والوصول ينتظر أن يربط كل متعهد جهازه |
 | السجلات والتدقيق | ٣٤ جدولاً مرصوداً بمُشغّل واحد، ودورة `insert/update/delete` بلقطةٍ عند الحذف، **والسجل append-only** لا يكتب فيه دورٌ ولا يُفرّغه | ملاحظة ١٥ | ✅ |
-| Page Builder · مصنع الـ Whitelabel | — | ١٣–١٤ | ⬜ لم تبدأ |
+| باني الصفحات | تركيب صفحة من كتل بسحبٍ وترتيب، **والعنصر المُعاد ترتيبه يحتفظ بترجمته** بمفاتيح `_k` ثابتة، والنشر يوفّق المفاتيح بدل أن يُعيد لقطةً قديمة | ١٣ | ✅ |
+| الشريط العلوي من اللوحة | بنوده وترتيبه وإظهاره من `pages` وجدول `nav_links`، و`site_nav()` تُرجعه مترجَماً فيقرؤه الشريط والدرج واللوحة من نداءٍ واحد — **بصفر مفتاح رسائل جديد** | ملاحظات المالك | ✅ |
+| مطالبة الطابور الذرّية | `claim_notifications()` ببيانٍ واحد `for update skip locked` + مهلة رؤية — **فلا يُسلَّم إشعارٌ مرتين** حين تتداخل دورتا الكرون. وقبلها كان عدّاد المحاولات يقرأ ٠ فيكتب ١ في الوصلتين، فلا أثرَ يشهد على التكرار | دَين تقني | ✅ |
+| مصنع الـ Whitelabel | — | ١٤ | ⬜ لم تبدأ |
 | وكيل الذكاء الاصطناعي | مصمَّم بعقده (`lib/agent-types.ts`) | ١١ | ⬜ موقوف على **رصيد API** |
 
 > **الحالة الحقيقية اليوم:** المنصة **منشورة وتعمل**، والمراحل ١–١٢ مبنيّة. وما يُبقي المراحل ١ و٢ و١٠ صفراء ليس كوداً ناقصاً بل **ما لا يُنجزه أحد غير المالك**: قياس Lighthouse وتقرير الفهرسة على الدومين الحيّ، ومعرّفات GA4 وClarity وMeta، وجولة نقر بجلسته على اللوحة والبورتال.
@@ -224,7 +229,9 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ٩٠** في `supabase/migrations/` من `0001_core.sql` إلى `0092_publish_reconciles_item_keys.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار السبع والعشرون** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
+**الترحيلات الـ ٩٩** في `supabase/migrations/` من `0001_core.sql` إلى `0101_logo_strip_list_label.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار الاثنتان والثلاثون** في `supabase/tests/`.
+
+⚠ **والعدد لا يساوي أعلى رقم**: في التسلسل فجوتان (`0090` و`0091` غير موجودتين)، **فالرقم الحرّ يُشتقّ بأمرٍ لا من عدّ الملفّات** — `ls supabase/migrations | tail -1`. وفي `schema_migrations` صفٌّ يتيم `0100_logo_strip_list_label.sql` بلا ملفّ، خلّفه تصادمُ رقمٍ بين وكيلين في 2026-08-17: طُبِّق ثم أُعيدت تسميتُه `0101` وطُبِّق ثانيةً. **وجسمُ الهجرة يُعيد الكتابة بقيمةٍ ثابتة فتشغيلُه مرتين بلا أثر** (تحقَّق: `fleetBrands` عشرة عناصر)، والصفّ يُحذف بـ`delete from public.schema_migrations where name = '0100_logo_strip_list_label.sql';`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 
 ---
 

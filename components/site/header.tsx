@@ -4,10 +4,11 @@ import { cn } from "@/lib/utils";
 import type { SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
+import { getSiteNav } from "@/lib/site-nav";
 import { AccountMenu } from "./account-menu";
 import { LocaleSwitcher } from "./locale-switcher";
 import { ThemeToggle } from "./theme-toggle";
-import { bookingHref, externalLinkProps, localeHref, navLinks } from "./links";
+import { bookingHref, externalLinkProps, localeHref } from "./links";
 
 /**
  * الترويسة الثابتة: هوية العلامة + تنقّل داخلي + زر «احجز الآن».
@@ -16,6 +17,17 @@ import { bookingHref, externalLinkProps, localeHref, navLinks } from "./links";
  * المرحلة ٨: نصوص الترويسة من مساحة `site.header` (والقائمة من `site.nav`)،
  * والروابط تمر بـ localeHref فتبقى العربية بلا بادئة والإنجليزية تحت /en.
  * اسم العلامة وشعارها يصلان مترجمَين أصلاً داخل `settings`.
+ *
+ * ── 🔴 الدفعة ج: التنقّل صار من القاعدة (هجرة `0094`) ───────────────────────
+ *
+ * كان `navLinks()` يقرأ قائمةً محفورة في `links.ts`، فصفحةٌ ينشرها المالك تظهر
+ * في التذييل (وهو يقرأ القاعدة) ولا تظهر هنا. صار `getSiteNav(locale)` تنادي
+ * `site_nav` في القاعدة **نداءً واحداً** يخرج منه الشريط والدرج معاً — البند
+ * الرابع من بنود بدر: «قائمتان تفترقان يوماً ما».
+ *
+ * والتسمية تصل **جاهزة** من القاعدة (عنوانُ الصفحة المترجَم، أو اختصارُه)، إلا
+ * ما له `labelKey` — وهو البنود الستة القائمة التي تسميتها في `messages/*.json`
+ * كما كانت. فلا تسميةَ نُقلت إلى خطّ الترجمة (البند الأول).
  */
 export async function SiteHeader({
   settings,
@@ -24,12 +36,24 @@ export async function SiteHeader({
   settings: SiteSettings;
   locale?: string;
 }) {
-  const [t, tNav] = await Promise.all([
+  const [t, tNav, nav] = await Promise.all([
     getT("site.header", locale),
     getT("site.nav", locale),
+    getSiteNav(locale),
   ]);
   const booking = bookingHref(settings, locale);
-  const links = navLinks(tNav, locale);
+
+  /**
+   * 🔒 **مصدرٌ واحد للشريط والدرج** — تُحسب مرةً ويقرؤها الاثنان.
+   *
+   * و`labelKey` يُحلّ هنا لا في `lib/site-nav.ts`: المترجِم (`tNav`) شأنُ طبقة
+   * العرض، وطبقة القراءة لا تعرف مساحات الرسائل ولا يجوز أن تعرفها.
+   */
+  const links = nav.items.map((item) => ({
+    key: item.id,
+    href: localeHref(item.href, locale),
+    label: item.labelKey ? tNav(item.labelKey, item.label) : item.label,
+  }));
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/60 bg-background/85 backdrop-blur-md">
@@ -78,7 +102,14 @@ export async function SiteHeader({
          *
          * ⚠ **وقد صارت ستة** بخروج «حجوزاتي» إلى جزيرة الحساب (‏الفجوة ١٣)،
          *   ودخل مقابلها زرُّ الحساب في كتلة اليمين. فالمُوازنة تقريباً صفرية،
-         *   والعتبة تبقى `xl` كما هي — **ومن يضيف رابطاً سابعاً يعيد القياس**.
+         *   والعتبة تبقى `xl` كما هي.
+         *
+         * 🔴 **وهذا القياس هو مصدر `nav_cap()` = ٧ في هجرة `0094`.** القائمة
+         *   صارت يملكها المالك من اللوحة، فلم يبق «من يضيف رابطاً سابعاً» كاتبَ
+         *   كودٍ يقرأ هذا التعليق — بل مالكاً ينقر خانة. فصار الرقم **محسوباً في
+         *   القاعدة ومعروضاً له تحذيراً** عند تجاوزه، لا عُرفاً مكتوباً هنا.
+         *   **ومن يغيّر العتبة أو الحشو يعيد القياس ثم يعدّل `nav_cap()` معه** —
+         *   وإلا حذّرت اللوحة عند رقمٍ لا يعني شيئاً، أو سكتت عند التفافٍ واقع.
          *
          * وعند `lg` (‏١٠٢٤) المتاح ٩٧٦ فقط بعد `px-6`، فكان أربعة روابط تلتف
          * سطرين داخل صناديقها (ارتفاع الشريط ٥٦ بدل ٣٦) بين ١٠٢٤ و‏١١٣٠ على
@@ -102,7 +133,7 @@ export async function SiteHeader({
         >
           {links.map((link) => (
             <a
-              key={link.href}
+              key={link.key}
               href={link.href}
               className="rounded-lg px-2.5 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
@@ -169,9 +200,12 @@ export async function SiteHeader({
               aria-label={t("mobileNav", "قائمة التنقل للجوال")}
               className="absolute end-0 top-11 z-50 flex w-52 flex-col gap-1 rounded-2xl border border-border bg-background p-2 shadow-xl"
             >
+              {/* 🔒 **نفس `links`** لا نسخةٌ ثانية — البند الرابع من بنود بدر.
+                  ولا ترشيح ولا ترتيب مختلف: قائمتان تفترقان يوماً ما، وهذا هو
+                  الموضع الذي كانتا ستفترقان فيه. */}
               {links.map((link) => (
                 <a
-                  key={link.href}
+                  key={link.key}
                   href={link.href}
                   className="rounded-xl px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
                 >

@@ -7,6 +7,7 @@ import {
   ArrowRight,
   BadgeCheck,
   CalendarClock,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -35,14 +36,18 @@ import type { PromoBanner } from "@/lib/discount-types";
 import type { AppliedDiscount } from "@/lib/discounts/types";
 import type { AppliedRedemption } from "@/lib/loyalty/types";
 import { createFormatter, type LocaleFormatter } from "../format";
-import { CollapsedStep } from "../collapsed-step";
 import { CouponField, DiscountRows } from "../coupon-field";
 import { RedeemField, RedeemRows } from "../redeem-field";
 import { PromoBanners } from "../promo-banner";
 import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
 import { isAirportTrip } from "../airport";
 import { readPaymentSettings, splitAmounts } from "./payment";
-import { todayInputValue, toIsoFromCairoInputs, minInputValues } from "./datetime";
+import {
+  todayInputValue,
+  toIsoFromCairoInputs,
+  minInputValues,
+  splitLocalDateTime,
+} from "./datetime";
 import { previewPaymentHold } from "./hold-action";
 import { previewLeadTime, previewPhoneEcho } from "./lead-time-action";
 import type { LeadTime } from "./lead-time";
@@ -177,67 +182,189 @@ function isPhoneValid(value: string): boolean {
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
- * ║  مؤشّر التقدّم — سطرٌ واحد **بدل** رصيف الدوائر الثلاث، لا فوقه            ║
+ * ║  شريطُ خطواتٍ قابل للنقر — **عنصرٌ واحد يؤدي الدورين** (ملاحظة المالك ٥)   ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
- * ── لماذا استبدالٌ لا إضافة ────────────────────────────────────────────────
+ * ── ما كان، ولماذا اعترض عليه المالك ───────────────────────────────────────
  *
- * أمرُ المالك كان «مؤشّر تقدّم يشجّع على الإكمال» على شاشةٍ **نحاول تقصيرها**.
- * وشريطٌ يُضاف فوق رصيفٍ يقول الشيء نفسه هو ارتفاعٌ خالص: الرصيف القديم كان
- * يعرض ثلاث دوائر بعناوينها، والشريط كان سيعرض الموضع نفسه مرةً ثانية. فحلّ
- * هذا السطر محلّه: **موضعٌ صريح بالكلمات** («الخطوة ٢ من ٣») ومسطرةٌ من ثلاث
- * قطع، في ارتفاع سطرٍ واحد بدل ارتفاع دائرةٍ ٣٢ بكسل وعناوين تُبتر عند ٣٧٥.
+ * كان في الشاشة **شيئان يقولان الموضع**: سطرُ تقدّمٍ («الخطوة ٢ من ٣» ومسطرةٌ
+ * من ثلاث قطع)، وتحته **الخطوات المطويّة مرصوفةً تحت بعضها** — صندوقٌ مؤطَّر
+ * لكل خطوة بعنوانها وقيمها وزرِّ «تعديل». ونصُّ المالك:
  *
- * وما فقده الرصيف لم يُفقد: **الخطوة المكتملة صارت سطر ملخّصٍ بقيمه** أسفل
- * هذا السطر مباشرة — وهو أكثر مما كانت تقوله دائرةٌ فيها علامة صح.
+ * > «الخطوات المطويّة تحت بعضها ⇒ شريط خطواتٍ قابل للنقر، يحلّ محلّ شريط
+ * >  التقدّم. عنصرٌ واحد يؤدي الدورين، ويعيدني إلى أي مرحلة بنقرة.»
  *
- * ── 🔴 والصدق شرطٌ في الملء، لا في النصّ وحده ──────────────────────────────
+ * **وهو الأصحّ**: الرصفُ كان يدفع ثمن الطيّ مرتين — ارتفاعَ صندوقٍ مؤطَّر لكل
+ * خطوة، وارتفاعَ سطرِ تقدّمٍ يقول ما تقوله الصناديق. فصار **صندوقٌ واحد** فيه
+ * ثلاث خلايا: الخلية تُظهر الحالة (فهي المؤشّر)، وتُظهر القيم (فهي السطر
+ * المطويّ)، ويُنقر عليها (فهي التنقّل).
  *
- * القطعة **الحالية لا تُملأ**: تُملأ ما اكتمل فقط، والخطوة التي أنت فيها لم
- * تكتمل بعد. فلا تبلغ المسطرة تمامها داخل النموذج إطلاقاً — وهو المطلوب
- * حرفياً: عند الخطوة ٣ ما زال أمام العميل اختيار خطة الدفع، ثم **صفحة الحجز**
- * حيث يحوّل ويرفع الإيصال. مسطرةٌ ممتلئة هناك تَعِد بانتهاءٍ لم يقع.
+ * ── 🔒 وثلاثة مكاسبَ من مرور الطيّ **لا تُنقَض** ───────────────────────────
  *
- * والمجموع «٣» **يخصّ هذا النموذج وحده** — وعنوانه فوقه مباشرةً («إتمام
- * الحجز»)، فالوعد محصورٌ فيما يفي به.
+ * (١) **القيم في السطر لا «مكتملة»**: الخلية المطويّة تعرض ما أدخله العميل
+ *     (`٢٠ سبتمبر ١٠:٠٠` · `أحمد · +20 10 …`) — وهو الدرس المدفوع في
+ *     `../collapsed-step.tsx`: سطرٌ يقول «مكتملة» يُجبر على الفتح ليرى.
+ * (٢) **التركيز ينتقل إلى ما فُتح**: المستدعي ينقله (‏`openedByEdit`) لأن الزرّ
+ *     المضغوط لا يختفي هنا — الخلية تبقى — لكن اللوحة التي تُفتح يجب أن تُعلن
+ *     نفسها لقارئ الشاشة، وهي أسفل الشريط لا عنده.
+ * (٣) **الخطوات التالية لا تُهدَر**: `reached` لا يتراجع، وخليةُ خطوةٍ بُلغت
+ *     تبقى قابلةً للنقر بقيمها.
  *
- * ⚠ والقطع `aria-hidden`: النصّ يقول ما تقوله بالضبط، وإعادتُه لقارئ الشاشة
- *   ثرثرةٌ لا معلومة.
+ * ── 🔴 والصدق في الملء كما كان حرفاً ──────────────────────────────────────
+ *
+ * تُملأ خليةُ ما **اكتمل** وحده (`index < current`)، والخطوةُ التي أنت فيها
+ * غيرُ ممتلئة. فلا يبلغ الشريط تمامَه داخل النموذج إطلاقاً — وهو المطلوب: عند
+ * الخطوة ٣ ما زال أمام العميل خطةُ الدفع، ثم **صفحة الحجز** حيث يحوّل ويرفع
+ * الإيصال. وشريطٌ ممتلئ هناك يَعِد بانتهاءٍ لم يقع.
+ *
+ * ── والنقر مقيَّدٌ بما بُلغ ─────────────────────────────────────────────────
+ *
+ * خليةُ خطوةٍ لم تُبلغ **زرٌّ معطَّل**: القفز إليها كان سيتخطّى `validateStepOne`
+ * و`validateStepTwo` — أي يبلغ الدفعَ بلا موعد ولا هاتف. والتقدّم يبقى بـ«التالي»
+ * وحده، والشريط للرجوع والمراجعة.
+ *
+ * ⚠ **ولا `aria-controls`**: اللوحة المفتوحة ليست ابنةَ الخلية ولا معرّفها
+ *   ثابت، ومرجعٌ إلى معرّفٍ غير موجود أسوأ من غيابه (نفس قرار `CollapsedStep`).
+ *   والحالة تُنطق بـ`aria-current="step"` وبنصٍّ `sr-only` في كل خلية.
  */
-function StepsProgress({ current, t, fmt }: { current: Step; t: Tx; fmt: LocaleFormatter }) {
-  const active = STEPS[current - 1];
-  return (
-    <div className="flex items-center gap-3" aria-label={t("stepsLabel", "خطوات الحجز")}>
-      <p className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 text-sm leading-6">
-        <span className="font-semibold">
-          {t("stepStatus", "الخطوة {index} من {total}", {
-            index: fmt.digits(current),
-            total: fmt.digits(STEPS.length),
-          })}
-        </span>
-        {active ? (
-          <span className="min-w-0 truncate text-muted-foreground">
-            {t(active.key, active.title)}
-          </span>
-        ) : null}
-      </p>
+function StepsBar({
+  current,
+  reached,
+  summaries,
+  onJump,
+  disabled,
+  t,
+  fmt,
+}: {
+  current: Step;
+  /** أبعد خطوة بلغها العميل — وما فوقها غير قابل للنقر */
+  reached: Step;
+  /** قيم كل خطوة بترتيب `STEPS` — تُعرض للمطويّة وحدها */
+  summaries: React.ReactNode[][];
+  onJump: (target: Step) => void;
+  disabled: boolean;
+  t: Tx;
+  fmt: LocaleFormatter;
+}) {
+  const editLabel = t("editStep", "تعديل");
 
-      <span aria-hidden="true" className="flex shrink-0 items-center gap-1">
-        {STEPS.map((step) => (
-          <span
-            key={step.index}
-            className={cn(
-              "h-1.5 w-7 rounded-full transition-colors",
-              step.index < current ? "bg-primary" : "bg-border"
-            )}
-          />
-        ))}
-      </span>
-    </div>
+  return (
+    <nav aria-label={t("stepsLabel", "خطوات الحجز")}>
+      <ol className="grid overflow-hidden rounded-2xl border border-border bg-muted/30 sm:grid-cols-3">
+        {STEPS.map((step, index) => {
+          const isCurrent = step.index === current;
+          /** اكتمل فعلاً — والحالية ليست مكتملة (انظر «الصدق في الملء») */
+          const isDone = step.index < current;
+          const isReached = step.index <= reached;
+          const interactive = isReached && !isCurrent && !disabled;
+          /**
+           * القيم للمطويّة **التي بُلغت** وحدها. والشرط `isReached` ليس زينة:
+           * ملخّصُ الدفع مبنيٌّ من الخطة المبدئية (`عربون` ومبلغها) فهو غير فارغ
+           * أبداً — وعرضُه لخطوةٍ لم يفتحها العميل قطّ يقرأ **قراراً اتخذه** وهو
+           * لم يره. والخطوة غير المبلوغة تبقى عنواناً ورقماً بلا وعد.
+           */
+          const parts = isCurrent || !isReached ? [] : summaries[index] ?? [];
+
+          return (
+            <li
+              key={step.index}
+              className={cn(
+                // الفاصل منطقيٌّ لا فيزيائي: `border-s` تنقلب مع RTL وحدها
+                index > 0 && "border-t border-border sm:border-t-0 sm:border-s",
+                isCurrent && "bg-primary/5"
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => onJump(step.index)}
+                disabled={!interactive}
+                aria-current={isCurrent ? "step" : undefined}
+                className={cn(
+                  "flex h-full w-full items-start gap-2.5 px-3.5 py-3 text-start transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50",
+                  interactive
+                    ? "cursor-pointer hover:bg-muted"
+                    : "cursor-default disabled:pointer-events-none",
+                  !isReached && "opacity-60"
+                )}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full text-[0.7rem] font-bold leading-none",
+                    isDone
+                      ? "bg-primary text-primary-foreground"
+                      : isCurrent
+                        ? "border border-primary bg-primary/10 text-primary"
+                        : "bg-border text-muted-foreground"
+                  )}
+                >
+                  {isDone ? <Check className="size-3" /> : fmt.digits(step.index)}
+                </span>
+
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="flex items-baseline justify-between gap-2 text-xs font-medium">
+                    <span
+                      className={cn(
+                        "min-w-0 truncate",
+                        isCurrent ? "text-primary" : "text-muted-foreground"
+                      )}
+                    >
+                      {t(step.key, step.title)}
+                      {/*
+                        🔴 المنطوق يتبع **المرسوم** لا الوصول — وإلا كذب أحدهما.
+
+                        ثلاث حالات لا اثنتان: خطوةٌ **قبل** موضعك اكتملت فعلاً،
+                        وخطوةٌ **بعده** بلغها العميل ثم رجع **أُدخلت ولم تكتمل**.
+                        والفرق ليس تدقيقاً لغوياً: من فتح «الدفع» ثم رجع إلى
+                        «بيانات الرحلة» كان قارئ الشاشة سيسمع «الدفع — مكتملة»
+                        **ولم يُدفع شيء**، وهي بعينها الكذبة التي تمنعها قاعدة
+                        الملء (‏`isDone`) في الرسم. فالنصّ يُقاس بمقياسها.
+                      */}
+                      <span className="sr-only">
+                        {" — "}
+                        {isCurrent
+                          ? t("stepCurrent", "الخطوة الحالية")
+                          : isDone
+                            ? t("stepDone", "مكتملة")
+                            : isReached
+                              ? t("stepFilled", "سبق إدخالها")
+                              : t("stepPending", "لم تصل إليها بعد")}
+                      </span>
+                    </span>
+                    {interactive ? (
+                      <span className="shrink-0 text-xs font-semibold text-primary">
+                        {editLabel}
+                      </span>
+                    ) : null}
+                  </span>
+
+                  {/*
+                    سطران على الأكثر — **حدُّ ارتفاعٍ لا حذفُ قيمة** (نفس تعليل
+                    `CollapsedStep`): القيمة كاملةً على بعد نقرةٍ واحدة، وبطاقةُ
+                    الملخّص أعلاه تحمل المسار كاملاً.
+                  */}
+                  {parts.length > 0 ? (
+                    <span className="line-clamp-2 text-sm font-medium leading-6 text-foreground">
+                      {parts.map((part, partIndex) => (
+                        <React.Fragment key={partIndex}>
+                          {partIndex > 0 ? (
+                            <span className="text-muted-foreground"> · </span>
+                          ) : null}
+                          {part}
+                        </React.Fragment>
+                      ))}
+                    </span>
+                  ) : null}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
-
-/* سطر الخطوة المنتهية مشتركٌ مع ويدجت البحث — انظر `../collapsed-step.tsx` */
 
 /** بطاقة الملخص الثابتة: المسار والفئة والسعر — حاضرة في الخطوات الثلاث */
 function SummaryCard({
@@ -348,13 +475,35 @@ export function Checkout({
    */
   const [reached, setReached] = React.useState<Step>(1);
 
-  const [pickupDate, setPickupDate] = React.useState("");
-  const [pickupTime, setPickupTime] = React.useState("");
+  /**
+   * 🔴 موعد الانطلاق **حقلٌ واحد** (`datetime-local`) — ملاحظة المالك ٢.
+   *
+   * كان حقلَين («التاريخ» و«الساعة»)، ودُمجا في الحاسبة وحدها فبقي مسارُ الحجز
+   * — وهو الفرع الذي يراه صاحبُ الرحلة باتجاه واحد — على أربع لمسات لموعدٍ واحد.
+   * والمالك رآه على الحاسوب فسأل عن التفاوت، **وهو تفاوتٌ لا قرار**.
+   *
+   * 🔒 **وهو دمجٌ بصري لا تبديلُ منطق** — والأربعة التي فرضها الدمج الأول تبقى:
+   *   • **منطقة الموقع**: القيمة تُشطر بـ`splitLocalDateTime` وتمضي إلى
+   *     `toIsoFromCairoInputs` **نفسها** — لا `new Date(value)` هنا بحال، وهي
+   *     التي تقرأ `siteTimeZone()` (‏D-59) لا القاهرة محفورةً.
+   *   • **أرضية المهلة**: `pickupMin` من `booking_min_pickup_at()` وحدها.
+   *   • **الأرقام العربية**: سطرُ الصدى أسفل الحقل من `fmt.dateTime` — ومنتقي
+   *     المتصفح يرسم بلغة الجهاز، فالصدى هو ما يُقرأ فعلاً.
+   *   • **العودة بعد الذهاب**: لا موعد عودة في هذا الفرع أصلاً (الاتجاه الواحد)،
+   *     وحارسُ الترتيب في الحاسبة حيث يُجمع الموعدان — لم يُمسّ.
+   */
+  const [pickupLocal, setPickupLocal] = React.useState("");
   const [notes, setNotes] = React.useState("");
 
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
-  const [sameWhatsapp, setSameWhatsapp] = React.useState(true);
+  /**
+   * 🔴 ملاحظة المالك ٤ — **رقم الواتساب يخالف الهاتف**، رايةٌ يرفعها العميل
+   * بإزالة علامة الصندوق الواحد. وكانت `sameWhatsapp` مبدوءةً بـ`true`، وهذه
+   * مبدوءةٌ بـ`false` — **نفس المعنى بالنفي**، فالحمولة لا تتغيّر بحرف
+   * (‏`secondary` أدناه).
+   */
+  const [whatsappSeparate, setWhatsappSeparate] = React.useState(false);
   const [whatsapp, setWhatsapp] = React.useState("");
   /** ج‑٣ — رقم الرحلة الجوية، ولا يُجمع إلا في الرحلة المطارية */
   const [flightNumber, setFlightNumber] = React.useState("");
@@ -424,14 +573,22 @@ export function Checkout({
   }, [step]);
 
   const leadFloor = lead?.enabled ? minInputValues(lead.minPickupAt) : null;
-  /** أرضية حقل التاريخ: الأبعد من «اليوم» و«يوم أقرب موعد متاح» */
-  const minDate = leadFloor && leadFloor.date > todayValue ? leadFloor.date : todayValue;
   /**
-   * أرضية حقل الساعة **تُطبَّق في يوم الأرضية وحده**: `<input type="time">`
-   * لا يعرف التاريخ، فوضعُ `min` عليه في يومٍ لاحق كان يمنع الحجز فجراً بعد
-   * غدٍ لمجرد أن أقرب موعدٍ اليوم بعد الظهر.
+   * أرضية الحقل الواحد — **لحظةٌ واحدة** بدل «تاريخٌ ثم ساعةٌ مشروطة بيومه».
+   *
+   * وهي المكسب الصامت للدمج، ونصُّه في `search-widget.tsx` حرفياً: الحقلان
+   * المنفصلان كانا يفرضان الساعة **في يوم الأرضية وحده** (‏`pickupDate ===
+   * leadFloor.date`) لأن `<input type="time">` لا يعرف أي يومٍ اختير — فمن
+   * اختار الغد كان منتقي الساعة عنده بلا حدٍّ أصلاً. أما الحقل الواحد فيقارن
+   * اللحظة باللحظة.
+   *
+   * 🔒 والمصدر واحدٌ كما كان: `minInputValues(lead.minPickupAt)` — أي
+   * `booking_min_pickup_at()` نفسها التي يفرضها `create_booking`، مقرَّبةً
+   * لأعلى إلى الدقيقة. **ولا معادلة مهلةٍ تُحسب في المتصفح** (النمط ٨).
    */
-  const minTime = leadFloor && pickupDate === leadFloor.date ? leadFloor.time : undefined;
+  const pickupMin = leadFloor
+    ? `${leadFloor.date}T${leadFloor.time}`
+    : `${todayValue}T00:00`;
 
   const fieldHeight = compact ? "h-11" : "h-12";
   const fieldClass = cn(
@@ -489,8 +646,14 @@ export function Checkout({
     topRef.current.scrollIntoView({ behavior, block: "nearest" });
   }, [step]);
 
-  /** موعد الانطلاق: من الحاسبة حين جمعته (ذهاب وعودة)، وإلا من حقلَي هذه الخطوة */
+  /**
+   * موعد الانطلاق: من الحاسبة حين جمعته (ذهاب وعودة)، وإلا من حقل هذه الخطوة.
+   *
+   * 🔒 والشطر ثم `toIsoFromCairoInputs` — **نفس المسار ونفس المُدخلين** اللذين
+   * كان يتلقّاهما من الحقلين المنفصلين، فالناتج ISO لا يتغيّر بحرف.
+   */
   const scheduledPickup = trip.pickupAt ?? null;
+  const [pickupDate, pickupTime] = splitLocalDateTime(pickupLocal);
   const pickupIso = scheduledPickup ?? toIsoFromCairoInputs(pickupDate, pickupTime);
   const hasExtras = offer.extras.length > 0;
 
@@ -560,10 +723,21 @@ export function Checkout({
           //    والوسم يجعل قِدَم الجواب حالةً **مستحيلة العرض** لا حالةً
           //    تحتاج من يتذكّر تنظيفها. وهو نمط `quotedInputsKey` نفسه في
           //    `search-widget.tsx`.
-          if (alive && result.display !== null) setEchoState({ ...result, forPhone: value });
+          //
+          // 🔴 **والجواب الفارغ يُخزَّن كذلك** — ولم يكن (ملاحظة المالك ٤).
+          //    كان الشرط `result.display !== null` يُهمل «لا صدى»، فلا تعرف
+          //    الشاشة الفرقَ بين «الجواب في الطريق» و«لا جواب لهذا الرقم». وقد
+          //    صار الفرق لازماً: صندوق التأكيد يحمل الآن **مفتاح الواتساب**
+          //    معه، ومفتاحٌ يظهر مؤشَّراً ثم يقلب نفسه حين يصل الصدى **يبدّل
+          //    قراراً تحت يد العميل**. فالصندوق لا يُصيَّر إلا وقد استقرّ
+          //    الجواب — إيجاباً أو نفياً — و`display === null` تبقى تعني
+          //    «لا رقم يُعرض ولا إقرار يُطلب» كما كانت حرفياً.
+          if (alive) setEchoState({ ...result, forPhone: value });
         })
         .catch(() => {
-          // الصمت الآمن: يبقى ما كان، والوسم يمنع عرضه لرقمٍ آخر
+          // تعذّر النداء = لا صدى لهذا الرقم بعينه. ويُوسم كذلك حتى لا يبقى
+          // الصندوق منتظراً جواباً لن يأتي فيُحتجَز مفتاح الواتساب معه.
+          if (alive) setEchoState({ normalized: null, display: null, forPhone: value });
         });
     }, 400);
 
@@ -579,14 +753,50 @@ export function Checkout({
    */
   const echo = echoState !== null && echoState.forPhone === trimmedPhoneValue ? echoState : null;
 
+  /** استقرّ جوابٌ لهذا الرقم — إيجاباً أو نفياً. وشرطُ تصيير الصندوق. */
+  const echoSettled = echo !== null;
   /** ثمة رقمٌ مفهوم يُعرض ⇒ ثمة ما يُقرّ به */
-  const echoReady = echo !== null && echo.display !== null && echo.normalized !== null;
+  const echoReady = echoSettled && echo.display !== null && echo.normalized !== null;
   /**
    * 🔒 المقارنة بالشكل **المعياري** لا بنصّ الحقل: العميل أقرّ رقماً لا كتابةً.
    * فمن أقرّ `01010000506` ثم أعاد كتابته `+20 101 000 0506` لا يُسأل ثانيةً،
    * ومن قلب خانةً واحدة يُسأل — وهو بالضبط الحدث الذي وُجدت الميزة لأجله.
    */
   const phoneAcked = echoReady && ackedNormalized === echo?.normalized;
+
+  /* ---------------------------------------------------------------- */
+  /* 🔴 ملاحظة المالك ٤ — صندوقٌ واحد لمعنيَين، بلا قدرةٍ تُفقد          */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * كان في الشاشة **تأكيدان لشيءٍ واحد** متجاورَين:
+   *   «نعم، هذا رقمي وأستقبل عليه المكالمات والرسائل» (أضافته أ‑١)
+   *   «رقم الواتساب نفس رقم الهاتف»                    (كان قائماً قبلها)
+   *
+   * ⚠ **والقديم لم يكن تأكيداً فقط بل يضبط رقم الواتساب** — فحذفُه ساذجاً إمّا
+   * يجعل الواتساب = الهاتف دائماً (فيفقد من له رقمٌ آخر ذكرَه) أو يُظهر حقلاً
+   * دائماً (عكس المطلوب). **وقرار المالك: يُدمجان في صندوقٍ واحد**، وإزالةُ
+   * علامته تُظهر حقل الواتساب. نقرةٌ للأغلبية، وحقلٌ لمن يحتاجه.
+   *
+   * ── الحالات الثلاث، ولماذا ليست حالتين ─────────────────────────────────
+   * | الصندوق | `whatsappSeparate` | الحقل | المعنى |
+   * |---|---|---|---|
+   * | لم يُلمس | `false` | مخفي | لم يُقرّ بعد — والحقل **لا يظهر** |
+   * | مؤشَّر | `false` | مخفي | أقرّ، والواتساب على الهاتف نفسه |
+   * | أُزيلت علامته | `true` | ظاهر | واتسابه رقمٌ آخر يكتبه |
+   *
+   * فالراية هي التي تفرّق «لم يُجب» من «قال لا» — ولولاها لظهر الحقل من أول
+   * تصييرة، وهو بالضبط ما رفضه المالك.
+   *
+   * ── 🔒 والإقرار يُستوفى بأحد فعلَين، لا بواحد ───────────────────────────
+   * من أزال العلامة **لا يمكن أن يؤشّرها** ليقرّ (فهي نفسها مفتاح الحقل)، فلو
+   * بقي الإقرار مشروطاً بالتأشير وحده صار طريقاً مسدوداً: يرى الخطأ ولا يجد
+   * فعلاً يرفعه. **فكتابةُ رقم واتسابٍ صحيح إقرارٌ كذلك** — ومبرَّرة: من أزال
+   * العلامة قرأ الرقم المعروض أمامه ثم قال «واتسابي غيره»، وهو نظرٌ في الرقم
+   * لا تمريرٌ عليه، وهو غرض أ‑١ كلّه.
+   */
+  const phoneConfirmed =
+    !echoReady || phoneAcked || (whatsappSeparate && isPhoneValid(whatsapp));
 
   /* ---------------------------------------------------------------- */
   /* ج‑٣ — رحلة مطار؟                                                   */
@@ -708,23 +918,64 @@ export function Checkout({
     if (name.trim().length < 3) {
       next.name = t("errors.nameTooShort", "اكتب اسمك كاملاً (٣ أحرف على الأقل).");
     }
+    /**
+     * رقم واتسابٍ مكتوبٌ خطأً — و**خطؤه وحده يُعرض**، لا هو وطلبُ الإقرار معه:
+     * كتابةُ رقمٍ صحيح هي الإقرار في هذا الفرع (‏`phoneConfirmed`)، فرقمٌ فاسد
+     * يُنتج رسالتين لعطلٍ واحد وحقلين مُحمَّرَين وعلاجٌ واحد.
+     */
+    const whatsappTyped = whatsappSeparate && whatsapp.trim().length > 0;
+    if (whatsappTyped && !isPhoneValid(whatsapp)) {
+      next.whatsapp = t("errors.whatsappInvalid", "رقم الواتساب غير صحيح.");
+    }
+
     if (!isPhoneValid(phone)) {
       next.phone = t("errors.phoneInvalid", "اكتب رقم هاتف صحيح للتواصل معك بشأن الرحلة.");
-    } else if (echoReady && !phoneAcked) {
+    } else if (!phoneConfirmed && !whatsappTyped) {
       /**
        * 🔒 أ‑١ — الإقرار **لا يُطلب إلا حين يوجد ما يُقرّ به**.
        *
-       * `echoReady` شرطُ المطالبة: بلا جوابٍ من الخادم (شبكة · بيئة غير مهيّأة
-       * · هجرة ناقصة) لا يُعرض رقم ولا يُطلب إقرار — فلا يُحبس عميلٌ خلف
-       * قراءةٍ تعذّرت. أما حين يُعرض الرقم فالإقرار **إلزامي**: أن يُعرض ثم
-       * يُمرَّر بلا نظر يعيدنا إلى ما قبل الميزة بالضبط.
+       * `echoReady` شرطُ المطالبة (وهو داخل `phoneConfirmed`): بلا جوابٍ من
+       * الخادم (شبكة · بيئة غير مهيّأة · هجرة ناقصة) لا يُعرض رقم ولا يُطلب
+       * إقرار — فلا يُحبس عميلٌ خلف قراءةٍ تعذّرت. أما حين يُعرض الرقم فالإقرار
+       * **إلزامي**: أن يُعرض ثم يُمرَّر بلا نظر يعيدنا إلى ما قبل الميزة بالضبط.
+       *
+       * ⚠ والرسالة تسمّي **المخرجَين** بعد الدمج (ملاحظة ٤): التأشير، أو كتابةُ
+       * رقم واتسابٍ صحيح. ورسالةٌ تطلب تأشيراً وحده تصير نصيحةً مسدودة لمن
+       * أزال العلامة عن قصد.
        */
-      next.phoneConfirm = t("errors.phoneUnconfirmed", "أكّد أن رقم هاتفك مكتوب صحيحاً.");
-    }
-    if (!sameWhatsapp && whatsapp.trim().length > 0 && !isPhoneValid(whatsapp)) {
-      next.whatsapp = t("errors.whatsappInvalid", "رقم الواتساب غير صحيح.");
+      next.phoneConfirm = t(
+        "errors.phoneUnconfirmed",
+        "أكّد أن رقم هاتفك مكتوب صحيحاً — أو أزل العلامة واكتب رقم الواتساب."
+      );
     }
     return next;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 🔴 ملاحظة المالك ٣ — الخطأ يزول بأول لمسةٍ للحقل، لا عند الإرسال   */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * > «رسالة الخطأ لا تختفي عند إعادة الإدخال.»
+   *
+   * وكان محلّها الوحيد `setErrors(found)` في `goNext` و`submit` — أي أن العميل
+   * يُصحّح الحقل ثم **يبقى الخطأ الأحمر تحته** حتى يضغط «التالي» ثانيةً. فيقرأ
+   * أن تصحيحه لم يُقبل، وأكثرُ ما يفعله عندها أن يعيد الكتابة مرةً ثالثة.
+   *
+   * 🔧 **ويُرجَع نفسُ الكائن حين لا شيء يُمحى** — وهو ليس تحسيناً بل شرطُ صحة:
+   * هذه الدالة تُنادى في `onChange` أي **مع كل ضغطة مفتاح**، وكائنٌ جديد في كل
+   * مرة يُعيد تصيير الشجرة كلها بلا تغيّر ظاهر. و`===` يجعل React تتخطّاه.
+   *
+   * ⚠ ولا يُمحى الخطأ في التصيير ولا في تأثير: **معالج الحدث** هو موضع القرار،
+   *   ومسحٌ في تأثيرٍ يعتمد على القيمة كان سيمحو خطأً وُلد لتوّه من `submit`.
+   */
+  function clearFieldError(...keys: FieldKey[]) {
+    setErrors((current) => {
+      if (keys.every((key) => current[key] === undefined)) return current;
+      const next = { ...current };
+      for (const key of keys) delete next[key];
+      return next;
+    });
   }
 
   function goNext() {
@@ -767,7 +1018,9 @@ export function Checkout({
     }
 
     const trimmedPhone = phone.trim();
-    const secondary = sameWhatsapp ? trimmedPhone : whatsapp.trim();
+    // 🔒 نفس التعبير بالنفي: `sameWhatsapp` كانت `!whatsappSeparate` بالمعنى
+    //    وبالقيمة المبدئية معاً — فالحمولة لا تتغيّر بحرف (ملاحظة ٤).
+    const secondary = whatsappSeparate ? whatsapp.trim() : trimmedPhone;
 
     const payload: CreateBookingRequestWithExtras = {
       origin: { label: trip.originLabel, lat: trip.originLat, lng: trip.originLng },
@@ -903,9 +1156,6 @@ export function Checkout({
   /* سطور الملخّص — **من نفس الحالة التي تملأ الحقول**، لا نسخةٌ عنها   */
   /* ---------------------------------------------------------------- */
 
-  const editLabel = t("editStep", "تعديل");
-  const doneLabel = t("stepDone", "مكتملة");
-
   const pickupLabel = fmt.dateTime(pickupIso);
   const returnLabel = trip.returnAt ? fmt.dateTime(trip.returnAt) : null;
   const notesTrimmed = notes.trim();
@@ -952,7 +1202,7 @@ export function Checkout({
       </bdi>
     );
   }
-  if (!sameWhatsapp && whatsappTrimmed.length > 0) {
+  if (whatsappSeparate && whatsappTrimmed.length > 0) {
     customerSummary.push(
       <span key="whatsapp">
         {t("customer.whatsapp", "رقم الواتساب")}: <bdi dir="ltr">{whatsappTrimmed}</bdi>
@@ -1014,7 +1264,19 @@ export function Checkout({
         </button>
       </div>
 
-      <StepsProgress current={step} t={t} fmt={fmt} />
+      {/*
+        شريطُ الخطوات — **مؤشّرُ التقدّم وسطورُ الطيّ والتنقّل في عنصرٍ واحد**
+        (ملاحظة المالك ٥). و`summaries` بترتيب `STEPS` حرفياً.
+      */}
+      <StepsBar
+        current={step}
+        reached={reached}
+        summaries={[tripSummary, customerSummary, paymentSummary]}
+        onJump={editStep}
+        disabled={submitting}
+        t={t}
+        fmt={fmt}
+      />
 
       {/* بانرات موضع «الحجز» — تحفيز بلا أثر على السعر */}
       <PromoBanners banners={banners} compact={compact} />
@@ -1034,32 +1296,39 @@ export function Checkout({
 
       {/*
         ══════════════════════════════════════════════════════════════════════
-         الخطوات: المفتوحة واحدة، وما قبلها وما بعدها **سطور ملخّصٍ بقيمها**
+         الخطوات: **لوحةٌ واحدة مفتوحة**، وكل ما عداها في شريط الخطوات أعلاه
         ══════════════════════════════════════════════════════════════════════
 
-        `step` هي المفتوحة، و`reached` أبعدُ ما بُلغ. فكل خطوة `≤ reached` تُصيَّر:
-        الحالية لوحةً، والباقية سطراً واحداً ينقر عليه العميل فيفتحها. وما لم
-        يُبلغ بعد لا يُصيَّر أصلاً — سطرُ ملخّصٍ فارغ لخطوةٍ لم تُملأ لا يقول شيئاً.
+        `step` هي المفتوحة، و`reached` أبعدُ ما بُلغ — وكلاهما يُقرأ في `StepsBar`
+        الذي يحمل القيم والحالة والتنقّل معاً (ملاحظة المالك ٥). فما بقي هنا
+        لوحةُ الخطوة الحالية وحدها، ولا صناديق طيٍّ مرصوفة بينها.
       */}
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         {/* ------------------------- الخطوة ١ ------------------------- */}
-        {step !== 1 ? (
-          <CollapsedStep
-            title={t(STEPS[0].key, STEPS[0].title)}
-            parts={tripSummary}
-            editLabel={editLabel}
-            doneLabel={doneLabel}
-            onEdit={() => editStep(1)}
-            disabled={submitting}
-          />
-        ) : null}
-
         {step === 1 ? (
           <div {...stepPanelProps}>
-            <p className="flex items-center gap-2 text-sm font-semibold">
-              <CalendarClock className="size-4 shrink-0 text-primary" aria-hidden="true" />
-              {t("trip.heading", "موعد الانطلاق")}
-            </p>
+            {/*
+              عنوان الخطوة — و**هو نفسه اسمُ الحقل** في الفرع القابل للكتابة.
+
+              بعد دمج التاريخ والساعة في حقلٍ واحد (ملاحظة ٢) صار للخطوة مُدخلٌ
+              واحد اسمُه اسمُ الخطوة. فعنوانٌ فوقه ثم اسمٌ له سطران يقولان
+              «موعد الانطلاق» مرتين على شاشةٍ نقصّرها. و`<label>` لا `<p>`: نقرةٌ
+              على الاسم تفتح المنتقي، وهو ما لا يعطيه `aria-labelledby`.
+            */}
+            {scheduledPickup ? (
+              <p className="flex items-center gap-2 text-sm font-semibold">
+                <CalendarClock className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                {t("trip.heading", "موعد الانطلاق")}
+              </p>
+            ) : (
+              <label
+                htmlFor={`${uid}-pickup-at`}
+                className="flex w-fit items-center gap-2 text-sm font-semibold"
+              >
+                <CalendarClock className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                {t("trip.heading", "موعد الانطلاق")}
+              </label>
+            )}
 
             {/*
               🔴 وسم التوقيت — يظهر في الفرعين معاً (المُثبَّت والقابل للكتابة).
@@ -1119,44 +1388,48 @@ export function Checkout({
               </dl>
             ) : (
               <>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor={`${uid}-date`} className="text-sm font-medium">
-                      {t("trip.date", "التاريخ")}
-                    </label>
-                    <input
-                      id={`${uid}-date`}
-                      type="date"
-                      min={minDate}
-                      value={pickupDate}
-                      onChange={(event) => setPickupDate(event.target.value)}
-                      aria-invalid={errors.pickup ? true : undefined}
-                      aria-describedby={errors.pickup ? `${uid}-pickup-error` : undefined}
-                      className={fieldClass}
-                    />
-                  </div>
+                {/*
+                  🔴 حقلٌ واحد للتاريخ والساعة — ملاحظة المالك ٢، والدمج نفسه
+                  الذي نزل في الحاسبة فبقي هذا الفرع خارجه.
 
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor={`${uid}-time`} className="text-sm font-medium">
-                      {t("trip.time", "الساعة")}
-                    </label>
-                    <input
-                      id={`${uid}-time`}
-                      type="time"
-                      min={minTime}
-                      value={pickupTime}
-                      onChange={(event) => setPickupTime(event.target.value)}
-                      aria-invalid={errors.pickup ? true : undefined}
-                      aria-describedby={
-                        errors.pickup
-                          ? `${uid}-pickup-error`
-                          : leadFloor
-                            ? `${uid}-lead-note`
-                            : undefined
-                      }
-                      className={fieldClass}
-                    />
-                  </div>
+                  ولا `sm:grid-cols-2` بعده: العمودان كانا وعاءَ حقلَين، وحقلٌ
+                  واحد في عمودٍ واحد بعرضٍ كامل هو الشكل نفسه على ٣٧٥ وعلى
+                  ١٢٨٠ — فالتفاوت بين الجوال والحاسوب زال من أصله لا بشرطٍ
+                  جديد.
+                */}
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    id={`${uid}-pickup-at`}
+                    type="datetime-local"
+                    min={pickupMin}
+                    value={pickupLocal}
+                    onChange={(event) => {
+                      setPickupLocal(event.target.value);
+                      // ملاحظة ٣: الخطأ يزول بأول لمسة، لا عند «التالي»
+                      clearFieldError("pickup");
+                    }}
+                    aria-invalid={errors.pickup ? true : undefined}
+                    aria-describedby={
+                      errors.pickup
+                        ? `${uid}-pickup-error`
+                        : leadFloor
+                          ? `${uid}-lead-note`
+                          : undefined
+                    }
+                    className={fieldClass}
+                  />
+
+                  {/*
+                    🔴 صدى بأرقام لغة الزائر — والحقل الأصلي **لا يضمنها**:
+                    منتقي المتصفح يرسم بلغة الجهاز لا بلغة الصفحة، فيرى العميل
+                    العربي «09/14/2026» في حقلٍ كل ما حوله بالعربية. فالصدى هو
+                    ما يُقرأ فعلاً، وهو من `fmt.dateTime` — نفس مُنسّق بقية
+                    الشاشة، وبمنطقة الموقع، فيرى اللحظة التي ستُحجز له لا التي
+                    كتبها جهازه. **وهو أحد الأربعة التي فرضها الدمج الأول.**
+                  */}
+                  {pickupIso ? (
+                    <p className="text-xs leading-5 text-primary">{fmt.dateTime(pickupIso)}</p>
+                  ) : null}
                 </div>
 
                 {/*
@@ -1298,17 +1571,6 @@ export function Checkout({
         ) : null}
 
         {/* ------------------------- الخطوة ٢ ------------------------- */}
-        {reached >= 2 && step !== 2 ? (
-          <CollapsedStep
-            title={t(STEPS[1].key, STEPS[1].title)}
-            parts={customerSummary}
-            editLabel={editLabel}
-            doneLabel={doneLabel}
-            onEdit={() => editStep(2)}
-            disabled={submitting}
-          />
-        ) : null}
-
         {step === 2 ? (
           <div {...stepPanelProps}>
             <p className="flex items-center gap-2 text-sm font-semibold">
@@ -1325,7 +1587,11 @@ export function Checkout({
                 type="text"
                 autoComplete="name"
                 value={name}
-                onChange={(event) => setName(event.target.value)}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  // ملاحظة ٣
+                  clearFieldError("name");
+                }}
                 placeholder={t("customer.namePlaceholder", "الاسم كما تحب أن يناديك به السائق")}
                 aria-invalid={errors.name ? true : undefined}
                 aria-describedby={errors.name ? `${uid}-name-error` : undefined}
@@ -1345,7 +1611,17 @@ export function Checkout({
                 dir="ltr"
                 autoComplete="tel"
                 value={phone}
-                onChange={(event) => setPhone(event.target.value)}
+                onChange={(event) => {
+                  setPhone(event.target.value);
+                  /**
+                   * ملاحظة ٣ — و**الخطآن معاً**: «أكّد رقمك» خطأٌ على هذا الحقل
+                   * بعينه، فإبقاؤه بعد أن يعدّل العميل الرقم يطالبه بإقرار رقمٍ
+                   * لم يعد مكتوباً. والإقرار نفسه يسقط بنيوياً بتغيّر الشكل
+                   * المعياري (‏`ackedNormalized`)، فالمطالبة تُعاد عند «التالي»
+                   * إن لزمت — ولا تبقى معلَّقة أثناء الكتابة.
+                   */
+                  clearFieldError("phone", "phoneConfirm");
+                }}
                 placeholder="01xxxxxxxxx"
                 aria-invalid={errors.phone ? true : undefined}
                 aria-describedby={errors.phone ? `${uid}-phone-error` : undefined}
@@ -1381,7 +1657,26 @@ export function Checkout({
                 تعديل يغيّر الشكل المعياري يُسقط الإقرار بنيوياً — لا بمُتذكِّرٍ
                 قد يُنسى.
               */}
-              {echoReady ? (
+              {/*
+                ══════════════════════════════════════════════════════════════
+                 🔴 صندوقٌ **واحد** لتأكيدٍ واحد — ملاحظة المالك ٤
+                ══════════════════════════════════════════════════════════════
+
+                التعليل الكامل (الحالات الثلاث، ولماذا الإقرار يُستوفى بفعلَين)
+                عند `phoneConfirmed` أعلاه. وما هنا شكلُه:
+
+                • يُصيَّر حين **يستقرّ** جواب الصدى (‏`echoSettled`) أو حين تكون
+                  رايةُ الواتساب مرفوعةً بالفعل — فلا يومض المفتاح ولا يقلب
+                  نفسه، ولا يختفي حقلُ الواتساب من تحت من يكتب فيه لأن الصدى
+                  يُعاد سؤاله.
+                • سطرُ الرقم يظهر حين يوجد رقمٌ يُعرض (‏`echoReady`) وحده —
+                  و`display === null` تبقى تعني «لا رقم يُعرض ولا إقرار يُطلب»
+                  حرفياً كما كانت (شبكة · بيئة غير مهيّأة · هجرة ناقصة).
+                • وحين لا صدى، المفتاح **مؤشَّرٌ مبدئياً** ومعناه معنى
+                  «الواتساب نفس الهاتف» القديم بالضبط — فلا يُحبس عميلٌ خلف
+                  قراءةٍ تعذّرت، ولا تُفقد قدرةُ من واتسابه رقمٌ آخر.
+              */}
+              {echoSettled || whatsappSeparate ? (
                 <div
                   className={cn(
                     "flex flex-col gap-2 rounded-2xl border px-3.5 py-3 transition-colors",
@@ -1392,83 +1687,119 @@ export function Checkout({
                         : "border-border bg-muted/40"
                   )}
                 >
-                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-7">
-                    <PhoneCall className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                    <span className="text-muted-foreground">
-                      {t("customer.echoLead", "سنراسلك ونتصل بك على")}
-                    </span>
-                    <bdi
-                      dir="ltr"
-                      className="font-mono text-base font-bold tracking-wider text-foreground"
-                    >
-                      {echo?.display}
-                    </bdi>
-                  </p>
+                  {echoReady ? (
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-7">
+                      <PhoneCall className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span className="text-muted-foreground">
+                        {t("customer.echoLead", "سنراسلك ونتصل بك على")}
+                      </span>
+                      <bdi
+                        dir="ltr"
+                        className="font-mono text-base font-bold tracking-wider text-foreground"
+                      >
+                        {echo?.display}
+                      </bdi>
+                    </p>
+                  ) : null}
 
-                  <label className="flex w-fit cursor-pointer items-start gap-2 text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      checked={phoneAcked}
-                      onChange={(event) => {
-                        setAckedNormalized(
-                          event.target.checked ? (echo?.normalized ?? null) : null
-                        );
-                        // الإقرار يرفع خطأه فوراً — لا ينتظر ضغطة «التالي»
-                        if (event.target.checked) {
-                          setErrors((current) => ({ ...current, phoneConfirm: undefined }));
+                  {echoSettled ? (
+                    <label className="flex w-fit cursor-pointer items-start gap-2 text-sm font-medium">
+                      <input
+                        type="checkbox"
+                        /**
+                         * 🔒 مؤشَّرٌ = «أقرَرتُ **وواتسابي هو هذا**». وبلا صدى
+                         * لا إقرار يُطلب، فيبقى المعنى الثاني وحده — ومبدأه
+                         * `true` كما كانت `sameWhatsapp` حرفاً.
+                         */
+                        checked={!whatsappSeparate && (echoReady ? phoneAcked : true)}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            setWhatsappSeparate(false);
+                            setAckedNormalized(echo?.normalized ?? null);
+                            // الإقرار يرفع خطأه فوراً — لا ينتظر «التالي»
+                            clearFieldError("phoneConfirm");
+                          } else {
+                            // إزالةُ العلامة = «واتسابي رقمٌ آخر» ⇒ يظهر حقله
+                            setWhatsappSeparate(true);
+                            setAckedNormalized(null);
+                          }
+                        }}
+                        aria-invalid={errors.phoneConfirm ? true : undefined}
+                        /**
+                         * ⚠ ولا يشير إلى معرّفٍ غير مُصيَّر: سطرُ التلميح يظهر
+                         * حين تكون العلامة قائمة وحدها، فإشارةٌ إليه بعد إزالتها
+                         * كانت ستكون مرجعاً معلّقاً — أسوأ من غياب الوصف
+                         * (نفس قرار `aria-controls` في `CollapsedStep`).
+                         */
+                        aria-describedby={
+                          errors.phoneConfirm
+                            ? `${uid}-phone-confirm-error`
+                            : whatsappSeparate
+                              ? undefined
+                              : `${uid}-whatsapp-hint`
                         }
-                      }}
-                      aria-invalid={errors.phoneConfirm ? true : undefined}
-                      aria-describedby={
-                        errors.phoneConfirm ? `${uid}-phone-confirm-error` : undefined
-                      }
-                      className="mt-0.5 size-4 shrink-0 rounded border-input accent-[var(--primary)]"
-                    />
-                    <span className="leading-6">
-                      {t("customer.echoConfirm", "نعم، هذا رقمي وأستقبل عليه المكالمات والرسائل.")}
-                    </span>
-                  </label>
+                        className="mt-0.5 size-4 shrink-0 rounded border-input accent-[var(--primary)]"
+                      />
+                      <span className="leading-6">
+                        {t(
+                          "customer.echoConfirm",
+                          "نعم، هذا رقمي وأستقبل عليه واتساب أيضاً."
+                        )}
+                      </span>
+                    </label>
+                  ) : null}
+
+                  {/*
+                    السطر الذي يجعل المفتاح مفهوماً **قبل** أن يُزال: بلا هذه
+                    الجملة لا يعرف صاحبُ الرقم الآخر أن إزالة العلامة هي بابُه،
+                    فيؤشّر ثم يفقد رقمه — وهي القدرة التي أمر المالك بحفظها.
+                  */}
+                  {!whatsappSeparate ? (
+                    <p
+                      id={`${uid}-whatsapp-hint`}
+                      className="text-xs leading-5 text-muted-foreground"
+                    >
+                      {t(
+                        "customer.whatsappHint",
+                        "واتسابك على رقمٍ آخر؟ أزل العلامة ليظهر حقلٌ تكتبه فيه."
+                      )}
+                    </p>
+                  ) : null}
 
                   <FieldError
                     id={`${uid}-phone-confirm-error`}
                     message={errors.phoneConfirm}
                   />
-                </div>
-              ) : null}
-            </div>
 
-            <div className="flex flex-col gap-2">
-              <label className="flex w-fit cursor-pointer items-center gap-2 text-sm font-medium">
-                <input
-                  type="checkbox"
-                  checked={sameWhatsapp}
-                  onChange={(event) => setSameWhatsapp(event.target.checked)}
-                  className="size-4 rounded border-input accent-[var(--primary)]"
-                />
-                {t("customer.sameWhatsapp", "رقم الواتساب نفس رقم الهاتف")}
-              </label>
-
-              {!sameWhatsapp ? (
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor={`${uid}-whatsapp`} className="text-sm font-medium">
-                    {t("customer.whatsapp", "رقم الواتساب")}{" "}
-                    <span className="font-normal text-muted-foreground">
-                      ({tCommon("optional", "اختياري")})
-                    </span>
-                  </label>
-                  <input
-                    id={`${uid}-whatsapp`}
-                    type="tel"
-                    inputMode="tel"
-                    dir="ltr"
-                    value={whatsapp}
-                    onChange={(event) => setWhatsapp(event.target.value)}
-                    placeholder="01xxxxxxxxx"
-                    aria-invalid={errors.whatsapp ? true : undefined}
-                    aria-describedby={errors.whatsapp ? `${uid}-whatsapp-error` : undefined}
-                    className={cn(fieldClass, "text-start")}
-                  />
-                  <FieldError id={`${uid}-whatsapp-error`} message={errors.whatsapp} />
+                  {whatsappSeparate ? (
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor={`${uid}-whatsapp`} className="text-sm font-medium">
+                        {t("customer.whatsapp", "رقم الواتساب")}
+                      </label>
+                      <input
+                        id={`${uid}-whatsapp`}
+                        type="tel"
+                        inputMode="tel"
+                        dir="ltr"
+                        autoComplete="tel"
+                        value={whatsapp}
+                        onChange={(event) => {
+                          setWhatsapp(event.target.value);
+                          /**
+                           * ملاحظة ٣ — و`phoneConfirm` معه: كتابةُ رقمٍ صحيح
+                           * **هي** الإقرار في هذا الفرع (انظر `phoneConfirmed`)،
+                           * فإبقاء الخطأ يطالب بفعلٍ يفعله العميل الآن.
+                           */
+                          clearFieldError("whatsapp", "phoneConfirm");
+                        }}
+                        placeholder="01xxxxxxxxx"
+                        aria-invalid={errors.whatsapp ? true : undefined}
+                        aria-describedby={errors.whatsapp ? `${uid}-whatsapp-error` : undefined}
+                        className={cn(fieldClass, "text-start")}
+                      />
+                      <FieldError id={`${uid}-whatsapp-error`} message={errors.whatsapp} />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -1476,22 +1807,103 @@ export function Checkout({
         ) : null}
 
         {/* ------------------------- الخطوة ٣ ------------------------- */}
-        {reached >= 3 && step !== 3 ? (
-          <CollapsedStep
-            title={t(STEPS[2].key, STEPS[2].title)}
-            parts={paymentSummary}
-            editLabel={editLabel}
-            doneLabel={doneLabel}
-            onEdit={() => editStep(3)}
-            disabled={submitting}
-          />
-        ) : null}
-
         {step === 3 ? (
           <div {...stepPanelProps}>
             {/*
-              حقل الكوبون قبل اختيار خطة الدفع عمداً: العربون نسبة من الإجمالي،
-              فتطبيق الخصم بعد اختيار الخطة يغيّر الرقم تحت يد الزائر.
+              ══════════════════════════════════════════════════════════════════
+               🔴 تفصيل السعر **أولاً**، ورمز الخصم تحته — ملاحظة المالك ٧
+              ══════════════════════════════════════════════════════════════════
+
+              > «رمز الخصم أعلى الإجمالي ⇒ يُنقل أسفله.»
+
+              وهو ترتيب القراءة الطبيعي: **هذا سعرك، ألديك رمز؟** — لا العكس.
+              حقلٌ يسأل عن رمزٍ قبل أن يعرف العميل على أي رقمٍ سيقع خصمُه يطلب
+              منه قراراً بلا مرجع.
+
+              🔒 **والقيد الذي فرض الترتيب القديم لم يُنقض**: العربون **نسبةٌ من
+              الإجمالي**، فتطبيقُ الخصم بعد اختيار الخطة يغيّر الرقم تحت يد
+              الزائر. ولذلك نُقل الحقل إلى ما **بين** التفصيل وخطة الدفع — أسفل
+              الإجمالي كما أمر المالك، وقبل الخطة كما يفرض الحساب. ولا موضع
+              ثالث يفي بالاثنين.
+
+              ⚠ وصفوفُ الخصم والنقاط تبقى **حيث تُحسب**: داخل هذا التفصيل بترتيب
+                §٢ (الرحلة ← الكوبون ← النقاط ← الخدمات)، لا عند الحقل — فالحقل
+                مُدخَل، والصفوف نتيجة.
+            */}
+            <dl className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm">
+              {/*
+                تفصيل السعر بالخصم: الإجمالي قبل ← قيمة الخصم ← الإجمالي بعد.
+                ثلاثتها من `apply_discount`. وحين لا خصم يبقى الصف الواحد كما كان
+                حرفياً — لا صفوف صفرية تشوّش القراءة.
+              */}
+              {/*
+                ⚠ «الإجمالي» تصير كلمةً كاذبة كلما تلاها سطرٌ يطرح: خدماتٌ
+                تُضاف، أو نقاطٌ تُخصم. فالمدى `ride` يُحسب من **الاثنين معاً** لا
+                من الخدمات وحدها كما كان، وإلا قرأ صاحبُ الكوبون والنقاط
+                «الإجمالي بعد الخصم» ثم رأى تحته خصماً ثانياً.
+              */}
+              {discount ? (
+                <DiscountRows
+                  discount={discount}
+                  t={tDiscount}
+                  fmt={fmt}
+                  scope={hasExtras || redemption ? "ride" : "total"}
+                />
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">
+                    {hasExtras || redemption
+                      ? t("payment.rideTotal", "سعر الرحلة")
+                      : t("payment.total", "إجمالي الرحلة")}
+                  </dt>
+                  <dd className="font-medium">
+                    {fmt.money(hasExtras ? offer.rideTotal : offer.total, offer.currency)}
+                  </dd>
+                </div>
+              )}
+
+              {/*
+                النقاط **بعد** الكوبون وقبل الخدمات — ترتيب §٢ حرفياً. وموضع
+                هذه الصفوف في الشاشة هو نفسه موضع الطبقة في القاعدة، فما يقرؤه
+                العميل هو ما يجري فعلاً لا ترتيبٌ اختير للجمال.
+              */}
+              {redemption ? (
+                <RedeemRows
+                  redemption={redemption}
+                  t={tLoyalty}
+                  fmt={fmt}
+                  scope={hasExtras ? "ride" : "total"}
+                />
+              ) : null}
+
+              {/*
+                الخدمات سطراً سطراً ثم الإجمالي — الترتيب نفسه الذي تنفّذه
+                القاعدة: خصمٌ على الرحلة، ثم خدمات فوقه. عرضها داخل الخصم يوحي
+                بأن الكوبون يشملها وهو لا يشملها.
+              */}
+              {hasExtras ? (
+                <>
+                  {offer.extras.map((line) => (
+                    <div key={line.slug} className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">
+                        {line.qty > 1 ? `${line.title} × ${fmt.digits(line.qty)}` : line.title}
+                      </dt>
+                      <dd className="font-medium">
+                        {fmt.money(line.lineTotal, offer.currency)}
+                      </dd>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2">
+                    <dt className="font-semibold">
+                      {t("payment.grandTotal", "الإجمالي بعد الخدمات")}
+                    </dt>
+                    <dd className="font-bold">{fmt.money(effectiveTotal, offer.currency)}</dd>
+                  </div>
+                </>
+              ) : null}
+            </dl>
+
+            {/*
               ولا يظهر الحقل أصلاً حين يكون نظام الخصومات مطفأ — لا حقلاً معطَّلاً
               يعلن عن ميزة لا تعمل.
             */}
@@ -1608,79 +2020,12 @@ export function Checkout({
               </label>
             </div>
 
-            {/* خلاصة المبالغ حسب الاختيار */}
+            {/*
+              ما يُدفع الآن وما يتبقى — والتفصيل انتقل **أعلى حقل الخصم**
+              (ملاحظة ٧). وهذان الصفّان يخصّان **الخطة المختارة**، فموضعهما تحت
+              الخطة لا فوقها: يتغيّران بضغطة الزرّ الذي أعلاهما مباشرة.
+            */}
             <dl className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm">
-              {/*
-                تفصيل السعر بالخصم: الإجمالي قبل ← قيمة الخصم ← الإجمالي بعد.
-                ثلاثتها من `apply_discount`. وحين لا خصم يبقى الصف الواحد كما كان
-                حرفياً — لا صفوف صفرية تشوّش القراءة.
-              */}
-              {/*
-                ⚠ «الإجمالي» تصير كلمةً كاذبة كلما تلاها سطرٌ يطرح: خدماتٌ
-                تُضاف، أو نقاطٌ تُخصم. فالمدى `ride` يُحسب من **الاثنين معاً** لا
-                من الخدمات وحدها كما كان، وإلا قرأ صاحبُ الكوبون والنقاط
-                «الإجمالي بعد الخصم» ثم رأى تحته خصماً ثانياً.
-              */}
-              {discount ? (
-                <DiscountRows
-                  discount={discount}
-                  t={tDiscount}
-                  fmt={fmt}
-                  scope={hasExtras || redemption ? "ride" : "total"}
-                />
-              ) : (
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-muted-foreground">
-                    {hasExtras || redemption
-                      ? t("payment.rideTotal", "سعر الرحلة")
-                      : t("payment.total", "إجمالي الرحلة")}
-                  </dt>
-                  <dd className="font-medium">
-                    {fmt.money(hasExtras ? offer.rideTotal : offer.total, offer.currency)}
-                  </dd>
-                </div>
-              )}
-
-              {/*
-                النقاط **بعد** الكوبون وقبل الخدمات — ترتيب §٢ حرفياً. وموضع
-                هذه الصفوف في الشاشة هو نفسه موضع الطبقة في القاعدة، فما يقرؤه
-                العميل هو ما يجري فعلاً لا ترتيبٌ اختير للجمال.
-              */}
-              {redemption ? (
-                <RedeemRows
-                  redemption={redemption}
-                  t={tLoyalty}
-                  fmt={fmt}
-                  scope={hasExtras ? "ride" : "total"}
-                />
-              ) : null}
-
-              {/*
-                الخدمات سطراً سطراً ثم الإجمالي — الترتيب نفسه الذي تنفّذه
-                القاعدة: خصمٌ على الرحلة، ثم خدمات فوقه. عرضها داخل الخصم يوحي
-                بأن الكوبون يشملها وهو لا يشملها.
-              */}
-              {hasExtras ? (
-                <>
-                  {offer.extras.map((line) => (
-                    <div key={line.slug} className="flex items-center justify-between gap-3">
-                      <dt className="text-muted-foreground">
-                        {line.qty > 1 ? `${line.title} × ${fmt.digits(line.qty)}` : line.title}
-                      </dt>
-                      <dd className="font-medium">
-                        {fmt.money(line.lineTotal, offer.currency)}
-                      </dd>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2">
-                    <dt className="font-semibold">
-                      {t("payment.grandTotal", "الإجمالي بعد الخدمات")}
-                    </dt>
-                    <dd className="font-bold">{fmt.money(effectiveTotal, offer.currency)}</dd>
-                  </div>
-                </>
-              ) : null}
-
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">
                   {t("payment.dueNow", "المطلوب تحويله الآن")}
@@ -1700,36 +2045,48 @@ export function Checkout({
               ) : null}
             </dl>
 
-            <p className="flex items-start gap-2 rounded-2xl border border-border bg-background px-3 py-2.5 text-xs leading-6 text-muted-foreground">
-              <BadgeCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-              {t(
-                "payment.afterConfirm",
-                "بعد التأكيد تفتح لك صفحة الحجز بحسابات التحويل المتاحة، وترفع صورة الإيصال ليراجعه فريقنا. المبالغ النهائية تُثبَّت في تلك الصفحة."
-              )}
-            </p>
-
             {/*
-              مهلة حفظ الحجز — السطر الذي كان ناقصاً كلياً: العميل يؤكد ثم يذهب
-              ليحوّل، ولا أحد أخبره أن للحجز عمراً.
+              ══════════════════════════════════════════════════════════════════
+               🔴 صندوقُ تنبيهٍ **واحد** يحمل المعنيَين — ملاحظة المالك ٨
+              ══════════════════════════════════════════════════════════════════
 
-              🔒 **«محفوظ حتى» لا «يُلغى في»**: التاريخ أرضيةٌ آمنة لا موعد
-              إعدام — الكنس يستثني كذلك من عليه نشاط إيصالٍ حديث، فالمهلة تمتدّ
-              ولا تقصر. والصياغة تحتمل الامتداد ولا تحتمل خُلف الوعد.
+              كانا صندوقين مؤطَّرين متجاورين بنفس الحجم ونفس اللون: أحدهما «ماذا
+              يحدث بعد التأكيد»، والآخر «إلى متى يبقى حجزك». وإطارٌ ثانٍ ملاصقٌ
+              لإطارٍ أول يُقرأ **قسمين مختلفين** فتُقرأ الجملة الثانية على أنها
+              موضوعٌ جديد — وهما جملتان عن الشيء نفسه: ما بين التأكيد والتحويل.
 
-              وهي **معاينة** كمعاينة العربون فوقها تماماً: تُحسب من لحظة العرض،
-              والرقم المُلزِم يُثبَّت في صفحة المتابعة وهي مصدره الوحيد. ولذلك
-              لا تظهر إلا بتاريخٍ وصل فعلاً — وغيابها لا يترك فراغاً ولا وعداً.
+              فصارا صندوقاً واحداً بسطرين: الأول أيقونتُه ✅ (ما ستفعله)، والثاني
+              أيقونتُه ⏱ (المهلة التي تفعله فيها). **ولا نصَّ تغيّر بحرف** —
+              المفتاحان كما هما، فلا ترجمةٌ تُعاد ولا معنى يسقط.
+
+              🔒 و«محفوظ حتى» لا «يُلغى في»: التاريخ أرضيةٌ آمنة لا موعد إعدام —
+              الكنس يستثني من عليه نشاط إيصالٍ حديث، فالمهلة تمتدّ ولا تقصر.
+
+              وسطر المهلة **معاينة** كمعاينة العربون: يُحسب من لحظة العرض، والرقم
+              المُلزِم يُثبَّت في صفحة المتابعة وهي مصدره الوحيد. ولذلك لا يظهر
+              إلا بتاريخٍ وصل فعلاً — وغيابه يترك الصندوق بسطره الأول وحده، بلا
+              فراغٍ ولا وعد.
             */}
-            {holdUntilLabel ? (
-              <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-3 py-2.5 text-xs leading-6 text-muted-foreground">
-                <Clock className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+            <div className="flex flex-col gap-2 rounded-2xl border border-border bg-background px-3 py-2.5 text-xs leading-6 text-muted-foreground">
+              <p className="flex items-start gap-2">
+                <BadgeCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
                 {t(
-                  "payment.holdUntil",
-                  "ويبقى حجزك محفوظاً لك حتى {value} لإتمام التحويل — وبعدها قد يُلغى تلقائياً ويعود موعده متاحاً لغيرك.",
-                  { value: holdUntilLabel }
+                  "payment.afterConfirm",
+                  "بعد التأكيد تفتح لك صفحة الحجز بحسابات التحويل المتاحة، وترفع صورة الإيصال ليراجعه فريقنا. المبالغ النهائية تُثبَّت في تلك الصفحة."
                 )}
               </p>
-            ) : null}
+
+              {holdUntilLabel ? (
+                <p className="flex items-start gap-2 border-t border-border pt-2">
+                  <Clock className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  {t(
+                    "payment.holdUntil",
+                    "ويبقى حجزك محفوظاً لك حتى {value} لإتمام التحويل — وبعدها قد يُلغى تلقائياً ويعود موعده متاحاً لغيرك.",
+                    { value: holdUntilLabel }
+                  )}
+                </p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 

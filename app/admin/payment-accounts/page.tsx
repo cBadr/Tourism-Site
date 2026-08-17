@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
@@ -138,6 +139,12 @@ type AccountRow = {
   feeKind: PaymentFeeKind;
   feeValue: number;
   /**
+   * علامة الوسيلة كما يراها العميل بجانب اسمها (البند ١٢، الهجرة `0093`).
+   * **مسارٌ داخلي أو `null`** — والشكل مفروضٌ بقيدٍ في الجدول لا بعُرفٍ هنا،
+   * فحقلُ صورةٍ حرّ كان سيصير باب أول طلبٍ خارجي يصدره الموقع.
+   */
+  imageUrl: string | null;
+  /**
    * مرتبطٌ بمزوّد دفع (‏`payment_providers.account_id`) — وعاءُ تسويةٍ لا وجهةُ
    * تحويل. يُقرأ من الجدول لا من مقبض محفور، كحارسَي `0060` و`0066` تماماً.
    */
@@ -247,6 +254,8 @@ const LEGACY_COLUMNS =
 const TREASURY_COLUMNS = `${LEGACY_COLUMNS}, customer_facing`;
 /** ونفسها + عمودا العمولة اللذان تضيفهما هجرة `0066` */
 const FEE_COLUMNS = `${TREASURY_COLUMNS}, fee_kind, fee_value`;
+/** ونفسها + علامة الوسيلة التي تضيفها هجرة `0093` (البند ١٢) */
+const MARK_COLUMNS = `${FEE_COLUMNS}, image_url`;
 
 const isFeeKind = (v: unknown): v is PaymentFeeKind =>
   v === "none" || v === "fixed" || v === "percent";
@@ -261,6 +270,8 @@ async function loadAccounts(): Promise<{
   treasuryReady: boolean;
   /** عمودا العمولة موجودان — أي أن هجرة `0066` مطبَّقة */
   feeReady: boolean;
+  /** عمود العلامة موجود — أي أن هجرة `0093` مطبَّقة */
+  markReady: boolean;
 }> {
   const blank = {
     accounts: [] as AccountRow[],
@@ -270,6 +281,7 @@ async function loadAccounts(): Promise<{
     ready: false,
     treasuryReady: false,
     feeReady: false,
+    markReady: false,
   };
 
   const supabase = await createServerSupabase();
@@ -282,8 +294,8 @@ async function loadAccounts(): Promise<{
   // وحسابات تسوية المزوّدين تُقرأ من `payment_providers` لا من مقبض محفور:
   // بها تُعطَّل خانة العمولة على الوعاء الذي يرفضها المُشغّل أصلاً، فلا يقع
   // المالك على رفضٍ لم تحذّره منه الشاشة.
-  const [feeRes, currencyRes, providerRes] = await Promise.all([
-    order(supabase.from("payment_accounts").select(FEE_COLUMNS)),
+  const [markRes, currencyRes, providerRes] = await Promise.all([
+    order(supabase.from("payment_accounts").select(MARK_COLUMNS)),
     supabase.from("pricing_settings").select("currency").limit(1).maybeSingle(),
     supabase.from("payment_providers").select("account_id"),
   ]);
@@ -304,6 +316,13 @@ async function loadAccounts(): Promise<{
    * الاستعلام كله، فتصير الشاشة للقراءة فقط بلا سبب. نتراجع من الأحدث إلى
    * الأقدم ونطفئ ما يخصّ كل هجرة وحدها.
    */
+  // ⚠ والتراجع من الأحدث إلى الأقدم: `0093` ثم `0066` ثم `0015`. وطلبُ عمودٍ غير
+  //   موجود يُفشل الاستعلام **كله**، فبلا هذا التدرّج تصير الشاشة للقراءة فقط
+  //   على قاعدة ناقصةِ هجرةٍ واحدة — وهو ما بُني التدرّج له أصلاً.
+  const markReady = !markRes.error;
+  const feeRes = markReady
+    ? markRes
+    : await order(supabase.from("payment_accounts").select(FEE_COLUMNS));
   const feeReady = !feeRes.error;
   const treasuryRes = feeReady
     ? feeRes
@@ -340,6 +359,8 @@ async function loadAccounts(): Promise<{
       // أصلاً — لا حساب يحملها ولا لقطةَ حجز تعرفها
       feeKind: isFeeKind(feeKind) ? feeKind : ("none" as PaymentFeeKind),
       feeValue: asNumber(pick(row, ["fee_value", "feeValue"])) ?? 0,
+      // بلا الهجرة لا عمود ولا علامة — والبطاقة تعود إلى أيقونة عائلتها
+      imageUrl: asText(pick(row, ["image_url", "imageUrl"])),
       gatewayPot: gatewayPots.has(id),
     };
   });
@@ -353,6 +374,7 @@ async function loadAccounts(): Promise<{
     ready: true,
     treasuryReady,
     feeReady,
+    markReady,
   };
 }
 
@@ -372,6 +394,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   feekind: "نوع العمولة غير معروف — اختر «بلا عمولة» أو «مبلغ ثابت» أو «نسبة».",
   feevalue: `قيمة العمولة يجب أن تكون رقماً غير سالب، والمبلغ الثابت لا يتجاوز ${PAYMENT_FEE_MAX_FIXED}.`,
   feepercent: `نسبة العمولة لا تتجاوز ${PAYMENT_FEE_MAX_PERCENT}٪ — النسبة تُحسب من إجمالي الرحلة.`,
+  image:
+    "علامة الوسيلة يجب أن تكون مسار صورة داخلياً يبدأ بشرطة مائلة — مثل /img/pay-vodafone-cash.avif. لا يُقبل عنوان من نطاق خارجي: الموقع لا يصدر أي طلب لخارجه، وصورةٌ من نطاق غريب تُرسل عنوان كل زائر إليه. اتركه فارغاً لتعود الأيقونة الافتراضية. لم يتغير شيء.",
   feebound:
     "قاعدة البيانات رفضت قيمة العمولة: النسبة بين صفر ومئة، والمبلغ الثابت غير سالب، و«بلا عمولة» قيمتها صفر. لم يتغير شيء.",
   feedead:
@@ -853,9 +877,12 @@ function PaymentSettingsCard({
         </div>
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={readOnly}>
-            حفظ إعدادات الدفع
-          </Button>
+          <SaveButton
+            label="حفظ إعدادات الدفع"
+            disabled={readOnly}
+            errorMessages={ERROR_MESSAGES}
+            savedMessages={{ "1": "حُفظت إعدادات الدفع وانعكست على صفحة الحجز فوراً." }}
+          />
         </div>
       </Card>
     </form>
@@ -871,6 +898,7 @@ function AccountCard({
   confirmingDelete,
   treasuryReady,
   feeReady,
+  markReady,
 }: {
   account: AccountRow;
   usage: Usage | undefined;
@@ -880,6 +908,8 @@ function AccountCard({
   confirmingDelete: boolean;
   treasuryReady: boolean;
   feeReady: boolean;
+  /** هجرة `0093` مطبَّقة — وبلاها تُعطَّل خانة العلامة وتقول لماذا */
+  markReady: boolean;
 }) {
   const f = (field: string) => `acc-${account.id}-${field}`;
   const KindIcon = KIND_ICON[account.kind];
@@ -985,6 +1015,30 @@ function AccountCard({
             disabled={readOnly}
             help="يظهر للعميل ليطمئن أن التحويل وصل للجهة الصحيحة — اتركه فارغاً ليختفي."
           />
+          {/*
+            علامة الوسيلة (البند ١٢) — «أحياناً ما تكون الصورة أبلغ وأسرع في
+            توصيل المعلومة من المحتوى النصي». وموضعها بين ما يراه العميل على
+            البطاقة (الاسم · الرقم · صاحب الحساب) لا مع الحدود والأرصدة.
+
+            ⚠ **والمساعدة تقول القيد لا تُخفيه:** مسارٌ داخلي وحده. ولو كُتب
+            نطاقٌ خارجي لرفضته القاعدة (‏`payment_accounts_image_internal_chk`)
+            ورفضه الإجراء قبلها برسالةٍ صريحة — فلا يحفظ المالك قيمةً تختفي
+            صامتةً على الموقع.
+          */}
+          <TextField
+            id={f("image_url")}
+            label="علامة الوسيلة (صورة)"
+            name="image_url"
+            defaultValue={account.imageUrl}
+            dir="ltr"
+            disabled={readOnly || !markReady}
+            placeholder="/img/pay-vodafone-cash.avif"
+            help={
+              markReady
+                ? "مسار صورة داخلي يظهر بجانب اسم الوسيلة في صفحة الدفع — مثل /img/pay-vodafone-cash.avif. اتركه فارغاً لتعود الأيقونة الافتراضية. ولا يُقبل عنوان من نطاق خارجي: الموقع لا يصدر أي طلب لخارجه."
+                : "يحتاج هجرة 0093 — العمود غير موجود في قاعدتك بعد."
+            }
+          />
           <NumberField
             id={f("opening_balance")}
             label="الرصيد الافتتاحي"
@@ -1074,9 +1128,7 @@ function AccountCard({
               حذف
             </Link>
           )}
-          <Button type="submit" disabled={readOnly}>
-            حفظ الحساب
-          </Button>
+          <SaveButton label="حفظ الحساب" disabled={readOnly} errorMessages={ERROR_MESSAGES} />
         </div>
       </form>
 
@@ -1094,10 +1146,16 @@ function AccountCard({
             يخفيه عن العملاء ويُبقي سجله المالي متصلاً به.
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" variant="destructive" disabled={readOnly}>
-              <Trash2 />
-              تأكيد الحذف
-            </Button>
+            <SaveButton
+              label="تأكيد الحذف"
+              icon={<Trash2 />}
+              variant="destructive"
+              savedLabel="تم الحذف"
+              pendingLabel="جارٍ الحذف…"
+              failedLabel="لم يُحذف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
             <Link
               href="/admin/payment-accounts"
               className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
@@ -1116,7 +1174,7 @@ export default async function PaymentAccountsPage({
 }: PageProps<"/admin/payment-accounts">) {
   const [
     params,
-    { accounts, usage, usageReady, currency, ready, treasuryReady, feeReady },
+    { accounts, usage, usageReady, currency, ready, treasuryReady, feeReady, markReady },
     settings,
     pulse,
   ] = await Promise.all([
@@ -1223,6 +1281,7 @@ export default async function PaymentAccountsPage({
           confirmingDelete={removing === account.id}
           treasuryReady={treasuryReady}
           feeReady={feeReady}
+          markReady={markReady}
         />
       ))}
 
@@ -1342,10 +1401,15 @@ export default async function PaymentAccountsPage({
           />
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              إضافة الحساب
-            </Button>
+            <SaveButton
+              label="إضافة الحساب"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم يُضَف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

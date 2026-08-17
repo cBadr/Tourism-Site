@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { CheckCircle2, ExternalLink, Save, ShieldAlert } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -311,10 +312,15 @@ export default async function SeoSettingsPage({
         </Card>
 
         <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-background/95 py-3 backdrop-blur">
-          <Button type="submit" disabled={!wired}>
-            <Save />
-            حفظ إعدادات السيو
-          </Button>
+          <SaveButton
+            label="حفظ إعدادات السيو"
+            icon={<Save />}
+            disabled={!wired}
+            errorMessages={ERROR_MESSAGES}
+            savedMessages={{
+              "1": "حُفظت إعدادات السيو وانعكست على كل صفحات الموقع فوراً.",
+            }}
+          />
         </div>
       </form>
 

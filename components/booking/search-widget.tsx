@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   CalendarClock,
-  ChevronDown,
   Flag,
   LoaderCircle,
   Luggage,
@@ -12,6 +11,7 @@ import {
   Plus,
   Repeat,
   Search,
+  Sparkles,
   TriangleAlert,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
@@ -35,7 +35,12 @@ import {
   type TripSummary,
 } from "./offers";
 import { ExtrasPicker } from "./extras-picker";
-import { todayInputValue, toIsoFromLocalInputs, minInputValues } from "./checkout/datetime";
+import {
+  todayInputValue,
+  toIsoFromLocalInputs,
+  minInputValues,
+  splitLocalDateTime,
+} from "./checkout/datetime";
 import { previewLeadTime } from "./checkout/lead-time-action";
 import type { LeadTime } from "./checkout/lead-time";
 import {
@@ -107,6 +112,15 @@ import {
  *     **`toIsoFromCairoInputs` نفسها** — فمسار التحويل إلى توقيت القاهرة يبقى
  *     واحداً كما تفرض ترويسة `checkout/datetime.ts`، وأرضيةُ المهلة تبقى
  *     مشتقّةً من `booking_min_pickup_at()` وحدها بلا معادلة ثانية.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  ملاحظة المالك ١ (2026-08-17) — الخدمات **مربّعاتٌ معروضة** لا لوحةٌ تُفتح
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * زرُّ الإفصاح وبطاقاتُه زالا، ومكانهما سطرُ عنوانٍ ومربّعاتٌ تلتفّ أفقياً
+ * (‏`extras-picker.tsx`، والقياس والتعليل في ترويسته). و**الحمولة لم تتغيّر
+ * بحرف**: `toSelection(quantities)` هي هي، ورموزٌ وكمياتٌ فقط تمضي إلى
+ * `/api/quote` (‏D-09).
  */
 
 const MIN_PASSENGERS = 1;
@@ -189,17 +203,10 @@ export type SearchWidgetProps = {
   placeSearch?: PlaceSearchSettings;
 };
 
-/* ------------------------------------------------------------------ */
-/* شطر قيمة datetime-local إلى الحقلين اللذين يعرفهما مسار التحويل      */
-/* ------------------------------------------------------------------ */
-
 /**
- * `<input type="datetime-local">` يُخرج "YYYY-MM-DDTHH:mm" (وقد يُلحق ثوانيَ).
- *
- * 🔒 **ولا يُبنى منه تاريخٌ هنا إطلاقاً.** الشطر وحده، ثم يمضي الجزآن إلى
- * `toIsoFromCairoInputs` — الدالة الوحيدة المسموح لها بتفسير ما كتبه العميل على
- * ساعة القاهرة. وأي `new Date(value)` في هذا الملف كان سيفسّره **بمنطقة جهاز
- * الزائر**، وهو بعينه العطل الذي عولج في الدفعة م‑٢.
+ * ⚠ **شطر `datetime-local` انتقل إلى `checkout/datetime.ts`** حين صار الحقل
+ * الواحد شكلَ النموذجين معاً (ملاحظة المالك ٢): الحاسبة هنا ومسار الحجز هناك.
+ * والشطر مجاورٌ الآن لمسار التحويل الذي يغذّيه ولأرضيته، فلا نسختان تنحرفان.
  */
 /**
  * 🔴 اسمُ المكان في سطر الملخّص — **المقطع الأول قبل الفاصلة وحده**.
@@ -219,13 +226,6 @@ export type SearchWidgetProps = {
 function shortPlaceLabel(label: string): string {
   const head = label.split(/[,،]/)[0]?.trim() ?? "";
   return head.length >= 3 ? head : label;
-}
-
-function splitLocalDateTime(value: string): [string, string] {
-  if (!value) return ["", ""];
-  const [date = "", rest = ""] = value.split("T");
-  // الثواني تُقصّ: مُحلِّل الوقت يقبل HH:mm، والحقل لا يعرض ثوانيَ أصلاً
-  return [date, rest.slice(0, 5)];
 }
 
 /* ------------------------------------------------------------------ */
@@ -336,6 +336,8 @@ export function SearchWidget({
   placeSearch = PLACE_SEARCH_DEFAULTS,
 }: SearchWidgetProps) {
   const t = useT("booking.search");
+  /** «اختياري» مشتركةٌ مع مسار الحجز — مساحةٌ واحدة لكلمةٍ واحدة */
+  const tCommon = useT("common");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
   const uid = React.useId();
   const originId = `${uid}-origin`;
@@ -363,7 +365,6 @@ export function SearchWidget({
   const [pickupLocal, setPickupLocal] = React.useState("");
   const [returnLocal, setReturnLocal] = React.useState("");
   const [quantities, setQuantities] = React.useState<Record<string, number>>({});
-  const [extrasOpen, setExtrasOpen] = React.useState(false);
 
   const [pending, setPending] = React.useState(false);
   const [hint, setHint] = React.useState<string | null>(null);
@@ -1370,48 +1371,57 @@ export function SearchWidget({
         ) : null}
 
         {/*
-          خيارات إضافية: **الخدمات** لا ساعات الانتظار (حُذف حقلها في الدفعة ٣).
-          والكتالوج الفارغ لا يعرض شيئاً إطلاقاً — لا زرّ ولا صندوق.
+          ══════════════════════════════════════════════════════════════════
+           🔴 الخدمات الإضافية — مربّعاتٌ **معروضة** لا لوحةٌ تُفتح (ملاحظة ١)
+          ══════════════════════════════════════════════════════════════════
+
+          أمرُ المالك: «تُضاف وتُلغى **بلمسة**». وزرُّ الإفصاح كان يجعلها لمستين
+          (افتح ثم انقر) ويُخفي عن أكثر العملاء أن الخدمة موجودة أصلاً — وهو
+          نصفُ الشكوى الأخرى («اختفت»). فحلّ محلّه سطرُ عنوانٍ ساكن، والمربّعات
+          تحته مباشرة.
+
+          🔒 **والثمن مقيس لا مقدَّر**: الكتلة كانت ١٩٨ بكسل لخدمةٍ واحدة
+          (بطاقة ٧٩٠×١٢٢ + زرّ + سطر شرح)، وصارت المربّعات تلتفّ أفقياً فتنمو
+          في العرض قبل الطول — أي أن عشر خدماتٍ تُضيف صفَّين لا عشر بطاقات.
+
+          ⚠ **وسطرُ الشرح لا يظهر إلا لمن اختار فعلاً**: هو يشرح **أثر** الخدمة
+            على الإجمالي وعلى الكوبون، ومن لم يُضف شيئاً لا أثر عنده يُشرَح —
+            فبقاؤه دائماً كان ثِقلاً على من لا يريد الخدمة، وهو عين ما نُصلحه.
+
+          والكتالوج الفارغ لا يعرض شيئاً إطلاقاً — لا عنوان ولا مربّع ولا سطر.
         */}
         {hasExtras ? (
-          <div className="flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={() => setExtrasOpen((current) => !current)}
-              aria-expanded={extrasOpen}
-              aria-controls={extrasId}
-              className="-mx-2 inline-flex w-fit items-center gap-1.5 rounded-lg px-2 py-2 text-sm font-medium text-primary transition-colors hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <ChevronDown
-                className={cn("size-4 transition-transform duration-200", extrasOpen && "rotate-180")}
-                aria-hidden="true"
-              />
-              {t("extras.toggle", "خدمات إضافية")}
+          <div role="group" aria-labelledby={extrasId} className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Sparkles className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span id={extrasId}>{t("extras.heading", "خدمات إضافية")}</span>
+              <span className="text-xs font-normal text-muted-foreground">
+                ({tCommon("optional", "اختياري")})
+              </span>
               {selection.length > 0 ? (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold">
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
                   {fmt.number(selection.length)}
                 </span>
               ) : null}
-            </button>
+            </div>
 
-            {extrasOpen ? (
-              <div id={extrasId} className="flex flex-col gap-2">
-                <ExtrasPicker
-                  extras={extras}
-                  quantities={quantities}
-                  onChange={updateQuantity}
-                  idPrefix={extrasId}
-                  t={t}
-                  fmt={fmt}
-                  disabled={pending}
-                />
-                <p className="text-xs leading-5 text-muted-foreground">
-                  {t(
-                    "services.note",
-                    "تُضاف الخدمات إلى إجمالي الحجز كبند مستقل بعد سعر الرحلة، ولا يشملها رمز الخصم."
-                  )}
-                </p>
-              </div>
+            <ExtrasPicker
+              extras={extras}
+              quantities={quantities}
+              onChange={updateQuantity}
+              idPrefix={extrasId}
+              t={t}
+              fmt={fmt}
+              disabled={pending}
+            />
+
+            {selection.length > 0 ? (
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t(
+                  "services.note",
+                  "تُضاف الخدمات إلى إجمالي الحجز كبند مستقل بعد سعر الرحلة، ولا يشملها رمز الخصم."
+                )}
+              </p>
             ) : null}
           </div>
         ) : null}

@@ -5,9 +5,9 @@ import { ExportLink } from "@/components/admin/export-link";
 import { PrintButton } from "@/components/admin/print-button";
 import { PrintHeader } from "@/components/admin/print-header";
 import { toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -702,10 +702,14 @@ export default async function ExpensesPage({
 
           <Separator />
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              تسجيل المصروف
-            </Button>
+            <SaveButton
+              label="تسجيل المصروف"
+              icon={<Plus />}
+              savedLabel="تم التسجيل"
+              pendingLabel="جارٍ التسجيل…"
+              failedLabel="لم يُسجَّل"
+              disabled={readOnly}
+            />
           </div>
         </Card>
       </form>

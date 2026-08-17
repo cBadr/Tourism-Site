@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ConciergeBell, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
@@ -424,9 +425,7 @@ function ExtraCard({
               حذف
             </Link>
           )}
-          <Button type="submit" disabled={readOnly}>
-            حفظ الخدمة
-          </Button>
+          <SaveButton label="حفظ الخدمة" disabled={readOnly} errorMessages={ERROR_MESSAGES} />
         </div>
       </form>
 
@@ -445,10 +444,16 @@ function ExtraCard({
             الحجز فوراً ويُبقي تفسير سعر تلك الحجوزات سليماً.
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" variant="destructive" disabled={readOnly}>
-              <Trash2 />
-              تأكيد الحذف
-            </Button>
+            <SaveButton
+              label="تأكيد الحذف"
+              icon={<Trash2 />}
+              variant="destructive"
+              savedLabel="تم الحذف"
+              pendingLabel="جارٍ الحذف…"
+              failedLabel="لم يُحذف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
             <Link
               href="/admin/extras"
               className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
@@ -686,10 +691,15 @@ export default async function ExtrasPage({ searchParams }: PageProps<"/admin/ext
           </Label>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              إضافة الخدمة
-            </Button>
+            <SaveButton
+              label="إضافة الخدمة"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم تُضَف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

@@ -6,7 +6,7 @@ import type { BrandPalette } from "@/lib/site-config";
 import { saveSettings } from "./actions";
 import { TripSettingsSection } from "./_components/trip-settings-section";
 import { HelpTip } from "@/components/shared/HelpTip";
-import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -121,7 +121,7 @@ const COLOR_GROUPS: ReadonlyArray<{
   },
   {
     title: "الأرضيات الداكنة",
-    hint: "أربع رتب بالترتيب من أعمق خلفية إلى البطاقة التي تعلوها، ثم الحدّ الفاصل بينها.",
+    hint: "أربع رتب بالترتيب من أعمق خلفية إلى البطاقة التي تعلوها، ثم الحدّ الفاصل بينها. وحدُّ الحقول (المدخلات والأزرار المحدَّدة) يأخذ درجةَ هذا الحدّ ونبرته، ثم تُصحَّح إضاءته آلياً حتى يبلغ ٣:١ — شرطُ إتاحةٍ لا خيار، فلا يمكن ضبطه على درجةٍ تُخفي الحقل.",
     fields: [
       ["ink", "الأرضية الداكنة الأساسية"],
       ["ink1", "الأرضية الداكنة — الرتبة الثانية"],
@@ -131,7 +131,7 @@ const COLOR_GROUPS: ReadonlyArray<{
   },
   {
     title: "الأرضيات الفاتحة",
-    hint: "خلفية الأقسام الفاتحة، والبطاقات التي تعلوها، والحدّ الفاصل بينها.",
+    hint: "خلفية الأقسام الفاتحة، والبطاقات التي تعلوها، والحدّ الفاصل بينها. وحدُّ الحقول يتبع هذا الحدّ في الدرجة والنبرة بإضاءةٍ مصحَّحة آلياً إلى ٣:١ — كنظيره على الداكن.",
     fields: [
       ["sand", "الأرضية الفاتحة الأساسية"],
       ["sand2", "أرضية البطاقات على الفاتح"],
@@ -180,6 +180,10 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
     env: "قاعدة البيانات غير مربوطة — لا يمكن الحفظ بعد.",
     name: "اسم العلامة التجارية حقل إلزامي.",
     save: "فشل الحفظ — تأكد أنك مسجل الدخول بحساب دوره admin (راجع supabase/README.md، فخ الصفوف الصفرية).",
+    // 🔴 تصادم وجهة إشعارات التشغيل (0057) — رمزٌ من `hint` تترجمه الشاشة، ولا
+    // يسقط في «فشل الحفظ» فتُتَّهم الصلاحيات في تصادم بيانات
+    "ops-telegram-taken":
+      "معرّف محادثة تليجرام الذي أدخلتَه مربوط بأحد المتعهدين في «قنوات التنبيه» عنده. ولو صار وجهةَ إشعارات الإدارة لوصلته كل إشعارات المنصة — وفيها أسماء العملاء وأرقامهم وأسعارهم وهامشنا. استخدم محادثة مستقلة للإدارة، أو افصل ربط ذلك المتعهد أولاً من صفحته في «المتعهدون». ولم يُحفظ شيء من هذا النموذج.",
     // ── إعدادات الرحلات (هجرة 0027): رمز مستقل لكل سبب، فلا تُتَّهم الصلاحيات في خطأ إدخال
     timeout:
       "المهلة يجب أن تكون عدداً صحيحاً من الدقائق بين ١٥ و٤٣٢٠٠ (ثلاثين يوماً) — وهو نفس المدى المفروض في قاعدة البيانات.",
@@ -546,9 +550,12 @@ export default async function SettingsPage({ searchParams }: PageProps<"/admin/s
 
         <Separator />
         <div className="flex items-center justify-end gap-3">
-          <Button type="submit" disabled={!wired}>
-            حفظ الإعدادات
-          </Button>
+          <SaveButton
+            label="حفظ الإعدادات"
+            disabled={!wired}
+            errorMessages={errorMessages}
+            savedMessages={SAVED_MESSAGES}
+          />
         </div>
       </form>
 

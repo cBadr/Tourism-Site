@@ -184,9 +184,9 @@ export async function TripCrewPanel({ trip, past }: { trip: PortalTrip; past?: b
     roster.vehicles,
     crew?.vehicleId ?? null,
     vehicleText,
-    "متوقفة"
+    "خارج الخدمة"
   );
-  const driverOptions = toOptions(roster.drivers, crew?.driverId ?? null, driverText, "متوقف");
+  const driverOptions = toOptions(roster.drivers, crew?.driverId ?? null, driverText, "خارج الخدمة");
 
   const field = (name: string) => `crew-${bookingId}-${name}`;
 

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { formatAmount, formatDateLabel, formatMoney } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
@@ -305,9 +306,7 @@ function SettingsCard({
         </div>
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={readOnly}>
-            حفظ الإعدادات
-          </Button>
+          <SaveButton label="حفظ الإعدادات" disabled={readOnly} errorMessages={ERROR_MESSAGES} />
         </div>
       </form>
     </Card>
@@ -528,10 +527,15 @@ export default async function DiscountsPage({ searchParams }: PageProps<"/admin/
           </div>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              إضافة الكوبون
-            </Button>
+            <SaveButton
+              label="إضافة الكوبون"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم يُضَف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

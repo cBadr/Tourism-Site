@@ -16,7 +16,6 @@ import {
   CreditCard,
   Hourglass,
   Info,
-  Landmark,
   Link2,
   Luggage,
   MessageCircle,
@@ -51,6 +50,7 @@ import {
   preferredAccountId,
 } from "@/components/booking/checkout/transfer-preference";
 import { CopyButton } from "@/components/booking/checkout/copy-button";
+import { safeMediaSrc } from "@/components/sections/image";
 import {
   PAY_SECTION_ANCHOR,
   RouteMapFigure,
@@ -477,8 +477,8 @@ function latestRejection(receipts: ReceiptView[]): ReceiptView | null {
 const STATUS_STEPS = [
   { key: "pendingPayment", label: "بانتظار الدفع", icon: Wallet },
   { key: "underReview", label: "قيد المراجعة", icon: Hourglass },
-  { key: "confirmed", label: "مؤكد", icon: BadgeCheck },
-  { key: "completed", label: "منفذ", icon: CircleCheck },
+  { key: "confirmed", label: "تم التأكيد", icon: BadgeCheck },
+  { key: "completed", label: "تم التنفيذ", icon: CircleCheck },
 ] as const;
 
 /**
@@ -548,25 +548,55 @@ function StatusStepper({ status, t }: { status: TrackedStatus; t: Tx }) {
 type PaymentAccountView = PaymentAccountChoice;
 
 /**
- * أيقونة الوعاء واسمه — **عرضٌ محض**. القائمة نفسها تصل مرشَّحة من
- * `available_payment_accounts`، ولا يقرر أي سطر هنا ظهور حساب من عدمه: نوعٌ
- * غير معروف يأخذ الأيقونة الافتراضية ويُعرض كما وصل، فإضافة نوع في القاعدة
- * لا تحتاج نشرةً هنا.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *  البند ١١ — «تصنيفات طرق الدفع خاطئة». ما قِيس، وما كان العطل فعلاً
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * **الفرضية في الموجز كانت أن التصنيف قائمةٌ محفورة هنا. والقياس أسقطها:**
+ * العائلة تُشتقّ في SQL بـ`payment_account_family(kind)` (‏`0070`) وهي **صحيحة**،
+ * مقيسةً على القاعدة الحيّة: `instapay` و`wallet` ⇒ `wallet` · `bank` ⇒ `bank` ·
+ * `card` ⇒ `card`. والجدولان أدناه احتياطيُّ ترجمةٍ لا قائمةُ سماح.
+ *
+ * **والعطل كان في العرض، وقِيس على الشاشة نفسها** (‏TR-MECP6W، أربعة حسابات
+ * معروضة). المصيَّر فعلاً:
+ *
+ *     انستا باي            ← الاسم
+ *     انستا باي            ← «النوع» — الكلمة نفسها حرفياً، مرتين
+ *     ▸ طرق دفع أخرى (٣)
+ *         محافظ إلكترونية  → فودافون كاش      ← عنوانٌ فوق **واحدةٍ من محفظتين**
+ *         حسابات بنكية     → البنك العربي الإفريقي · بنك الكويت الوطني
+ *
+ * **ثلاثة عيوب متمايزة، وكلٌّ منها مقيس:**
+ *
+ *  (١) 🔴 **التصنيف يُقال مرتين لكل صف، ويتناقض مع نفسه.** السطر الثاني كان
+ *      `ACCOUNT_KIND_FALLBACK[kind]` — أي تصنيفٌ بالـ`kind`، والعنوان فوقه
+ *      تصنيفٌ بالـ`family`. فداخل «محافظ إلكترونية» يقول كل صفٍّ «محفظة
+ *      إلكترونية» (تكرارٌ للعنوان)، **و`instapay` يقول «انستا باي» — اسمَ الحساب
+ *      نفسه**. تصنيفان لفكرةٍ واحدة، أحدهما يعيد العنوان والآخر يعيد الاسم.
+ *
+ *  (٢) 🔴 **والأيقونة كانت تكذّب المجموعة.** `instapay: Landmark` — و`Landmark`
+ *      هو رمز **البنك** (مبنى بأعمدة)، بينما `bank: Building2` مبنى مكاتب. أي
+ *      أن الحساب الواقع تحت «محافظ إلكترونية» يلبس رمز بنك، والبنوك تلبس رمزاً
+ *      عاماً. **فأُسندت الأيقونة إلى `family`** — نفس المصدر الذي يُسمّي
+ *      المجموعة، فلا يمكن للرمز أن يخالف العنوان فوقه بنيوياً.
+ *
+ *  (٣) **والعنوان كان يصف نصف عائلته.** التجميع يقع على `rest` (ما بعد إبراز
+ *      الخيار المفضَّل)، فـ«محافظ إلكترونية» تغطي فودافون كاش وحدها وانستا باي
+ *      محفظةٌ كذلك لكنها فوق الكشف. **والعلاج ليس نقل التجميع** — الإبراز قرارٌ
+ *      معتمد (ن‑٩ ب-١) وإلغاؤه نقضٌ له — بل **أن يُقال التصنيف مرةً واحدة في
+ *      الموضع الذي لا عنوانَ فيه**: البطاقةُ المُبرَزة تحمل عائلتها نصّاً، ومن
+ *      تحت عنوانٍ يذكرها لا يعيدها. فلا صفَّ بلا تصنيف، ولا صفَّ بتصنيفين.
+ *
+ * ⚠ **ولا قائمة أنواع تحكم الظهور في أي طبقة** — لا هنا ولا في SQL. الحكم
+ *   `active AND customer_facing` وحدهما عبر `payment_account_customer_visible`.
+ *   ونوعٌ يضيفه بدر غداً بلا مدخلٍ في الجدولين يظهر بمفتاح عائلته وبأيقونةٍ
+ *   افتراضية — **لأن حساباً لا يُعرض مالٌ لا يصل**.
  */
-const ACCOUNT_ICON: Record<string, typeof Wallet> = {
+const FAMILY_ICON: Record<string, typeof Wallet> = {
   wallet: Wallet,
-  instapay: Landmark,
   bank: Building2,
   card: CreditCard,
   cash: Banknote,
-};
-
-const ACCOUNT_KIND_FALLBACK: Record<string, string> = {
-  wallet: "محفظة إلكترونية",
-  instapay: "انستا باي",
-  bank: "حساب بنكي",
-  card: "بطاقة",
-  cash: "نقدي",
 };
 
 /**
@@ -581,6 +611,53 @@ const ACCOUNT_FAMILY_FALLBACK: Record<string, string> = {
   cash: "نقداً",
   other: "طرق أخرى",
 };
+
+/** اسم العائلة مفرداً — لبطاقةٍ واحدة لا لعنوان مجموعة */
+const ACCOUNT_FAMILY_ONE_FALLBACK: Record<string, string> = {
+  wallet: "محفظة إلكترونية",
+  bank: "حساب بنكي",
+  card: "بطاقة",
+  cash: "نقداً",
+  other: "طريقة أخرى",
+};
+
+/**
+ * علامة الوسيلة (البند ١٢) — «الصورة أبلغ وأسرع في توصيل المعلومة من النص».
+ *
+ * وهو محقّ لسببٍ أدقّ من الجمال: العميل **يتعرّف** على علامة فودافون كاش ولا
+ * **يقرأ** اسمها، وصفحةٌ كل غرضها أن يدفع لا تملك ثانيةً تُهدر في قراءة.
+ *
+ * 🔒 **والمسار يمرّ بـ`safeMediaSrc` — الحارس نفسه الذي يحرس كل صورة في الموقع**
+ * (الذهبية ١٢: فوِّض ولا تستنسخ). وهي الطبقة الثانية لا الأولى: القيد
+ * `payment_accounts_image_internal_chk` في `0093` يمنع تخزين غير المسار الداخلي
+ * أصلاً، فالموقع يبقى بصفر طلبات خارجية حتى لو كتب أحدٌ في الجدول من تحت اللوحة.
+ *
+ * **و`alt=""` مقصود لا سهو:** الاسم مكتوبٌ بجانب العلامة مباشرةً، فنصٌّ بديل
+ * يعيده يجعل قارئ الشاشة ينطق «فودافون كاش فودافون كاش». الصورة هنا **تعزيزٌ
+ * بصري** لنصٍّ حاضر — وهو تعريف الصورة الزخرفية.
+ *
+ * و`object-contain`: الشعارات مستطيلةٌ ومربّعةٌ ومختلفة النسب، و`cover` كان
+ * سيقصّ حرفاً من علامةٍ ويشوّه أخرى.
+ */
+function AccountMark({ account }: { account: PaymentAccountView }) {
+  const src = safeMediaSrc(account.imageUrl);
+  if (src !== null) {
+    return (
+      <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
+        {/* eslint-disable-next-line @next/next/no-img-element -- لا remotePatterns للتخزين (نفس حجّة components/sections/image.tsx) */}
+        <img src={src} alt="" loading="lazy" decoding="async" className="size-full object-contain" />
+      </span>
+    );
+  }
+  // بلا علامة: أيقونة العائلة — **من `family` لا من `kind`**، فلا تخالف عنوان
+  // المجموعة فوقها (العيب ٢ أعلاه). والمجهول يأخذ المحفظة افتراضاً ولا يسقط.
+  const Icon = FAMILY_ICON[account.family] ?? Wallet;
+  return (
+    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+      <Icon className="size-5" aria-hidden="true" />
+    </span>
+  );
+}
 
 type AccountGroup = { family: string; accounts: PaymentAccountView[] };
 
@@ -635,6 +712,7 @@ function AccountOption({
   checked,
   cheapest,
   showAmount,
+  showFamily,
   currency,
   fmt,
   t,
@@ -645,16 +723,27 @@ function AccountOption({
   cheapest: boolean;
   /** يُظهر المطلوب على السطر نفسه — لا يُطلب إلا حين تختلف الأرقام (ن‑٩ ب-٤) */
   showAmount: boolean;
+  /**
+   * أيُذكر التصنيف على هذه البطاقة؟ — **البند ١١، العيبان (١) و(٣).**
+   *
+   * `true` للبطاقة المُبرَزة وحدها: هي الوحيدة التي لا عنوانَ مجموعةٍ فوقها،
+   * فبلا هذا السطر لا يعرف العميل أن انستا باي محفظةٌ كذلك. و`false` لما تحت
+   * عنوانٍ يذكر العائلة — **فلا يُقال التصنيف مرتين لصفٍّ واحد**.
+   */
+  showFamily: boolean;
   currency: string;
   fmt: LocaleFormatter;
   t: Tx;
 }) {
-  const Icon = ACCOUNT_ICON[account.kind] ?? Wallet;
   const inputId = `transfer-account-${account.id}`;
-  const kindLabel = t(
-    `pay.accountKind.${account.kind}`,
-    ACCOUNT_KIND_FALLBACK[account.kind] ?? ""
-  );
+  // 🔒 المفتاح `family` لا `kind`: هو ما يُسمّي المجموعة، فلا ينطق الصفُّ تصنيفاً
+  //    يخالف عنوانه — ولا يعيد اسم الحساب حرفياً كما كان يفعل `instapay`.
+  const familyLabel = showFamily
+    ? t(
+        `pay.accountFamilyOne.${account.family}`,
+        ACCOUNT_FAMILY_ONE_FALLBACK[account.family] ?? ""
+      )
+    : "";
 
   return (
     <li
@@ -688,9 +777,7 @@ function AccountOption({
         htmlFor={inputId}
         className="flex cursor-pointer items-center gap-2.5 p-4 ps-11"
       >
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-          <Icon className="size-5" aria-hidden="true" />
-        </span>
+        <AccountMark account={account} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-bold">
             {account.label}
@@ -700,8 +787,8 @@ function AccountOption({
               </span>
             ) : null}
           </span>
-          {kindLabel ? (
-            <span className="text-xs leading-5 text-muted-foreground">{kindLabel}</span>
+          {familyLabel ? (
+            <span className="text-xs leading-5 text-muted-foreground">{familyLabel}</span>
           ) : null}
         </span>
 
@@ -782,7 +869,7 @@ function AccountOption({
           <p className="text-xs leading-5 text-muted-foreground">
             {t(
               "pay.feeNote",
-              "عمولة تحويل هذا الحساب — تختلف من حساب لآخر، فاختر ما يناسبك. وهي ثابتة على حجزك هذا مهما تغيّرت لاحقاً."
+              "عمولة هذا الحساب وحده، وهي ثابتة على حجزك مهما تغيّرت لاحقاً."
             )}
           </p>
         ) : null}
@@ -847,6 +934,8 @@ function AccountChooser({
           checked
           cheapest={primary.id === cheapestId}
           showAmount={anyFee}
+          // 🔒 هنا وحدها — لا عنوانَ مجموعةٍ فوق المُبرَزة (البند ١١)
+          showFamily
           currency={currency}
           fmt={fmt}
           t={t}
@@ -900,6 +989,8 @@ function AccountChooser({
                       checked={false}
                       cheapest={account.id === cheapestId}
                       showAmount={anyFee}
+                      // العنوان فوقها يقول العائلة — فلا تُقال ثانيةً في الصف
+                      showFamily={false}
                       currency={currency}
                       fmt={fmt}
                       t={t}
@@ -938,7 +1029,7 @@ const RECEIPT_STATUS_META: Record<
   },
   approved: {
     key: "receipts.status.approved",
-    label: "اعتُمد",
+    label: "تم الاعتماد",
     badge: "bg-primary/10 text-primary",
     icon: BadgeCheck,
   },
@@ -1062,11 +1153,31 @@ const PRINT_CSS = `
     content-visibility: visible !important;
     block-size: auto !important;
   }
+  /* 🖨 وطيّةُ الحساب تُفتح كذلك (٩): الورقة تحمل الحساب كاملاً — طيٌّ يصلح
+     لشاشةٍ تُنقر لا لورقةٍ لا يُنقر فيها شيء. ونفس القاعدة الثلاثية التي تفتح
+     «طرق دفع أخرى» أعلاه، لأن \`::details-content\` هو ما يحجب فعلاً.
+     ⚠ والغلاف يبقى ظاهراً هنا خلافاً لذاك: هو سطرُ «تفصيل الحساب» والإجمالي،
+     أي عنوانُ القسم على الورق — لا زرَّ فتحٍ يذهب معه. */
+  .print-sheet details.sheet-fold { border: 0 !important; }
+  .print-sheet details.sheet-fold > summary { list-style: none !important; }
+  /* والحشو الداخلي يُصفَّر: الإطار أعلاه يحمل حشو البطاقة، وإبقاء \`p-5\` معه
+     يُخرج الطيّة بضعف هامش أخواتها على الورق */
+  .print-sheet details.sheet-fold > summary,
+  .print-sheet details.sheet-fold > div { padding: 0 !important; }
+  .print-sheet details.sheet-fold > div { gap: 8px !important; }
+  .print-sheet details.sheet-fold::details-content {
+    content-visibility: visible !important;
+    block-size: auto !important;
+  }
   .print-sheet .print-only { display: block !important; }
   .print-sheet [aria-current="step"] { outline: 1px solid #000 !important; }
   .print-sheet .sheet-hero { padding-top: 0 !important; padding-bottom: 8px !important; }
   .print-sheet .sheet-body { gap: 10px !important; padding: 0 !important; }
-  .print-sheet .sheet-body > section {
+  /* ⚠ و\`details.sheet-fold\` معها: طيّة الحساب **أختُ البطاقات لا حاشية**، وبلا
+     ذكرها هنا تخرج على الورق بلا إطارٍ ولا هامش بين إخوةٍ كلُّهم مُحاطون —
+     فتُقرأ زائدةً على الورقة وهي أهمُّ ما فيها بعد أرقام التحويل. */
+  .print-sheet .sheet-body > section,
+  .print-sheet .sheet-body > details.sheet-fold {
     border: 1px solid #999 !important;
     padding: 10px 12px !important;
     break-inside: avoid;
@@ -1412,6 +1523,10 @@ export default async function BookingStatusPage({ params }: PageParams) {
         label: readText(row, "label") ?? t("pay.accountFallbackLabel", "حساب تحويل"),
         handle: readText(row, "handle") ?? "",
         holderName: readText(row, "holder_name", "holderName"),
+        // علامة الوسيلة (البند ١٢، الهجرة `0093`). والغياب هو الحال الافتراضي —
+        // قاعدةٌ بلا الهجرة، أو حسابٌ لم يضبط بدر صورته: تعود البطاقة إلى أيقونة
+        // عائلتها ولا يسقط الحساب.
+        imageUrl: readText(row, "image_url", "imageUrl"),
         // العمولة والإجماليان يصلان **محسوبَين** من الدالة (ن‑١). والسقوط على
         // `amountDue`/`total` ليس تجميلاً: قاعدةٌ بلا هجرة `0066` لا تُرجع
         // الأعمدة الثلاثة، والصفحة يجب أن تعرض أرقامها الصحيحة لا فراغاً.
@@ -1573,6 +1688,459 @@ export default async function BookingStatusPage({ params }: PageParams) {
   const whatsapp = settings.contact.whatsapp;
   const phone = settings.contact.phone;
 
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   *  البندان ٩ و١٣ — الترتيب يتبع الهدف، والهدف يختلف باختلاف الحالة
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * **إطار بدر، وهو ما يحكم كل قرار أدناه:** «الهدف الرئيسي في صفحات الحجوزات
+   * غير المدفوعة أن نحث العميل على دفع المبلغ لتأكيد الحجز». فعلى حجزٍ لم يُدفع،
+   * **كل ما لا يخدم الدفع ضجيج** — يُنقل أو يُطوى أو يُحذف.
+   *
+   * ── ما كان يراه العميل فعلاً (مقيسٌ على TR-MECP6W قبل هذا التغيير) ────────
+   *
+   *   رقم الحجز → «احفظ هذا الرابط» + ثلاثة أزرار → مؤشر الحالة →
+   *   **بطاقة المبالغ** (سبعة صفوف حسابية) → **تفصيل الخدمات** →
+   *   ⟶ **الدفع** ⟵ ← الغرض، رابعَ بطاقةٍ في الصفحة
+   *   → سجل الإيصالات → تفاصيل الرحلة والخريطة
+   *
+   * أي أن من فتح الصفحة ليدفع كان يمرّ على **جدولَي محاسبة** قبل أن يبلغ زرّ
+   * الدفع. والجدولان ليسا قراراً بل **مراجعة** — ومن يراجع حسابه يفعل ذلك بعد
+   * أن يعرف كم يدفع وكيف، لا قبله.
+   *
+   * ── والترتيب الجديد يتبع سؤال العميل لا بنية البيانات ────────────────────
+   *
+   * | # | البطاقة | السؤال الذي تجيبه |
+   * |---|---|---|
+   * | ١ | رقم الحجز | «أي حجزٍ هذا؟» |
+   * | ٢ | مؤشر الحالة | «أين وصلتُ؟» — أربع دوائر، وهو ما يجعل الدعوة مفهومة |
+   * | ٣ | رفض إيصالٍ سابق | «لماذا رُفض؟» — **قبل** أن يعيد الرفع، وإلا أعاد الخطأ |
+   * | ٤ | **الدفع** | «كيف أدفع؟» — الغرض، بلا شيءٍ يسبقه إلا ما يشرحه |
+   * | ٥ | تفاصيل الرحلة | «على ماذا أدفع؟» — تحقّقٌ **بعد** الدعوة لا قبلها |
+   * | ٦ | الحساب (مطويّاً) | «كيف تكوّن المبلغ؟» — سؤالُ قلّةٍ، فلا يزاحم الأغلبية |
+   * | ٧ | سجل الإيصالات | «هل وصلكم ما أرسلت؟» |
+   * | ٨ | «احفظ هذا الرابط» | «كيف أعود؟» — حاجةُ **ما بعد** الزيارة لا أثناءها |
+   *
+   * ⚠ **وهذا الترتيب للحجز غير المدفوع وحده.** على حجزٍ مؤكَّد الهدف **خبرٌ لا
+   *   فعل**: صاحبه يفتح الصفحة ليعرف ما يأتيه ومتى، فيبقى الترتيب المشحون كما
+   *   هو (احفظ الرابط → الحالة → المركبة والسائق → الحساب → التأكيد → الرحلة).
+   *   ولذلك تُعرَّف الكتل **مرةً واحدة** وتُصيَّر في موضعين — لا نسختان تنحرفان
+   *   عند أول تعديل (النمط ٨ في `handover/LESSONS.md`).
+   */
+  const awaitingPayment = status === "pending_payment";
+
+  /** «احفظ هذا الرابط» وأدوات المشاركة — أعلى الصفحة إلا على حجزٍ ينتظر الدفع */
+  const saveLinkBar = (
+    <>
+      {/*
+        تنبيه حفظ الرابط، ومعه أدوات المشاركة الثلاث.
+
+        🔒 **ولا زر فيسبوك هنا، ولا إكس، ولا تليجرام، ولا بطاقة Open Graph.**
+        من قرأ هذه الأزرار فرآها «ناقصة» فليقرأ هذا أولاً: **الرابط نفسه هو
+        بيانات الاعتماد**. `get_booking_by_token` دالة `security definer`
+        تأذن بحيازة نصّ التوكن وحده — لا كلمة سر ولا جلسة — ومن فتحه قرأ اسم
+        العميل وهاتفه وواتسابه وإحداثيات التقاطه ووصوله وملاحظاته وسجل
+        إيصالاته. ونشرُ هذا الرابط على سطح عام لا «يشارك صفحة»، بل **ينشر
+        مفتاحاً حيّاً**: فاحصة المعاينة تجلبه فتخزّنه، وترويسة `referer`
+        تحمله إلى الموقع التالي، وسجلّ مختصر الروابط يحفظه. والسطر الذي فوق
+        هذه الأزرار مباشرةً يقول للعميل إنه «مفتاحك الوحيد لهذه الصفحة» —
+        فزرُّ نشرٍ بجواره يناقض الصفحة نفسها.
+
+        ولذلك: النشر العام لصفحات التسويق وحدها (المسارات والخدمات
+        والرئيسية) — عامة مفهرَسة بلا سرّ وبُنيت لتُشارَك. وهنا **ثلاث نيّات
+        خاصة**: طباعة، ونسخ الرابط، وإرسال إلى واتساب **بلا رقم مستقبِل**
+        فيختار العميل وجهته بنفسه (نفسه غالباً). ولنفس السبب لا تُغيَّر
+        `generateMetadata` أعلاه: `index:false` و`follow:false` و`nocache:true`،
+        ولا تمرّ بـ`buildPageMetadata` عمداً فلا تُبنى لهذه الصفحة بطاقة
+        مشاركة إطلاقاً. القرار محسوم مع المالك في `lib/export-types.ts` §٥.
+      */}
+      <div
+        className={`${PRINT_HIDDEN_CLASS} flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between`}
+      >
+        <p className="flex items-start gap-2 text-sm leading-6">
+          <Link2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          {t("saveLink", "احفظ هذا الرابط لمتابعة حجزك — هو مفتاحك الوحيد لهذه الصفحة.")}
+        </p>
+        {/* `shrink-0` كي تنكسر الجملة لا الأزرار: بلا هذا القيد يتقاسم النصّ
+            والأزرارُ العرضَ بالتساوي فتنزل «طباعة» سطراً وحدها على الشاشات
+            المتوسطة — والجملة نثرٌ يُعاد لفّه بلا ثمن */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
+          <CopyButton
+            value={bookingUrl}
+            label={t("saveLinkCopyLabel", "رابط متابعة الحجز")}
+            variant="inline"
+          />
+          <a
+            href={waShareHref(shareText)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <MessageCircle className="size-4 shrink-0" aria-hidden="true" />
+            {t("share.whatsapp", "إرسال إلى واتساب")}
+          </a>
+          <PrintButton label={t("share.print", "طباعة")} />
+        </div>
+      </div>
+    </>
+  );
+
+  /** بطاقة المبالغ وتفصيل الخدمات — وحدةٌ واحدة: الثانية شرحُ سطرٍ في الأولى */
+  const financials = (
+    <>
+      {/* المبالغ */}
+      <section
+        aria-label={t("amounts.sectionLabel", "مبالغ الحجز")}
+        className="flex flex-col gap-3 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
+      >
+        <h2 className="text-base font-bold">{t("amounts.heading", "المبالغ")}</h2>
+        <dl className="flex flex-col gap-2.5 text-sm">
+          {/*
+            🔒 تسمية ما يخصمه الكوبون **فعلاً**: منذ الدفعة ٣ صار يخصم
+            `ride_total` وحده، والخدمات تُجمع فوق الناتج. فكلمة «الإجمالي قبل
+            الخصم» تصير كاذبة بوجود خدمات — الرقم المشطوب سعرُ رحلة لا إجمالٌ
+            — وهي بعينها «الشاشة تَعِد بما لا تفعله القاعدة». والسطور تُسمّى
+            بحسب وجود الخدمات لا بنص واحد يصلح للحالتين.
+          */}
+          {hasDiscount ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">
+                  {hasExtras
+                    ? t("amounts.rideBeforeDiscount", "سعر الرحلة قبل الخصم")
+                    : t("amounts.totalBeforeDiscount", "الإجمالي قبل الخصم")}
+                </dt>
+                <dd className="font-medium line-through decoration-muted-foreground/60">
+                  {fmt.money(discountTotalBefore as number, currency)}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-primary">
+                  {discountCode
+                    ? t("amounts.discountWithCode", "الخصم ({code})", { code: discountCode })
+                    : t("amounts.discount", "الخصم")}
+                </dt>
+                <dd className="font-semibold text-primary">
+                  {t("amounts.discountMinus", "‑{amount}", {
+                    amount: fmt.money(discountAmount as number, currency),
+                  })}
+                </dd>
+              </div>
+              {/* الحلقة الوسطى — تظهر حين تكون هناك خدمات فوقها فقط، وإلا
+                  كررت سطر «الإجمالي بعد الخصم» أدناه بالرقم نفسه */}
+              {hasExtras && discountTotalAfter !== null ? (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-muted-foreground">
+                    {t("amounts.rideAfterDiscount", "سعر الرحلة بعد الخصم")}
+                  </dt>
+                  <dd className="font-medium">
+                    {fmt.money(discountTotalAfter, currency)}
+                  </dd>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {/*
+            الخدمات سطرٌ مستقل **قبل** الإجمالي لا بعده: التسلسل الذي يقرؤه
+            العميل هو تسلسل المعادلة نفسه — سعر الرحلة، ثم ناقص الخصم، ثم
+            زائد الخدمات، ثم الإجمالي. ولو كتبناها «منها كذا» بعد الإجمالي
+            لبدت خصماً منه لا إضافةً إليه.
+          */}
+          {hasExtras ? (
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">
+                {t("amounts.extras", "الخدمات الإضافية")}
+              </dt>
+              <dd className="font-medium">
+                {t("amounts.extrasPlus", "+{amount}", {
+                  amount: fmt.money(extrasTotal as number, currency),
+                })}
+              </dd>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-between gap-3">
+            <dt className="text-muted-foreground">
+              {hasExtras
+                ? t("amounts.totalWithExtras", "الإجمالي شاملاً الخدمات")
+                : hasDiscount
+                  ? t("amounts.totalAfterDiscount", "الإجمالي بعد الخصم")
+                  : t("amounts.total", "إجمالي الرحلة")}
+            </dt>
+            <dd className="font-medium">{fmt.money(total, currency)}</dd>
+          </div>
+          {/*
+            🔒 صفّا «المطلوب الآن» و«المتبقي مع السائق» يصفان **التزاماً
+            حيّاً**، ولا التزام على رحلةٍ لم تُنفَّذ: لا مبلغ يُطلب، ولا سائق
+            يُحصِّل، والمسار المعلن فوقهما ردٌّ لا تحصيل. وإبقاؤهما كان
+            يجعل الصفحة تناقض نفسها في شاشةٍ واحدة.
+
+            ويبقى «الإجمالي» فوقهما: هو **ما كانت تساويه الرحلة**، وسجلُّه
+            حقُّ العميل ومرجعه حين يسأل عن الردّ.
+
+            ⚠ و`cancelled` تُترك كما شُحنت — ليست من عهدة هذه الموجة، والملاحظة
+            مرفوعة لمالك ذلك السطح لا مُصلَحة بالمرور.
+          */}
+          {status === "failed" ? null : (
+            <>
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">
+                <dt className="font-semibold">{t("amounts.dueNow", "المطلوب الآن")}</dt>
+                <dd className="text-lg font-extrabold">{fmt.money(amountDue, currency)}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">
+                  {t("amounts.remaining", "المتبقي مع السائق")}
+                </dt>
+                <dd className="font-medium">{fmt.money(amountRemaining, currency)}</dd>
+              </div>
+            </>
+          )}
+        </dl>
+        {status !== "failed" && amountRemaining > 0 ? (
+          <p className="text-xs leading-6 text-muted-foreground">
+            {t("amounts.remainingNote", "المتبقي يُحصَّل نقداً مع السائق يوم الرحلة.")}
+          </p>
+        ) : null}
+        {/*
+          🔒 عمولة التحويل (ن‑١) لا تُجمع في «المطلوب الآن» أعلاه لأنها
+          **تختلف باختلاف الحساب** — ورقمٌ واحد هنا يكذب على من يختار غيره.
+          لكن السكوت عنها يجعل الصفحة تعرض رقمين للشيء نفسه بلا شرح، فيُقال
+          صراحةً أين يُقرأ الرقم النهائي. ولا يظهر السطر إلا حين توجد عمولة
+          فعلاً على حسابٍ **متاح الآن** — لا على حساب مخفيّ أو بلغ حدّه.
+        */}
+        {status === "pending_payment" && anyFee ? (
+          <p className="text-xs leading-6 text-muted-foreground">
+            {t(
+              // ⚠ بلا «أدناه» ولا «أعلاه»: هذه البطاقة تنتقل بحسب الحالة (٩ + ١٣)،
+              //   وكلمةُ اتجاهٍ فيها تصير كذباً بأول إعادة ترتيب.
+              "amounts.feeNote",
+              "بعض حسابات التحويل عليها عمولة تُضاف إلى المبلغ — تظهر مع كل حساب في خطوة الدفع، فاختر ما يناسبك."
+            )}
+          </p>
+        ) : null}
+      </section>
+
+      {/*
+        تفصيل الخدمات — يلي بطاقة المبالغ مباشرةً لأنه شرحُ سطرٍ فيها.
+        كل رقم هنا مقروء من لقطة الحجز: الكمية وسعر الوحدة وإجمالي السطر
+        خزّنتها قاعدة البيانات لحظة الحجز، فتغيير سعر الخدمة غداً لا يغيّر
+        ما دفعه العميل اليوم. وبلا تفصيل واصل تُخفى البطاقة كلها ويبقى
+        المجموع في المبالغ — لا نخترع سطوراً لا نملكها.
+      */}
+      {extras.length > 0 ? (
+        <section
+          aria-label={t("extras.sectionLabel", "الخدمات الإضافية")}
+          className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
+        >
+          <div className="flex flex-col gap-1.5">
+            <h2 className="flex items-center gap-2 text-base font-bold">
+              <ConciergeBell className="size-5 shrink-0 text-primary" aria-hidden="true" />
+              {t("extras.heading", "الخدمات الإضافية")}
+            </h2>
+            <p className="text-sm leading-7 text-muted-foreground">
+              {t("extras.lead", "ما اخترته مع الرحلة، بسعر لحظة الحجز.")}
+            </p>
+          </div>
+
+          <ul className="flex flex-col gap-2.5 text-sm">
+            {extras.map((extra, index) => (
+              <li
+                key={`${extra.title}#${index}`}
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border pb-2.5 last:border-0 last:pb-0"
+              >
+                <span className="font-medium">
+                  {extra.title}
+                  <span className="ms-1.5 text-muted-foreground">
+                    {t("extras.quantity", "× {qty}", { qty: fmt.number(extra.qty) })}
+                  </span>
+                </span>
+                <span className="flex items-baseline gap-2">
+                  {extra.unitPrice !== null ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t("extras.unitPrice", "{amount} للوحدة", {
+                        amount: fmt.money(extra.unitPrice, currency),
+                      })}
+                    </span>
+                  ) : null}
+                  {extra.lineTotal !== null ? (
+                    <span className="font-semibold">
+                      {fmt.money(extra.lineTotal, currency)}
+                    </span>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {hasDiscount ? (
+            <p className="text-xs leading-6 text-muted-foreground">
+              {t(
+                "extras.discountNote",
+                "الخصم يسري على سعر الرحلة وحده؛ الخدمات الإضافية تُضاف بسعرها كاملاً بعده."
+              )}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+    </>
+  );
+
+  /**
+   * والحساب مطويّاً على حجزٍ ينتظر الدفع — **طيٌّ لا حذف** (البند ٩).
+   *
+   * المبلغ المطلوب مكتوبٌ في عنوان بطاقة الدفع نفسها («ادفع ١٬١٥٤ ج.م لتأكيد
+   * الحجز»)، فما يبقى هنا هو **كيف تكوّن** ذلك المبلغ: سعرٌ قبل الخصم، وخصم،
+   * وخدمات، ومتبقٍّ مع السائق. وهو حقُّ العميل ولا يُحذف — لكنه سؤالُ قلّةٍ
+   * تراجع، لا سؤالُ من جاء ليدفع.
+   *
+   * و`<details>` وسمٌ أصلي: يعمل بلا جافاسكربت، ويعلن حالته لقارئ الشاشة.
+   * 🖨 **ويُفتح على الورق** بقاعدةٍ في `PRINT_CSS` — ورقةُ الرحلة تحمل الحساب
+   *    كاملاً، فطيٌّ يصلح لشاشةٍ لا يصلح لورقةٍ لا يُنقر فيها شيء.
+   */
+  const financialsFolded = (
+    <details className="sheet-fold rounded-3xl border border-border bg-card text-card-foreground">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 text-sm font-bold marker:content-none hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:p-6">
+        <span className="flex items-center gap-2">
+          <ReceiptText className="size-4 shrink-0 text-primary" aria-hidden="true" />
+          {t("amounts.foldSummary", "تفصيل الحساب")}
+        </span>
+        {/* الإجمالي على الغلاف — وإلا صار الطيّ إخفاءَ رقمٍ لا تأجيلَ تفصيل */}
+        <span className="text-sm font-extrabold">{fmt.money(total, currency)}</span>
+      </summary>
+      <div className="flex flex-col gap-6 border-t border-border p-5 sm:p-6">{financials}</div>
+    </details>
+  );
+
+  /** تفاصيل الرحلة والخريطة — «على ماذا أدفع؟» */
+  const tripCard = (
+    <>
+      {/* تفاصيل الرحلة */}
+      <section
+        aria-label={t("trip.sectionLabel", "تفاصيل الرحلة")}
+        className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
+      >
+        <h2 className="text-base font-bold">{t("trip.heading", "تفاصيل الرحلة")}</h2>
+
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
+          <RouteIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+          <span>{originLabel}</span>
+          <span className="text-muted-foreground" aria-hidden="true">
+            ←
+          </span>
+          <span>{destLabel}</span>
+        </p>
+
+        {/*
+          موضع الخريطة — تحت سطر «من ← إلى» مباشرةً لأنها صورتُه، وفوق
+          الحقائق لأن العين تقرأ الشكل قبل الجدول. والحالتان تتقاسمان
+          الموضع نفسه فلا يقفز التخطيط حين يتحول الحجز من «بانتظار الدفع»
+          إلى «تم التأكيد» بين فتحتين.
+        */}
+        {routeMapSrc && routeMapView ? (
+          <RouteMapFigure
+            src={routeMapSrc}
+            originLabel={originLabel}
+            destLabel={destLabel}
+            geometrySource={routeMapView.geometrySource}
+            directionsUrl={directionsUrl}
+            t={t}
+          />
+        ) : showRoutePending ? (
+          <RoutePendingPanel awaitingPayment={status === "pending_payment"} t={t} />
+        ) : null}
+
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+            <dt className="text-muted-foreground">{t("trip.vehicleClass", "الفئة")}</dt>
+            <dd className="font-medium">{classTitle}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+            <dt className="text-muted-foreground">{t("trip.passengers", "عدد الركاب")}</dt>
+            <dd className="font-medium">{fmt.passengers(passengers)}</dd>
+          </div>
+          {/* الحقائب (0031) — يُعرض الصفر أيضاً لأنه اختيار العميل لا غياب بيانات */}
+          {luggage !== null ? (
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+              <dt className="flex items-center gap-1.5 text-muted-foreground">
+                <Luggage className="size-3.5 shrink-0" aria-hidden="true" />
+                {t("trip.luggage", "عدد الحقائب")}
+              </dt>
+              <dd className="font-medium">{fmt.number(luggage)}</dd>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+            <dt className="text-muted-foreground">{t("trip.tripType", "نوع الرحلة")}</dt>
+            <dd className="font-medium">
+              {roundTrip
+                ? t("trip.roundTrip", "ذهاب وعودة")
+                : t("trip.oneWay", "ذهاب فقط")}
+            </dd>
+          </div>
+          {distanceKm !== null ? (
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+              <dt className="text-muted-foreground">{t("trip.distance", "المسافة")}</dt>
+              <dd className="font-medium">{fmt.distance(distanceKm)}</dd>
+            </div>
+          ) : null}
+          {waitingHours > 0 ? (
+            <div className="flex flex-col gap-1 rounded-2xl bg-muted/40 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="flex items-center gap-1.5 text-muted-foreground">
+                  <Clock className="size-3.5 shrink-0" aria-hidden="true" />
+                  {t("trip.waitingHours", "ساعات الانتظار")}
+                </dt>
+                <dd className="font-medium">{fmt.hours(waitingHours)}</dd>
+              </div>
+              {/*
+                من أين جاء الرقم — السؤال الذي يطرحه العميل حين يرى ساعات
+                انتظار لم يطلبها صراحةً: عودتُه في اليوم نفسه تعني أن السائق
+                ينتظره بينهما.
+              */}
+              {waitingDerived ? (
+                <p className="text-xs leading-6 text-muted-foreground">
+                  {t(
+                    "trip.waitingDerivedNote",
+                    "محسوبة تلقائياً من موعد عودتك في اليوم نفسه — السائق ينتظرك بينهما."
+                  )}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {pickupLabel ? (
+            <div
+              className={`flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5 ${
+                returnLabel ? "" : "sm:col-span-2"
+              }`}
+            >
+              <dt className="flex items-center gap-1.5 text-muted-foreground">
+                <CalendarClock className="size-3.5 shrink-0" aria-hidden="true" />
+                {t("trip.pickupAt", "موعد الانطلاق")}
+              </dt>
+              <dd className="font-medium">{pickupLabel}</dd>
+            </div>
+          ) : null}
+          {returnLabel ? (
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
+              <dt className="flex items-center gap-1.5 text-muted-foreground">
+                <CalendarClock className="size-3.5 shrink-0" aria-hidden="true" />
+                {t("trip.returnAt", "موعد العودة")}
+              </dt>
+              <dd className="font-medium">{returnLabel}</dd>
+            </div>
+          ) : null}
+        </dl>
+
+        {notes ? (
+          <div className="flex flex-col gap-1.5 rounded-2xl border border-border px-3 py-2.5">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t("trip.notes", "ملاحظاتك")}
+            </p>
+            <p className="whitespace-pre-line text-sm leading-7">{notes}</p>
+          </div>
+        ) : null}
+      </section>
+    </>
+  );
+
   return (
     <>
       <SiteHeader settings={settings} locale={locale} />
@@ -1634,56 +2202,8 @@ export default async function BookingStatusPage({ params }: PageParams) {
         </section>
 
         <div className="sheet-body mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6 md:py-14">
-          {/*
-            تنبيه حفظ الرابط، ومعه أدوات المشاركة الثلاث.
-
-            🔒 **ولا زر فيسبوك هنا، ولا إكس، ولا تليجرام، ولا بطاقة Open Graph.**
-            من قرأ هذه الأزرار فرآها «ناقصة» فليقرأ هذا أولاً: **الرابط نفسه هو
-            بيانات الاعتماد**. `get_booking_by_token` دالة `security definer`
-            تأذن بحيازة نصّ التوكن وحده — لا كلمة سر ولا جلسة — ومن فتحه قرأ اسم
-            العميل وهاتفه وواتسابه وإحداثيات التقاطه ووصوله وملاحظاته وسجل
-            إيصالاته. ونشرُ هذا الرابط على سطح عام لا «يشارك صفحة»، بل **ينشر
-            مفتاحاً حيّاً**: فاحصة المعاينة تجلبه فتخزّنه، وترويسة `referer`
-            تحمله إلى الموقع التالي، وسجلّ مختصر الروابط يحفظه. والسطر الذي فوق
-            هذه الأزرار مباشرةً يقول للعميل إنه «مفتاحك الوحيد لهذه الصفحة» —
-            فزرُّ نشرٍ بجواره يناقض الصفحة نفسها.
-
-            ولذلك: النشر العام لصفحات التسويق وحدها (المسارات والخدمات
-            والرئيسية) — عامة مفهرَسة بلا سرّ وبُنيت لتُشارَك. وهنا **ثلاث نيّات
-            خاصة**: طباعة، ونسخ الرابط، وإرسال إلى واتساب **بلا رقم مستقبِل**
-            فيختار العميل وجهته بنفسه (نفسه غالباً). ولنفس السبب لا تُغيَّر
-            `generateMetadata` أعلاه: `index:false` و`follow:false` و`nocache:true`،
-            ولا تمرّ بـ`buildPageMetadata` عمداً فلا تُبنى لهذه الصفحة بطاقة
-            مشاركة إطلاقاً. القرار محسوم مع المالك في `lib/export-types.ts` §٥.
-          */}
-          <div
-            className={`${PRINT_HIDDEN_CLASS} flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between`}
-          >
-            <p className="flex items-start gap-2 text-sm leading-6">
-              <Link2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-              {t("saveLink", "احفظ هذا الرابط لمتابعة حجزك — هو مفتاحك الوحيد لهذه الصفحة.")}
-            </p>
-            {/* `shrink-0` كي تنكسر الجملة لا الأزرار: بلا هذا القيد يتقاسم النصّ
-                والأزرارُ العرضَ بالتساوي فتنزل «طباعة» سطراً وحدها على الشاشات
-                المتوسطة — والجملة نثرٌ يُعاد لفّه بلا ثمن */}
-            <div className="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
-              <CopyButton
-                value={bookingUrl}
-                label={t("saveLinkCopyLabel", "رابط متابعة الحجز")}
-                variant="inline"
-              />
-              <a
-                href={waShareHref(shareText)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-              >
-                <MessageCircle className="size-4 shrink-0" aria-hidden="true" />
-                {t("share.whatsapp", "إرسال إلى واتساب")}
-              </a>
-              <PrintButton label={t("share.print", "طباعة")} />
-            </div>
-          </div>
+          {/* «احفظ هذا الرابط» ينزل أسفل الصفحة على حجزٍ ينتظر الدفع — حاجةُ ما بعد الزيارة */}
+          {awaitingPayment ? null : saveLinkBar}
 
           {/* مؤشر الحالة */}
           {status === "cancelled" ? (
@@ -1999,197 +2519,8 @@ export default async function BookingStatusPage({ params }: PageParams) {
             </section>
           ) : null}
 
-          {/* المبالغ */}
-          <section
-            aria-label={t("amounts.sectionLabel", "مبالغ الحجز")}
-            className="flex flex-col gap-3 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
-          >
-            <h2 className="text-base font-bold">{t("amounts.heading", "المبالغ")}</h2>
-            <dl className="flex flex-col gap-2.5 text-sm">
-              {/*
-                🔒 تسمية ما يخصمه الكوبون **فعلاً**: منذ الدفعة ٣ صار يخصم
-                `ride_total` وحده، والخدمات تُجمع فوق الناتج. فكلمة «الإجمالي قبل
-                الخصم» تصير كاذبة بوجود خدمات — الرقم المشطوب سعرُ رحلة لا إجمالٌ
-                — وهي بعينها «الشاشة تَعِد بما لا تفعله القاعدة». والسطور تُسمّى
-                بحسب وجود الخدمات لا بنص واحد يصلح للحالتين.
-              */}
-              {hasDiscount ? (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <dt className="text-muted-foreground">
-                      {hasExtras
-                        ? t("amounts.rideBeforeDiscount", "سعر الرحلة قبل الخصم")
-                        : t("amounts.totalBeforeDiscount", "الإجمالي قبل الخصم")}
-                    </dt>
-                    <dd className="font-medium line-through decoration-muted-foreground/60">
-                      {fmt.money(discountTotalBefore as number, currency)}
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <dt className="text-primary">
-                      {discountCode
-                        ? t("amounts.discountWithCode", "الخصم ({code})", { code: discountCode })
-                        : t("amounts.discount", "الخصم")}
-                    </dt>
-                    <dd className="font-semibold text-primary">
-                      {t("amounts.discountMinus", "‑{amount}", {
-                        amount: fmt.money(discountAmount as number, currency),
-                      })}
-                    </dd>
-                  </div>
-                  {/* الحلقة الوسطى — تظهر حين تكون هناك خدمات فوقها فقط، وإلا
-                      كررت سطر «الإجمالي بعد الخصم» أدناه بالرقم نفسه */}
-                  {hasExtras && discountTotalAfter !== null ? (
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted-foreground">
-                        {t("amounts.rideAfterDiscount", "سعر الرحلة بعد الخصم")}
-                      </dt>
-                      <dd className="font-medium">
-                        {fmt.money(discountTotalAfter, currency)}
-                      </dd>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-              {/*
-                الخدمات سطرٌ مستقل **قبل** الإجمالي لا بعده: التسلسل الذي يقرؤه
-                العميل هو تسلسل المعادلة نفسه — سعر الرحلة، ثم ناقص الخصم، ثم
-                زائد الخدمات، ثم الإجمالي. ولو كتبناها «منها كذا» بعد الإجمالي
-                لبدت خصماً منه لا إضافةً إليه.
-              */}
-              {hasExtras ? (
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-muted-foreground">
-                    {t("amounts.extras", "الخدمات الإضافية")}
-                  </dt>
-                  <dd className="font-medium">
-                    {t("amounts.extrasPlus", "+{amount}", {
-                      amount: fmt.money(extrasTotal as number, currency),
-                    })}
-                  </dd>
-                </div>
-              ) : null}
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted-foreground">
-                  {hasExtras
-                    ? t("amounts.totalWithExtras", "الإجمالي شاملاً الخدمات")
-                    : hasDiscount
-                      ? t("amounts.totalAfterDiscount", "الإجمالي بعد الخصم")
-                      : t("amounts.total", "إجمالي الرحلة")}
-                </dt>
-                <dd className="font-medium">{fmt.money(total, currency)}</dd>
-              </div>
-              {/*
-                🔒 صفّا «المطلوب الآن» و«المتبقي مع السائق» يصفان **التزاماً
-                حيّاً**، ولا التزام على رحلةٍ لم تُنفَّذ: لا مبلغ يُطلب، ولا سائق
-                يُحصِّل، والمسار المعلن فوقهما ردٌّ لا تحصيل. وإبقاؤهما كان
-                يجعل الصفحة تناقض نفسها في شاشةٍ واحدة.
-
-                ويبقى «الإجمالي» فوقهما: هو **ما كانت تساويه الرحلة**، وسجلُّه
-                حقُّ العميل ومرجعه حين يسأل عن الردّ.
-
-                ⚠ و`cancelled` تُترك كما شُحنت — ليست من عهدة هذه الموجة، والملاحظة
-                مرفوعة لمالك ذلك السطح لا مُصلَحة بالمرور.
-              */}
-              {status === "failed" ? null : (
-                <>
-                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">
-                    <dt className="font-semibold">{t("amounts.dueNow", "المطلوب الآن")}</dt>
-                    <dd className="text-lg font-extrabold">{fmt.money(amountDue, currency)}</dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <dt className="text-muted-foreground">
-                      {t("amounts.remaining", "المتبقي مع السائق")}
-                    </dt>
-                    <dd className="font-medium">{fmt.money(amountRemaining, currency)}</dd>
-                  </div>
-                </>
-              )}
-            </dl>
-            {status !== "failed" && amountRemaining > 0 ? (
-              <p className="text-xs leading-6 text-muted-foreground">
-                {t("amounts.remainingNote", "المتبقي يُحصَّل نقداً مع السائق يوم الرحلة.")}
-              </p>
-            ) : null}
-            {/*
-              🔒 عمولة التحويل (ن‑١) لا تُجمع في «المطلوب الآن» أعلاه لأنها
-              **تختلف باختلاف الحساب** — ورقمٌ واحد هنا يكذب على من يختار غيره.
-              لكن السكوت عنها يجعل الصفحة تعرض رقمين للشيء نفسه بلا شرح، فيُقال
-              صراحةً أين يُقرأ الرقم النهائي. ولا يظهر السطر إلا حين توجد عمولة
-              فعلاً على حسابٍ **متاح الآن** — لا على حساب مخفيّ أو بلغ حدّه.
-            */}
-            {status === "pending_payment" && anyFee ? (
-              <p className="text-xs leading-6 text-muted-foreground">
-                {t(
-                  "amounts.feeNote",
-                  "بعض حسابات التحويل عليها عمولة تُضاف إلى المبلغ — تظهر مع كل حساب في خطوة الدفع أدناه، فاختر ما يناسبك."
-                )}
-              </p>
-            ) : null}
-          </section>
-
-          {/*
-            تفصيل الخدمات — يلي بطاقة المبالغ مباشرةً لأنه شرحُ سطرٍ فيها.
-            كل رقم هنا مقروء من لقطة الحجز: الكمية وسعر الوحدة وإجمالي السطر
-            خزّنتها قاعدة البيانات لحظة الحجز، فتغيير سعر الخدمة غداً لا يغيّر
-            ما دفعه العميل اليوم. وبلا تفصيل واصل تُخفى البطاقة كلها ويبقى
-            المجموع في المبالغ — لا نخترع سطوراً لا نملكها.
-          */}
-          {extras.length > 0 ? (
-            <section
-              aria-label={t("extras.sectionLabel", "الخدمات الإضافية")}
-              className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
-            >
-              <div className="flex flex-col gap-1.5">
-                <h2 className="flex items-center gap-2 text-base font-bold">
-                  <ConciergeBell className="size-5 shrink-0 text-primary" aria-hidden="true" />
-                  {t("extras.heading", "الخدمات الإضافية")}
-                </h2>
-                <p className="text-sm leading-7 text-muted-foreground">
-                  {t("extras.lead", "ما اخترته مع الرحلة، بسعر لحظة الحجز.")}
-                </p>
-              </div>
-
-              <ul className="flex flex-col gap-2.5 text-sm">
-                {extras.map((extra, index) => (
-                  <li
-                    key={`${extra.title}#${index}`}
-                    className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border pb-2.5 last:border-0 last:pb-0"
-                  >
-                    <span className="font-medium">
-                      {extra.title}
-                      <span className="ms-1.5 text-muted-foreground">
-                        {t("extras.quantity", "× {qty}", { qty: fmt.number(extra.qty) })}
-                      </span>
-                    </span>
-                    <span className="flex items-baseline gap-2">
-                      {extra.unitPrice !== null ? (
-                        <span className="text-xs text-muted-foreground">
-                          {t("extras.unitPrice", "{amount} للوحدة", {
-                            amount: fmt.money(extra.unitPrice, currency),
-                          })}
-                        </span>
-                      ) : null}
-                      {extra.lineTotal !== null ? (
-                        <span className="font-semibold">
-                          {fmt.money(extra.lineTotal, currency)}
-                        </span>
-                      ) : null}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-
-              {hasDiscount ? (
-                <p className="text-xs leading-6 text-muted-foreground">
-                  {t(
-                    "extras.discountNote",
-                    "الخصم يسري على سعر الرحلة وحده؛ الخدمات الإضافية تُضاف بسعرها كاملاً بعده."
-                  )}
-                </p>
-              ) : null}
-            </section>
-          ) : null}
+          {/* الحساب فوق الدفع للمؤكَّد، ومطويّاً تحته لمن لم يدفع (٩ + ١٣) */}
+          {awaitingPayment ? null : financials}
 
           {/* رفض إيصال سابق — يسبق بطاقة التحويل ليقرأه العميل قبل أن يعيد الرفع */}
           {rejection ? (
@@ -2326,7 +2657,7 @@ export default async function BookingStatusPage({ params }: PageParams) {
                 <p className="text-sm leading-7 text-muted-foreground">
                   {t(
                     "review.text",
-                    "وصلنا إيصال التحويل ويراجعه فريق التشغيل الآن. ما إن يُعتمد حتى تتحول حالة حجزك إلى «مؤكد» في هذه الصفحة نفسها — لا حاجة لأي خطوة منك."
+                    "وصلنا إيصال التحويل ويراجعه فريق التشغيل الآن. ما إن يُعتمد حتى تتحول حالة حجزك إلى «تم التأكيد» في هذه الصفحة نفسها — لا حاجة لأي خطوة منك."
                   )}
                 </p>
               </div>
@@ -2452,6 +2783,10 @@ export default async function BookingStatusPage({ params }: PageParams) {
             </section>
           ) : null}
 
+          {/* ثم «على ماذا أدفع؟» ثم «كيف تكوّن المبلغ؟» — بعد الدعوة لا قبلها */}
+          {awaitingPayment ? tripCard : null}
+          {awaitingPayment ? financialsFolded : null}
+
           {/* سجل الإيصالات — ما وصلنا وحالته. القائمة الفارغة لا تصيّر شيئاً */}
           {listedReceipts.length > 0 ? (
             <section
@@ -2482,131 +2817,20 @@ export default async function BookingStatusPage({ params }: PageParams) {
             </section>
           ) : null}
 
-          {/* تفاصيل الرحلة */}
-          <section
-            aria-label={t("trip.sectionLabel", "تفاصيل الرحلة")}
-            className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground sm:p-6"
-          >
-            <h2 className="text-base font-bold">{t("trip.heading", "تفاصيل الرحلة")}</h2>
+          {awaitingPayment ? null : tripCard}
 
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
-              <RouteIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
-              <span>{originLabel}</span>
-              <span className="text-muted-foreground" aria-hidden="true">
-                ←
-              </span>
-              <span>{destLabel}</span>
-            </p>
+          {/*
+            🔴 **وهنا موضعها على حجزٍ ينتظر الدفع — لا تُحذف.**
 
-            {/*
-              موضع الخريطة — تحت سطر «من ← إلى» مباشرةً لأنها صورتُه، وفوق
-              الحقائق لأن العين تقرأ الشكل قبل الجدول. والحالتان تتقاسمان
-              الموضع نفسه فلا يقفز التخطيط حين يتحول الحجز من «بانتظار الدفع»
-              إلى «مؤكد» بين فتحتين.
-            */}
-            {routeMapSrc && routeMapView ? (
-              <RouteMapFigure
-                src={routeMapSrc}
-                originLabel={originLabel}
-                destLabel={destLabel}
-                geometrySource={routeMapView.geometrySource}
-                directionsUrl={directionsUrl}
-                t={t}
-              />
-            ) : showRoutePending ? (
-              <RoutePendingPanel awaitingPayment={status === "pending_payment"} t={t} />
-            ) : null}
+            «هو مفتاحك الوحيد لهذه الصفحة» جملةٌ حرفية: `get_booking_by_token`
+            تأذن بحيازة التوكن وحده، فمن فقد الرابط فقد حجزه. وإسقاطُها كان
+            سيكون أسوأ من تشتّتٍ في الترتيب.
 
-            <dl className="grid gap-3 text-sm sm:grid-cols-2">
-              <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                <dt className="text-muted-foreground">{t("trip.vehicleClass", "الفئة")}</dt>
-                <dd className="font-medium">{classTitle}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                <dt className="text-muted-foreground">{t("trip.passengers", "عدد الركاب")}</dt>
-                <dd className="font-medium">{fmt.passengers(passengers)}</dd>
-              </div>
-              {/* الحقائب (0031) — يُعرض الصفر أيضاً لأنه اختيار العميل لا غياب بيانات */}
-              {luggage !== null ? (
-                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                  <dt className="flex items-center gap-1.5 text-muted-foreground">
-                    <Luggage className="size-3.5 shrink-0" aria-hidden="true" />
-                    {t("trip.luggage", "عدد الحقائب")}
-                  </dt>
-                  <dd className="font-medium">{fmt.number(luggage)}</dd>
-                </div>
-              ) : null}
-              <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                <dt className="text-muted-foreground">{t("trip.tripType", "نوع الرحلة")}</dt>
-                <dd className="font-medium">
-                  {roundTrip
-                    ? t("trip.roundTrip", "ذهاب وعودة")
-                    : t("trip.oneWay", "ذهاب فقط")}
-                </dd>
-              </div>
-              {distanceKm !== null ? (
-                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                  <dt className="text-muted-foreground">{t("trip.distance", "المسافة")}</dt>
-                  <dd className="font-medium">{fmt.distance(distanceKm)}</dd>
-                </div>
-              ) : null}
-              {waitingHours > 0 ? (
-                <div className="flex flex-col gap-1 rounded-2xl bg-muted/40 px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <dt className="flex items-center gap-1.5 text-muted-foreground">
-                      <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-                      {t("trip.waitingHours", "ساعات الانتظار")}
-                    </dt>
-                    <dd className="font-medium">{fmt.hours(waitingHours)}</dd>
-                  </div>
-                  {/*
-                    من أين جاء الرقم — السؤال الذي يطرحه العميل حين يرى ساعات
-                    انتظار لم يطلبها صراحةً: عودتُه في اليوم نفسه تعني أن السائق
-                    ينتظره بينهما.
-                  */}
-                  {waitingDerived ? (
-                    <p className="text-xs leading-6 text-muted-foreground">
-                      {t(
-                        "trip.waitingDerivedNote",
-                        "محسوبة تلقائياً من موعد عودتك في اليوم نفسه — السائق ينتظرك بينهما."
-                      )}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {pickupLabel ? (
-                <div
-                  className={`flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5 ${
-                    returnLabel ? "" : "sm:col-span-2"
-                  }`}
-                >
-                  <dt className="flex items-center gap-1.5 text-muted-foreground">
-                    <CalendarClock className="size-3.5 shrink-0" aria-hidden="true" />
-                    {t("trip.pickupAt", "موعد الانطلاق")}
-                  </dt>
-                  <dd className="font-medium">{pickupLabel}</dd>
-                </div>
-              ) : null}
-              {returnLabel ? (
-                <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
-                  <dt className="flex items-center gap-1.5 text-muted-foreground">
-                    <CalendarClock className="size-3.5 shrink-0" aria-hidden="true" />
-                    {t("trip.returnAt", "موعد العودة")}
-                  </dt>
-                  <dd className="font-medium">{returnLabel}</dd>
-                </div>
-              ) : null}
-            </dl>
-
-            {notes ? (
-              <div className="flex flex-col gap-1.5 rounded-2xl border border-border px-3 py-2.5">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {t("trip.notes", "ملاحظاتك")}
-                </p>
-                <p className="whitespace-pre-line text-sm leading-7">{notes}</p>
-              </div>
-            ) : null}
-          </section>
+            وإنما نزلت لأن حاجتها **بعد** الزيارة لا أثناءها: من فتح الصفحة الآن
+            لا يحتاج رابطاً إليها، ويحتاجه غداً. فتبقى كاملةً بأزرارها الثلاث
+            (نسخ · واتساب · طباعة) في آخر ما يقرؤه، بعد أن يكون قد دفع.
+          */}
+          {awaitingPayment ? saveLinkBar : null}
 
           {/* «أضِف هذا الحجز إلى حسابي» — المدخل الثاني للربط في العقد §٥،
               وحيازةُ التوكن هي الإثبات. تظهر لصاحب الجلسة، وتدعو غيره إلى

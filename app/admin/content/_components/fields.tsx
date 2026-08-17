@@ -32,6 +32,8 @@ export function Field({
   disabled,
   required,
   pattern,
+  type,
+  maxLength,
 }: {
   label: string;
   name: string;
@@ -42,6 +44,13 @@ export function Field({
   disabled?: boolean;
   required?: boolean;
   pattern?: string;
+  /**
+   * ⚠ `type` و`maxLength` **إضافةٌ اختيارية** (الدفعة ج): حقلُ ترتيبٍ رقميّ
+   * وحقلُ اختصارٍ محدود الطول في بطاقة الشريط العلوي. وبلا تمريرهما يخرج العنصر
+   * كما كان حرفاً — فلا شاشةَ من الشاشات القائمة تتغيّر ببكسل.
+   */
+  type?: React.ComponentProps<"input">["type"];
+  maxLength?: number;
 }) {
   return (
     <div className="space-y-1.5">
@@ -53,6 +62,8 @@ export function Field({
         id={name}
         name={name}
         dir={dir}
+        type={type}
+        maxLength={maxLength}
         defaultValue={defaultValue ?? ""}
         placeholder={placeholder}
         disabled={disabled}

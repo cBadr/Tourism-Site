@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -143,10 +143,15 @@ export default async function NewContentPage({ searchParams }: PageProps<"/admin
 
           <Separator />
           <div className="flex justify-end">
-            <Button type="submit" disabled={!wired}>
-              <Plus />
-              إنشاء الصفحة والانتقال للمحرر
-            </Button>
+            <SaveButton
+              label="إنشاء الصفحة والانتقال للمحرر"
+              icon={<Plus />}
+              savedLabel="تم الإنشاء"
+              pendingLabel="جارٍ الإنشاء…"
+              failedLabel="لم تُنشأ"
+              disabled={!wired}
+              errorMessages={errorMessages}
+            />
           </div>
         </Card>
       </form>

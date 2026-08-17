@@ -1,10 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useFormStatus } from "react-dom";
-import { AlertTriangle, Eye, Loader2, Power, Wrench } from "lucide-react";
+import { AlertTriangle, Eye, Power, Wrench } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { SaveButton, type SaveMessages } from "@/components/admin/save-feedback";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -27,18 +26,9 @@ export type MaintenanceFormProps = {
   contactLabels: string[];
   maxLength: number;
   disabled: boolean;
+  /** رموز أخطاء الشاشة — تُعرض في الشريط الزاويّ بنفس نصّها أعلى الصفحة */
+  errorMessages: SaveMessages;
 };
-
-/** زر الحفظ — يعرف حالة الإرسال من النموذج نفسه عبر useFormStatus */
-function SubmitButton({ enabled, disabled }: { enabled: boolean; disabled: boolean }) {
-  const { pending } = useFormStatus();
-  return (
-    <Button type="submit" disabled={disabled || pending} variant={enabled ? "destructive" : "default"}>
-      {pending ? <Loader2 className="animate-spin" /> : <Power />}
-      {enabled ? "تشغيل وضع الصيانة وحفظ الرسالة" : "حفظ وإبقاء الموقع مفتوحاً"}
-    </Button>
-  );
-}
 
 export function MaintenanceForm({
   action,
@@ -50,6 +40,7 @@ export function MaintenanceForm({
   contactLabels,
   maxLength,
   disabled,
+  errorMessages,
 }: MaintenanceFormProps) {
   const [enabled, setEnabled] = React.useState(initialEnabled);
   const [message, setMessage] = React.useState(initialMessage);
@@ -133,7 +124,21 @@ export function MaintenanceForm({
 
         <Separator />
         <div className="flex justify-end">
-          <SubmitButton enabled={enabled} disabled={disabled} />
+          {/* 🔴 نصّ الشريط يتبع المفتاح لا الحالة المحفوظة: تفعيل الصيانة يُغلق
+              الموقع العام — وهذا أثرٌ لا يحمله وميضُ زرّ. */}
+          <SaveButton
+            label={
+              enabled ? "تشغيل وضع الصيانة وحفظ الرسالة" : "حفظ وإبقاء الموقع مفتوحاً"
+            }
+            icon={<Power />}
+            variant={enabled ? "destructive" : "default"}
+            disabled={disabled}
+            errorMessages={errorMessages}
+            savedMessages={{
+              on: "وضع الصيانة مُفعَّل الآن — الموقع العام مغلق أمام الزوار. لا تنسَ إطفاءه بعد انتهاء العمل.",
+              off: "حُفظت الإعدادات — الموقع العام يعمل بشكل طبيعي.",
+            }}
+          />
         </div>
       </Card>
 

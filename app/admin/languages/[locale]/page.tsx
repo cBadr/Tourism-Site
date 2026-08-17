@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ArrowRight, Check, Filter, Send, Upload } from "lucide-react";
+import { ArrowRight, Bot, Check, Filter, Send, Upload } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
@@ -20,12 +21,14 @@ import {
   hasSupabaseEnv,
   isMissingRow,
   isQueueFilter,
+  LANGUAGE_ERRORS,
   LanguagesFeedback,
   LanguagesNotReady,
   MAX_QUEUE_ROWS,
   namespaceLabel,
   NAMESPACE_HINTS,
   NAMESPACES,
+  numberOf,
   numberText,
   ProgressBar,
   type QueueFilter,
@@ -41,7 +44,8 @@ import {
   STATUS_HINTS,
 } from "../_components/languages-ui";
 import { TranslateButton } from "../_components/translate-button";
-import { publishReviewed, saveTranslation } from "./actions";
+import { publishDrafts, publishReviewed, saveTranslation } from "./actions";
+import { PublishDraftsButton } from "./_components/publish-drafts-button";
 
 /**
  * طابور مراجعة لغة واحدة — الشاشة التي يصير فيها النص الآلي نصاً منشوراً.
@@ -57,9 +61,100 @@ import { publishReviewed, saveTranslation } from "./actions";
  * زر «اعتمد» يوقف الصف عند المراجَعة (لا يراه الزائر)، و«اعتمد وانشر» ينشره
  * فوراً. وزر «انشر كل المراجَع» ينشر ما اعتُمد دفعةً — وكلها تقع داخل دوال
  * Postgres لا هنا.
+ *
+ * و**«انشر كل المسودات»** (طلب المالك 2026-08-17) بجواره: يعتمد كل مسودةٍ
+ * بشريةٍ مطابقةٍ لأصلها باسمه ثم ينشرها. وثلاثةٌ في تصميمه ليست زينة:
+ *
+ *  (١) **العدد مطبوعٌ قبل الضغط** ويأتي من `draft_publish_preview` — أي من
+ *      **نفس مصنِّف** الدالة التي ستنفّذ، فلا يختلف الوعد عن الفعل.
+ *  (٢) **الحصيلة تقول ما لم يحدث**: المستثنى آلياً وقديماً وفارغاً، كلٌّ برقمه.
+ *  (٣) **الصفوف الآلية معروضةٌ بنصّها** في بطاقةٍ دائمة — قرار المالك كان
+ *      «استثنِها وسجّل ملاحظة»، والملاحظة النافعة أن يراها فيقرّرها بيده.
  */
 
 export const metadata = { title: "مراجعة الترجمة" };
+
+/** صفٌّ آليٌّ يستثنيه زرّ المسودات — يُعرض بنصّه ليقرّره المالك بيده */
+type MachineRow = { id: string; namespace: string; key: string; value: string };
+
+/**
+ * حصيلة `draft_publish_preview(locale)` — **ما سيفعله الزرّ لو ضُغط الآن**.
+ *
+ * ⚠ ولا يُحسب أيٌّ من هذه الأرقام هنا. `translation_progress().draft` قريبٌ منها
+ * وليس هو: **يعدّ الآلية معها** (٨٧٦ مقابل ٨٧٠ مؤهَّلاً في `en` عند القياس)،
+ * فطبعُه على الزرّ كان يَعِد بستّةٍ لا تُنشر. والرقم يأتي من مصنِّف الدالة نفسه.
+ */
+type DraftPlan = {
+  ready: boolean;
+  /** كل المسودات = eligible + الثلاثة المستثنَاة */
+  drafts: number;
+  /** ما سيُعتمد ويُنشر فعلاً */
+  eligible: number;
+  skippedMachine: number;
+  skippedBlank: number;
+  skippedStale: number;
+  /** مراجَعٌ سلفاً — تنشره `publish_locale` مع دفعتنا */
+  alreadyReviewed: number;
+  /** مراجَعٌ سلفاً **وأصله تغيّر** — عيبٌ في زرّ «المراجَع» القائم، يُعلَن لا يُخفى */
+  staleReviewed: number;
+  machineRows: MachineRow[];
+};
+
+const NO_PLAN: DraftPlan = {
+  ready: false,
+  drafts: 0,
+  eligible: 0,
+  skippedMachine: 0,
+  skippedBlank: 0,
+  skippedStale: 0,
+  alreadyReviewed: 0,
+  staleReviewed: 0,
+  machineRows: [],
+};
+
+function readMachineRows(value: unknown): MachineRow[] {
+  if (!Array.isArray(value)) return [];
+  const out: MachineRow[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const key = typeof row.key === "string" ? row.key : "";
+    if (key === "") continue;
+    out.push({
+      id: typeof row.id === "string" ? row.id : key,
+      namespace: typeof row.namespace === "string" ? row.namespace : "",
+      key,
+      value: typeof row.value === "string" ? row.value : "",
+    });
+  }
+  return out;
+}
+
+/**
+ * قراءةٌ محضة: `draft_publish_preview` معلَّمة `stable` **بلا DML** بقصد — فتصييرُ
+ * الصفحة لا يستطيع أن ينشر شيئاً حتى لو أخطأ أحدٌ في استدعائها (الشرح في `0100`).
+ */
+async function readDraftPlan(
+  supabase: NonNullable<Awaited<ReturnType<typeof createServerSupabase>>>,
+  locale: string
+): Promise<DraftPlan> {
+  const result = await supabase.rpc("draft_publish_preview", { p_locale: locale });
+  if (result.error || result.data === null || typeof result.data !== "object") return NO_PLAN;
+
+  const data = result.data as Record<string, unknown>;
+  const at = (name: string) => numberOf(data, [name]) ?? 0;
+  return {
+    ready: true,
+    drafts: at("drafts"),
+    eligible: at("eligible"),
+    skippedMachine: at("skippedMachine"),
+    skippedBlank: at("skippedBlank"),
+    skippedStale: at("skippedStale"),
+    alreadyReviewed: at("alreadyReviewed"),
+    staleReviewed: at("staleReviewed"),
+    machineRows: readMachineRows(data.machineRows),
+  };
+}
 
 type Loaded = {
   locale: AdminLocale | null;
@@ -69,6 +164,7 @@ type Loaded = {
   /** قُرئ الفهرس الحي؟ بدونه لا تظهر المفاتيح الناقصة (وتظهر المكتوبة كاملة) */
   corpusReady: boolean;
   progress: LocaleProgress | null;
+  plan: DraftPlan;
   missing: string | null;
 };
 
@@ -79,6 +175,7 @@ const BLANK: Loaded = {
   queueReady: false,
   corpusReady: false,
   progress: null,
+  plan: NO_PLAN,
   missing: "قاعدة البيانات",
 };
 
@@ -86,10 +183,11 @@ async function loadScreen(locale: string, filter: QueueFilter): Promise<Loaded> 
   const supabase = await createServerSupabase();
   if (!supabase) return BLANK;
 
-  const [localesResult, queueResult, progressResult] = await Promise.all([
+  const [localesResult, queueResult, progressResult, plan] = await Promise.all([
     readLocales(supabase),
     readQueue(supabase, locale, filter),
     readProgress(supabase),
+    readDraftPlan(supabase, locale),
   ]);
 
   const missing =
@@ -108,12 +206,67 @@ async function loadScreen(locale: string, filter: QueueFilter): Promise<Loaded> 
     queueReady: !queueResult.error,
     corpusReady: queueResult.corpusReady,
     progress: progressResult.progress.get(locale) ?? null,
+    plan,
     missing,
   };
 }
 
+/** رقمٌ من الرابط — وما ليس رقماً صحيحاً يصير صفراً، فلا يظهر `NaN` في جملة */
+function paramCount(params: Record<string, string | string[] | undefined>, name: string): number {
+  const raw = params[name];
+  return typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : 0;
+}
+
+/**
+ * جملة حصيلة «انشر كل المسودات» — **تُسمّي ما لم يحدث ولماذا**.
+ *
+ * وهذا شرطُ المالك لا تزويقٌ: زرٌّ جماعيٌّ يقول «تم» وقد تخطّى صفوفاً صامتاً
+ * يترك في القاعدة نصاً يظنّه منشوراً وهو ليس كذلك. فكل مستثنًى يُذكر برقمه
+ * وسببه، **والقديم أوّلها** لأنه الوحيد الذي يعني «ترجمةٌ لم تعد تطابق أصلها».
+ */
+function draftsSentence(params: Record<string, string | string[] | undefined>): string {
+  const approved = paramCount(params, "ap");
+  const published = paramCount(params, "pb");
+  const machine = paramCount(params, "mt");
+  const stale = paramCount(params, "st");
+  const blank = paramCount(params, "bl");
+  const staleReviewed = paramCount(params, "sr");
+
+  const head =
+    approved === 0
+      ? "لم تُعتمد مسودةٌ واحدة"
+      : `اعتُمدت ${toArabicDigits(approved)} مسودة باسمك ونُشرت`;
+  const total =
+    published > approved
+      ? ` — المنشور في هذه الجولة ${toArabicDigits(published)} صفاً بحساب ما كان مراجَعاً سلفاً`
+      : "";
+
+  const skipped: string[] = [];
+  if (stale > 0) {
+    skipped.push(
+      `${toArabicDigits(stale)} تغيّر أصلها العربي بعد ترجمتها فبقيت مسودةً — راجعها بترشيح «الأصل تغيّر»`
+    );
+  }
+  if (machine > 0) {
+    skipped.push(`${toArabicDigits(machine)} آلية استُثنيت بقرارك — قرّرها صفاً صفاً`);
+  }
+  if (blank > 0) skipped.push(`${toArabicDigits(blank)} بلا نص`);
+  if (staleReviewed > 0) {
+    skipped.push(
+      `⚠ و${toArabicDigits(staleReviewed)} صفاً كان مراجَعاً سلفاً وأصله تغيّر — نشرته دالة «انشر كل المراجَع» معنا، فافحصه`
+    );
+  }
+
+  return skipped.length === 0
+    ? `${head}${total}. لا صفَّ استُثني.`
+    : `${head}${total}. ولم يُنشر: ${skipped.join(" · ")}.`;
+}
+
 /** جملة النجاح المناسبة للعملية التي رجعت من الإجراء */
 function savedSentence(params: Record<string, string | string[] | undefined>): string | null {
+  if (params.saved === "bulkall" || params.saved === "bulkpart") {
+    return draftsSentence(params);
+  }
   if (typeof params.bulk === "string") {
     const count = /^\d+$/.test(params.bulk) ? toArabicDigits(params.bulk) : null;
     return count === null
@@ -158,7 +311,7 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
       : null;
 
   const loaded = await loadScreen(locale, filter);
-  const { localesReady, rows, queueReady, corpusReady, progress, missing } = loaded;
+  const { localesReady, rows, queueReady, corpusReady, progress, plan, missing } = loaded;
 
   const wired = hasSupabaseEnv();
   const readOnly = !wired || !queueReady;
@@ -170,6 +323,40 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
   const localeRow = loaded.locale;
   const title = localeRow?.name ?? locale;
   const dir = localeRow?.dir ?? "ltr";
+
+  /*
+   * نافذة التأكيد — تُبنى على الخادم لأن العميل لا يملك الأرقام ولا حالة اللغة.
+   *
+   * ⚠ **وسطر «اللغة ظاهرة للزوار» ليس حشواً**: النشر يصل القارئ **فوراً** إن كانت
+   * اللغة مفعَّلة، **ولا يصله أحدٌ** إن كانت مخفية (`enabled_locales()` ترشِّح
+   * بـ`enabled` وحده — والنشر لا يُظهر لغة). فالفرق بين الحالتين هو كل الفرق بين
+   * «نصٌّ صار عاماً» و«نصٌّ جُهِّز في الدرج»، ولا يصحّ أن يضغط وهو لا يعرف أيهما.
+   */
+  const skippedParts = [
+    plan.skippedStale > 0 ? `${toArabicDigits(plan.skippedStale)} تغيّر أصلها` : null,
+    plan.skippedMachine > 0 ? `${toArabicDigits(plan.skippedMachine)} آلية` : null,
+    plan.skippedBlank > 0 ? `${toArabicDigits(plan.skippedBlank)} بلا نص` : null,
+  ].filter((part): part is string => part !== null);
+
+  const confirmText = [
+    `اعتماد ${toArabicDigits(plan.eligible)} مسودة باسمك ونشرها في «${title}».`,
+    skippedParts.length > 0 ? `يُستثنى: ${skippedParts.join(" · ")}.` : "لا صفَّ يُستثنى.",
+    localeRow?.enabled
+      ? "واللغة ظاهرة للزوار الآن ⇒ يقرؤه الزائر فور النشر."
+      : "واللغة مخفية عن الزوار ⇒ لن يراه أحدٌ حتى تفعّلها من مدير اللغات.",
+    "متابعة؟",
+  ].join("\n");
+
+  const draftsDisabled = readOnly || !plan.ready || plan.eligible === 0;
+
+  /*
+   * عدد المراجَع على زرّه: من المعاينة إن قُرئت، ومن `translation_progress` إن لم
+   * تُقرأ. **والفرق مقصود لا احتياط**: المعاينة تستثني المراجَع **الفارغ** —
+   * و`publish_locale` لا تنشره أصلاً (شرط `btrim(value) <> ''`) — فرقمها هو ما
+   * سيُنشر فعلاً. والسقوط إلى `progress` يمنع أن يتعطّل زرٌّ قائم على قاعدةٍ لم
+   * تُطبَّق عليها هجرة `0100` بعد.
+   */
+  const reviewedCount = plan.ready ? plan.alreadyReviewed : (progress?.reviewed ?? 0);
 
   const filtered = sortQueue(
     filterQueue(rows, filter).filter((row) => nsFilter === null || row.namespace === nsFilter)
@@ -292,34 +479,120 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
             limit={provider.maxTexts}
             disabled={readOnly || !provider.ready}
           />
+          {/*
+            🔴 **النصّ يتبع الإعداد الحيّ لا الافتراض** (اتفاقيات §٥: «النص يصف ما
+            يحدث فعلاً»). كان مكتوباً «يكتب ناتجها مسودات لا أكثر» على كل حال —
+            **وهو كذبٌ حين يكون «النشر التلقائي» مفعَّلاً**: `upsert_translations`
+            هي من تقرّر الحالة من `locales.auto_publish` (والمسار في
+            `app/api/i18n/translate/route.ts:326` يقرؤه ليخبر لا ليقرّر)، فتُكتب
+            المخرجات الآلية **`published`** فوراً. وقِيس على القاعدة الحيّة أن
+            `en.auto_publish = true` — فالنصّ القديم كان يَعِد بحاجزٍ غير قائم.
+          */}
           <HelpTip>
             يرسل دفعة من المفاتيح الناقصة والقديمة إلى {provider.label} ويكتب ناتجها{" "}
-            <span className="font-semibold">مسودات</span> لا أكثر. السقف {" "}
-            {toArabicDigits(provider.maxTexts)} نصاً في الضغطة الواحدة حتى لا تحرق ضغطة واحدة
-            الحصة اليومية — كرّر الضغط حتى يفرغ الطابور. {provider.note}
+            {localeRow?.autoPublish ? (
+              <>
+                <span className="font-semibold">منشوراً مباشرة</span> لأن «النشر التلقائي»
+                مفعَّل لهذه اللغة — أي يقرؤه الزائر بلا أن يمرّ على بشر. أطفئه من مدير اللغات
+                إن أردته مسودات تُراجَع أولاً.
+              </>
+            ) : (
+              <>
+                <span className="font-semibold">مسودات</span> لا أكثر.
+              </>
+            )}{" "}
+            السقف {toArabicDigits(provider.maxTexts)} نصاً في الضغطة الواحدة حتى لا تحرق ضغطة
+            واحدة الحصة اليومية — كرّر الضغط حتى يفرغ الطابور. {provider.note}
           </HelpTip>
 
           <form action={publishReviewed} className="flex items-center gap-2">
             <input type="hidden" name="locale" value={locale} />
             <input type="hidden" name="return_ns" value={nsFilter ?? ""} />
             <input type="hidden" name="return_status" value={filter} />
-            <Button
-              type="submit"
+            <SaveButton
+              label={`انشر كل المراجَع${
+                reviewedCount > 0 ? ` (${numberText(reviewedCount)})` : ""
+              }`}
+              icon={<Upload />}
+              savedLabel="تم النشر"
+              pendingLabel="جارٍ النشر…"
+              failedLabel="لم يُنشر"
               size="sm"
               variant="outline"
-              disabled={readOnly || (progress?.reviewed ?? 0) === 0}
-            >
-              <Upload />
-              انشر كل المراجَع
-              {progress && progress.reviewed > 0 ? ` (${numberText(progress.reviewed)})` : ""}
-            </Button>
+              disabled={readOnly || reviewedCount === 0}
+              errorMessages={LANGUAGE_ERRORS}
+            />
           </form>
           <HelpTip>
             ينقل كل صف حالته «مراجَعة» إلى «منشورة» دفعةً واحدة عبر دالة{" "}
             <code dir="ltr">publish_locale</code>. المسودات التي لم يعتمدها بشر لا تتأثر
             إطلاقاً — وهذا هو الفرق بينه وبين النشر التلقائي.
           </HelpTip>
+
+          <form action={publishDrafts} className="flex items-center gap-2">
+            <input type="hidden" name="locale" value={locale} />
+            <input type="hidden" name="return_ns" value={nsFilter ?? ""} />
+            <input type="hidden" name="return_status" value={filter} />
+            <PublishDraftsButton
+              label={`انشر كل المسودات${
+                plan.eligible > 0 ? ` (${numberText(plan.eligible)})` : ""
+              }`}
+              confirmText={confirmText}
+              disabled={draftsDisabled}
+              savedMessages={{
+                bulkall: "تم النشر — ولا صفَّ استُثني.",
+                bulkpart: "تم النشر، وبعض الصفوف استُثنيت — التفصيل في الشريط أعلى الصفحة.",
+              }}
+              errorMessages={LANGUAGE_ERRORS}
+            />
+          </form>
+          <HelpTip>
+            يعتمد كل مسودة <span className="font-semibold">باسمك</span> ثم ينشرها بنفس دالة{" "}
+            <code dir="ltr">publish_locale</code> — فلا يُكتب في الجدول نصٌّ لم يمرّ
+            بالاعتماد. ويستثني ثلاثة: ما{" "}
+            <span className="font-semibold">تغيّر أصله العربي</span> بعد ترجمته (ترجمةٌ لم
+            تعد تطابق أصلها فتبقى مسودةً)، والنصوص الآلية بقرارك، والفارغ. والعدد على الزرّ
+            هو ما سيُنشر فعلاً لا عدد المسودات كلها
+            {plan.ready && plan.drafts !== plan.eligible
+              ? ` (${numberText(plan.drafts)} مسودة، منها ${numberText(plan.eligible)} مؤهَّلة)`
+              : ""}
+            .
+          </HelpTip>
         </div>
+
+        {/*
+          الصفوف الآلية — بطاقةٌ **دائمة** لا رسالةُ ما بعد الضغط.
+
+          قرار المالك 2026-08-17: «استثنِها حالياً وسجّل ملاحظة». والاستثناء وحده
+          يجعلها تختفي من نظره إلى الأبد؛ فالملاحظة هي أن يراها بنصّها ويقرّر كلَّ
+          صفٍّ بيده. وفي `en` عند القياس ستّةٌ كلها روابط (`href`) — أي أن دورة
+          الترجمة الآلية أرسلت **عناوين مسارات** إلى مترجم، فعاد أحدها ناقص حرف.
+        */}
+        {plan.machineRows.length > 0 && (
+          <details className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950">
+            <summary className="flex cursor-pointer items-center gap-2 font-medium text-amber-900 dark:text-amber-100">
+              <Bot className="size-4 shrink-0" />
+              {numberText(plan.machineRows.length)} مسودة آلية لا يشملها الزرّ — قرّرها بيدك
+            </summary>
+            <p className="mt-2 leading-relaxed text-amber-900 dark:text-amber-100">
+              هذه من مزوّد ترجمة آلي، وقرارك أن تُستثنى حتى تقرأها. راجع كلاً منها من صفّها
+              في الطابور أدناه (اضغط «اعتمد» أو «اعتمد وانشر» بعد تصحيحها) — أو اتركها
+              فتبقى مخفيةً عن الزائر.
+            </p>
+            <ul className="mt-2 space-y-1">
+              {plan.machineRows.map((row) => (
+                <li key={row.id} className="flex flex-wrap items-baseline gap-2">
+                  <code dir="ltr" className="text-xs text-muted-foreground">
+                    {row.key}
+                  </code>
+                  <span dir="ltr" className="font-medium">
+                    {row.value}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </Card>
 
       {/* الترشيح — نموذج GET حتى يبقى الرابط قابلاً للحفظ والمشاركة */}

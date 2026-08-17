@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, Plus, Power, PowerOff, XCircle } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
@@ -461,9 +462,12 @@ function ClassCard({
         </div>
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={readOnly}>
-            حفظ الفئة
-          </Button>
+          <SaveButton
+            label="حفظ الفئة"
+            disabled={readOnly}
+            errorMessages={ERROR_MESSAGES}
+            savedMessages={{ "1": "حُفظت أسعار الفئة وانعكست على كل عروض الأسعار فوراً." }}
+          />
         </div>
       </form>
     </Card>
@@ -605,10 +609,15 @@ export default async function FleetPage({ searchParams }: PageProps<"/admin/flee
           </div>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              إضافة الفئة
-            </Button>
+            <SaveButton
+              label="إضافة الفئة"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم تُضَف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

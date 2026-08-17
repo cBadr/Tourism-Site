@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertTriangle, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -407,9 +408,7 @@ function ReasonCard({
               حذف
             </Link>
           )}
-          <Button type="submit" disabled={readOnly}>
-            حفظ السبب
-          </Button>
+          <SaveButton label="حفظ السبب" disabled={readOnly} errorMessages={ERROR_MESSAGES} />
         </div>
       </form>
 
@@ -428,10 +427,16 @@ function ReasonCard({
             الفشل فوراً ويُبقي سجلّ تلك الرحلات مفهوماً.
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" variant="destructive" disabled={readOnly}>
-              <Trash2 />
-              تأكيد الحذف
-            </Button>
+            <SaveButton
+              label="تأكيد الحذف"
+              icon={<Trash2 />}
+              variant="destructive"
+              savedLabel="تم الحذف"
+              pendingLabel="جارٍ الحذف…"
+              failedLabel="لم يُحذف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
             <Link
               href="/admin/failure-reasons"
               className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
@@ -491,7 +496,7 @@ export default async function FailureReasonsPage({
         <h2 className="font-heading text-lg font-bold">أسباب فشل الرحلة</h2>
         <HelpTip>
           كل صف هنا سببٌ يختاره المدير حين <span className="font-semibold">لا تُنفَّذ</span>{" "}
-          رحلة — وهي حالة <span className="font-semibold">«فاشلة» لا «ملغاة»</span>: الإلغاء
+          رحلة — وهي حالة <span className="font-semibold">«لم يتم التنفيذ» لا «تم الإلغاء»</span>: الإلغاء
           يقع قبل التنفيذ، والفشل بعد أن صار للرحلة منفِّذ. ولكل سبب إجراءٌ مالي مقترح مع
           المتعهد يقبله المدير أو يتجاوزه بمبرر. ووجود قائمة مصنَّفة — لا نصٍّ حر — هو ما
           يجعل سؤال «كم رحلة فشلت بذنب هذا المتعهد؟» سؤالاً له جواب.
@@ -611,10 +616,15 @@ export default async function FailureReasonsPage({
           </Label>
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={readOnly}>
-              <Plus />
-              إضافة السبب
-            </Button>
+            <SaveButton
+              label="إضافة السبب"
+              icon={<Plus />}
+              savedLabel="تمت الإضافة"
+              pendingLabel="جارٍ الإضافة…"
+              failedLabel="لم يُضَف"
+              disabled={readOnly}
+              errorMessages={ERROR_MESSAGES}
+            />
           </div>
         </Card>
       </form>

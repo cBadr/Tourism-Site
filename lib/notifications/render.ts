@@ -45,12 +45,12 @@ export type RenderContext = {
 export const EVENT_TITLES: Record<string, string> = {
   booking_created: "حجز جديد بانتظار التحويل",
   receipt_uploaded: "إيصال تحويل بانتظار المراجعة",
-  booking_confirmed: "حجز مؤكَّد",
-  booking_cancelled: "حجز ملغى",
+  booking_confirmed: "تم تأكيد الحجز",
+  booking_cancelled: "تم إلغاء الحجز",
   quote_requested: "طلب عرض سعر جديد",
   // أحداث البث والإسناد (المرحلة ٦) — بدونها تظهر كلها بعنوان «إشعار جديد»
   trip_offered: "عرض رحلة جديد على المتعهدين",
-  trip_assigned: "أُسندت الرحلة إلى متعهد",
+  trip_assigned: "تم إسناد الرحلة إلى متعهد",
   dispatch_round_expired: "انتهت مهلة موجة البث",
   dispatch_exhausted: "لم يقبل أي متعهد — إسناد يدوي",
 };
@@ -80,9 +80,9 @@ export const CHANNEL_LABELS: Record<string, string> = {
 /** أسماء حالات الطابور كما تظهر للمالك */
 export const STATUS_LABELS: Record<string, string> = {
   queued: "في الطابور",
-  sent: "أُرسل",
-  skipped: "متجاوَز",
-  failed: "فشل",
+  sent: "تم الإرسال",
+  skipped: "تم التجاوز",
+  failed: "لم يتم الإرسال",
 };
 
 export function channelLabel(channel: string): string {

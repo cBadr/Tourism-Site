@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { ChevronDown, ExternalLink, EyeOff, Pencil, Save } from "lucide-react";
 
+import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { toArabicDigits } from "@/components/booking/format";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -355,10 +356,15 @@ export default async function SeoMetadataPage({ searchParams }: PageProps<"/admi
             <p className="me-auto text-xs text-muted-foreground">
               الحفظ يكتب الصفحات التي تغيّرت وحدها.
             </p>
-            <Button type="submit" disabled={disabled}>
-              <Save />
-              حفظ الميتاداتا
-            </Button>
+            <SaveButton
+              label="حفظ الميتاداتا"
+              icon={<Save />}
+              disabled={disabled}
+              errorMessages={ERROR_MESSAGES}
+              savedMessages={{
+                "1": "حُفظت الميتاداتا وانعكست على الصفحة العامة فوراً.",
+              }}
+            />
           </div>
         </form>
       )}
