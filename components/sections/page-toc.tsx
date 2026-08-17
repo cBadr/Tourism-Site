@@ -82,7 +82,13 @@ export async function PageTocSection({
                   className="flex items-baseline gap-2 rounded-md py-1.5 text-body text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                 >
                   {clause.num ? (
-                    <span className="shrink-0 tabular-nums text-primary/80">
+                    /* 🔴 كان `text-primary/80` — والشفافية هنا كانت تخفيتاً
+                       زخرفياً ثمنه قابلية القراءة. المقيس على `/terms` حياً في
+                       المظهر الفاتح: 3.86:1 (الحد 4.5)، لأن الـ٨٠٪ تخلط لون
+                       الفعل بأرضيته فتأكل الفارق. واللون كامل الإعتام 6.37:1،
+                       والرقم لا يحتاج تخفيتاً أصلاً: قياسه أصغر من العنوان
+                       وموضعه يميّزه. */
+                    <span className="shrink-0 tabular-nums text-primary">
                       {clause.num}
                     </span>
                   ) : null}

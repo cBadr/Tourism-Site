@@ -817,6 +817,16 @@ declare
 begin
   v_at := public.partner_debt(v_deb);
 
+  -- 🔴 وأرضيةُ البث تُصفَّر **قبل** قياس الحوض (إصلاح حمرةٍ صنفية، 2026-08-17):
+  --    `dispatch_pool` تمرّ على `dispatch_ceiling` وهي
+  --    `least(base, greatest(total - min_margin_amount, 0))`. فأرضيةٌ يرفعها
+  --    المالك فوق هامش الفيكسترة تُفرغ الحوض، فيرمي (هـ-٠) متّهماً **تجهيزه**
+  --    بالخطأ — والخطأ إعدادٌ حيّ لا يملكه الملف. وهذا الملف يثبّت
+  --    `partner_credit_settings` بدقة ويترك هذه وحدها (النمط ٦).
+  --
+  --    والكتلة كلها تنتهي بـ`ROLLBACK_MARKER`، فلا استعادة تُكتب ولا تُنسى.
+  update public.dispatch_settings set min_margin_amount = 0 where id = true;
+
   -- شاهد إيجابي أول: المتعهدان **كلاهما** في الحوض المؤهل قبل أي حجب. بدونه
   -- يمر القسم لو خرج المدين من الحوض لسبب لا علاقة له بالدين (تغطية أو مركبة).
   select count(*)::integer into v_pool

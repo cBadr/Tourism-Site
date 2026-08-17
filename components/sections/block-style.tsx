@@ -3,6 +3,10 @@ import { cn } from "@/lib/utils";
 import {
   CALLOUT_TONE_TOKENS,
   FEATURES_LAYOUT_TOKENS,
+  LOGO_EFFECT_TOKENS,
+  LOGO_LINK_TOKENS,
+  MARQUEE_DIRECTION_TOKENS,
+  MARQUEE_SPEED_TOKENS,
   SPACING_TOKENS,
   STYLE_FIELD,
   THEME_COLOR_TOKENS,
@@ -12,6 +16,10 @@ import {
   type BlockStyle,
   type CalloutToneToken,
   type FeaturesLayoutToken,
+  type LogoEffectToken,
+  type LogoLinkToken,
+  type MarqueeDirectionToken,
+  type MarqueeSpeedToken,
   type SpacingToken,
   type ThemeColorToken,
   type TypingHoldToken,
@@ -92,6 +100,24 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
     FEATURES_LAYOUT_TOKENS
   );
   const whyUsLayout = tokenOf<WhyUsLayoutToken>(record.whyUsLayout, WHY_US_LAYOUT_TOKENS);
+  /**
+   * 🆕 ن‑٩ — مقابض شريط الماركات، ومسلكها مسلك `tone` حرفاً: تمرّ من هنا ولا
+   * تخرج صنفاً في `blockStyleClass`.
+   *
+   * 🔴 **و`marqueePause` وحدها تُقرأ `!== false` لا `=== true`:** الغياب يعني
+   * «يقف عند التحويم» (العقد §٥ — الغياب هو الافتراضي لا الصفر). ولو قُرئت
+   * كأختَيها `hideOnMobile` و`typingLoop` لصار كل صفٍّ قائم — وكلها بلا هذا
+   * المفتاح — شريطاً **لا يقف لمن يحاول قراءة اسم ماركة**. فالإطفاء يحتاج
+   * `false` مكتوبةً بقصد.
+   */
+  const marqueeSpeed = tokenOf<MarqueeSpeedToken>(record.marqueeSpeed, MARQUEE_SPEED_TOKENS);
+  const marqueeDirection = tokenOf<MarqueeDirectionToken>(
+    record.marqueeDirection,
+    MARQUEE_DIRECTION_TOKENS
+  );
+  const marqueePause = record.marqueePause !== false;
+  const logoEffect = tokenOf<LogoEffectToken>(record.logoEffect, LOGO_EFFECT_TOKENS);
+  const logoLink = tokenOf<LogoLinkToken>(record.logoLink, LOGO_LINK_TOKENS);
 
   if (
     background === null &&
@@ -103,7 +129,12 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
     typingErase === null &&
     !typingLoop &&
     featuresLayout === null &&
-    whyUsLayout === null
+    whyUsLayout === null &&
+    marqueeSpeed === null &&
+    marqueeDirection === null &&
+    marqueePause &&
+    logoEffect === null &&
+    logoLink === null
   ) {
     return null;
   }
@@ -118,6 +149,12 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
     ...(typingLoop ? { typingLoop: true } : {}),
     ...(featuresLayout !== null ? { featuresLayout } : {}),
     ...(whyUsLayout !== null ? { whyUsLayout } : {}),
+    ...(marqueeSpeed !== null ? { marqueeSpeed } : {}),
+    ...(marqueeDirection !== null ? { marqueeDirection } : {}),
+    /** تُكتب `false` وحدها — و`true` هي الغياب، فلا يتضخّم الكائن بالافتراضي */
+    ...(marqueePause ? {} : { marqueePause: false }),
+    ...(logoEffect !== null ? { logoEffect } : {}),
+    ...(logoLink !== null ? { logoLink } : {}),
   };
 }
 

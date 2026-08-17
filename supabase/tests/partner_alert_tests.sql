@@ -238,6 +238,21 @@ begin
     insert into public.price_list_items (price_list_id, class_slug, cost)
     values (v_lt, v_slug, 1000), (v_li, v_slug, 1100), (v_ld, v_slug, 1200);
 
+    -- 🔴 والهامشُ وأرضيةُ البث يُثبَّتان هنا (إصلاح حمرةٍ صنفية، 2026-08-17):
+    --    الفارق 1000/1100/1200 يفترض ضمناً هامشاً حيّاً واسعاً، لأن
+    --    `dispatch_ceiling(round 3)` = `cost + min(margin, min_margin_amount…)`.
+    --    وعند `margin_value = 1` (وقد ضبطه المالك كذلك فعلاً) يسقط صاحبُ 1200
+    --    من الحوض، فيرمي مسبارُ المسبار أدناه و**المجموعة كلها ترفض أن تبدأ** —
+    --    وهي بعينها الحمرة التي أصابت `extras` و`loyalty` وهذا الملف من قبل.
+    --    والتوقّعات هنا تقيس **من يصله العرض**، فتثبيت أساسها لا يُضعفها.
+    --
+    --    والكتلة تنتهي بـ`PARTNER_ALERT_TESTS_ROLLBACK`، فلا صفَّ يُحفظ ولا
+    --    استعادةٌ تُكتب ثم تُنسى.
+    update public.pricing_settings
+       set margin_type = 'percent', margin_value = 20, margin_min_amount = 0
+     where id = true;
+    update public.dispatch_settings set min_margin_amount = 0 where id = true;
+
     perform set_config('request.jwt.claims',
       json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
 

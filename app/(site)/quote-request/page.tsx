@@ -3,6 +3,7 @@ import { CalendarRange, Landmark, PartyPopper, Users } from "lucide-react";
 import { getSettings } from "@/lib/settings";
 import { buildPageMetadata } from "@/lib/seo";
 import { getLocalizedServices, getT, resolveLocale } from "@/lib/i18n/content";
+import { readPlaceSearchSettings } from "@/lib/geo/place-search-settings";
 import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
@@ -73,11 +74,13 @@ const USE_CASES = [
 
 export default async function QuoteRequestPage({ searchParams }: QuoteRequestPageProps) {
   const locale = await resolveLocale();
-  const [settings, t, services, params] = await Promise.all([
+  const [settings, t, services, params, placeSearch] = await Promise.all([
     getSettings(locale),
     getT("pages.quoteRequest", locale),
     getLocalizedServices(locale),
     searchParams,
+    // إعدادات البحث الرباعي — نفس ما يقرؤه `/book`، فالحقلان هنا وهناك سواء
+    readPlaceSearchSettings(),
   ]);
 
   const requested = typeof params.service === "string" ? params.service : "";
@@ -127,6 +130,7 @@ export default async function QuoteRequestPage({ searchParams }: QuoteRequestPag
               defaultService={defaultService}
               tripPrefill={tripPrefill}
               services={services}
+              placeSearch={placeSearch}
               locale={locale}
             />
           </div>

@@ -16,6 +16,14 @@ import {
   FEATURES_LAYOUT_LABELS,
   FEATURES_LAYOUT_OPTIONS,
   ICON_LABELS,
+  LOGO_EFFECT_LABELS,
+  LOGO_EFFECT_OPTIONS,
+  LOGO_LINK_LABELS,
+  LOGO_LINK_OPTIONS,
+  MARQUEE_DIRECTION_LABELS,
+  MARQUEE_DIRECTION_OPTIONS,
+  MARQUEE_SPEED_LABELS,
+  MARQUEE_SPEED_OPTIONS,
   MEDIA_SUGGESTIONS,
   SPACING_LABELS,
   SPACING_OPTIONS,
@@ -545,11 +553,14 @@ function StyleFields({
   const hasFormat = keys.some(
     (key) => key === "tone" || key === "background" || key === "spacing" || key === "hideOnMobile"
   );
+  /** 🆕 ن‑٩ — الصندوق يحمل مقابض حركةٍ وعرضٍ معاً، فعنوانه يقول الاثنين */
+  const hasMarquee = keys.includes("marqueeSpeed");
+  const heading = hasMarquee ? "العرض والحركة" : hasFormat ? "التنسيق" : "أثر الكتابة على العنوان";
 
   return (
     <div className="space-y-3 rounded-lg border border-dashed border-border p-3">
       <div className="flex items-center gap-1.5">
-        <span className="text-sm font-medium">{hasFormat ? "التنسيق" : "أثر الكتابة على العنوان"}</span>
+        <span className="text-sm font-medium">{heading}</span>
         {hasFormat ? (
           <HelpTip>
             رموز من ثيم العلامة لا ألوان مكتوبة — الرمز يتبع ألوان الهوية إن تغيّرت، واللون
@@ -639,6 +650,109 @@ function StyleFields({
               {WHY_US_LAYOUT_OPTIONS.map((token) => (
                 <option key={token} value={token}>
                   {WHY_US_LAYOUT_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* ── ن‑٩: مقابض شريط الماركات — قوائم مغلقة، والمجهول يعود للافتراضي ── */}
+        {keys.includes("marqueeSpeed") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-mq-speed`} className="text-xs text-muted-foreground">
+              سرعة الشريط
+            </Label>
+            <select
+              id={`${idPrefix}-mq-speed`}
+              className={fieldControlClass}
+              value={style.marqueeSpeed ?? "normal"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ marqueeSpeed: e.target.value as never })}
+            >
+              {MARQUEE_SPEED_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {MARQUEE_SPEED_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {keys.includes("marqueeDirection") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-mq-dir`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              اتجاه الشريط
+              {/**
+               * 🔴 نصُّ المساعدة يشرح **لماذا لا يوجد خيار «يمين»**: الشريط يتبع
+               * اتجاه الصفحة، والموقع له نسخة إنجليزية (D-24). فخيارٌ مطلق كان
+               * يعني «مع القراءة» في لغةٍ و«عكسها» في الأخرى.
+               */}
+              <HelpTip>
+                نسبيٌّ لا مطلق: الشريط يزحف مع اتجاه القراءة (يميناً في العربية ويساراً في
+                الإنجليزية)، وهذا المقبض يقلبه في اللغتين معاً — فلا ينقلب معناه بتغيّر اللغة.
+              </HelpTip>
+            </Label>
+            <select
+              id={`${idPrefix}-mq-dir`}
+              className={fieldControlClass}
+              value={style.marqueeDirection ?? "auto"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ marqueeDirection: e.target.value as never })}
+            >
+              {MARQUEE_DIRECTION_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {MARQUEE_DIRECTION_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {keys.includes("logoEffect") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-logo-effect`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              أثر الصورة
+              <HelpTip>
+                🔴 «بألوانها الأصلية» تسري على الأرضية الفاتحة وحدها. على القشرة الداكنة تبقى
+                الشعارات بيضاء أحادية في كل الحالات — وإلا اختفت الشعارات السوداء (تويوتا وهوندا
+                وكيا وهيونداي) تماماً، وهو عيبٌ لا يظهر إلا لمن يفتح الموقع على الداكن.
+              </HelpTip>
+            </Label>
+            <select
+              id={`${idPrefix}-logo-effect`}
+              className={fieldControlClass}
+              value={style.logoEffect ?? "mono"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ logoEffect: e.target.value as never })}
+            >
+              {LOGO_EFFECT_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {LOGO_EFFECT_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {keys.includes("logoLink") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-logo-link`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              النقر على الشعار
+              <HelpTip>
+                «يفتح رابط العنصر» يجعل كل شعارٍ كُتب له رابطٌ **داخلي** قابلاً للنقر — والشعار
+                الذي لا رابط له يبقى صورة. والرابط الخارجي لا يُصيَّر أصلاً.
+              </HelpTip>
+            </Label>
+            <select
+              id={`${idPrefix}-logo-link`}
+              className={fieldControlClass}
+              value={style.logoLink ?? "none"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ logoLink: e.target.value as never })}
+            >
+              {LOGO_LINK_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {LOGO_LINK_LABELS[token]}
                 </option>
               ))}
             </select>
@@ -778,6 +892,35 @@ function StyleFields({
           <HelpTip>
             بلا تأشير: يكتب الجُمل مرة واحدة ويقف عند آخرها — وهو الافتراضي. وبالتأشير يعود
             إلى الأولى بلا نهاية، وهي حركة دائمة بجوار نموذج الحجز فاختَرها بقصد.
+          </HelpTip>
+        </Label>
+      )}
+
+      {keys.includes("marqueePause") && (
+        /**
+         * 🔴 **المربّع مؤشَّرٌ افتراضياً، والإطفاء وحده يُكتب في الصفّ.**
+         *
+         * وهو الوحيد في هذا الصندوق الذي لا يعني فيه الغياب `false`: التوقّف عند
+         * التحويم شرطُ قراءةٍ لا زينة — من أراد أن يقرأ اسم ماركةٍ تمرّ يحتاج أن
+         * تقف له. ولو كان الافتراضي «لا يقف» لصار كل صفٍّ قائم (وكلها بلا هذا
+         * المفتاح) شريطاً لا يقف لأحد.
+         *
+         * ولذلك `patchStyle({ marqueePause: false })` تكتب `false` صراحةً،
+         * و`true` تُسقط المفتاح — فلا يتضخّم الصفّ بالافتراضي.
+         */
+        <Label className="flex w-fit cursor-pointer items-center gap-2 text-sm font-normal">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={style.marqueePause !== false}
+            disabled={disabled}
+            onChange={(e) => patchStyle({ marqueePause: e.target.checked ? undefined : false })}
+          />
+          يقف عند التحويم
+          <HelpTip>
+            مؤشَّرٌ افتراضياً: من يمرّ بالمؤشّر على الشريط يقف له فيقرأ. وإطفاؤه يجعل الشريط
+            يجري بلا توقّف. ⚠ وتوقّفُه عند التنقّل بلوحة المفاتيح لا يُطفأ بهذا المربّع ولا
+            بغيره — من يتنقّل بالـTab لا يستطيع ملاحقة رابطٍ يهرب منه.
           </HelpTip>
         </Label>
       )}

@@ -1167,6 +1167,17 @@ declare
   v_p   timestamptz;
   v_got timestamptz;
 begin
+  -- 🔴 هذه الكتلة تقرأ **مهلة المالك الحيّة** ولا تثبّتها — وهو مقصودٌ هنا: ما
+  --    يُقاس فرعُ `greatest` الفائز، لا رقمٌ بعينه. لكن الفرعَ الفائز كان محسوماً
+  --    بمسافتين محفورتين (`10 days` و`1 hour`)، فصار للتأكيد نطاقُ صلاحيةٍ ضمني:
+  --    (ن-٢) يمرّ ما دامت المهلة ≤ ١٤٥٢٠ دقيقة، و(ن-٣) ما دامت ≥ ٩٠ — والعمود
+  --    يقبل ١٥ … ٤٣٢٠٠. فمالكٌ يكتب «ادفع خلال ساعة» يُحمّر (ن-٣)، ومالكٌ يكتب
+  --    «ثلاثون يوماً» يُحمّر (ن-٢) — وهي القيمة التي تثبّتها فيكسترات هذا الملف
+  --    نفسه. (إصلاح حمرةٍ صنفية، 2026-08-17 · النمط ٦.)
+  --
+  -- 🔒 والعلاج: تُقاس المسافتان **من حدّ الفرعين نفسه**. الحدّ عند
+  --    `pickup = created + 2×timeout` (لأن الفرعين `created+t` و`pickup−t`)،
+  --    فساعةٌ فوقه وساعةٌ تحته تحسمان الفرع لأي مهلةٍ قانونية مهما بلغت.
   select c.unpaid_timeout_minutes into v_t from public.trip_config() c;
 
   -- بلا موعد: العمر وحده
@@ -1175,18 +1186,20 @@ begin
     raise exception '(ن-١) بلا موعد: توقعنا % وحصلنا %', v_c + make_interval(mins => v_t), v_got;
   end if;
 
-  -- موعدٌ بعيد: الموعد ناقص المهلة هو الحاكم
-  v_p   := now() + make_interval(mins => v_t) + interval '10 days';
+  -- موعدٌ بعيد (ساعةٌ **فوق** الحدّ): الموعد ناقص المهلة هو الحاكم
+  v_p   := v_c + make_interval(mins => 2 * v_t) + interval '1 hour';
   v_got := public.booking_hold_until(v_c, v_p);
   if v_got is distinct from v_p - make_interval(mins => v_t) then
-    raise exception '(ن-٢) موعدٌ بعيد: توقعنا % وحصلنا %', v_p - make_interval(mins => v_t), v_got;
+    raise exception '(ن-٢) موعدٌ بعيد: توقعنا % وحصلنا % (المهلة % دقيقة)',
+      v_p - make_interval(mins => v_t), v_got, v_t;
   end if;
 
-  -- موعدٌ قريب: المهلة الكاملة هي الحاكمة — فالوعد لا يُقصَّر
-  v_p   := now() + interval '1 hour';
+  -- موعدٌ قريب (ساعةٌ **تحت** الحدّ): المهلة الكاملة هي الحاكمة — فالوعد لا يُقصَّر
+  v_p   := v_c + make_interval(mins => 2 * v_t) - interval '1 hour';
   v_got := public.booking_hold_until(v_c, v_p);
   if v_got is distinct from v_c + make_interval(mins => v_t) then
-    raise exception '(ن-٣) موعدٌ قريب: توقعنا % وحصلنا %', v_c + make_interval(mins => v_t), v_got;
+    raise exception '(ن-٣) موعدٌ قريب: توقعنا % وحصلنا % (المهلة % دقيقة)',
+      v_c + make_interval(mins => v_t), v_got, v_t;
   end if;
 
   -- 🔒 والمنحة: `/booking/[token]` صفحةٌ عامة، فبلا anon لا وعدَ يُعرض

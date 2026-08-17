@@ -446,13 +446,29 @@ begin
 
   -- ── الإعدادات العامة: الذروة مفعّلة، والخصم مفتوح بلا أرضيات ────────────────
   -- (الأرضيات مقاسة في `discount_tests.sql`؛ ما يقاس هنا هو **أساس** الخصم لا حده.)
-  update public.pricing_settings set peak_enabled = true, peak_percent = 15 where id;
+  --
+  -- 🔴 **والهامشُ يُثبَّت هنا كذلك، وهذا إصلاحُ حمرةٍ مقيسة (2026-08-17).** كان
+  --    مثبَّتاً اثنان من ثلاثة، و`pricing_settings.margin_*` متروكاً لقيمة المالك
+  --    الحيّة — وهي التي تصنع `discount_implied_cost`، أي الحدَّ المهيمن في
+  --    `min_total`. وعند `margin_value = 1` (وقد ضبطه المالك كذلك فعلاً) تتساوى
+  --    مساحةُ الخصم على الرحلة ومساحتُه على الإجمالي، فيرمي (ج-٣-٠) و(ج-٧-٠)
+  --    والمجموعةُ كلها ترفض أن تبدأ — بلا أن ينكسر شيء. وهو النمط ٦ في
+  --    `handover/LESSONS.md`: مجموعةٌ تحمرّ كلما غيّر المالك رقماً في لوحته.
+  --
+  --    والتثبيت داخل الكتلة المتراجعة، فلا صفَّ يُحفظ ولا قيمة تُستعاد يدوياً.
+  update public.pricing_settings
+     set peak_enabled = true, peak_percent = 15,
+         margin_type = 'percent', margin_value = 20, margin_min_amount = 0
+   where id;
   update public.discount_settings
      set enabled = true,
          max_percent = 100,
          min_margin_percent_after_discount = 0,
          min_margin_amount_after_discount = 0
    where id;
+  -- وأرضيةُ البث ثالثةُ الحدود في `discount_floor_room` — وتركُها حيّةً يعيد
+  -- العطب نفسه من بابٍ آخر (وهو ما وقع في `discount_tests` و`partner_credit_tests`).
+  update public.dispatch_settings set min_margin_amount = 0 where id;
 
   select ps.peak_percent into v_peak from public.pricing_settings ps limit 1;
   if coalesce(v_peak, 0) <= 0 then

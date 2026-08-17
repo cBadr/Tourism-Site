@@ -6,6 +6,7 @@ import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
 import { AccountMenu } from "./account-menu";
 import { LocaleSwitcher } from "./locale-switcher";
+import { ThemeToggle } from "./theme-toggle";
 import { bookingHref, externalLinkProps, localeHref, navLinks } from "./links";
 
 /**
@@ -118,6 +119,15 @@ export async function SiteHeader({
           <LocaleSwitcher />
 
           {/*
+           * مبدّل الثيم (م‑٩) — بجوار مبدّل اللغة لأنهما شيءٌ واحد للزائر:
+           * «كيف أرى هذا الموقع». وكلاهما خادميّ بلا جافاسكربت.
+           *
+           * وعتبته `sm` لا `xl`: ثلاثة أزرارٍ أيقونية أضيق من مدخل الحساب
+           * بكثير، والدرج يحمل نسخته الكاملة بالنصوص لما دونها.
+           */}
+          <ThemeToggle className="hidden sm:block" />
+
+          {/*
            * 🔴 مدخل حساب العميل (الفجوة ١٢) — «أول ما أُصلحه في هذه المرحلة».
            *
            * جزيرةُ عميلٍ صغيرة، **لا ترويسة ديناميكية**: قراءة الجلسة هنا كانت
@@ -174,6 +184,11 @@ export async function SiteHeader({
                   فوقه لأنه ليس تنقّلاً في الموقع بل باباً إلى سطحٍ آخر. */}
               <span aria-hidden="true" className="my-1 h-px bg-border" />
               <AccountMenu variant="drawer" locale={locale} />
+
+              {/* مبدّل الثيم بنصّه كاملاً — نسخة الجوال لما دون `sm`، وهي
+                  الوحيدة هناك فلا تكرار على أي عرض. */}
+              <span aria-hidden="true" className="my-1 h-px bg-border sm:hidden" />
+              <ThemeToggle variant="inline" className="px-1 pb-1 sm:hidden" />
             </nav>
           </details>
         </div>

@@ -187,6 +187,14 @@ begin
            min_margin_percent_after_discount = 10,
            min_margin_amount_after_discount = 50;
 
+    -- 🔴 ومهلةُ الحجز المسبق تُصفَّر (إصلاح حمرةٍ صنفية، 2026-08-17): كل نداءات
+    --    `create_booking` أدناه بموعدٍ `now() + 3 days`، و`0081` ترفض ما قبل
+    --    `booking_min_pickup_at()` برمز `lead-time`. و`trip_settings.min_lead_minutes`
+    --    إعدادُ مالكٍ يقبل حتى ١٠٠٨٠ دقيقة (سبعة أيام) — فرفعُه فوق ٤٣٢٠ يجعل
+    --    **كل** المجموعة حمراء برسالةٍ لا علاقة لها بالولاء. والتثبيت داخل الكتلة
+    --    المتراجعة (`LOYALTY_TESTS_ROLLBACK`)، فلا صفَّ مالكٍ يُحفظ.
+    update public.trip_settings set min_lead_minutes = 0 where id = true;
+
     select * into v_cfg from public.loyalty_config();
     if not v_cfg.enabled or v_cfg.currency_per_point <> 0.5 then
       raise exception '(ب) إعدادات الفيكسترة لم تُقرأ (مفعَّل=% قيمة النقطة=%) — القياس على إعدادات أخرى',

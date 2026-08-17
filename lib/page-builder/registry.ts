@@ -16,6 +16,10 @@ import {
   BLOCK_CATALOGUE,
   CALLOUT_TONE_TOKENS,
   FEATURES_LAYOUT_TOKENS,
+  LOGO_EFFECT_TOKENS,
+  LOGO_LINK_TOKENS,
+  MARQUEE_DIRECTION_TOKENS,
+  MARQUEE_SPEED_TOKENS,
   blockDef,
   ITEMS_FIELD,
   SPACING_TOKENS,
@@ -30,6 +34,10 @@ import {
   type BuilderErrorCode,
   type CalloutToneToken,
   type FeaturesLayoutToken,
+  type LogoEffectToken,
+  type LogoLinkToken,
+  type MarqueeDirectionToken,
+  type MarqueeSpeedToken,
   type PublishBlockerCode,
   type SpacingToken,
   type ThemeColorToken,
@@ -139,18 +147,11 @@ export const FIELD_LABELS: Record<string, FieldLabel> = {
    */
   note: { label: "ملاحظة" },
   /**
-   * ⚠ **الوحيد في هذه الخريطة الذي لا يعني الفراغُ فيه إخفاءً**: العارضة تعيد
-   * النصّ الافتراضي حين يُترك خالياً، لأنه شرط استعمالٍ لا نثر. والمساعدة تقول
-   * ذلك صراحةً — حقلٌ يتصرّف خلاف بقية الحقول ولا يُنبّه عليه فخٌّ لمن يحرّره.
+   * 🔴 **`disclaimer` حُذف من هذه الخريطة في ن‑٩ (2026-08-17) بقرار المالك** —
+   * ولم يُترك معطَّلاً ولا مخفياً. كان الحقل الوحيد هنا الذي لا يعني الفراغُ فيه
+   * إخفاءً (العارضة تعيد افتراضيَّه)، وحذفُه قرارُ منتجٍ لا هندسة. ونصُّه محفوظٌ
+   * في `docs/phase-briefs/OWNER-NOTES-2026-08-16.md` وحده.
    */
-  disclaimer: {
-    label: "تنويه أسفل الشريط",
-    multiline: true,
-    help:
-      "شرط استعمال الشعارات: أنها تصف طرازات المركبات المتاحة عبر المتعهدين، " +
-      "لا رعايةً ولا شراكةً مع الشركات المصنِّعة. " +
-      "تستطيع إعادة صياغته، أما تركُه فارغاً فيعيد النصّ الافتراضي ولا يُخفيه.",
-  },
   ctaLabel: { label: "نص زر الحجز" },
   alt: {
     label: "النص البديل للصورة",
@@ -182,11 +183,20 @@ export const FIELD_LABELS: Record<string, FieldLabel> = {
   },
   suffix: { label: "اللاحقة", help: "ما يلي الرقم مباشرة: + أو /5 أو ٪ — والفارغ لا يظهر." },
   label: { label: "تسمية الرقم" },
-  name: { label: "اسم المسار" },
+  /**
+   * ⚠ «الاسم» لا «اسم المسار»: الحقل يخدم بطاقة مسارٍ **وماركةَ أسطول** (ن‑٩)،
+   * واسمٌ يصف مستعملاً واحداً كذبٌ صغير على الثاني — نفس علّة `note` أعلاه.
+   */
+  name: {
+    label: "الاسم",
+    help: "اسم الماركة أو المسار كما يُقرأ — ويُترجَم كأي نصّ. وبلا اسمٍ لا يُصيَّر العنصر إطلاقاً.",
+  },
   href: {
-    label: "رابط المسار",
+    label: "الرابط",
     dir: "ltr",
-    help: "مسارٌ داخلي يبدأ بـ/ مثل /routes/cairo-alexandria — والصفحة يجب أن تكون منشورة فعلاً وإلا كان الرابط ٤٠٤.",
+    help:
+      "مسارٌ داخلي يبدأ بـ/ مثل /routes/cairo-alexandria — والصفحة يجب أن تكون منشورة فعلاً وإلا كان الرابط ٤٠٤. " +
+      "والرابط الخارجي لا يُصيَّر أصلاً: يُعرض العنصر بلا رابط.",
   },
   duration: { label: "المدة", help: "كما تُقرأ: «٣ ساعات» أو «٤٥ دقيقة» — والفارغ لا يظهر." },
   distance: { label: "المسافة", help: "كما تُقرأ: «٢٢٠ كم» — والفارغ لا يظهر." },
@@ -260,6 +270,22 @@ export const MEDIA_SUGGESTIONS: readonly string[] = [
   "/img/traveler-airport.avif",
   "/img/interior-van.avif",
   "/img/interior-detail.avif",
+  /**
+   * 🆕 ن‑٩ — شعارات الماركات العشرة. كانت خارج هذه القائمة لأن الشعارات كانت
+   * بيانات نظام لا يصلها منتقي وسائط أصلاً (قرار بدر ٤). وبعد أن صارت `items`
+   * صار غيابُها هنا يعني أن المالك **يكتب `/brands/mercedes.svg` بيده** —
+   * وهو بعينه ما تسمّيه م‑٧ §٨ عيباً لا تأجيلاً.
+   */
+  "/brands/mercedes.svg",
+  "/brands/toyota.svg",
+  "/brands/bmw.svg",
+  "/brands/hyundai.svg",
+  "/brands/nissan.svg",
+  "/brands/kia.svg",
+  "/brands/mg.svg",
+  "/brands/jetour.svg",
+  "/brands/byd.svg",
+  "/brands/honda.svg",
 ] as const;
 
 /** أصول الفيديو القائمة — حقلٌ واحد يستعملها اليوم (`hero.video`) */
@@ -393,6 +419,37 @@ export const WHY_US_LAYOUT_LABELS: Record<WhyUsLayoutToken, string> = {
   expressive: "بصريّ (أرقام وحركة)",
 };
 
+/**
+ * ن‑٩ — مقابض شريط الماركات. **الوصف بالأثر لا بالرقم** (مذهب `TYPING_*`):
+ * «متمهّل» تقول لمن يختارها ما سيراه، و«٦٤ ثانية للدورة» لا تقول شيئاً لأحد.
+ */
+export const MARQUEE_SPEED_LABELS: Record<MarqueeSpeedToken, string> = {
+  slow: "متمهّل",
+  normal: "معتدل",
+  fast: "سريع",
+};
+
+/**
+ * 🔴 **الاتجاه نسبيٌّ لا مطلق، والتسمية تقول ذلك صراحةً.** الشريط يتبع اتجاه
+ * الصفحة (RTL يميناً وLTR يساراً)، فخيارٌ اسمه «يمين» كان يعني «مع القراءة» في
+ * العربية و«عكسها» في الإنجليزية — أي خياراً واحداً بمعنيين.
+ */
+export const MARQUEE_DIRECTION_LABELS: Record<MarqueeDirectionToken, string> = {
+  auto: "مع اتجاه القراءة",
+  reverse: "عكس اتجاه القراءة",
+};
+
+export const LOGO_EFFECT_LABELS: Record<LogoEffectToken, string> = {
+  mono: "رمادية، وتتلوّن عند التحويم",
+  monoStill: "رمادية دائماً",
+  color: "بألوانها الأصلية",
+};
+
+export const LOGO_LINK_LABELS: Record<LogoLinkToken, string> = {
+  none: "لا شيء (صورة فقط)",
+  item: "يفتح رابط العنصر",
+};
+
 export const THEME_COLOR_OPTIONS = THEME_COLOR_TOKENS;
 export const SPACING_OPTIONS = SPACING_TOKENS;
 export const CALLOUT_TONE_OPTIONS = CALLOUT_TONE_TOKENS;
@@ -400,6 +457,10 @@ export const TYPING_SPEED_OPTIONS = TYPING_SPEED_TOKENS;
 export const TYPING_HOLD_OPTIONS = TYPING_HOLD_TOKENS;
 export const FEATURES_LAYOUT_OPTIONS = FEATURES_LAYOUT_TOKENS;
 export const WHY_US_LAYOUT_OPTIONS = WHY_US_LAYOUT_TOKENS;
+export const MARQUEE_SPEED_OPTIONS = MARQUEE_SPEED_TOKENS;
+export const MARQUEE_DIRECTION_OPTIONS = MARQUEE_DIRECTION_TOKENS;
+export const LOGO_EFFECT_OPTIONS = LOGO_EFFECT_TOKENS;
+export const LOGO_LINK_OPTIONS = LOGO_LINK_TOKENS;
 
 // ---------------------------------------------------------------------------
 // الرموز → عربية. **الخادم يرسل رمزاً والشاشة تترجمه** (قاعدة المشروع)

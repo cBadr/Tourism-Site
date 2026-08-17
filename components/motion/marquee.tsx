@@ -27,6 +27,8 @@ export function Marquee({
   children,
   copies = 4,
   durationSec = TIMING.marqueeSec,
+  reverse = false,
+  pauseOnHover = true,
   className,
   setClassName,
   label,
@@ -36,6 +38,23 @@ export function Marquee({
   /** عدد النسخ المتطابقة. أربعٌ تغطي حتى ~٤٥٠٠ بكسل من العرض. */
   copies?: number;
   durationSec?: number;
+  /**
+   * 🆕 ن‑٩ — يجري **عكس** اتجاه القراءة؟ والافتراضي «مع القراءة».
+   *
+   * ولا يُمرَّر «يمين/يسار»: الاتجاه الأساس يأتي من `[dir]` في CSS (وإلا سار
+   * الشريط عكس القراءة على `/en`)، وهذا المقبض **يقلبه نسبياً** فيبقى صحيحاً
+   * في اللغتين معاً.
+   */
+  reverse?: boolean;
+  /**
+   * 🆕 ن‑٩ — يقف عند التحويم؟ والافتراضي **نعم**، فمن يقرأ عنصراً يمرّ يستطيع
+   * أن يقرأه.
+   *
+   * ⚠ **وتوقّف التركيز بلوحة المفاتيح لا يُطفئه هذا المقبض**: من يتنقّل بالـTab
+   * لا يستطيع ملاحقة رابطٍ يهرب منه، وهو شرط إتاحة لا خيار — ولذلك قاعدتُه في
+   * `motion.module.css` مستقلةٌ عن هذه السمة.
+   */
+  pauseOnHover?: boolean;
   className?: string;
   /** أصناف النسخة الواحدة (الفجوات والمحاذاة) — يملكها القسم لا هذا المكوّن. */
   setClassName?: string;
@@ -84,7 +103,16 @@ export function Marquee({
   const sets = Array.from({ length: Math.max(1, copies) });
 
   return (
-    <div ref={viewportRef} className={cn(styles.marqueeViewport, className)}>
+    <div
+      ref={viewportRef}
+      className={cn(styles.marqueeViewport, className)}
+      /**
+       * سمةٌ **سالبة** لا موجبة: الافتراضي (بلا سمة) هو الوقوف عند التحويم،
+       * فالقاعدة في CSS تُقرأ `:not([data-no-hover-pause])`. ولو كانت موجبة
+       * لصار كل مستهلكٍ لا يعرف المقبض شريطاً لا يقف — وهو انحدارٌ صامت.
+       */
+      {...(pauseOnHover ? null : { "data-no-hover-pause": "" })}
+    >
       <div
         className={styles.marqueeTrack}
         style={
@@ -94,6 +122,7 @@ export function Marquee({
           } as CSSProperties
         }
         {...(paused ? { "data-paused": "" } : null)}
+        {...(reverse ? { "data-reverse": "" } : null)}
       >
         {sets.map((_, i) => (
           <ul

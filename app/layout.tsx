@@ -3,7 +3,7 @@ import { Geist_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import { NextIntlClientProvider } from "next-intl";
 import { getSettings } from "@/lib/settings";
-import { paletteVars } from "@/lib/site-config";
+import { PALETTE_PREFIX, paletteVars } from "@/lib/site-config";
 import { getActiveLocale, getActiveLocaleDef } from "@/i18n/server";
 import { AnalyticsTags } from "@/lib/analytics/tags";
 import { normalizeIntegrations, resolveIntegration } from "@/lib/analytics/services";
@@ -233,7 +233,20 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
    * وهي **نفس قيم التصميم**، فالصفحة لا تظهر بلا هوية في أي حال.
    */
   const brandVars = {
-    ...paletteVars(settings.brand.colors),
+    /**
+     * 🔴 **لوحتان لا واحدة، وكلتاهما مُبَدَّأة (م‑٩).**
+     *
+     * القاعدة التي بُنيت عليها `0063` كانت: «السطريّ يسبق `:root` دائماً، فليحمل
+     * السطريُّ اللوحةَ كلها». وهي صحيحة ما دامت اللوحة واحدة. ومع لوحتين ينقلب
+     * السبقُ نفسه إلى مانع: رمزٌ عارٍ محقونٌ هنا **لا تستطيع أي كتلة CSS أن
+     * تبدّله**، فلا مبدّل أصلاً. فيُحقن الاثنان مُبَدَّأين — والاختيار بينهما
+     * في `globals.css` §١ب على غلاف الموقع وحده.
+     *
+     * والحجم: ٣٤ رمزاً بدل ١٧ — أي ~٦٠٠ بايت مضغوطةً في وثيقة، ولا طلبَ شبكةٍ
+     * ولا سكربت. وهو الثمن الكامل لمبدّلٍ بلا وميض.
+     */
+    ...paletteVars(settings.brand.colors, PALETTE_PREFIX.dark),
+    ...paletteVars(settings.brand.colorsLight, PALETTE_PREFIX.light),
     // الخطّان: العناوين Alexandria والمتن Readex Pro — وكلاهما يغطّي العربية
     // واللاتينية بنطاقَي يونيكود، فلا تبديل بحسب الاتجاه بعد اليوم.
     "--font-display": DISPLAY_STACK,

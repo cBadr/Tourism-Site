@@ -955,7 +955,9 @@ begin
   if not has_function_privilege('anon', 'public.get_booking_by_token(text)', 'EXECUTE')
      or not has_function_privilege('anon', 'public.attach_receipt(text, text)', 'EXECUTE')
      or not has_function_privilege('anon', 'public.available_payment_accounts(text, numeric)', 'EXECUTE')
-     or not has_function_privilege('anon', 'public.create_quote_request(text, text, text, text)', 'EXECUTE')
+     or not has_function_privilege('anon',
+          'public.create_quote_request(text, text, text, text, text, numeric, numeric, text, numeric, numeric, timestamptz, integer, integer)',
+          'EXECUTE')
      or not has_function_privilege('anon', 'public.receipt_upload_allowed(text)', 'EXECUTE') then
     raise exception '(ط-٤) إحدى دوال الضيف غير قابلة للتنفيذ من anon';
   end if;
@@ -1441,8 +1443,12 @@ begin
       end;
 
       -- (م-٢) والدالة المتحقِّقة تعمل بنفس الهوية وتقصّ التفاصيل عند ٢٠٠٠
+      --       (التوقيع صار مُهيكلاً في 0084: نقطتان وموعد وعدد ركاب)
       select * into v_res from public.create_quote_request(
-        'tours', v_name, '01000000000', repeat('ت', 5000)
+        'tours', v_name, '01000000000', repeat('ت', 5000),
+        'وسط البلد، القاهرة', 30.0444, 31.2357,
+        'أهرامات الجيزة', 29.9773, 31.1325,
+        now() + interval '3 days', 4, 2
       );
 
       execute 'reset role';
@@ -1471,42 +1477,54 @@ begin
     end if;
   end if;
 
-  -- (م-٥) اسم قصير يُرفض بـ invalid-input
+  -- (م-٥) اسم قصير يُرفض بـ invalid-name
+  --       ⚠ الرموز صارت مفصَّلة في 0084 بدل `invalid-input` الجامع: خريطة
+  --       `VALIDATION_MESSAGES` في `app/api/quote-request/route.ts` كانت تحمل
+  --       الأربعة سلفاً وتنتظرها، فصار لكل حقل رسالته بدل جملةٍ واحدة عامة.
   v_raised := false;
   begin
-    perform 1 from public.create_quote_request(null, 'ab', '01000000000', 'تفاصيل');
+    perform 1 from public.create_quote_request(
+      null, 'ab', '01000000000', 'تفاصيل',
+      'وسط البلد، القاهرة', 30.0444, 31.2357, null, null, null,
+      now() + interval '3 days', 4, null);
   exception
     when others then
       v_raised := true;
       get stacked diagnostics v_hint = pg_exception_hint;
   end;
-  if not v_raised or v_hint is distinct from 'invalid-input' then
+  if not v_raised or v_hint is distinct from 'invalid-name' then
     raise exception '(م-٥) اسم من حرفين قُبل (رُفض=% رمز=%)', v_raised, coalesce(v_hint, 'بلا');
   end if;
 
   -- (م-٦) هاتف بأرقام أقل من ثمانية يُرفض
   v_raised := false;
   begin
-    perform 1 from public.create_quote_request(null, v_name, '0100', 'تفاصيل');
+    perform 1 from public.create_quote_request(
+      null, v_name, '0100', 'تفاصيل',
+      'وسط البلد، القاهرة', 30.0444, 31.2357, null, null, null,
+      now() + interval '3 days', 4, null);
   exception
     when others then
       v_raised := true;
       get stacked diagnostics v_hint = pg_exception_hint;
   end;
-  if not v_raised or v_hint is distinct from 'invalid-input' then
+  if not v_raised or v_hint is distinct from 'invalid-phone' then
     raise exception '(م-٦) هاتف قصير قُبل (رُفض=% رمز=%)', v_raised, coalesce(v_hint, 'بلا');
   end if;
 
   -- (م-٧) خدمة غير معروفة تُرفض بدل أن تُخزَّن نصاً حراً
   v_raised := false;
   begin
-    perform 1 from public.create_quote_request('طائرة-خاصة', v_name, '01000000000', 'تفاصيل');
+    perform 1 from public.create_quote_request(
+      'طائرة-خاصة', v_name, '01000000000', 'تفاصيل',
+      'وسط البلد، القاهرة', 30.0444, 31.2357, null, null, null,
+      now() + interval '3 days', 4, null);
   exception
     when others then
       v_raised := true;
       get stacked diagnostics v_hint = pg_exception_hint;
   end;
-  if not v_raised or v_hint is distinct from 'invalid-input' then
+  if not v_raised or v_hint is distinct from 'invalid-service' then
     raise exception '(م-٧) خدمة وهمية قُبلت (رُفض=% رمز=%)', v_raised, coalesce(v_hint, 'بلا');
   end if;
 

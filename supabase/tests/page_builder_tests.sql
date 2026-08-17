@@ -48,6 +48,10 @@
 --   (ك)   الابن لا يُرى إن كانت أمُّه مخفيّة (فحص حيّ بدور `anon`)
 --   (م)   🔴 م‑٧: صورةُ العنصر وأيقونتُه **خارج** الفهرس وخارج `i18n_apply`،
 --         و`alt` و`href` **داخلهما** · والحارس يرفض ثمانية أشكال · والأيقونات مغلقة
+--   (ن)   🔴 م‑١٠: المرساة خارج الفهرس، ورقمُ البند وخلايا الجدول داخله
+--   (س)   🔴 `0082`: عنصرٌ بلا مفتاح ثابت صالح وفريد لا يُكتب + 🔬 **الطفرة ٣**
+--   (ع)   🔴 `0092`: لقطةٌ قديمة تُنشَر فلا تمحو `items` ولا تُيتّم عنوان ترجمة،
+--         و`items: []` تنفُذ + 🔬 **الطفرة ٤**
 --   (ل)   صفر أثر
 --
 -- المرجع: supabase/migrations/0058_page_builder.sql · 0065_item_non_text_fields.sql
@@ -240,11 +244,18 @@ begin
       -- `block_registry_check` تقرأ `required_fields` على اتحاد القوائم.
       ('image',         'content', 'any',           false, null,          array['alt','caption'],          null,                   array['src','alt'], array['src'],                 null),
       -- ── كتل م‑٢ الثلاث (‏`0061`) ──────────────────────────────────────
-      -- الشعارات بيانات نظام لا `items` — والمبرر تغيّر في م‑٧: الشكل صار
-      -- مقنَّناً، وبقاؤها في الإعدادات نطاقٌ (قائمةٌ واحدة للموقع) لا بنية.
-      -- 🔴 `disclaimer` خانةٌ ثالثة (‏`0072`): شرط الاستعمال لا يشارك النثر
-      -- التحريري مكانه، لأن الخانة الواحدة خسرته صامتاً حين كُتب فوقه.
-      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','note','disclaimer'], null,                '{}'::text[],    null,                            null),
+      -- 🔴 **ن‑٩ (`0087`): الشعارات صارت `items` عادية، وقرار بدر ٤ انتهى لأن
+      --    مبرره انتهى** — كان «`src` داخل عنصر قائمة شكلٌ لم يُقنَّن»، وم‑٧
+      --    قنّنته بعينه في `0065`. و`site_settings.fleetBrands` صار **احتياطاً**
+      --    حين تفرغ `items` (مذهب `SERVICES` مع `services-grid`)، ولذلك
+      --    `required_fields` تبقى فارغة.
+      --    و`name` نصٌّ يُترجَم (وكان مجمَّداً على العربية في اللغتين في الإعدادات)،
+      --    و`alt` **إلزامٌ بنيوي** تفرضه القاعدة (٤) على كل كتلةٍ تعلن `src`.
+      -- 🔴 و`disclaimer` **حُذف كاملاً بقرار المالك 2026-08-17** — لا معطَّلاً ولا
+      --    مخفياً. أضافته `0072` خانةً ثانية يعيد فراغُها افتراضيَّها، فعُرض الأمر
+      --    على المالك بمخاطره فقرّر خانةً واحدة. ونصُّه محفوظٌ في
+      --    `docs/phase-briefs/OWNER-NOTES-2026-08-16.md` لا في الكود.
+      ('logo-strip',    'system',  'once-per-page', false, null,          array['title','note'],           array['name','href','alt'], '{}'::text[], null,                array['src']),
       -- 🔴 `{items}` إلزاميةً = «الكتلة تُشحن والأرقام لا» (قرار بدر ٣)
       ('stat-band',     'content', 'any',           false, null,          array['title'],                  array['value','suffix','label'], array['items'], null,             null),
       -- بلا سعر (قرار بدر ١) — **قائم**. أمّا «بلا صورة» فنُقض بأمر بدر
@@ -1473,6 +1484,8 @@ do $$
 declare
   v_page constant uuid := '0b580000-0000-4000-8000-000000000601';
   v_sec  constant uuid := '0b580000-0000-4000-8000-000000000602';
+  /** 🆕 ن‑٩ — صفُّ شعاراتٍ على الصفحة نفسها، فتُقاس الكتلتان بحارسٍ واحد */
+  v_logo constant uuid := '0b580000-0000-4000-8000-000000000603';
   v_f       text;
   v_bad     text;
   v_n       integer;
@@ -1570,9 +1583,61 @@ begin
     raise exception '(م-٣) نصّ العنصر البديل لم يُترجَم — والإتاحة سقطت مع المسارات';
   end if;
 
+  /* ------------------------------------------------------------------------
+     (م-٤) 🆕 **ن‑٩ — شعارُ الماركة يمرّ من نفس البابين، على `logo-strip` نفسها.**
+
+     وهذا **توسيعٌ لهذا الشاهد لا فحصٌ ثانٍ بجانبه** (القاعدة الذهبية ١٢):
+     الحجب بالاسم عالميٌّ في `i18n_non_text_field`، فلو كُتب فحصٌ مستقل لكتلة
+     الشعارات لصارت نسختان من القاعدة تنحرفان يوم تُضاف كتلةٌ ثالثة تحمل صوراً.
+
+     🔴 **ولماذا لا يُغني عنه صفُّ `route-rail` أعلاه؟** لأن ما يُقاس هنا شيءٌ
+     آخر: أن **الكتلة التي كانت بيانات نظام** صارت تمرّ من الحارس نفسه بعد
+     `0087`. وصفٌّ في `block_registry` قد يُعلَن صحيحاً والمحتوى الحيّ يحمل
+     الشكل القديم — فالشاهد على المحتوى لا على الإعلان.
+     ------------------------------------------------------------------------ */
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values (v_logo, v_page, 'logo-strip', jsonb_build_object(
+    'title', 'ماركات الفحص',
+    'items', jsonb_build_array(jsonb_build_object(
+      '_k',   'n9lgo1',
+      'name', 'مرسيدس',
+      'src',  '/brands/0b58-probe.svg',
+      'href', '/routes/0b58-probe'))
+  ), 1, true);
+
+  -- (أ) ولا مسارَ شعارٍ في الفهرس
+  select string_agg(c.k, ', ') into v_bad
+  from public.i18n_corpus_rows() c
+  where c.k like v_logo::text || '.%'
+    and public.i18n_non_text_field(
+          split_part(c.k, '.', array_length(string_to_array(c.k, '.'), 1)));
+  if v_bad is not null then
+    raise exception '(م-٤أ) مسارُ شعار ماركةٍ دخل فهرس الترجمة: %', v_bad;
+  end if;
+
+  -- (ب) و**اسم الماركة داخله بقيمته** — وهو مكسبٌ لا حراسة: كان مجمَّداً على
+  --     العربية في اللغتين حين كان في `site_settings` (‏٦ صفوف `settings` وحدها،
+  --     ولا واحد منها اسمُ ماركة). فصفر صفوفٍ هنا يعني أن النقل لم يفتح ترجمتها.
+  select count(*) into v_n
+  from public.i18n_corpus_rows() c
+  where c.k = v_logo::text || '.items.n9lgo1.name'
+    and c.src = 'مرسيدس';
+  if v_n <> 1 then
+    raise exception '(م-٤ب) اسم الماركة ليس في الفهرس — النقل لم يفتح ترجمته';
+  end if;
+
+  -- (ج) 🔴 و`disclaimer` **لا مكان له**: حُذف من الكتالوج بقرار المالك (`0087`)،
+  --     فمفتاحٌ بهذا الاسم في الفهرس يعني صفّاً حيّاً يحمل حقلاً محذوفاً.
+  if exists (
+    select 1 from public.i18n_corpus_rows() c
+    where c.k like '%.disclaimer'
+  ) then
+    raise exception '(م-٤ج) مفتاح disclaimer ما زال في الفهرس — الحقل محذوف بقرارٍ لا معطَّل';
+  end if;
+
   delete from public.pages where id = v_page;
 
-  raise notice '✔ (م-١..٣) وسائط العنصر خارج الفهرس وخارج التطبيق، و`alt` و`href` داخلهما';
+  raise notice '✔ (م-١..٤) وسائط العنصر والشعار خارج الفهرس وخارج التطبيق، و`alt`/`href`/`name` داخلها';
 end;
 $$;
 
@@ -1804,6 +1869,9 @@ do $$
 declare
   v_page constant uuid := '0b580000-0000-4000-8000-000000000801';
   v_sec  constant uuid := '0b580000-0000-4000-8000-000000000802';
+  -- صفحةٌ ثانية **خارج** نطاق المسح الذاتي، لتحمل شاهد (س-٦) المزروع
+  v_page2 constant uuid := '0b580000-0000-4000-8000-000000000803';
+  v_wit   constant uuid := '0b580000-0000-4000-8000-000000000804';
   v_case  record;
   v_ok    boolean;
   v_hint  text;
@@ -1811,8 +1879,9 @@ declare
   v_key   text;
   v_taken text[];
 begin
-  insert into public.pages (id, slug, kind, title, published, sort)
-  values (v_page, '0b58-itemkeys', 'static', 'فيكسترة مفاتيح العناصر', false, 981);
+  insert into public.pages (id, slug, kind, title, published, sort) values
+    (v_page,  '0b58-itemkeys',     'static', 'فيكسترة مفاتيح العناصر', false, 981),
+    (v_page2, '0b58-itemkeys-wit', 'static', 'شاهد مفاتيح العناصر',    false, 980);
 
   -- (س-١) الأشكال المرفوضة — والحالات الثلاث التي يجمعها الرمز الواحد:
   --       **غائب** · **مخالف للنمط** · **مكرر**
@@ -1961,18 +2030,228 @@ begin
   end if;
 
   -- وشاهدٌ إيجابي على (س-٦): الصفر أعلاه ليس لأن لا شيء يحمل عناصر
+  --
+  -- 🔴 وكان هذا الشاهد `v_n < 50` — أي **تعداداً لمحتوى المالك**: `sections` أكثر
+  --    الجداول تحريراً، وحذفُ صفحاتٍ حتى ينزل العدد دون الخمسين كان يُحمّر مجموعةً
+  --    ولا شيء انكسر. والشاهد الآن **مزروع**: صفٌّ نعرفه بعينه، فالحكم على المسح
+  --    لا على حجم القاعدة (وهو النمط ٦ في `LESSONS.md`).
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values (v_wit, v_page2, 'faq',
+          '{"items":[{"_k":"s6wit1","q":"شاهد","a":"مزروع"}]}'::jsonb, 0, true);
+
   select count(*) into v_n
   from public.sections s
   where s.page_id <> v_page
     and jsonb_typeof(s.content -> 'items') = 'array'
     and jsonb_array_length(s.content -> 'items') > 0;
-  if v_n < 50 then
-    raise exception '(س-٦) شاهدٌ إيجابي غائب — % صفاً حيّاً يحمل عناصر', v_n;
+  if v_n < 1 then
+    raise exception '(س-٦) شاهدٌ إيجابي غائب — المسح لا يرى الصفَّ المزروع نفسه (% صفاً)', v_n;
+  end if;
+
+  -- والصفر أعلاه ما زال صفراً **والشاهد قائم**: أي أن المسح يقرأ ولا يعمى
+  if public.items_key_check(
+       (select s.content -> 'items' from public.sections s where s.id = v_wit)) is not null then
+    raise exception '(س-٦) الصفّ المزروع نفسه يرفضه الحكم — الفيكسترة معطوبة لا المنتج';
   end if;
 
   delete from public.sections where page_id = v_page;
 
-  raise notice '✔ (س-١..٦) العنصر بلا مفتاح صالح فريد لا يُكتب — إدراجاً وتحديثاً · والقانوني يمرّ · 🔬 والطفرة ٣ تثبت أن الحارس هو الرافض · و% صفاً حيّاً كلها مفتاحة', v_n;
+  raise notice '✔ (س-١..٦) العنصر بلا مفتاح صالح فريد لا يُكتب — إدراجاً وتحديثاً · والقانوني يمرّ · 🔬 والطفرة ٣ تثبت أن الحارس هو الرافض · و% صفاً يحمل عناصر (منها شاهدٌ مزروع) كلها مفتاحة', v_n;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ع) 🔴 `0092` — **لقطةٌ قديمة لا تمحو عناصر كتبتها هجرة، والنشرة لا تُحبَس**
+--
+-- ── العطب كما قِيس حيّاً (2026-08-17)، لا كما يُتوقَّع ──────────────────────
+--
+-- `0087` رحّلت عشر ماركات إلى `sections.content->'items'` في 08:32:31Z، ثم نُشرت
+-- الرئيسية من المنشئ أربع مرّات (‏08:34:56 · 08:43:07 · 08:44:21 · 08:46:36)
+-- فعادت `items` إلى الغياب في كل مرة. والسببُ **قاعدةٌ لم تكن مكتوبة**: النشر
+-- يُعيد تشغيل لقطةً، ولقطةُ المسودة تُؤخذ لحظة فتح المنشئ — فما كتبته هجرةٌ بعدها
+-- تمحوه خطوةُ (ج) وهي تكتب `content` جملةً واحدة.
+--
+-- 🔒 **والخسارة في العنوان لا في النصّ**: كل عنصر يحمل `_k` وهو عنوان ترجمته
+--    (‏`0059`). فمحوُ `items` **يُيتّم مفاتيح الترجمة**، ولا يُستعاد ما ضاع منها
+--    بإعادة الكتابة — العناصر الجديدة تُسكّ لها مفاتيح أخرى.
+--
+-- ⚠ **ولم يمسكه حارسٌ قائم.** `sections_guard_item_keys` مربوطٌ على الجدول ويفحص
+--    كل كتابة بما فيها هذه — لكنه يرفض `items` **مخالفةً**، و`items` **غائبة**
+--    شكلٌ قانوني (`items_key_check(null) ⇒ null`). ولم تمسكه عينٌ أيضاً: العارضة
+--    تسقط إلى `settings.fleetBrands` فظلّ الشريط يعرض عشرة شعارات صحيحة **بينما
+--    التحرير من اللوحة مطفأ**. الاحتياطي أنقذ الصفحة وأخفى العطل.
+--
+-- ── ما يقيسه هذا القسم ──────────────────────────────────────────────────────
+--
+--   (ع-١) 🔒 **النشر ينجح** — وهذا نصف الاختبار لا زينته: حارسٌ يمنع المالك من
+--         نشر محتواه أسوأ من الانحراف الذي يمنعه.
+--   (ع-٢) والعناصر نجت **بمفاتيحها وبترتيبها** لا بعددها.
+--   (ع-٣) وعنوانُ ترجمة العنصر ما زال في الفهرس وترجمتُه المنشورة حيّة.
+--   (ع-٤) واللقطة المخزَّنة نفسها صُولحت — وإلا عادت الشاشة تُقدّم شكلاً يمحوها.
+--   (ع-٥) 🔴 **والحدّ الفاصل: `"items": []` إرادةُ مالكٍ فتنفُذ.** بلا هذا التأكيد
+--         يكون الحارس قد أطفأ الحذف بدل أن يمنع المحو.
+--   (ع-٦) 🔬 **الطفرة ٤** — يُعطَّل المُصالِح ويُعاد المشهد نفسه، فيُثبَت أن ما
+--         نجا في (ع-٢) نجا **به** لا بشيءٍ آخر.
+--
+-- المرجع: supabase/migrations/0092_publish_reconciles_item_keys.sql · D-60
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_page  constant uuid := '0b580000-0000-4000-8000-000000000901';
+  v_sec   constant uuid := '0b580000-0000-4000-8000-000000000902';
+  v_rev   constant uuid := '0b580000-0000-4000-8000-000000000903';
+  v_rev2  constant uuid := '0b580000-0000-4000-8000-000000000904';
+  v_rev3  constant uuid := '0b580000-0000-4000-8000-000000000905';
+  v_items constant jsonb := jsonb_build_array(
+    jsonb_build_object('_k', 'g92aa1', 'name', 'مرسيدس',
+                       'src', '/brands/0b58-a.svg', 'alt', 'شعار مرسيدس'),
+    jsonb_build_object('_k', 'g92bb2', 'name', 'بي إم دبليو',
+                       'src', '/brands/0b58-b.svg', 'alt', 'شعار بي إم دبليو'));
+  v_full  constant jsonb := jsonb_build_object('title', 'ماركات فحص المصالحة',
+                                               'items', v_items);
+  v_key   text;
+  v_stale jsonb;
+  v_res   jsonb;
+  v_got   jsonb;
+  v_killed boolean := false;
+begin
+  insert into public.locales (code, name, native_name, dir, is_default, enabled, auto_publish, sort)
+  values ('zx', 'لغة فحص المنشئ', 'Builderish', 'ltr', false, true, false, 97)
+  on conflict (code) do nothing;
+
+  insert into public.pages (id, slug, kind, title, meta, published, sort)
+  values (v_page, '0b58-publish-items', 'landing', 'صفحة فحص مصالحة العناصر',
+          '{"title":null,"description":"وصف فحص مصالحة العناصر"}'::jsonb, true, 978);
+
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values (v_sec, v_page, 'logo-strip', v_full, 0, true);
+
+  v_key := v_sec::text || '.items.g92aa1.name';
+
+  -- (ع-٠) شاهدٌ إيجابي **قبل** أي نشر: العنوان في الفهرس فعلاً، وله ترجمةٌ منشورة.
+  --       وبلاه يكون كل ما بعده إثباتَ فراغٍ لا إثباتَ حراسة (الذهبية ١٩).
+  if not exists (select 1 from public.i18n_corpus_rows() c
+                 where c.ns = 'section' and c.k = v_key) then
+    raise exception '(ع-٠) عنوان ترجمة العنصر ليس في الفهرس أصلاً — الفيكسترة معطوبة لا المنتج';
+  end if;
+  insert into public.translations (locale, namespace, key, source_text, value, status)
+  values ('zx', 'section', v_key, 'مرسيدس', 'Mercedes', 'published');
+
+  -- ── اللقطة «من قبل الهجرة»: نفس الكتلة بنفس معرّفها، **بلا مفتاح `items`** ──
+  v_stale := jsonb_build_object('page',
+    jsonb_build_object('id', v_page::text, 'slug', '0b58-publish-items'),
+    'sections', jsonb_build_array(
+      jsonb_build_object('id', v_sec::text, 'type', 'logo-strip',
+        'content', jsonb_build_object('title', 'ماركات فحص المصالحة'),
+        'sort', 0, 'visible', true)));
+
+  insert into public.page_revisions (id, page_id, status, snapshot)
+  values (v_rev, v_page, 'draft', v_stale);
+
+  -- (ع-١) 🔒 النشر **ينجح**. ولو رُفض هنا لكان الحارس قد حبس المالك خارج محتواه
+  v_res := public.publish_page_revision(v_page, v_rev);
+  if v_res -> 'keptSectionIds' is null then
+    raise exception '(ع-١) النشر لم يُرجع عقده — %', coalesce(v_res::text, '∅');
+  end if;
+
+  -- (ع-٢) 🔴 والعناصر نجت **بمفاتيحها وبترتيبها**: عدٌّ متساوٍ يمرّ فوق مفاتيح أخرى
+  select s.content -> 'items' into v_got from public.sections s where s.id = v_sec;
+  if v_got is distinct from v_items then
+    raise exception
+      '(ع-٢) 🔴 لقطةٌ لا تعرف `items` محت القائمة الحيّة عند النشر — %',
+      coalesce(v_got::text, '∅');
+  end if;
+
+  -- (ع-٣) والعنوان ما زال قائماً، والترجمة المنشورة لم تُيتَّم
+  if not exists (select 1 from public.i18n_corpus_rows() c
+                 where c.ns = 'section' and c.k = v_key) then
+    raise exception '(ع-٣) 🔴 عنوان ترجمة العنصر سقط من الفهرس بعد النشر';
+  end if;
+  if not exists (select 1 from public.translations t
+                 where t.locale = 'zx' and t.namespace = 'section'
+                   and t.key = v_key and t.status = 'published') then
+    raise exception '(ع-٣) الترجمة المنشورة صارت يتيمةً — مفتاحٌ لا يقابله عنصر';
+  end if;
+
+  -- (ع-٤) واللقطة المخزَّنة صُولحت هي نفسها، فلا يعود المنشئ يُقدّم شكلاً يمحوها
+  select x -> 'content' -> 'items' into v_got
+  from public.page_revisions r, jsonb_array_elements(r.snapshot -> 'sections') x
+  where r.id = v_rev;
+  if v_got is distinct from v_items then
+    raise exception
+      '(ع-٤) اللقطة المخزَّنة ما زالت بلا عناصر — النشرة التالية تعيد المحو (%)',
+      coalesce(v_got::text, '∅');
+  end if;
+
+  -- ══ (ع-٥) 🔴 الحدّ الفاصل: الغياب ليس الفراغ ═══════════════════════════════
+  --
+  -- المنشئ يكتب `[]` حين يفرغ المالك قائمةً، ويُخرج المفتاح كلَّه حين لا يعرفه.
+  -- فلو صالحنا الفراغ أيضاً لصار الحارس قد **أطفأ الحذف**: مالكٌ يمحو ماركاته
+  -- فتعود بأول نشرة، ولا رسالة ولا سبب.
+  insert into public.page_revisions (id, page_id, status, snapshot)
+  values (v_rev2, v_page, 'draft', jsonb_build_object('sections', jsonb_build_array(
+    jsonb_build_object('id', v_sec::text, 'type', 'logo-strip',
+      'content', jsonb_build_object('title', 'ماركات فحص المصالحة',
+                                    'items', '[]'::jsonb),
+      'sort', 0, 'visible', true))));
+
+  perform public.publish_page_revision(v_page, v_rev2);
+
+  select s.content -> 'items' into v_got from public.sections s where s.id = v_sec;
+  if v_got is distinct from '[]'::jsonb then
+    raise exception
+      '(ع-٥) 🔴 إفراغُ المالك المتعمَّد لم ينفُذ (%) — الحارس أطفأ الحذف بدل أن يمنع المحو',
+      coalesce(v_got::text, '∅');
+  end if;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- 🔬 (ع-٦) الطفرة ٤ — «فحصٌ لا يمكن أن يفشل هو زينة» (النمط ٩)
+  --
+  -- يُستبدل جسم `reconcile_revision_items` بجسمٍ لا يفعل شيئاً، ويُعاد المشهد
+  -- نفسه حرفاً، فيجب أن **تُمحى** العناصر. ولو نجت والمُصالِح معطَّل، فنجاتُها في
+  -- (ع-٢) لم تكن به — وكان يجب حذف التأكيد لا الاطمئنان إليه.
+  --
+  -- والطفرة داخل معاملةٍ فرعية تُرجَع، وDDL في Postgres معاملاتيّ — فالجسم الحقيقي
+  -- يعود بلا سطرِ استعادةٍ يمكن أن يُنسى. والشاهد على عودته بعدها.
+  -- ══════════════════════════════════════════════════════════════════════════
+  begin
+    update public.sections set content = v_full where id = v_sec;
+
+    execute $q$
+      create or replace function public.reconcile_revision_items(p_page uuid, p_revision uuid)
+      returns integer language sql immutable set search_path = '' as $b$ select 0 $b$;
+    $q$;
+
+    insert into public.page_revisions (id, page_id, status, snapshot)
+    values (v_rev3, v_page, 'draft', v_stale);
+
+    perform public.publish_page_revision(v_page, v_rev3);
+
+    select s.content -> 'items' into v_got from public.sections s where s.id = v_sec;
+    v_killed := (v_got is null);
+
+    raise exception 'PB_RECONCILE_MUTATION_ROLLBACK';
+  exception
+    when others then
+      if sqlerrm <> 'PB_RECONCILE_MUTATION_ROLLBACK' then
+        raise;
+      end if;
+  end;
+
+  if not v_killed then
+    raise exception
+      '(ع-٦) 🔬 الطفرة لم تُحدث فرقاً: العناصر نجت والمُصالِح معطَّل — أي أن (ع-٢) لا يقيس هذا الحارس';
+  end if;
+
+  -- والجسم الحقيقي عاد: الفحص لا يترك القاعدة أضعف مما وجدها
+  if position('touched' in pg_get_functiondef(
+       'public.reconcile_revision_items(uuid, uuid)'::regprocedure)) = 0 then
+    raise exception '(ع-٦) المُصالِح لم يعُد إلى جسمه بعد الطفرة — القاعدة أضعف مما وجدها';
+  end if;
+
+  delete from public.pages where id = v_page;
+
+  raise notice '✔ (ع-١..٥) لقطةٌ لا تعرف `items` تُنشَر فلا تمحو العناصر ولا تُيتّم عنوان ترجمةٍ، و`items: []` تنفُذ · 🔬 والطفرة ٤ تثبت أن المُصالِح هو ما أنجاها';
 end;
 $$;
 
@@ -2013,7 +2292,11 @@ begin
    where r.id in ('0b580000-0000-4000-8000-000000000311'::uuid,
                   '0b580000-0000-4000-8000-000000000411'::uuid,
                   '0b580000-0000-4000-8000-000000000412'::uuid,
-                  '0b580000-0000-4000-8000-000000000511'::uuid);
+                  '0b580000-0000-4000-8000-000000000511'::uuid,
+                  -- لقطات (ع) الثلاث: القديمة · المُفرِغة · والمطفورة
+                  '0b580000-0000-4000-8000-000000000903'::uuid,
+                  '0b580000-0000-4000-8000-000000000904'::uuid,
+                  '0b580000-0000-4000-8000-000000000905'::uuid);
   if v_n <> 0 then
     raise exception '(ل) بقيت % لقطة فيكسترة — الحذف بـcascade لم يعمل', v_n;
   end if;
@@ -2040,6 +2323,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — منشئ الصفحات: عنصرٌ بلا مفتاح ثابت صالح وفريد لا يُكتب إدراجاً ولا تحديثاً (وطفرةٌ تثبت أن الحارس هو الرافض) · مرساةُ البند خارج فهرس الترجمة وخارج التطبيق ورقمُه وخلايا الجدول داخلهما · صورةُ العنصر وأيقونتُه خارج فهرس الترجمة وخارج التطبيق و`alt` داخلهما · النشر فرقٌ بالمعرّف فتنجو الترجمات (وطفرة «احذف ثم أدرج» تُبيدها) · العمق مستوى واحد من الطرفين · محجوزات المسار تُرفض برمزها · الكتالوج = BLOCK_CATALOGUE ولا يقبل شكلاً غير معنوَن · بوابة النشر ترجع كل رمز في حالته وتقرأ الكتالوج فعلاً · anon صفر منحة ولا TRUNCATE لأحد · والمتعهد صفر مسودة وops قراءةٌ فقط';
+  raise notice 'ALL PASSED — منشئ الصفحات: لقطةٌ قديمة تُنشَر فلا تمحو عناصر كتبتها هجرة ولا تُيتّم عنوان ترجمة، و«items: []» إفراغٌ ينفُذ (وطفرةٌ تعطّل المُصالِح فتُمحى) · عنصرٌ بلا مفتاح ثابت صالح وفريد لا يُكتب إدراجاً ولا تحديثاً (وطفرةٌ تثبت أن الحارس هو الرافض) · مرساةُ البند خارج فهرس الترجمة وخارج التطبيق ورقمُه وخلايا الجدول داخلهما · صورةُ العنصر وأيقونتُه خارج فهرس الترجمة وخارج التطبيق و`alt` داخلهما · النشر فرقٌ بالمعرّف فتنجو الترجمات (وطفرة «احذف ثم أدرج» تُبيدها) · العمق مستوى واحد من الطرفين · محجوزات المسار تُرفض برمزها · الكتالوج = BLOCK_CATALOGUE ولا يقبل شكلاً غير معنوَن · بوابة النشر ترجع كل رمز في حالته وتقرأ الكتالوج فعلاً · anon صفر منحة ولا TRUNCATE لأحد · والمتعهد صفر مسودة وops قراءةٌ فقط';
 end;
 $$;

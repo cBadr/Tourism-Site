@@ -198,12 +198,19 @@ begin
   if v_admin is null then
     raise exception '(ب-٠) لا مشرف في القاعدة — كل ما يلي كان سيقيس رفضاً لا سلوكاً';
   end if;
-  select * into v_cfg from public.loyalty_config();
   v_win := public.failed_reclass_window();
 
   begin
     -- ══ الفيكسترة ═════════════════════════════════════════════════════════
     update public.loyalty_settings set enabled = true, points_per_currency = 1;
+
+    -- ⚠ والقراءة **بعد** الفيكسترة لا قبلها — وهذا موضعُ حمرةٍ مقيسة:
+    --   كانت `loyalty_config()` تُقرأ قبل السطر أعلاه، فتُرجع سعرَ المالك الحيّ.
+    --   ويوم 2026-08-17 رفعه بدر إلى 1.25، فصار (و-٢) يقارن ما سكّه المُشغّل
+    --   بسعرٍ **لم يعمل به** (‏3000 مقابل 3750) — أي مجموعةٌ تحمرّ كلما غيّر
+    --   المالك رقماً في لوحته، وهو النمط ٦ في `handover/LESSONS.md` حرفياً.
+    --   والاختبار يملك بياناته: التوقّع يُشتق من **نفس المدخل** الذي رآه الكود.
+    select * into v_cfg from public.loyalty_config();
 
     insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
                             created_at, updated_at, raw_app_meta_data, raw_user_meta_data)

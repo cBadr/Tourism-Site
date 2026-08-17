@@ -1,79 +1,76 @@
 import type { SectionContentMap } from "@/lib/content-types";
 import type { FleetBrand, SiteSettings } from "@/lib/site-config";
+import type { BlockStyle } from "@/lib/page-builder-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
+import { Marquee } from "@/components/motion";
+import { internalPath, localeHref } from "@/components/site/links";
+import { safeMediaSrc } from "@/components/sections/image";
 
 /**
  * شريط شعارات ماركات الأسطول — نقلٌ لقسم `.brands` في التصميم.
  *
- * ── أربعة قرارات تحكم هذا الملف ─────────────────────────────────────────────
+ * ── ما تغيّر في ن‑٩ (2026-08-17)، وكلُّه بأمر المالك ────────────────────────
  *
- * (١) **الشعارات بيانات نظام لا `items`** (قرار بدر ٤): تُقرأ من
- *     `settings.fleetBrands` أي من صفٍّ في `site_settings`، والكتلة تحمل
- *     عنوانها وتنويهها وحدهما.
+ * (١) 🔴 **الشعارات صارت `items` عادية، وقرار بدر ٤ انتهى لأن مبرره انتهى.**
  *
- *     🔴 **وتصحيحٌ على المبرر — 2026-08-16 (م‑٧):** كان مكتوباً هنا أن السبب
- *     بنيوي: «`src` داخل عنصر قائمة شكلٌ لم يُقنَّن في عقد المنشئ، وفتحُه بابٌ
- *     لكل كتلة لاحقة». **والباب فُتح بأمر بدر**: «ضيف الأعمدة المطلوبة بحيث
- *     يمكن التحكم في كل شيء من خلال لوحة التحكم بما فيها الصور والأيكونات».
- *     والشكل مقنَّنٌ اليوم في `lib/item-fields-types.ts` والهجرة `0065`،
- *     و`route-rail` و`services-grid` تحملان صور عناصرهما فعلاً.
+ *     كان مكتوباً هنا أن السبب بنيوي: «`src` داخل عنصر قائمة شكلٌ لم يُقنَّن في
+ *     عقد المنشئ». **وم‑٧ قنّنته بعينه** — `NON_TEXT_FIELD_NAMES` تحجب `src`
+ *     بالاسم على مستوى العنصر (`0065`)، و`route-rail` و`services-grid` تحملان
+ *     صور عناصرهما فعلاً. فالقيد زال والقرار يزول معه؛ ومبررُ م‑٧ الثاني
+ *     («النطاق: قائمةٌ واحدة للموقع كله») يُعالَج **بالاحتياط لا بالمنع**:
  *
- *     فالسبب الباقي هنا **نطاقٌ لا بنية**: قائمة الماركات واحدةٌ للموقع كله،
- *     ووضعُها في `items` يجعل ماركةً تُضاف في صفحةٍ وتغيب في أخرى. ونقضُه
- *     حقلان في `block_registry` لا مرحلةٌ جديدة.
+ *       `content.items` تتجاوز  ⇐  `settings.fleetBrands` تحتيها
  *
- * (٢) **التنويه شرط الاستعمال لا زخرف** (الاتفاق §٤): الشعارات وصفٌ للمركبات
- *     العاملة لا ادّعاءُ شراكة ولا اعتماد — ونصُّه من القاعدة كغيره.
+ *     وهو مذهب `services-grid` مع `SERVICES` و`hero.items` مع نقاط الثقة حرفاً.
+ *     فصفحةٌ لم تُحرَّر ترى القائمة الواحدة كما كانت، وصفحةٌ حُرِّرت ترى ما كُتب.
  *
- *     🔴 **وهذا البند كان مكتوباً هنا ومنقوضاً على الصفحة الحيّة.** التنويه
- *     كان يسكن حقل `note` نفسه، فكُتب فوقه نثرٌ تسويقي («نقوم بتوفير كافة
- *     الموديلات…») واختفى شرط الاستعمال من الرئيسية **بلا خطأ ولا سجلّ ولا
- *     فحصٍ يمسكه**: الحقل ممتلئ، والكتلة تُصيَّر، والبوابة خضراء.
+ *     ⚠ **وثمنُه بلا تجميل:** من حذف **كل** العناصر تعود إليه قائمة الإعدادات.
+ *     وهو ثمن `services-grid` المشحون نفسه، ونصُّ المساعدة في اللوحة يقوله.
  *
- *     فصارتا خانتين (‏`0072`)، والفرق بينهما في **معنى الفراغ** لا في الموضع:
+ * (٢) 🔴 **حقل `disclaimer` حُذف كاملاً — قرارُ المالك، 2026-08-17.**
  *
- *       `note`       نثرٌ تحريري — `?? ` واحتياطيّه لا شيء، فالفارغ يُخفيه.
- *       `disclaimer` شرطُ استعمال — `||` واحتياطيّه النصّ الكامل، **فالفارغ
- *                    يعيد الافتراضي**. والمالك يملك الصياغة ولا يملك الحذف،
- *                    وهو بعينه معنى «شرطٌ لا زخرف».
+ *     أضافته `0072` خانةً ثانية أسفل الشريط: `note` نثرٌ تحريري يختفي بالفراغ،
+ *     و`disclaimer` شرطُ استعمالٍ **يعيد افتراضيَّه عند الفراغ** (`||` لا `??`)
+ *     فيملك المالك الصياغة ولا يملك الحذف. وعُرض عليه الأمر بمخاطره فقرّر:
+ *     **خانةٌ واحدة، ويُحذف الثاني.** وهو قرار منتجٍ لا هندسة، فنُفِّذ بلا
+ *     تحوّطٍ في الواجهة وبلا نصٍّ بديل يُلمّح إليه.
  *
- *     ⚠ ولا يكفي أن يُملأ الحقل في القاعدة: خانةٌ فارغةٌ في المنشئ تُحفَظ
- *     `""`، و`??` لا تسقط على السلسلة الفارغة — فالتنويه كان سيضيع بضغطة
- *     حفظٍ لا علاقة لها به. `||` هي الفرق بين «افتراضيٍّ عند الغياب» و«شرطٍ
- *     لا يُفرَّغ».
+ *     ونصُّ التنويه المحذوف محفوظٌ **مرةً واحدة** في
+ *     `docs/phase-briefs/OWNER-NOTES-2026-08-16.md` كي لا يُعاد اختراعه إن
+ *     طلبه يوماً — **ولا نسخة منه في الكود ولا في ملفات الرسائل** بطلبه.
+ *     و`note` — نثرُ المالك — **لم يُمسّ**.
  *
- * (٣) **النسختان المكرّرتان `aria-hidden` بالكامل**: الأولى وحدها مقروءة،
- *     وإلا قرأ قارئ الشاشة «مرسيدس» ثلاث مرات. وثلاث نسخ لا اثنتان لأن الشاشة
- *     العريضة يجب أن تبقى ممتلئة طوال الدورة، وإلا عبَرها فراغٌ كل لفّة.
+ * (٣) **الحركة صارت `Marquee` من م‑٥ ولم تبقَ حلقةً ثانية في هذا الملف.**
+ *     كان هنا `MARQUEE_CSS` مستقلٌّ بثلاث نسخ، و`Marquee` مبنيٌّ منذ م‑٥ **وبلا
+ *     مستهلك واحد** (مقيس: صفر استيراد). فحلقتان تنحرفان، والقائمة تكسب منه
+ *     ثلاثة أشياء لم تكن هنا:
+ *       • **التوقّف خارج الشاشة وفي التبويب الخلفي** — حركةٌ تدور طوال عمر
+ *         الصفحة كانت تدور وهي غير مرئية.
+ *       • **التوقّف عند تركيز لوحة المفاتيح** — شرط إتاحة: من يتنقّل بالـTab لا
+ *         يستطيع ملاحقة رابطٍ يهرب منه (ويصير له معنىً حقيقي مع `logoLink`).
+ *       • 🔴 **وتقليل الحركة يُوقف الشريط ولا يُخفيه.** `MARQUEE_CSS` القديم كان
+ *         `animation:none` وحدها داخل حاويةٍ `overflow:hidden` ⇒ **أكثر من نصف
+ *         الشعارات مقصوصٌ بلا طريقة لرؤيته** لمن طلب تقليل الحركة. و`Marquee`
+ *         يفكّ الحاوية ويُخفي النسخ المكرّرة فتلتفّ العشرة شبكةً مرتّبة.
+ *         والشعارات **محتوى** لا زخرفة، فإيقافها ليس إخفاءها.
  *
- * (٤) **اتجاه اللفّ يتبع اتجاه الصفحة**: الشريط في RTL يزحف يميناً وفي LTR
- *     يساراً — و`transform` لا يعرف الاتجاه، فالإشارة تأتي من متغيّر يُضبط
- *     بـ`[dir]`. ولولا ذلك لزحف الشريط إلى فراغٍ في إحدى اللغتين.
+ * (٤) **خمسة مقابض في `content.style` وحده** (سرعة · اتجاه · توقّف بالتحويم ·
+ *     أثر الصورة · فعل النقر) — رموزٌ من قوائم مغلقة، والمجهول ينحدر إلى
+ *     الافتراضي في `readBlockStyle`. والمبرر مكتوب في العقد §٥ ولا يُعاد.
  *
- * ⚠ **والحركة تتوقف كلياً عند `prefers-reduced-motion`** — شرط إتاحة يفرضه
- *   التصميم على نفسه، والشريط يبقى مقروءاً ساكناً.
+ * ── وقرارٌ من م‑٢ باقٍ كما هو ────────────────────────────────────────────────
+ *
+ * **اتجاه اللفّ يتبع اتجاه الصفحة**: الشريط في RTL يزحف يميناً وفي LTR يساراً —
+ * و`transform` لا يعرف الاتجاه. ولذلك مقبض الاتجاه **نسبيّ** («مع القراءة» /
+ * «عكسها») لا مطلق: مقبضٌ يقول «يمين» كان يعني شيئين في لغتين.
  *
  * ⚠ والشعار SVG مسطّح: `<img>` عادية لا `next/image` — المُحسِّن لا يلمس SVG
  *   ويحتاج `dangerouslyAllowSVG`، ووزن العشرة مجتمعةً ٤١ ك.ب.
  */
 
-/**
- * ثلاث نسخ ⇒ إزاحة ثُلث المسار تساوي عرض نسخةٍ كاملة، فتُغلق الدورة بلا قفزة.
- *
- * ⚠ **وشرطُ ألا يعبر الشريطَ فراغٌ مقيسٌ لا مقدَّر:** ما يُرى في أي لحظة يجب
- * ألا يتجاوز `(عدد النسخ − ١) × عرض النسخة`. والعشرة شعارات مجتمعةً ٦٤٠ بكسل
- * فقط — فبثلاث نسخ ينكسر الشريط على أي شاشة أعرض من ١٢٨٠، وهي شاشة الأغلبية.
- * ولذلك تحمل كل نسخة `min-w-[100vw]`: تصير النسخة بعرض الشاشة مهما كبرت،
- * فيصير الشرط `عرض الشاشة ≤ ضعفه` — أي محقَّقاً دائماً بلا رقمٍ مضبوط بالتجربة.
- */
-const MARQUEE_CSS = `
-.brandmq{--brandmq-end:-33.3333%}
-[dir="rtl"] .brandmq{--brandmq-end:33.3333%}
-.brandmq{animation:brandmq 46s linear infinite}
-@keyframes brandmq{from{transform:translateX(0)}to{transform:translateX(var(--brandmq-end))}}
-@media (prefers-reduced-motion:reduce){.brandmq{animation:none}}
-`;
+/** مدّة دورة النسخة الواحدة بالثواني — الوسط هو رقم التصميم (`TIMING.marqueeSec`) */
+const SPEED_SEC = { slow: 64, normal: 40, fast: 24 } as const;
 
 /**
  * 🔴 **الشعارات أحادية اللون على الداكن — وإلا اختفت كلها.**
@@ -87,83 +84,118 @@ const MARQUEE_CSS = `
  * أبيض» — `brightness(0) invert(1)`. وهي تعمل على **أي** شعار مهما كان لونه،
  * فلا تحتاج قائمة استثناءات لكل ماركة تُضاف لاحقاً.
  *
- * وتُقيَّد بـ`dark:` فقط: على الأرضية الفاتحة (‏`/admin` ومعاينة المنشئ) تبقى
- * الشعارات رماديةً كما كانت — أبيضُ على أبيض هو العيب نفسه مقلوباً.
+ * 🔒 **ولذلك يبقى `dark:` في الرموز الثلاثة كلها بلا استثناء** — بما فيها
+ * `color`. ورمزٌ يعِد بالألوان على الداكن كان يعِد باختفاء أربعة شعارات، وهو
+ * مقبضٌ يُشحن معطوباً خلف خيار (النمط ٣ في `LESSONS.md`). فالوعد مقصورٌ على
+ * الأرضية الفاتحة، ونصُّ المساعدة في اللوحة يقول ذلك حرفاً.
  */
-const LOGO_CLASS =
-  "h-7 w-auto max-w-28 object-contain opacity-60 grayscale transition duration-300 sm:h-8 " +
-  "dark:opacity-55 dark:grayscale-0 dark:[filter:brightness(0)_invert(1)]";
+const LOGO_BASE = "h-7 w-auto max-w-28 object-contain transition duration-300 sm:h-8";
+const DARK_MONO = "dark:opacity-55 dark:grayscale-0 dark:[filter:brightness(0)_invert(1)]";
 
-function BrandSet({ brands, decorative }: { brands: FleetBrand[]; decorative: boolean }) {
-  return (
-    <ul
-      role="list"
-      aria-hidden={decorative || undefined}
-      className="flex min-w-[100vw] shrink-0 items-center justify-around gap-x-10 px-5 sm:gap-x-14 sm:px-7"
-    >
-      {brands.map((brand) => (
-        <li key={brand.slug} className="shrink-0">
-          {brand.logoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={brand.logoUrl}
-              /* النسخة الزخرفية بلا نصٍّ بديل — الاسم مقروء مرة واحدة */
-              alt={decorative ? "" : brand.name}
-              loading="lazy"
-              decoding="async"
-              className={
-                decorative
-                  ? LOGO_CLASS
-                  : `${LOGO_CLASS} hover:opacity-100 hover:grayscale-0 dark:hover:opacity-100`
-              }
-            />
-          ) : (
-            /* بلا شعار يُعرض الاسم — الماركة معلومة، والصورة وسيلتها */
-            <span className="text-sm font-semibold text-muted-foreground">{brand.name}</span>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
+const LOGO_EFFECT_CLASS = {
+  /** الافتراضي وسلوك اليوم: رمادية، وتتلوّن لمن يحوّم أو يركّز */
+  mono: `${LOGO_BASE} opacity-60 grayscale ${DARK_MONO}`,
+  monoStill: `${LOGO_BASE} opacity-60 grayscale ${DARK_MONO}`,
+  /** بألوانها على الفاتح — وأحاديةً على الداكن، والسبب في التعليق أعلاه */
+  color: `${LOGO_BASE} opacity-90 ${DARK_MONO}`,
+} as const;
+
+/**
+ * الكشف عند التحويم **وعند التركيز معاً**: `hover:` وحدها تعطي أثراً لا يبلغه
+ * من يتنقّل بلوحة المفاتيح، والشعار قد يكون رابطاً (`logoLink`) فيصير قابلاً
+ * للتركيز فعلاً.
+ */
+const REVEAL_CLASS =
+  "group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 " +
+  "group-focus-visible:grayscale-0 dark:group-hover:opacity-100 dark:group-focus-visible:opacity-100";
+
+/** ماركةٌ جاهزة للتصيير — بعد الحرّاس، فلا تُنادى دالةُ حارسٍ في JSX */
+type Logo = { key: string; name: string; src: string | null; alt: string; href: string | null };
+
+/**
+ * العناصر أولاً، والإعدادات احتياطاً. **والحرّاس تُنادى هنا مرةً واحدة** لا في
+ * الحلقة: الشريط يُصيَّر أربع مرات (نسخةٌ مقروءة وثلاث زخرفية)، فحارسٌ داخل JSX
+ * يعمل أربعين مرة على عشرة شعارات بلا مقابل.
+ */
+function readLogos(
+  items: SectionContentMap["logo-strip"]["items"],
+  fallback: FleetBrand[],
+  locale: string,
+  linkable: boolean
+): Logo[] {
+  const source = Array.isArray(items) && items.length > 0 ? items : null;
+
+  if (source === null) {
+    return fallback
+      .filter((brand) => typeof brand?.name === "string" && brand.name.trim() !== "")
+      .map((brand) => ({
+        key: brand.slug,
+        name: brand.name.trim(),
+        src: safeMediaSrc(brand.logoUrl),
+        /** الاحتياط بلا حقل نصٍّ بديل — واسمُ الماركة هو وصفُها الصحيح */
+        alt: brand.name.trim(),
+        href: null,
+      }));
+  }
+
+  const logos: Logo[] = [];
+  source.forEach((item, index) => {
+    const name = typeof item?.name === "string" ? item.name.trim() : "";
+    if (name === "") return; // عنصرٌ بلا اسم لا يُصيَّر: لا شعار ولا نصّ بديل له
+    const raw = typeof item?.href === "string" ? internalPath(item.href) : null;
+    logos.push({
+      key: typeof item?._k === "string" && item._k !== "" ? item._k : `i${index}`,
+      name,
+      src: safeMediaSrc(item?.src),
+      /**
+       * 🔴 **الفارغ يعود إلى الاسم، ولا يعني «زخرفة» — وهذا خروجٌ مقصود عن
+       * قاعدة م‑٧ العامة، ومبرره في الشاشة لا في العقد:**
+       *
+       * قاعدة م‑٧ («الفارغ = `alt=""`») مبنيةٌ على أن **عنوان البطاقة مرئيٌّ
+       * بجوار الصورة**، فالصورة تكرار له. وهنا لا شيء مرئيٌّ إلى جوار الشعار
+       * إطلاقاً: الاسم لا يُعرض إلا حين تغيب الصورة. فـ`alt=""` كان يعني أن
+       * قارئ الشاشة يمرّ على عشرة شعارات **فلا يسمع اسم ماركةٍ واحدة** — أي
+       * قسمٌ كامل يختفي عن قارئه بلا خطأ ولا فحصٍ يمسكه.
+       *
+       * والحقل يبقى معروضاً لأن الحارس البنيوي يشترطه مع `src` (‏القاعدة ٤ في
+       * `block_registry_check`)، **ولأنه يُترجَم**: من أراد وصفاً أدقّ من الاسم
+       * كتبه، ومن تركه فارغاً سُمع الاسم.
+       */
+      alt: (typeof item?.alt === "string" && item.alt.trim() !== "" ? item.alt : name).trim(),
+      href: linkable && raw !== null ? localeHref(raw, locale) : null,
+    });
+  });
+  return logos;
 }
 
 export async function LogoStripSection({
   content,
   settings,
   locale = DEFAULT_LOCALE,
+  style,
 }: {
   content: SectionContentMap["logo-strip"];
   settings: SiteSettings;
   locale?: string;
+  style?: BlockStyle | null;
 }) {
-  const brands = (settings.fleetBrands ?? []).filter((brand) => brand?.name);
+  const linkable = style?.logoLink === "item";
+  const logos = readLogos(content.items, settings.fleetBrands ?? [], locale, linkable);
   // قائمة فارغة ⇒ لا شريط. إطارٌ بلا شعار أسوأ من غيابه (القاعدة الذهبية ١٥)
-  if (brands.length === 0) return null;
+  if (logos.length === 0) return null;
 
   const t = await getT("sections.logoStrip", locale);
   const title = content.title ?? t("title", "الفئات المتاحة في أسطولنا");
   /* نثرٌ تحريري: الغياب والفراغ كلاهما يعني «لا تعرضه» */
   const note = content.note ?? "";
-  /* شرط استعمال: الفراغ يعني «أعد الافتراضي» — الشرح في البند (٢) أعلاه */
-  const disclaimer =
-    (content.disclaimer ?? "").trim() ||
-    t(
-      "disclaimer",
-      "الشعارات معروضة لبيان طرازات المركبات المتاحة عبر متعهدينا فقط، ولا تعني رعايةً ولا اعتماداً ولا علاقة تجارية مع الشركات المصنّعة."
-    );
+
+  const effect = style?.logoEffect ?? "mono";
+  const logoClass = LOGO_EFFECT_CLASS[effect];
+  /** الكشف عند التحويم لرمزَي «mono» و«color»، ولا يكشف `monoStill` بقصد */
+  const reveal = effect === "monoStill" ? "" : REVEAL_CLASS;
 
   return (
     <section className="overflow-hidden border-y border-border/60 bg-muted/30 py-10 md:py-14">
-      {/**
-       * 🔴 **لماذا CSS هنا لا في `app/globals.css`؟** ملف الرموز يملكه م‑١
-       * وهذه المرحلة لا تلمسه. و`href`+`precedence` هما آلية React 19: تُرفع
-       * القاعدة إلى `<head>` **وتُوحَّد** فلا تتكرر لو تكررت الكتلة، وتختفي
-       * حين تختفي — فلا يبقى في الثيم أثرٌ لكتلةٍ حُذفت.
-       */}
-      <style href="brand-marquee" precedence="default">
-        {MARQUEE_CSS}
-      </style>
-
       {title ? (
         <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
           <h2 className="text-center text-sm font-semibold tracking-wide text-muted-foreground">
@@ -172,26 +204,79 @@ export async function LogoStripSection({
         </div>
       ) : null}
 
-      <div className="relative mt-7 flex w-full overflow-hidden [mask-image:linear-gradient(to_left,transparent,black_10%,black_90%,transparent)]">
-        <div className="brandmq flex w-max shrink-0">
-          <BrandSet brands={brands} decorative={false} />
-          <BrandSet brands={brands} decorative />
-          <BrandSet brands={brands} decorative />
-        </div>
-      </div>
+      {/**
+       * ⚠ **`min-w-[100vw]` على النسخة شرطُ صحةٍ لا تنسيق:** ما يُرى في أي لحظة
+       * يجب ألا يتجاوز `(عدد النسخ − ١) × عرض النسخة`، وإلا عبَر الشريطَ فراغٌ
+       * كل لفّة. والعشرة شعارات مجتمعةً ٦٤٠ بكسل فقط — **والمالك يستطيع اليوم
+       * أن يحذف حتى يبقى شعارٌ واحد**، فرقمٌ مضبوط بالتجربة كان سيكسر أول حذف.
+       * وبنسخةٍ بعرض الشاشة يصير الشرط «عرض الشاشة ≤ ثلاثة أضعافه» — محقَّقاً
+       * دائماً بلا رقم.
+       *
+       * وفي تقليل الحركة تُلغى هذه القيود في `motion.module.css` نفسه (النسخة
+       * تلتفّ وتنحسر) — لا هنا، فلا تُكتب القاعدة في مكانين.
+       */}
+      <Marquee
+        className="relative mt-7 w-full"
+        setClassName="flex min-w-[100vw] shrink-0 items-center justify-around gap-x-10 px-5 sm:gap-x-14 sm:px-7"
+        durationSec={SPEED_SEC[style?.marqueeSpeed ?? "normal"]}
+        reverse={style?.marqueeDirection === "reverse"}
+        pauseOnHover={style?.marqueePause !== false}
+        label={t("listLabel", "ماركات الأسطول")}
+      >
+        {logos.map((logo) => {
+          /**
+           * الشعار نفسه — والنسخ الزخرفية يحجبها `Marquee` بـ`aria-hidden` على
+           * الـ`<ul>` كله، فلا حاجة إلى نسختين من هذا الجسم كما كان هنا سابقاً.
+           */
+          const media = logo.src ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={logo.src}
+              alt={logo.alt}
+              loading="lazy"
+              decoding="async"
+              className={`${logoClass} ${reveal}`}
+            />
+          ) : (
+            /* بلا شعار يُعرض الاسم — الماركة معلومة، والصورة وسيلتها */
+            <span className="text-sm font-semibold text-muted-foreground">{logo.name}</span>
+          );
+
+          return (
+            <li key={logo.key} className="group shrink-0">
+              {logo.href ? (
+                /**
+                 * ⚠ **الرابط يحمل `aria-label` باسم الماركة**: نصُّه الظاهر
+                 * صورةٌ نصُّها البديل قد يكون وصفاً لا اسماً، ورابطٌ بلا اسم
+                 * مقروء يُنطق «رابط» عشر مرات. و`rounded`+`focus-visible` كي
+                 * يُرى مسار لوحة المفاتيح على شعارٍ بلا حدود.
+                 */
+                <a
+                  href={logo.href}
+                  aria-label={logo.name}
+                  className="inline-flex rounded-sm outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  {media}
+                </a>
+              ) : (
+                media
+              )}
+            </li>
+          );
+        })}
+      </Marquee>
 
       {/**
-       * ⚠ **والشفافية `/80` رُفعت عن النصّين** — لا تجميلاً بل بقياس: على
-       * أرضية `bg-muted/30` فوق `--ink` يخرج `--on-ink-mut` عند ٨٠٪ بنسبة
-       * ‏٥٫٨:١، وبلا شفافية ‏٨٫٥:١. الأولى تعبر AA والثانية تعبر AAA، والفرق
-       * سطرٌ من الأصناف. وأصغر نصٍّ في القسم لا يُترك على أضيق هامش.
+       * ⚠ **والشفافية `/80` رُفعت عن النصّ** — لا تجميلاً بل بقياس: على أرضية
+       * `bg-muted/30` فوق `--ink` يخرج `--on-ink-mut` عند ٨٠٪ بنسبة ‏٥٫٨:١،
+       * وبلا شفافية ‏٨٫٥:١. الأولى تعبر AA والثانية تعبر AAA، والفرق سطرٌ من
+       * الأصناف. وأصغر نصٍّ في القسم لا يُترك على أضيق هامش.
        */}
-      <div className="mx-auto mt-8 w-full max-w-3xl space-y-2 px-4 sm:px-6">
-        {note ? (
+      {note ? (
+        <div className="mx-auto mt-8 w-full max-w-3xl px-4 sm:px-6">
           <p className="text-center text-sm leading-6 text-muted-foreground">{note}</p>
-        ) : null}
-        <p className="text-center text-xs leading-6 text-muted-foreground">{disclaimer}</p>
-      </div>
+        </div>
+      ) : null}
     </section>
   );
 }

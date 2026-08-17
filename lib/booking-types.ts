@@ -202,7 +202,42 @@ export type BookingError = {
   message: string;
 };
 
-/** طلب عرض سعر — للجولات والمناسبات وما هو خارج التسعير الفوري */
+/**
+ * حالة طلب عرض السعر — آلةٌ يحرسها مُشغّلٌ في القاعدة (هجرة 0084)، لا مجرد وسم:
+ *
+ *     جديد ──► مسعَّر ──► محوَّل        (نهائية: ب‑٣ أنشأت الحجز)
+ *       │        │
+ *       └────────┴──► مرفوض ──► جديد   (إعادة فتح)
+ *
+ * 🔴 و«مسعَّر» و«محوَّل» **لا تقومان بلا مبلغ** (قيد `quote_requests_priced_states_chk`)
+ * — وإلا حُسب في معدل التحويل طلبٌ لم يُعرض عليه شيء.
+ */
+export type QuoteRequestStatus = "new" | "quoted" | "converted" | "rejected";
+
+/**
+ * الانتقالات المشروعة — مرآة `guard_quote_request_transition()` في 0084.
+ *
+ * ⚠ و`quoted → converted` مشروعٌ في **الآلة** ولا يُنفَّذ بـ
+ * `set_quote_request_status`: هي تردّه برمز `use-convert` منذ 0088، لأن «محوَّل»
+ * صارت **مقترنةً بحجزٍ قائم** بقيدٍ على الجدول ولها دالتها
+ * `convert_quote_request` التي تُنشئ الحجز وتفرض أرضية الهامش على السعر اليدوي.
+ * فمن يبني شاشةً من هذا الجدول يستثني `converted` من أزرار النقلة (كما تفعل
+ * `/admin/quote-requests`) — وإلا وعد زرٌّ بما لا يفعل.
+ */
+export const QUOTE_STATUS_TRANSITIONS: Record<QuoteRequestStatus, QuoteRequestStatus[]> = {
+  new: ["quoted", "rejected"],
+  quoted: ["converted", "rejected"],
+  converted: [],
+  rejected: ["new"],
+};
+
+/**
+ * طلب عرض سعر — للجولات والمناسبات وما هو خارج التسعير الفوري.
+ *
+ * 🔒 المكان **ثلاثيّ لا يتجزأ**: تسمية يقرؤها الموظف وإحداثيتان يُقاس عليهما.
+ * لا يُسعَّر نصٌّ لم يُحلّ إلى نقطة (D-09) — والانطلاق مطلوب، والوجهة اختيارية
+ * لأن الجولة والإيجار اليومي بلا وجهةٍ واحدة.
+ */
 export type QuoteRequestRow = {
   id: string;
   reference: string;
@@ -210,8 +245,30 @@ export type QuoteRequestRow = {
   customerName: string;
   customerPhone: string;
   details: string;
-  status: "new" | "contacted" | "converted" | "closed";
+  status: QuoteRequestStatus;
   createdAt: string;
+  originLabel: string | null;
+  originLat: number | null;
+  originLng: number | null;
+  destLabel: string | null;
+  destLat: number | null;
+  destLng: number | null;
+  pickupAt: string | null;
+  passengers: number | null;
+  luggage: number | null;
+  /** السعر المعروض على العميل بالجنيه — يملؤه المالك عند التسعير */
+  quotedAmount: number | null;
+  quotedAt: string | null;
+  /** 🔒 ملاحظة داخلية — لا تُعرض للعميل في أي مسار (D-19) */
+  adminNote: string | null;
+  statusChangedAt: string | null;
+  /**
+   * ب‑٣ (0088) — الحجز الذي نشأ من الطلب. **مقترنٌ بالحالة في الطرفين** بقيد
+   * `quote_requests_converted_needs_booking_chk`: «محوَّل» تستلزم حجزاً والحجز
+   * يستلزم «محوَّل»، فلا وسمَ تحويلٍ بلا حجزٍ في أي مكان.
+   */
+  bookingId: string | null;
+  convertedAt: string | null;
 };
 
 /** إعدادات الدفع — ضمن site_settings بمفتاح "payment" */

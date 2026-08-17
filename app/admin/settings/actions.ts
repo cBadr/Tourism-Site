@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { isMissingTable } from "@/lib/dispatch/settings";
 import {
   DESIGN_PALETTE,
+  DESIGN_PALETTE_LIGHT,
   PALETTE_CSS_VARS,
   safeColorValue,
   type BrandPalette,
@@ -68,6 +69,25 @@ export async function saveSettings(formData: FormData) {
     if (submitted !== null) brandColors[key] = submitted;
   }
 
+  /*
+   * لوحة الثيم الفاتح (م‑٩) — **نفس الحلقة بحرفها، ولهذا هي آمنة.**
+   *
+   * القاعدة المكتوبة أعلاه («ما يُحقن هو ما يُحرَّر هو ما يُحفظ، من قائمةٍ
+   * واحدة») تسري على اللوحتين بلا استثناء، فتُبنى الثانية من `PALETTE_CSS_VARS`
+   * نفسها لا من قائمةٍ موازية. ومفتاحٌ يُضاف إلى العقد يظهر في **أربعة** مواضع
+   * دفعةً بعد اليوم — حقن الداكن، وحقن الفاتح، وحقلا التحرير، وصفّا الحفظ.
+   *
+   * ⚠ والانطلاق من `DESIGN_PALETTE_LIGHT` لا من `DESIGN_PALETTE`: لو انطلق من
+   * الداكنة لَورث مفتاحٌ غيرُ مُرسَلٍ **قيمةً مضبوطةً لأرضيةٍ أخرى** — أي أن
+   * أول حفظةٍ من شاشةٍ لمّا يُضَف إليها الحقل كانت تكتب كهرمان الحبر في لوحة
+   * الرمل بنجاحٍ ظاهر وبلا رسالة، وهو 2.14:1.
+   */
+  const brandColorsLight: BrandPalette = { ...DESIGN_PALETTE_LIGHT };
+  for (const [key] of PALETTE_CSS_VARS) {
+    const submitted = safeColorValue(formData.get(`brand.colorsLight.${key}`));
+    if (submitted !== null) brandColorsLight[key] = submitted;
+  }
+
   const rows = [
     {
       key: "brand",
@@ -76,6 +96,7 @@ export async function saveSettings(formData: FormData) {
         tagline: s("brand.tagline") ?? "",
         logoUrl: s("brand.logoUrl"),
         colors: brandColors,
+        colorsLight: brandColorsLight,
       },
     },
     {

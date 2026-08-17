@@ -224,9 +224,6 @@ begin
     return;
   end if;
 
-  select coalesce(driver_phone_lead_minutes, 120) into v_lead
-    from public.trip_settings where id = true;
-
   select id into v_veh from public.subcontractor_vehicles
    where subcontractor_id = v_sub limit 1;
   if v_veh is null then
@@ -235,6 +232,19 @@ begin
   end if;
 
   begin
+    -- 🔴 المهلةُ **تُثبَّت ثم تُقرأ**، ولا تُقرأ حيّةً (إصلاح حمرةٍ صنفية،
+    --    2026-08-17). الشاهد الإيجابي في (هـ-٢) يُبنى بـ`greatest(v_lead - 10, 0)`،
+    --    فعند أي قيمة مالكٍ ≤ ١٠ يصير موعد الشاهد `now()` بالضبط ويتحوّل الحكم
+    --    إلى `<=` مقابل `<` — أي تأكيدٌ يقرّره إعدادٌ في لوحة المالك لا الكودُ
+    --    المُختبَر (النمط ٦ في `handover/LESSONS.md`).
+    --
+    -- ⚠ والتثبيت **داخل** هذه الكتلة لا قبلها: هي التي تنتهي بـ
+    --   `CREW_TESTS_ROLLBACK`، فلا صفَّ مالكٍ يُحفظ ولا استعادةٌ تُنسى. ونطاقُ
+    --   العمود نفسه مقيسٌ في (ج) على قيمه الحدّية، فالتثبيت هنا لا يُغطّي عليه.
+    update public.trip_settings set driver_phone_lead_minutes = 120 where id = true;
+    select coalesce(driver_phone_lead_minutes, 120) into v_lead
+      from public.trip_settings where id = true;
+
     insert into public.subcontractor_drivers (subcontractor_id, name, phone)
     values (v_sub, 'CREW_TESTS سائق', '01055443322') returning id into v_drv;
 

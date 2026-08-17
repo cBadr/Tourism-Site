@@ -145,6 +145,14 @@
       "switchTo": "View this site in {language}"
     },
 
+    "themeToggle": {
+      "groupLabel": "Site appearance",
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark",
+      "switchTo": "View the site in {mode} mode"
+    },
+
     "share": {
       "regionLabel": "Share this page",
       "heading": "Share this page",
@@ -173,7 +181,7 @@
     },
     "logoStrip": {
       "title": "Vehicle classes available in our fleet",
-      "disclaimer": "The logos shown indicate the vehicle models available through our partners only. They do not imply sponsorship, endorsement, or any commercial relationship with the manufacturers."
+      "listLabel": "Fleet brands"
     }
   },
 
@@ -482,21 +490,53 @@
         }
       },
       "form": {
+        "origin": "Where does the trip start",
+        "originPlaceholder": "e.g. \"Cairo International Airport\"",
+        "destination": "Where to (optional)",
+        "destinationPlaceholder": "Leave empty for tours and daily rentals",
+        "destinationHelp": "An itinerary with several stops? Leave this empty and list the stops in the notes.",
+        "pickup": "Pick-up time",
+        "pickupDate": "Trip date",
+        "pickupTime": "Trip time",
+        "passengers": "Passengers",
+        "luggage": "Bags (optional)",
         "service": "Service type",
         "servicePlaceholder": "Choose a service (optional)",
         "name": "Full name",
         "phone": "Phone number",
         "phonePlaceholder": "01xxxxxxxxx",
-        "details": "Request details",
-        "detailsPlaceholder": "For example: a full-day tour of historic Cairo on the 12th of next month, 6 people, starting from a hotel in Zamalek.",
-        "detailsHelp": "The more detail you give, the faster and more accurate the offer.",
+        "details": "Additional notes (optional)",
+        "detailsPlaceholder": "For example: we would like to stop at the Egyptian Museum and Khan el-Khalili, with an English-speaking representative.",
+        "detailsHelp": "Extra stops, number of days, or any special request.",
         "submit": "Send request",
         "submitting": "Sending your request…",
         "submittingStatus": "Sending your request",
+
+        "askForQuote": "Request a quote for this place",
+        "mapAttribution": "© OpenStreetMap contributors",
+        "mapCancel": "Cancel",
+        "mapConfirm": "Confirm this location",
+        "mapHint": "Move the map until the pin sits exactly on your location.",
+        "mapOutOfArea": "This location is outside our service area — we operate inside Egypt. Move the map to your location in Egypt.",
+        "mapTitle": "Pick the location on the map",
+        "mapZoomIn": "Zoom in",
+        "mapZoomOut": "Zoom out",
+        "noResults": "No matching results — try a clearer name such as \"Cairo International Airport\".",
+        "pickFromList": "Choose the place from the suggestions to pin it precisely.",
+        "pickOnMap": "Pick on the map",
+        "suggestionsCount": "{count} suggestions available",
+        "suggestionsFor": "Suggestions for {field}",
+        "typeMinChars": "Type at least {count} characters, then choose the place from the suggestions.",
+
         "errors": {
-          "nameTooShort": "Enter your full name (at least 3 characters).",
+          "nameTooShort": "Enter your full name (at least {min} characters).",
           "phoneInvalid": "Enter a valid phone number so we can reach you.",
-          "detailsTooShort": "Describe your request: destination, date and number of people.",
+          "originRequired": "Set your pick-up point.",
+          "originUnresolved": "Choose the pick-up point from the search results so we know exactly where it is.",
+          "destinationUnresolved": "Choose the destination from the search results, or clear the field if the trip has no single destination.",
+          "pickupRequired": "Set the trip date and time.",
+          "pickupPast": "The trip time must be in the future.",
+          "passengersInvalid": "Enter the number of passengers (at least one).",
           "sendFailed": "We could not send your request right now. Please try again.",
           "network": "We could not reach the server. Check your internet connection and try again."
         },

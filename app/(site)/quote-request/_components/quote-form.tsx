@@ -2,26 +2,64 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { CircleCheck, LoaderCircle, Send, TriangleAlert } from "lucide-react";
+import {
+  CalendarClock,
+  CircleCheck,
+  LoaderCircle,
+  Luggage,
+  MapPin,
+  MapPinned,
+  Send,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import type { ServiceDef } from "@/lib/site-config";
-import { useT, type Tx } from "@/components/site/i18n";
+import type { GeoPlace } from "@/lib/pricing-types";
+import type { PlaceSearchSettings } from "@/lib/place-search-types";
+import { useT } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
-import { createFormatter, type LocaleFormatter } from "@/components/booking/format";
-import { hasTripPrefill, type QuoteTripPrefill } from "../_lib/prefill";
+import { createFormatter } from "@/components/booking/format";
+import { PlaceField } from "@/components/booking/place-field";
+import {
+  minInputValues,
+  todayInputValue,
+  toIsoFromCairoInputs,
+} from "@/components/booking/checkout/datetime";
+import type { QuoteTripPrefill } from "../_lib/prefill";
 
 /**
  * نموذج «اطلب عرض سعر» — لما هو خارج الحاسبة الفورية: الجولات والمناسبات
  * والإيجار اليومي والمجموعات الكبيرة.
  *
- * يرسل إلى /api/quote-request (إدراج في quote_requests بمفتاح anon) ويعرض
- * حالة نجاح تحمل الرقم المرجعي حين تسمح القاعدة بإرجاعه.
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 ما تغيّر في ب‑١: الطلب صار **بياناً يُسعَّر** لا فقرةً تُقرأ
+ * ══════════════════════════════════════════════════════════════════════════
  *
- * المرحلة ٨: النصوص من مساحة `pages.quoteRequest.form`، وأسماء الخدمات تصل
- * **مترجَمة** من الصفحة الخادمية عبر `services` بدل استيراد SERVICES هنا —
- * فجزيرة العميل لا تستطيع قراءة جدول الترجمات. والرقم المرجعي يبقى كما تولّده
- * القاعدة (رمز لا عدد) فلا يمر بتحويل الخانات.
+ * كان النموذج ثلاثة حقول (اسم · هاتف · فقرة حرّة)، فيصل الإدارة نصٌّ لا يُقاس
+ * عليه شيء: لا مسافة، ولا موعد يدخل التقويم، ولا عدد يحدّد الأسطول. صار يحمل
+ * **نقطتين بإحداثياتهما وموعداً وعدد ركاب وحقائب**.
+ *
+ * 🔒 وحقلا المكان هما `PlaceField` **نفسه** الذي يستعمله ويدجت الحجز — لا نسخةٌ
+ * ثانية (القاعدة ١٢). يعني ذلك أن الطلب يرث البحث الرباعي كاملاً بلا سطرٍ
+ * مكرَّر: جوجل ← Nominatim ← «حدّد على الخريطة» ← الطبقة الرابعة؛ ودورة رمز
+ * الجلسة التي تجعل الفاتورة واحدة لا سبعاً؛ ورفضَ ما خرج عن نطاق التشغيل.
+ *
+ * ⚠ **ولا يُسعَّر نصٌّ لم يُحلّ إلى نقطة** (D-09): زرّ الإرسال لا يقبل انطلاقاً
+ * كتبه العميل بيده ولم يختره من النتائج — لأن سعراً مبنيّاً على «فندق في
+ * الزمالك» سعرٌ نلتزم به ولا نعرف مسافته. والوجهة **اختيارية** لأن الجولة
+ * والإيجار اليومي بلا وجهةٍ واحدة، لكنها إن ذُكرت فبالشرط نفسه.
+ *
+ * ── والموعد يمرّ بمسار التحويل الواحد ─────────────────────────────────────
+ * `toIsoFromCairoInputs` هي الدالة نفسها التي يحوّل بها الحجز حقلَي التاريخ
+ * والوقت — فما يكتبه العميل **وقتُ الموقع** لا وقتُ جهازه. ومسارا تحويلٍ لقيمةٍ
+ * واحدة هو صنف العيب الذي يتكرر في هذا المستودع، فلا يُفتح ثانٍ.
+ *
+ * ── حمولة بطاقة الإنقاذ ────────────────────────────────────────────────────
+ * ما يصل من الرابط **اقتراحُ تعبئة لا واقعة**: الاسم يملأ نصّ الحقل، ويبقى على
+ * العميل أن يختاره من النتائج ليصير نقطةً محلولة. وذاك صوابٌ لا نقص — تسميةٌ
+ * في رابطٍ يُلصَق ويُصنَع باليد ليست إحداثيات.
  */
 
 type QuoteRequestResponse =
@@ -32,72 +70,32 @@ const PHONE_PATTERN = /^[+\d\s()-]{8,20}$/;
 
 /** الحد الأدنى لطول الاسم — نفس ما تقوله رسالة الخطأ */
 const NAME_MIN_LENGTH = 3;
-/** الحد الأدنى لطول التفاصيل قبل الإرسال */
-const DETAILS_MIN_LENGTH = 5;
-
-function isPhoneValid(value: string): boolean {
-  const trimmed = value.trim();
-  if (!PHONE_PATTERN.test(trimmed)) return false;
-  const digits = trimmed.replace(/\D/g, "");
-  return digits.length >= 8 && digits.length <= 15;
-}
-
-type FieldErrors = Partial<Record<"service" | "name" | "phone" | "details", string>>;
 
 /**
- * سقف السطر الافتتاحي المُركَّب داخل حقلٍ حدّه ٢٠٠٠ (‏`maxLength` هنا، وقيد
- * `quote_requests_details_len_chk` في القاعدة). أطول تركيبة ممكنة من الحمولة
- * المنقّاة (‏١٢٠+١٢٠ حرفاً للمكانين + عدد + تاريخ) لا تبلغ نصف هذا الرقم —
- * فهو حزامٌ ثانٍ لا حدّ عامل، ويضمن أن يبقى للعميل مجالٌ يكتب فيه بقية طلبه.
+ * سقف الركاب هنا **٢٠٠ لا ٦٠**: سقف الويدجت يخصّ رحلةً تُسعَّر فوراً بسيارة
+ * واحدة، وهذه الصفحة وُجدت للوفود التي تتجاوز ذلك — وهو نفس مدى القاعدة (0084).
  */
-const MAX_PREFILL_LINE = 600;
+const MAX_PASSENGERS = 200;
+const MAX_LUGGAGE = 400;
 
-/**
- * يركّب السطر الافتتاحي من حمولة بطاقة الإنقاذ — **في المتصفح لا في الخادم**.
- *
- * 🔒 القاعدة: ما يعبر من الخادم إلى الواجهة رمزٌ لا جملة. لو رُكِّبت العبارة في
- * `page.tsx` لوصلت `/en` عربيةً بلا ترجمة. فالخادم يمرّر بيانات، وهنا تُبنى
- * الجملة بمفاتيح ترجمة (ونصّها العربي احتياطياً) وبمُنسِّق اللغة نفسه الذي
- * يعرض السعر والمواعيد في كل الموقع — فالخانات عربية هندية في العربية،
- * والتاريخ بتوقيت القاهرة، بلا صيغة ثانية تُخترع هنا.
- */
-function composePrefillLine(prefill: QuoteTripPrefill, t: Tx, fmt: LocaleFormatter): string {
-  const parts: string[] = [];
-
-  const { from, to, passengers, pickupAt } = prefill;
-  if (from && to) {
-    parts.push(t("prefill.route", "من {from} إلى {to}", { from, to }));
-  } else if (from) {
-    parts.push(t("prefill.origin", "من {from}", { from }));
-  } else if (to) {
-    parts.push(t("prefill.destination", "إلى {to}", { to }));
-  }
-
-  if (typeof passengers === "number") parts.push(fmt.passengers(passengers));
-
-  const when = fmt.dateTime(pickupAt ?? null);
-  if (when) parts.push(when);
-
-  if (parts.length === 0) return "";
-  // الفاصل نفسه الذي يفصل مقاطع ملخّص الرحلة في شاشة العروض
-  return parts.join(" · ").slice(0, MAX_PREFILL_LINE);
-}
+type FieldErrors = Partial<
+  Record<"origin" | "destination" | "pickup" | "passengers" | "name" | "phone", string>
+>;
 
 export function QuoteRequestForm({
   defaultService,
   tripPrefill,
   services,
+  placeSearch,
   locale = DEFAULT_LOCALE,
 }: {
   defaultService?: string;
-  /**
-   * ما حملته بطاقة الإنقاذ في الرابط — **منقّى** في `_lib/prefill.ts`.
-   * يبدأ به حقل التفاصيل ليعدّله العميل، ولا يُرسَل حقلاً مستقلاً ولا يُخزَّن
-   * منفصلاً: القاعدة لا تعرف من هذا الطلب غير `details` نصّاً حراً.
-   */
+  /** ما حملته بطاقة الإنقاذ في الرابط — **منقّى** في `_lib/prefill.ts` */
   tripPrefill?: QuoteTripPrefill;
   /** الخدمات بلغة الزائر — تصل من الصفحة الخادمية */
   services: ServiceDef[];
+  /** إعدادات بحث الأماكن من اللوحة — ضابط تكلفة يملكه المالك (هجرة 0076) */
+  placeSearch: PlaceSearchSettings;
   /** لغة الزائر — تصل من الصفحة الخادمية، وغيابها يعني العربية */
   locale?: string;
 }) {
@@ -106,15 +104,35 @@ export function QuoteRequestForm({
   const uid = React.useId();
 
   const [serviceSlug, setServiceSlug] = React.useState(defaultService ?? "");
+
+  // المكان: نصٌّ يكتبه العميل + نقطةٌ محلولة. والثاني وحده يُرسَل.
+  const [originText, setOriginText] = React.useState(tripPrefill?.from ?? "");
+  const [origin, setOrigin] = React.useState<GeoPlace | null>(null);
+  const [destText, setDestText] = React.useState(tripPrefill?.to ?? "");
+  const [destination, setDestination] = React.useState<GeoPlace | null>(null);
+
+  // الموعد: حقلان يقرؤهما العميل، وتحويلٌ واحد إلى لحظةٍ مطلقة عند الإرسال.
+  // والاتجاه المعاكس (لحظة ⇐ حقلين) له دالته الجاهزة `minInputValues` — تقرأ
+  // بمنطقة الموقع لا بمنطقة الجهاز، وهي جارة `toIsoFromCairoInputs` في نفس
+  // الملف بقصد: مسار تحويلٍ واحد للاتجاهين (القاعدة ١٢).
+  //
+  // والحساب في **مُهيّئٍ كسول** لا في `useMemo`: القيمة تُقرأ مرةً واحدة عند
+  // التركيب، وبعدها الحقل ملك العميل. و`useMemo` هنا كان يَعِد بتحديثٍ لا يقع.
+  const [pickupDate, setPickupDate] = React.useState(
+    () => (tripPrefill?.pickupAt ? (minInputValues(tripPrefill.pickupAt)?.date ?? "") : "")
+  );
+  const [pickupTime, setPickupTime] = React.useState(
+    () => (tripPrefill?.pickupAt ? (minInputValues(tripPrefill.pickupAt)?.time ?? "") : "")
+  );
+
+  const [passengers, setPassengers] = React.useState(
+    tripPrefill?.passengers ? String(tripPrefill.passengers) : "1"
+  );
+  const [luggage, setLuggage] = React.useState("");
+
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
-  // القيمة الابتدائية تُحسب مرة واحدة: بعدها الحقل ملك العميل يمحوه ويكتب فوقه.
-  // والسطران الفارغان بعده مقصودان — يترك المؤشر في مساحة بقية التفاصيل.
-  const [details, setDetails] = React.useState(() => {
-    if (!tripPrefill || !hasTripPrefill(tripPrefill)) return "";
-    const line = composePrefillLine(tripPrefill, t, fmt);
-    return line ? `${line}\n\n` : "";
-  });
+  const [details, setDetails] = React.useState("");
 
   const [errors, setErrors] = React.useState<FieldErrors>({});
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -122,14 +140,51 @@ export function QuoteRequestForm({
   const [reference, setReference] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
 
+  const fieldHeight = "h-12";
   const fieldClass =
     "h-12 w-full rounded-2xl border border-input bg-background px-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+
+  /** أرضية حقل التاريخ بتوقيت الموقع — لا بتوقيت جهاز الزائر */
+  const minDate = React.useMemo(() => todayInputValue(), []);
+
+  function isPhoneValid(value: string): boolean {
+    const trimmed = value.trim();
+    if (!PHONE_PATTERN.test(trimmed)) return false;
+    const digits = trimmed.replace(/\D/g, "");
+    return digits.length >= 8 && digits.length <= 15;
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
 
     const found: FieldErrors = {};
+
+    // 🔴 نقطةٌ محلولة أو لا إرسال — والنصّ المكتوب وحده ليس نقطة
+    if (!origin) {
+      found.origin = originText.trim()
+        ? t("errors.originUnresolved", "اختر نقطة الانطلاق من نتائج البحث حتى نعرف مكانها بالضبط.")
+        : t("errors.originRequired", "حدّد نقطة الانطلاق.");
+    }
+    if (!destination && destText.trim()) {
+      found.destination = t(
+        "errors.destinationUnresolved",
+        "اختر الوجهة من نتائج البحث، أو امسح الحقل إن كانت الرحلة بلا وجهة واحدة."
+      );
+    }
+
+    const pickupIso = toIsoFromCairoInputs(pickupDate, pickupTime);
+    if (!pickupIso) {
+      found.pickup = t("errors.pickupRequired", "حدّد تاريخ الرحلة ووقتها.");
+    } else if (Date.parse(pickupIso) <= Date.now()) {
+      found.pickup = t("errors.pickupPast", "موعد الرحلة يجب أن يكون في المستقبل.");
+    }
+
+    const paxNumber = Number(passengers);
+    if (!Number.isInteger(paxNumber) || paxNumber < 1 || paxNumber > MAX_PASSENGERS) {
+      found.passengers = t("errors.passengersInvalid", "اكتب عدد الركاب (واحد على الأقل).");
+    }
+
     if (name.trim().length < NAME_MIN_LENGTH) {
       found.name = t("errors.nameTooShort", "اكتب اسمك كاملاً (٣ أحرف على الأقل).", {
         min: fmt.digits(NAME_MIN_LENGTH),
@@ -138,11 +193,11 @@ export function QuoteRequestForm({
     if (!isPhoneValid(phone)) {
       found.phone = t("errors.phoneInvalid", "اكتب رقم هاتف صحيح للتواصل معك.");
     }
-    if (details.trim().length < DETAILS_MIN_LENGTH) {
-      found.details = t("errors.detailsTooShort", "اكتب تفاصيل طلبك: الوجهة والتاريخ وعدد الأفراد.");
-    }
+
     setErrors(found);
     if (Object.keys(found).length > 0) return;
+
+    const luggageNumber = luggage.trim() === "" ? null : Number(luggage);
 
     setSubmitting(true);
     setSubmitError(null);
@@ -155,6 +210,17 @@ export function QuoteRequestForm({
           customerName: name.trim(),
           customerPhone: phone.trim(),
           details: details.trim(),
+          // الثلاثي كما حلّه مكوّن البحث — لا نصّ الحقل
+          origin: origin ? { label: origin.label, lat: origin.lat, lng: origin.lng } : null,
+          destination: destination
+            ? { label: destination.label, lat: destination.lat, lng: destination.lng }
+            : null,
+          pickupAt: pickupIso,
+          passengers: paxNumber,
+          luggage:
+            luggageNumber !== null && Number.isInteger(luggageNumber) && luggageNumber >= 0
+              ? luggageNumber
+              : null,
         }),
       });
       const json = (await res.json()) as QuoteRequestResponse;
@@ -167,8 +233,8 @@ export function QuoteRequestForm({
         return;
       }
 
-      // القمع في المتصفح: نظير `trackFunnel("quote_requested")` في
-      // `/api/quote-request`. الرقم المرجعي وحده (QR-…) — لا اسم ولا هاتف.
+      // القمع في المتصفح: نظير `trackFunnel("quote_requested")` في المسار.
+      // 🔒 الرقم المرجعي وحده — لا اسم ولا هاتف ولا مكان.
       trackBrowserFunnel("quote_requested", {
         ...(json.reference ? { reference: json.reference } : {}),
       });
@@ -218,12 +284,143 @@ export function QuoteRequestForm({
     );
   }
 
+  const fieldError = (message: string | undefined) =>
+    message ? (
+      <p className="flex items-start gap-1.5 text-xs leading-5 text-destructive">
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        {message}
+      </p>
+    ) : null;
+
   return (
     <form
       onSubmit={handleSubmit}
       noValidate
-      className="flex flex-col gap-4 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-xl shadow-primary/5 sm:p-7"
+      className="flex flex-col gap-5 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-xl shadow-primary/5 sm:p-7"
     >
+      {/* ── الرحلة ─────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <PlaceField
+            id={`${uid}-origin`}
+            label={t("origin", "من أين تبدأ الرحلة")}
+            placeholder={t("originPlaceholder", "مثل «مطار القاهرة الدولي»")}
+            icon={<MapPin className="size-4" />}
+            value={originText}
+            place={origin}
+            onValueChange={setOriginText}
+            onPlaceChange={setOrigin}
+            fieldHeight={fieldHeight}
+            t={t}
+            fmt={fmt}
+            settings={placeSearch}
+            locale={locale}
+          />
+          {fieldError(errors.origin)}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <PlaceField
+            id={`${uid}-destination`}
+            label={t("destination", "إلى أين (اختياري)")}
+            placeholder={t("destinationPlaceholder", "اتركه فارغاً للجولات والإيجار اليومي")}
+            icon={<MapPinned className="size-4" />}
+            value={destText}
+            place={destination}
+            onValueChange={setDestText}
+            onPlaceChange={setDestination}
+            fieldHeight={fieldHeight}
+            t={t}
+            fmt={fmt}
+            settings={placeSearch}
+            locale={locale}
+          />
+          {fieldError(errors.destination) ?? (
+            <p className="text-xs leading-5 text-muted-foreground">
+              {t("destinationHelp", "برنامج بعدة محطات؟ اتركه فارغاً واكتب المحطات في الملاحظات.")}
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="flex items-center gap-1.5 text-sm font-medium">
+            <CalendarClock className="size-4 text-muted-foreground" aria-hidden="true" />
+            {t("pickup", "موعد الانطلاق")}
+          </span>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              id={`${uid}-date`}
+              type="date"
+              min={minDate}
+              value={pickupDate}
+              onChange={(event) => setPickupDate(event.target.value)}
+              aria-invalid={errors.pickup ? true : undefined}
+              aria-label={t("pickupDate", "تاريخ الرحلة")}
+              className={fieldClass}
+            />
+            <input
+              id={`${uid}-time`}
+              type="time"
+              value={pickupTime}
+              onChange={(event) => setPickupTime(event.target.value)}
+              aria-invalid={errors.pickup ? true : undefined}
+              aria-label={t("pickupTime", "وقت الرحلة")}
+              className={fieldClass}
+            />
+          </div>
+          {fieldError(errors.pickup)}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor={`${uid}-passengers`}
+              className="flex items-center gap-1.5 text-sm font-medium"
+            >
+              <Users className="size-4 text-muted-foreground" aria-hidden="true" />
+              {t("passengers", "عدد الركاب")}
+            </label>
+            <input
+              id={`${uid}-passengers`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MAX_PASSENGERS}
+              step={1}
+              value={passengers}
+              onChange={(event) => setPassengers(event.target.value)}
+              aria-invalid={errors.passengers ? true : undefined}
+              className={fieldClass}
+            />
+            {fieldError(errors.passengers)}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor={`${uid}-luggage`}
+              className="flex items-center gap-1.5 text-sm font-medium"
+            >
+              <Luggage className="size-4 text-muted-foreground" aria-hidden="true" />
+              {t("luggage", "عدد الحقائب (اختياري)")}
+            </label>
+            <input
+              id={`${uid}-luggage`}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={MAX_LUGGAGE}
+              step={1}
+              value={luggage}
+              onChange={(event) => setLuggage(event.target.value)}
+              className={fieldClass}
+            />
+          </div>
+        </div>
+      </div>
+
+      <hr className="border-border" />
+
+      {/* ── الخدمة والتواصل ────────────────────────────────────────── */}
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${uid}-service`} className="text-sm font-medium">
           {t("service", "نوع الخدمة")}
@@ -243,78 +440,62 @@ export function QuoteRequestForm({
         </select>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${uid}-name`} className="text-sm font-medium">
-          {t("name", "الاسم")}
-        </label>
-        <input
-          id={`${uid}-name`}
-          type="text"
-          autoComplete="name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          aria-invalid={errors.name ? true : undefined}
-          className={fieldClass}
-        />
-        {errors.name ? (
-          <p className="flex items-start gap-1.5 text-xs leading-5 text-destructive">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            {errors.name}
-          </p>
-        ) : null}
-      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${uid}-name`} className="text-sm font-medium">
+            {t("name", "الاسم")}
+          </label>
+          <input
+            id={`${uid}-name`}
+            type="text"
+            autoComplete="name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            aria-invalid={errors.name ? true : undefined}
+            className={fieldClass}
+          />
+          {fieldError(errors.name)}
+        </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${uid}-phone`} className="text-sm font-medium">
-          {t("phone", "رقم الهاتف")}
-        </label>
-        <input
-          id={`${uid}-phone`}
-          type="tel"
-          inputMode="tel"
-          dir="ltr"
-          autoComplete="tel"
-          placeholder={t("phonePlaceholder", "01xxxxxxxxx")}
-          value={phone}
-          onChange={(event) => setPhone(event.target.value)}
-          aria-invalid={errors.phone ? true : undefined}
-          className={cn(fieldClass, "text-start")}
-        />
-        {errors.phone ? (
-          <p className="flex items-start gap-1.5 text-xs leading-5 text-destructive">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            {errors.phone}
-          </p>
-        ) : null}
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${uid}-phone`} className="text-sm font-medium">
+            {t("phone", "رقم الهاتف")}
+          </label>
+          <input
+            id={`${uid}-phone`}
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            autoComplete="tel"
+            placeholder={t("phonePlaceholder", "01xxxxxxxxx")}
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            aria-invalid={errors.phone ? true : undefined}
+            className={cn(fieldClass, "text-start")}
+          />
+          {fieldError(errors.phone)}
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${uid}-details`} className="text-sm font-medium">
-          {t("details", "تفاصيل الطلب")}
+          {t("details", "ملاحظات إضافية (اختياري)")}
         </label>
         <textarea
           id={`${uid}-details`}
-          rows={5}
+          rows={4}
           maxLength={2000}
           value={details}
           onChange={(event) => setDetails(event.target.value)}
           placeholder={t(
             "detailsPlaceholder",
-            "مثال: جولة يوم كامل في القاهرة التاريخية يوم ١٢ من الشهر القادم، ٦ أفراد، الانطلاق من فندق في الزمالك."
+            "مثال: نريد المرور على المتحف المصري وخان الخليلي، ومندوب يتحدث الإنجليزية."
           )}
-          aria-invalid={errors.details ? true : undefined}
           className="w-full rounded-2xl border border-input bg-background px-3 py-2.5 text-base leading-7 outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
-        {errors.details ? (
-          <p className="flex items-start gap-1.5 text-xs leading-5 text-destructive">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            {errors.details}
-          </p>
-        ) : (
-          <p className="text-xs leading-5 text-muted-foreground">
-            {t("detailsHelp", "كلما زادت التفاصيل، وصلك عرض أدق وأسرع.")}
-          </p>
-        )}
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t("detailsHelp", "المحطات الإضافية، أو عدد الأيام، أو أي طلب خاص.")}
+        </p>
       </div>
 
       {submitError ? (
