@@ -1,12 +1,22 @@
 import { Fragment } from "react";
+import { ChevronDown } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import type { SiteSettings } from "@/lib/site-config";
 import { getPagesByKind } from "@/lib/content";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
 import { createFormatter } from "@/components/booking/format";
 import { LocaleSwitcher } from "./locale-switcher";
-import { accountLinks, externalLinkProps, localeHref, navLinks, socialEntries } from "./links";
+import { FooterAccordionSync } from "./footer-accordion";
+import {
+  TRACK_LINK_KEY,
+  accountLinks,
+  externalLinkProps,
+  localeHref,
+  navLinks,
+  socialEntries,
+} from "./links";
 import { SOCIAL_ICONS } from "./social-icons";
 
 /**
@@ -24,27 +34,75 @@ const LEGAL_PAGES = [
 /** الصفحات الثابتة التي يملكها صفّ الحقوق أدناه — تُستبعَد من عمود الأقسام */
 const LEGAL_SLUGS: ReadonlySet<string> = new Set(LEGAL_PAGES.map((page) => page.slug));
 
-/** عمود روابط موحّد في التذييل */
+/**
+ * عمود روابط موحّد في التذييل — **مطويّ على الجوال ومفتوحٌ على المكتب**.
+ *
+ * ── الشكوى المقيسة ─────────────────────────────────────────────────────────
+ *
+ * بدر، بعد أن فتح الموقع على هاتفه: «الفوتر… غير منظم و كبير جدااااا».
+ * والسبب بنيويّ لا تجميليّ: التذييل **يُبنى من القاعدة** (كل صفحة منشورة +
+ * روابط الحساب)، فطال بطول الموقع — ٢٨ رابطاً في عمودٍ واحد على شاشة الهاتف،
+ * ‏١٣٦٢ بكسل مقيسة عند ٣٧٥ عرضاً.
+ *
+ * والعلاج ليس حذف روابط: كلٌّ منها أُضيف لسبب، وحذفُ رابطٍ من التذييل يقطع
+ * طريقاً داخلياً إلى صفحةٍ منشورة (نفس عيب `/business` و`/contact` الموثّق
+ * أسفل هذا الملف). فالعلاج **طيّ** — الروابط كلها في DOM ويصلها الزاحف، ولا
+ * يفتحها الزائر إلا حين يريدها.
+ *
+ * 🔒 **و`<details>` بلا `open` في الماركب هو الشكل المرفوض**: بلا جافاسكربت
+ * كان الزاحف والزائر يريان أربعة عناوين وصفر رابط. فالعمود يخرج من الخادم
+ * **مفتوحاً**، و`FooterAccordionSync` يطويه على الجوال بعد الترطيب — فالفشل
+ * يقع إلى «كما كان» لا إلى «محجوب».
+ *
+ * ⚠ و`keepOpen` لا يُطوى على أي عرض — وهو العمود الذي فيه «تابع حجزك».
+ */
 function FooterLinkColumn({
   title,
   links,
+  keepOpen = false,
 }: {
   title: string;
   links: { href: string; label: string }[];
+  keepOpen?: boolean;
 }) {
   if (links.length === 0) return null;
   return (
-    <nav aria-label={title} className="flex flex-col gap-2">
-      <p className="mb-1 text-sm font-bold">{title}</p>
-      {links.map((link) => (
-        <a
-          key={link.href}
-          href={link.href}
-          className="w-fit rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+    <nav aria-label={title} className="border-t border-border/60 md:border-t-0">
+      <details data-ftr-acc open {...(keepOpen ? { "data-ftr-keep": "" } : null)} className="group">
+        <summary
+          className={cn(
+            "flex cursor-pointer list-none items-center justify-between gap-2 py-3 text-sm font-bold",
+            /**
+             * على المكتب: عنوانٌ ساكن لا زرّ — لا مؤشّر ولا نقر ولا سهم.
+             * و`pointer-events-none` تمنع النقر بالفأرة، **والنقر بلوحة
+             * المفاتيح يمنعه حارس `toggle` في `FooterAccordionSync`** — فعمودٌ
+             * أُغلق على المكتب لا يجد ما يفتحه (الأسهم مخفية هناك).
+             */
+            "md:pointer-events-none md:cursor-default md:py-0 md:pb-3",
+            "[&::-webkit-details-marker]:hidden",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          )}
         >
-          {link.label}
-        </a>
-      ))}
+          {title}
+          <ChevronDown
+            aria-hidden="true"
+            className="size-4 shrink-0 text-muted-foreground transition-transform duration-300 group-open:-rotate-180 md:hidden"
+          />
+        </summary>
+        <ul role="list" className="flex flex-col pb-3 md:pb-0">
+          {links.map((link) => (
+            <li key={link.href}>
+              <a
+                href={link.href}
+                // ٤٤ بكسل حدّ لمسٍ مريح على الجوال، و«طبيعي» فوق `md`
+                className="flex min-h-11 w-fit items-center rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 md:min-h-0 md:py-1"
+              >
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </details>
     </nav>
   );
 }
@@ -88,8 +146,23 @@ export async function SiteFooter({
 
   // NAV_LINKS مطلقة أصلاً («/#services») فتُستخدم كما هي — إضافة "/" هنا
   // كانت تنتج «//#services» وهو رابط بروتوكول-نسبي مكسور
+  const nav = navLinks(tNav, locale);
+
+  /**
+   * 🔒 **العمود الذي لا يُطوى** — «تابع حجزك» ورابطا الحساب معاً.
+   *
+   * وثلاثتها تجيب سؤالاً واحداً («أين حجزي؟») فتقع طبيعياً في عمود، **وهو
+   * بالضبط ما يجعل بقاءها مفتوحةً مبرَّراً**: لا تُطوى لأنها مهمة فحسب، بل
+   * لأنها العمود الوحيد الذي يفتحه **عائدٌ** لا متصفّح — والعائد لا يمسح
+   * التذييل بحثاً عن عنوانٍ يفتحه.
+   */
+  const bookingLinks = [
+    ...nav.filter((link) => link.key === TRACK_LINK_KEY),
+    ...accountLinks(tNav, locale),
+  ];
+
   const sectionLinks = [
-    ...navLinks(tNav, locale),
+    ...nav.filter((link) => link.key !== TRACK_LINK_KEY),
     /**
      * 🔴 كل صفحة ثابتة منشورة — لا `/about` وحدها مكتوبةً باليد.
      *
@@ -118,15 +191,15 @@ export async function SiteFooter({
       label: page.title,
     })),
     /**
-     * رابطا الحساب — **ثابتان بلا قراءة جلسة**، وهذا شرطُ بقاء التذييل خادمياً
-     * على كل صفحة (نفس مبرر جزيرة الترويسة، من الجهة الأخرى).
+     * ⚠ **ورابطا الحساب غادرا هذا العمود إلى `bookingLinks` أعلاه** ولم
+     * يُحذفا: هما **ثابتان بلا قراءة جلسة** كما كانا — وهذا شرطُ بقاء التذييل
+     * خادمياً على كل صفحة (نفس مبرر جزيرة الترويسة، من الجهة الأخرى).
      *
      * وعرضُهما للجميع سليم: `/account/login` تُحوِّل صاحب الجلسة إلى «حجوزاتي»،
      * و«حجوزاتي» تلقى من لا جلسة له ببطاقة «سجّل دخولك» ومعها طريق `/track`.
-     * فلا يقع أحدٌ على باب مغلق، **ومن عطّل JavaScript يجد الطريقين هنا** بعد
-     * أن غابت عنه جزيرة الترويسة.
+     * فلا يقع أحدٌ على باب مغلق، **ومن عطّل JavaScript يجد الطريقين** في عمودٍ
+     * لا يُطوى أصلاً بعد أن غابت عنه جزيرة الترويسة.
      */
-    ...accountLinks(tNav, locale),
   ];
   const serviceLinks = services.map((page) => ({
     href: localeHref(`/services/${page.slug}`, locale),
@@ -148,10 +221,17 @@ export async function SiteFooter({
 
   return (
     <footer className="border-t bg-muted/30">
-      <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 md:py-16">
-        <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
+      {/* يطوي الأعمدة على الجوال بعد الترطيب — والفشل يقع إلى «الكل مفتوح» */}
+      <FooterAccordionSync />
+      <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 md:py-16">
+        {/**
+         * على الجوال: عمودٌ واحد بلا فجوة — الفصل يأتي من حدّ كل عمود
+         * (`border-t` في `FooterLinkColumn`) فيمتد الخط عبر العرض كاملاً
+         * ويُقرأ صفَّ أكورديون. وفوق `sm` تعود الفجوة والأعمدة.
+         */}
+        <div className="grid gap-0 sm:grid-cols-2 sm:gap-8 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1fr] lg:gap-6">
           {/* الهوية */}
-          <div className="flex max-w-sm flex-col gap-3">
+          <div className="flex max-w-sm flex-col gap-3 pb-6 sm:pb-0">
             <div className="flex items-center gap-3">
               {settings.brand.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -172,13 +252,13 @@ export async function SiteFooter({
                 </>
               )}
             </div>
-            <p className="text-sm leading-7 text-muted-foreground">
+            <p className="text-sm leading-6 text-muted-foreground">
               {settings.brand.tagline}
             </p>
 
             {/* الشبكات الاجتماعية المتوفرة فقط */}
             {socials.length > 0 ? (
-              <ul className="mt-2 flex items-center gap-2">
+              <ul className="mt-1 flex items-center gap-2">
                 {socials.map((social) => {
                   const Icon = SOCIAL_ICONS[social.key];
                   return (
@@ -198,18 +278,24 @@ export async function SiteFooter({
             ) : null}
           </div>
 
+          {/* 🔒 أول الأعمدة ولا يُطوى: «تابع حجزك» ودخول العملاء و«حجوزاتي» */}
+          <FooterLinkColumn
+            title={t("booking", "حجزك وحسابك")}
+            links={bookingLinks}
+            keepOpen
+          />
           <FooterLinkColumn title={t("sections", "أقسام الموقع")} links={sectionLinks} />
           <FooterLinkColumn title={t("services", "خدماتنا")} links={serviceLinks} />
           <FooterLinkColumn title={t("corridors", "مسارات شائعة")} links={corridorLinks} />
         </div>
 
-        <Separator className="my-8" />
+        <Separator className="my-5 md:my-8" />
 
         {/* صف الصفحات القانونية — الشروط والاسترداد والخصوصية */}
         {legalLinks.length > 0 ? (
           <nav
             aria-label={t("legalNav", "الصفحات القانونية")}
-            className="mb-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted-foreground md:justify-start"
+            className="mb-4 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-muted-foreground md:mb-6 md:justify-start"
           >
             {legalLinks.map((link, index) => (
               <Fragment key={link.href}>
@@ -236,21 +322,28 @@ export async function SiteFooter({
           </nav>
         ) : null}
 
-        <div className="flex flex-col items-center justify-between gap-4 text-sm text-muted-foreground md:flex-row">
-          <p>
+        {/**
+         * صفّ الذيل — كان **ثلاثة صفوف** على الجوال (`flex-col` + `gap-4`)
+         * فأكل ~١٤٠ بكسل من ارتفاعٍ يشكو منه المالك. والمبدّل وخريطة الموقع
+         * سطرٌ واحد الآن، وسطر الحقوق تحته.
+         */}
+        <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground md:flex-row md:justify-between md:gap-4">
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 md:order-2">
+            {/* صف اللغات مكشوفاً — من فاته المبدّل في الترويسة يجده هنا */}
+            <LocaleSwitcher variant="inline" className="-mx-2" />
+            <a
+              href="/sitemap.xml"
+              className="rounded-md transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              {t("sitemap", "خريطة الموقع")}
+            </a>
+          </div>
+          <p className="text-center text-xs md:order-1 md:text-sm">
             {t("rights", "© {year} {owner} — جميع الحقوق محفوظة.", {
               year,
               owner: ownerName,
             })}
           </p>
-          {/* صف اللغات مكشوفاً — من فاته المبدّل في الترويسة يجده هنا */}
-          <LocaleSwitcher variant="inline" className="-mx-2" />
-          <a
-            href="/sitemap.xml"
-            className="rounded-md transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-          >
-            {t("sitemap", "خريطة الموقع")}
-          </a>
         </div>
       </div>
     </footer>

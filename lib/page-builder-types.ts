@@ -274,6 +274,54 @@ export const TYPING_HOLD_TOKENS = ["short", "normal", "long"] as const;
 export type TypingHoldToken = (typeof TYPING_HOLD_TOKENS)[number];
 
 /**
+ * 🆕 **شكل كتلة «المزايا»** — بأمر بدر بعد أن فتح الموقع على هاتفه:
+ * «الحجز في ثلاث خطوات… أري أنها مختلفة تماماً في الموقع حالياً عن الموجود
+ * في Tours-02».
+ *
+ * ── ولماذا رمزٌ في `style` لا كتلةٌ جديدة ولا حقلٌ في `block_registry` ──────
+ *
+ * الرئيسية تحمل **كتلتَي `features`**: «الحجز في ثلاث خطوات» و«ست ضمانات
+ * مكتوبة». وهما نفس البنية حرفاً (‏`title` + `items[{title,text,icon}]`)
+ * ويختلفان في **شكل العرض وحده**: الأولى مسارٌ مرقَّم بخطٍّ يربط خطواته،
+ * والثانية شبكةُ بطاقات. فلو حُوِّلت العارضة إلى مسارٍ مرقَّم لصارت الضمانات
+ * الست «خطوات» يُقرأ ترتيبها إجراءً — وهو خطأُ معنى لا خطأ ذوق.
+ *
+ * فالمطلوب **تمييزٌ بين صفَّين من النوع نفسه**، وهذا تعريف `style` حرفاً:
+ *   • ليس نصّاً للزائر ⇒ لا يدخل فهرس الترجمة (‏`i18n_reserved_content_key`)
+ *   • ليس لوناً خاماً ⇒ لا يكسر العلامة الثانية
+ *   • رمزٌ من قائمة مغلقة ⇒ القيمة المخرَّبة تسقط إلى الافتراضي لا إلى عطل
+ *
+ * وكتلةٌ جديدة (`steps`) كانت تكلّف: صفّاً في `block_registry`، وهجرةً، وسطراً
+ * في `page_builder_tests.sql`، **وترحيلَ الصفّ الحيّ من نوعٍ إلى نوع** — أي
+ * `sections.id` جديداً ⇒ **فقدان كل ترجمات الكتلة** (المكتوب في §٧ أعلاه).
+ * والثمن كله لا يشتري حقلاً واحداً لا يحمله `features` اليوم.
+ *
+ * 🔒 **والترقيم موضعيّ لا حقل**: «١ ٢ ٣» هي `index + 1` بأرقام لغة الزائر —
+ * فإعادةُ ترتيب عنصرٍ من المنشئ تعيد ترقيمه وحدها، ولا يبقى رقمٌ مكتوبٌ في
+ * نصٍّ يناقض موضعه.
+ */
+export const FEATURES_LAYOUT_TOKENS = ["cards", "steps"] as const;
+export type FeaturesLayoutToken = (typeof FEATURES_LAYOUT_TOKENS)[number];
+
+/**
+ * 🆕 **شكل كتلة «لماذا نحن»** — بأمر بدر عن «ما تحصل عليه في كل حجز»:
+ * «أسلوب العرض الحالي يستهلك مساحة كبيرة نسبياً على الموبايل… يمكن عرض الأمر
+ * بشكل مختلف مع استخدام رسومات أو مؤثرات معينة».
+ *
+ * والرمزان **يُبنيان معاً ويُعرضان عليه ليختار** — لا يُختار عنه:
+ *
+ * | الرمز | ما هو | متى يكسب |
+ * |---|---|---|
+ * | `dense` | صفوفٌ مضغوطة: الأيقونة والنصّ على سطرٍ واحد، بلا بطاقةٍ لكل بند | القسم **يُقرأ ليُقرَّر** لا ليُعجَب؛ والشاشة صغيرة والصبر أقصر |
+ * | `expressive` | وزنٌ بصريّ أعلى: أرقامٌ وحركةٌ وتدرّجٌ عند دخول الشاشة | حين تكون الرسالة «نحن محترفون» لا «إليك ما تحصل عليه» |
+ *
+ * والافتراضي `dense` لأنه الجواب المباشر على الشكوى المقيسة (الارتفاع)، **وتبديلُه
+ * قائمةٌ واحدة في المنشئ** لا نشرةُ كود.
+ */
+export const WHY_US_LAYOUT_TOKENS = ["dense", "expressive"] as const;
+export type WhyUsLayoutToken = (typeof WHY_US_LAYOUT_TOKENS)[number];
+
+/**
  * شكل `content.style`. كل حقوله اختيارية، **والغياب يعني «الافتراضي»** لا
  * «صفر» — نفس تمييز القاعدة الذهبية ١٥.
  */
@@ -307,6 +355,13 @@ export type BlockStyle = {
   typingErase?: TypingSpeedToken;
   /** يتكرر بلا توقف؟ الغياب = يقف عند آخر جملة (الافتراضي) */
   typingLoop?: boolean;
+  /**
+   * 🆕 شكل «المزايا» و«لماذا نحن». تسلكان مسلك `tone` حرفاً: تصفان **داخل**
+   * الكتلة لا غلافها، فلا تُخرجان صنفاً في `blockStyleClass`، وتصلان المكوّن
+   * مطهَّرتين عبر `SectionProps.style` وحده.
+   */
+  featuresLayout?: FeaturesLayoutToken;
+  whyUsLayout?: WhyUsLayoutToken;
 };
 
 // ---------------------------------------------------------------------------
@@ -594,7 +649,7 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     nonTextFields: null,
     nonTextItemFields: ["icon"],
     requiredFields: ["items"],
-    styleKeys: ["background", "spacing", "hideOnMobile"],
+    styleKeys: ["featuresLayout", "background", "spacing", "hideOnMobile"],
   },
   {
     type: "faq",
@@ -680,7 +735,7 @@ export const BLOCK_CATALOGUE: readonly BlockDef[] = [
     nonTextFields: null,
     nonTextItemFields: null,
     requiredFields: [],
-    styleKeys: ["background", "spacing"],
+    styleKeys: ["whyUsLayout", "background", "spacing"],
   },
   {
     type: "contact",

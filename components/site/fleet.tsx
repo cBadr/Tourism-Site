@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getLocalizedVehicleClasses, getT } from "@/lib/i18n/content";
 import { safeMediaSrc } from "@/components/sections/image";
+import { RAIL_GRID_4, Rail, RailItem } from "@/components/sections/rail";
 import type { IconComponent } from "@/components/sections/icons";
 import { SectionHeading } from "./section-heading";
 
@@ -75,7 +76,26 @@ export async function FleetSection({
           }
         />
 
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4 md:mt-16">
+        {/**
+         * 🆕 **سكةٌ أفقية على الجوال — بأمر بدر بعد أن فتح الموقع على هاتفه:**
+         * «تظهر السيارات تحت بعضها، وأري أنه من الأفضل أن تكون متجانبة مع خيار
+         * تمرير مناسب **كما هو الحال في المسارات**».
+         *
+         * والآلية **مستوردة لا مكتوبة**: نفس `Rail` التي تحمل سكة المسارات
+         * (‏القاعدة الذهبية ١٢). فحافةُ البطاقة الناقصة والاستقرارُ على بطاقةٍ
+         * كاملة والتمريرُ بلوحة المفاتيح ونقاطُ المؤشّر — كلها تصل هنا بلا سطرٍ
+         * واحد يُنسخ، ولا يمكن أن تنحرف إحدى السكتين عن أختها.
+         *
+         * والفرق الوحيد عن سكة المسارات سطرٌ في شبكة الديسكتوب: **أربعة أعمدة**
+         * لا ثلاثة، لأن الفئات أربع فتقع كلها في صفٍّ واحد على الشاشة الواسعة —
+         * وهو تخطيطها القائم حرفاً قبل هذا التغيير.
+         */}
+        <Rail
+          id="fleetRail"
+          label={t("railLabel", "فئات الأسطول")}
+          gridClassName={RAIL_GRID_4}
+          className="mt-12 md:mt-16"
+        >
           {vehicles.map((vehicle) => {
             const Icon = FLEET_ICONS[vehicle.slug] ?? Car;
             /**
@@ -86,10 +106,10 @@ export async function FleetSection({
             const src = safeMediaSrc(vehicle.imageUrl);
 
             return (
+              <RailItem key={vehicle.slug}>
               <Card
-                key={vehicle.slug}
                 className={cn(
-                  "overflow-hidden rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]",
+                  "h-full overflow-hidden rounded-2xl ring-border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-primary/10 hover:ring-primary/30 [--card-spacing:--spacing(6)]",
                   src === null && "items-center text-center"
                 )}
               >
@@ -108,7 +128,10 @@ export async function FleetSection({
                       src={src}
                       alt=""
                       fill
-                      sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 288px"
+                      /* مقيسٌ على السكة لا على الشبكة القديمة: البطاقة ٢٥٦ بكسل
+                         على الجوال (`w-64`)، لا `100vw`. ورقمٌ خاطئ هنا يطلب
+                         نسخةً أعرض بلا بكسل مرئي إضافي. */
+                      sizes="(max-width: 767px) 256px, (max-width: 1023px) 50vw, 288px"
                       quality={55}
                       className="object-cover"
                     />
@@ -143,9 +166,10 @@ export async function FleetSection({
                   ) : null}
                 </CardHeader>
               </Card>
+              </RailItem>
             );
           })}
-        </div>
+        </Rail>
       </div>
     </section>
   );

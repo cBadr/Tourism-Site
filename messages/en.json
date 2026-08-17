@@ -53,7 +53,8 @@
         "terms": "Terms and conditions",
         "refundPolicy": "Refund policy",
         "privacy": "Privacy policy"
-      }
+      },
+      "booking": "Your booking & account"
     },
 
     "hero": {
@@ -77,7 +78,8 @@
     "fleet": {
       "eyebrow": "Our fleet",
       "title": "A vehicle class for every group size",
-      "description": "Tell us how many passengers you have and we will suggest the right class — from a light solo ride to a full group."
+      "description": "Tell us how many passengers you have and we will suggest the right class — from a light solo ride to a full group.",
+      "railLabel": "Fleet classes"
     },
 
     "whyUs": {
@@ -163,7 +165,11 @@
       "title": "Answers to what our customers ask about most"
     },
     "features": {
-      "eyebrow": "Features"
+      "eyebrow": "Features",
+      "stepsEyebrow": "How it works"
+    },
+    "routeRail": {
+      "railLabel": "Popular routes"
     },
     "logoStrip": {
       "title": "Vehicle classes available in our fleet",

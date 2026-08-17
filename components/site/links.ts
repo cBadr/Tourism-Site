@@ -83,6 +83,19 @@ export const ACCOUNT_LINKS = [
   { href: "/account/bookings", key: "account", label: "حجوزاتي" },
 ] as const;
 
+/**
+ * 🔴 مفتاح «تابع حجزك» — **مُصدَّرٌ لأن التذييل يفرزه بالاسم لا بالموضع.**
+ *
+ * التذييل صار يطوي أعمدته على الجوال (شكوى بدر: «غير منظم و كبير جدااااا»)،
+ * **وهذا الرابط بعينه لا يُطوى**: سمّاه بدر شكواه الأولى في ملحق الرؤية،
+ * وتذييلٌ أنيق يُخفيه خلف نقرةٍ يعيد المشكلة التي أُضيف لأجلها. فله عمودٌ
+ * مفتوحٌ دائماً مع رابطَي الحساب — ويُفرَز من هذه القائمة بمفتاحه.
+ *
+ * ⚠ **ولا يُنسخ الرابط في مكانين**: نسختان في تذييلٍ واحد تعنيان رابطاً
+ * داخلياً مكرراً في كل صفحة من الموقع، وزائراً يقرأ السطر نفسه مرتين.
+ */
+export const TRACK_LINK_KEY = "track";
+
 /** روابط الحساب بلغة الزائر — للتذييل وحده (‏الترويسة تستعمل الجزيرة) */
 export function accountLinks(t?: Tx, locale: string = DEFAULT_LOCALE): { href: string; label: string }[] {
   return ACCOUNT_LINKS.map((link) => ({
@@ -91,9 +104,16 @@ export function accountLinks(t?: Tx, locale: string = DEFAULT_LOCALE): { href: s
   }));
 }
 
-/** روابط القائمة بلغة الزائر — النص من مساحة `site.nav` والمسار من localePath */
-export function navLinks(t?: Tx, locale: string = DEFAULT_LOCALE): { href: string; label: string }[] {
+/**
+ * روابط القائمة بلغة الزائر — النص من مساحة `site.nav` والمسار من localePath.
+ * و`key` يخرج معها كي يفرزها من يحتاج (التذييل يفصل «تابع حجزك» بمفتاحه).
+ */
+export function navLinks(
+  t?: Tx,
+  locale: string = DEFAULT_LOCALE
+): { key: string; href: string; label: string }[] {
   return NAV_LINKS.map((link) => ({
+    key: link.key,
     href: localeHref(link.href, locale),
     label: t ? t(link.key, link.label) : link.label,
   }));

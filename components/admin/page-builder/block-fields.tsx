@@ -13,6 +13,8 @@ import { ITEM_ICON_NAMES, fieldWidget } from "@/lib/item-fields-types";
 import {
   CALLOUT_TONE_LABELS,
   CALLOUT_TONE_OPTIONS,
+  FEATURES_LAYOUT_LABELS,
+  FEATURES_LAYOUT_OPTIONS,
   ICON_LABELS,
   MEDIA_SUGGESTIONS,
   SPACING_LABELS,
@@ -24,6 +26,8 @@ import {
   TYPING_SPEED_LABELS,
   TYPING_SPEED_OPTIONS,
   VIDEO_SUGGESTIONS,
+  WHY_US_LAYOUT_LABELS,
+  WHY_US_LAYOUT_OPTIONS,
   fieldLabel,
 } from "@/lib/page-builder/registry";
 import {
@@ -584,6 +588,57 @@ function StyleFields({
               {CALLOUT_TONE_OPTIONS.map((token) => (
                 <option key={token} value={token}>
                   {CALLOUT_TONE_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/**
+         * 🆕 شكل «المزايا» — قائمة مغلقة لا حقل نصّ. الرمز `steps` يحوّل
+         * البطاقات إلى مسارٍ مرقَّم بخطٍّ يربط خطواته (شكل التصميم لقسم «كيف
+         * نعمل»)، و`cards` يبقيها شبكةً كما هي.
+         */}
+        {keys.includes("featuresLayout") && (
+          <div className="space-y-1.5">
+            <Label
+              htmlFor={`${idPrefix}-features-layout`}
+              className="text-xs text-muted-foreground"
+            >
+              شكل العرض
+            </Label>
+            <select
+              id={`${idPrefix}-features-layout`}
+              className={fieldControlClass}
+              value={style.featuresLayout ?? "cards"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ featuresLayout: e.target.value as never })}
+            >
+              {FEATURES_LAYOUT_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {FEATURES_LAYOUT_LABELS[token]}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/** 🆕 شكل «لماذا نحن» — المضغوط يقصّ الارتفاع، والبصريّ يزيد الوزن */}
+        {keys.includes("whyUsLayout") && (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-whyus-layout`} className="text-xs text-muted-foreground">
+              شكل العرض
+            </Label>
+            <select
+              id={`${idPrefix}-whyus-layout`}
+              className={fieldControlClass}
+              value={style.whyUsLayout ?? "dense"}
+              disabled={disabled}
+              onChange={(e) => patchStyle({ whyUsLayout: e.target.value as never })}
+            >
+              {WHY_US_LAYOUT_OPTIONS.map((token) => (
+                <option key={token} value={token}>
+                  {WHY_US_LAYOUT_LABELS[token]}
                 </option>
               ))}
             </select>

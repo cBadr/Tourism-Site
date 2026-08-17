@@ -2,17 +2,21 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   CALLOUT_TONE_TOKENS,
+  FEATURES_LAYOUT_TOKENS,
   SPACING_TOKENS,
   STYLE_FIELD,
   THEME_COLOR_TOKENS,
   TYPING_HOLD_TOKENS,
   TYPING_SPEED_TOKENS,
+  WHY_US_LAYOUT_TOKENS,
   type BlockStyle,
   type CalloutToneToken,
+  type FeaturesLayoutToken,
   type SpacingToken,
   type ThemeColorToken,
   type TypingHoldToken,
   type TypingSpeedToken,
+  type WhyUsLayoutToken,
 } from "@/lib/page-builder-types";
 
 /**
@@ -79,6 +83,15 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
   const typingErase = tokenOf<TypingSpeedToken>(record.typingErase, TYPING_SPEED_TOKENS);
   /** `=== true` لا `Boolean(...)`: الغياب و«أي قيمة أخرى» كلاهما «يقف» */
   const typingLoop = record.typingLoop === true;
+  /**
+   * 🆕 شكلا «المزايا» و«لماذا نحن» — ومسلكهما مسلك `tone` حرفاً: يمرّان من هنا
+   * ولا يخرجان صنفاً في `blockStyleClass`، ويصلان العارضة عبر `SectionProps.style`.
+   */
+  const featuresLayout = tokenOf<FeaturesLayoutToken>(
+    record.featuresLayout,
+    FEATURES_LAYOUT_TOKENS
+  );
+  const whyUsLayout = tokenOf<WhyUsLayoutToken>(record.whyUsLayout, WHY_US_LAYOUT_TOKENS);
 
   if (
     background === null &&
@@ -88,7 +101,9 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
     typingSpeed === null &&
     typingHold === null &&
     typingErase === null &&
-    !typingLoop
+    !typingLoop &&
+    featuresLayout === null &&
+    whyUsLayout === null
   ) {
     return null;
   }
@@ -101,6 +116,8 @@ export function readBlockStyle(content: unknown): BlockStyle | null {
     ...(typingHold !== null ? { typingHold } : {}),
     ...(typingErase !== null ? { typingErase } : {}),
     ...(typingLoop ? { typingLoop: true } : {}),
+    ...(featuresLayout !== null ? { featuresLayout } : {}),
+    ...(whyUsLayout !== null ? { whyUsLayout } : {}),
   };
 }
 

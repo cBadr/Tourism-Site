@@ -7,6 +7,7 @@ import { resolveLocale } from "@/lib/i18n/content";
 import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
+import { SiteCtaBar } from "@/components/site/cta-bar";
 import { RenderSections } from "@/components/sections/render";
 import { ShareBar } from "@/components/site/share-bar";
 import { PageJsonLd } from "@/components/seo/JsonLd";
@@ -85,7 +86,9 @@ export default async function ServicePage({ params }: PageParams) {
         />
       </main>
       <SiteFooter settings={settings} locale={locale} />
-      <WhatsAppFab settings={settings} locale={locale} />
+      {/* الزرّ العائم يُخفى على الجوال — واتساب إجراءٌ داخل الشريط السفلي هناك */}
+      <WhatsAppFab settings={settings} locale={locale} hiddenOnMobile />
+      <SiteCtaBar settings={settings} locale={locale} />
     </>
   );
 }

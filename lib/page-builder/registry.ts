@@ -15,6 +15,7 @@ import { SECTION_TYPE_LABELS, type PageKind } from "@/lib/content-types";
 import {
   BLOCK_CATALOGUE,
   CALLOUT_TONE_TOKENS,
+  FEATURES_LAYOUT_TOKENS,
   blockDef,
   ITEMS_FIELD,
   SPACING_TOKENS,
@@ -22,16 +23,19 @@ import {
   THEME_COLOR_TOKENS,
   TYPING_HOLD_TOKENS,
   TYPING_SPEED_TOKENS,
+  WHY_US_LAYOUT_TOKENS,
   type BlockDef,
   type BlockStyle,
   type BuilderBlockType,
   type BuilderErrorCode,
   type CalloutToneToken,
+  type FeaturesLayoutToken,
   type PublishBlockerCode,
   type SpacingToken,
   type ThemeColorToken,
   type TypingHoldToken,
   type TypingSpeedToken,
+  type WhyUsLayoutToken,
 } from "@/lib/page-builder-types";
 
 export { blockDef, BLOCK_CATALOGUE };
@@ -375,11 +379,25 @@ export const TYPING_HOLD_LABELS: Record<TypingHoldToken, string> = {
   long: "طويلة",
 };
 
+/** شكل «المزايا»: شبكة بطاقات أم مسارُ خطواتٍ مرقَّم بخطٍّ يربطها */
+export const FEATURES_LAYOUT_LABELS: Record<FeaturesLayoutToken, string> = {
+  cards: "بطاقات (شبكة)",
+  steps: "خطوات مرقَّمة على مسار",
+};
+
+/** شكل «لماذا نحن»: صفوفٌ مضغوطة أم عرضٌ بصريّ أوسع */
+export const WHY_US_LAYOUT_LABELS: Record<WhyUsLayoutToken, string> = {
+  dense: "مضغوط (صفوف)",
+  expressive: "بصريّ (أرقام وحركة)",
+};
+
 export const THEME_COLOR_OPTIONS = THEME_COLOR_TOKENS;
 export const SPACING_OPTIONS = SPACING_TOKENS;
 export const CALLOUT_TONE_OPTIONS = CALLOUT_TONE_TOKENS;
 export const TYPING_SPEED_OPTIONS = TYPING_SPEED_TOKENS;
 export const TYPING_HOLD_OPTIONS = TYPING_HOLD_TOKENS;
+export const FEATURES_LAYOUT_OPTIONS = FEATURES_LAYOUT_TOKENS;
+export const WHY_US_LAYOUT_OPTIONS = WHY_US_LAYOUT_TOKENS;
 
 // ---------------------------------------------------------------------------
 // الرموز → عربية. **الخادم يرسل رمزاً والشاشة تترجمه** (قاعدة المشروع)

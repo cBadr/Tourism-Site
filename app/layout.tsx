@@ -16,7 +16,7 @@ import "./globals.css";
  * `[locale]` كان سيجرّ كل رابط عربي إلى `/ar/...`. اللغة تصل من ترويسة يضبطها
  * `proxy.ts`، فتبقى شجرة الصفحات واحدة كما هي.
  *
- * ── الخطوط: Alexandria + IBM Plex Sans Arabic، محليّان (القرار ٢٦) ───────────
+ * ── الخطوط: Alexandria + Readex Pro، محليّان (القرار ٢٦، والمتن بُدِّل 2026-08-17) ─
  *
  * كان هنا `Cairo` و`Inter` من Google Fonts. والتصميم يقوم على خطّين آخرين،
  * وملفاتهما الاثنا عشر مشحونةٌ في `public/fonts/` منذ م‑٣ — **ولم يسجّلها أحد**.
@@ -87,9 +87,29 @@ const alexandriaLatin = localFont({
   ],
 });
 
-/** خطّ المتن — ثلاثة أوزان (٤٠٠·٥٠٠·٦٠٠) */
-const plexArabic = localFont({
-  variable: "--font-plex-ar",
+/**
+ * خطّ المتن — ثلاثة أوزان (٤٠٠·٥٠٠·٦٠٠)
+ *
+ * ── لماذا Readex Pro بدل IBM Plex Sans Arabic (اختيار المالك، 2026-08-17) ────
+ *
+ * راجع بدر عيّنةً تعرض الخطَّين تحت عنوانٍ بـAlexandria 800 على أرضية `--ink`،
+ * بجملته المرجعية وبفقرةٍ من صفحة «من نحن»، فاختار Readex Pro. والعلّة الطباعية
+ * أن Plex كوفيُّ النبرة وهندسيٌّ كـAlexandria نفسها — فالزوج يُقرأ خطّاً واحداً
+ * بوزنين لا عنواناً ومتناً. وReadex أعرض وأدفأ وأكثر انفتاحاً في العيون
+ * (‏ص ه ع ف)، فيتباين مع العنوان بدل أن يردّده.
+ *
+ * ⚠ **وتغطية المحارف قيست قبل الاستبدال لا بعده**: نطاق Readex العربي ٨٢ رمزاً
+ * مقابل ٦٨١ لـPlex، والفارق كلّه فارسي/أردي وعلامات قرآنية و«أشكال العرض»
+ * (‏U+FB50…). ومسحُ ٨ ملايين محرف من المستودع كلّه + محتوى الصفحات والرسائل
+ * أخرج **صفر محرفٍ مرئيّ** خارج تغطيته؛ والأرقام الهندية `٠-٩` (‏U+0660) مغطّاة.
+ * أما `۰-۹` الفارسية (‏U+06F0) فلا تُعرض قط — مواضعها الثلاثة خرائط تطبيع
+ * ومدياتُ regex تُقرأ ولا تُرسم (`count-up.tsx` · `services.ts` · `0026`).
+ *
+ * والرخصة SIL OFL 1.1 — مثبتةً من جدول `name` في الملف نفسه (‏nameID 0 و14)
+ * ومن نصّها المشحون بجواره في `public/fonts/readex-pro-LICENSE.txt`.
+ */
+const readexArabic = localFont({
+  variable: "--font-readex-ar",
   display: "swap",
   declarations: [
     {
@@ -99,14 +119,14 @@ const plexArabic = localFont({
     },
   ],
   src: [
-    { path: "../public/fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2", weight: "400", style: "normal" },
-    { path: "../public/fonts/ibm-plex-sans-arabic-arabic-500-normal.woff2", weight: "500", style: "normal" },
-    { path: "../public/fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "../public/fonts/readex-pro-arabic-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "../public/fonts/readex-pro-arabic-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../public/fonts/readex-pro-arabic-600-normal.woff2", weight: "600", style: "normal" },
   ],
 });
 
-const plexLatin = localFont({
-  variable: "--font-plex-latin",
+const readexLatin = localFont({
+  variable: "--font-readex-latin",
   display: "swap",
   preload: false,
   declarations: [
@@ -117,9 +137,9 @@ const plexLatin = localFont({
     },
   ],
   src: [
-    { path: "../public/fonts/ibm-plex-sans-arabic-latin-400-normal.woff2", weight: "400", style: "normal" },
-    { path: "../public/fonts/ibm-plex-sans-arabic-latin-500-normal.woff2", weight: "500", style: "normal" },
-    { path: "../public/fonts/ibm-plex-sans-arabic-latin-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "../public/fonts/readex-pro-latin-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "../public/fonts/readex-pro-latin-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../public/fonts/readex-pro-latin-600-normal.woff2", weight: "600", style: "normal" },
   ],
 });
 
@@ -150,7 +170,7 @@ const geistMono = Geist_Mono({
 const DISPLAY_STACK =
   "var(--font-alexandria-ar), var(--font-alexandria-latin), 'Segoe UI', Tahoma, sans-serif";
 const BODY_STACK =
-  "var(--font-plex-ar), var(--font-plex-latin), 'Segoe UI', Tahoma, sans-serif";
+  "var(--font-readex-ar), var(--font-readex-latin), 'Segoe UI', Tahoma, sans-serif";
 
 /**
  * العنوان الافتراضي وقالبه ووصف الموقع كلها نصوص مترجمة في `site_settings`،
@@ -213,7 +233,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
    */
   const brandVars = {
     ...paletteVars(settings.brand.colors),
-    // الخطّان: العناوين Alexandria والمتن IBM Plex — وكلاهما يغطّي العربية
+    // الخطّان: العناوين Alexandria والمتن Readex Pro — وكلاهما يغطّي العربية
     // واللاتينية بنطاقَي يونيكود، فلا تبديل بحسب الاتجاه بعد اليوم.
     "--font-display": DISPLAY_STACK,
     "--font-body": BODY_STACK,
@@ -225,7 +245,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       lang={locale.htmlLang}
       dir={locale.dir}
       style={brandVars}
-      className={`${alexandriaArabic.variable} ${alexandriaLatin.variable} ${plexArabic.variable} ${plexLatin.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${alexandriaArabic.variable} ${alexandriaLatin.variable} ${readexArabic.variable} ${readexLatin.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-sans">
         {/* مزوّد الرسائل لجزر العميل (ويدجت البحث، مسار الحجز، نماذج الطلب) */}

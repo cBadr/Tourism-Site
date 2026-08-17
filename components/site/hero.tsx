@@ -142,6 +142,14 @@ export async function Hero({
 
   return (
     <section
+      /**
+       * `id="hero"` — مرجعُ حدّ ظهور الشريط السفلي (`SlideUpBar` يقرأ ارتفاعه
+       * فيظهر عند `ارتفاع البطل − ١٤٠` كما في التصميم). وهو آمنٌ بلا تكرار:
+       * كتلة `hero` مسجَّلة `placement: "home-only"` فلا تقع مرتين في صفحة.
+       * وبقية الصفحات لا بطلَ لها بهذا المعرّف فتأخذ الحدّ الاحتياطي (٨٠٪ من
+       * ارتفاع الشاشة) — وهو تدهورٌ مقبول لا عطل.
+       */
+      id="hero"
       className={cn("relative overflow-hidden", hasMedia ? "surface-ink" : "site-hero-bg")}
     >
       {/*

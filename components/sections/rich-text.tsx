@@ -12,7 +12,8 @@ import type { SectionContentMap } from "@/lib/content-types";
  * السطر التالي عند هذا العرض، فتُقرأ الفقرة مرتين أو يُقفز سطر.
  *
  * فحلّ `prose-ar` محلّ العرض والإيقاع المكتوبين بالأدوات:
- *   `max-w-3xl` ⇐ عرض القراءة (‏`--measure-prose` ≈ ٦٨ محرفاً)
+ *   `max-w-3xl` ⇐ عرض القراءة (‏`--measure-prose` — مقيسٌ ٦٧ محرفاً بـReadex Pro؛
+ *                 والرقم يتبع الخطّ، وعلّته وجدوله في `globals.css` عند الرمز)
  *   `leading-8 sm:leading-9` ⇐ `--leading-arabic` (١٫٨٥ — رمز الثيم القائم)
  *   `gap-5` ⇐ إيقاع الفقرة (١٫١٥em)، فيتبع قياس الخطّ بدل أن يثبت على ٢٠px
  *

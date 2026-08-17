@@ -5,6 +5,7 @@ import { SectionHeading } from "@/components/site/section-heading";
 import { internalPath, localeHref } from "@/components/site/links";
 import { safeMediaSrc } from "@/components/sections/image";
 import { iconFor } from "@/components/sections/icons";
+import { RAIL_GRID_3, Rail, RailItem } from "@/components/sections/rail";
 import { cn } from "@/lib/utils";
 import type { SectionContentMap } from "@/lib/content-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
@@ -69,16 +70,18 @@ export async function RouteRailSection({
 
         {/**
          * سكة أفقية على الجوال وشبكة على المكتب — وهو سلوك التصميم نفسه.
-         * `snap` يجعل السحب يستقر على بطاقة كاملة لا على نصفها، و`-mx-4 px-4`
-         * يُبقي أول بطاقة وآخرها ملتصقتين بحافة الشاشة أثناء السحب.
+         *
+         * 🆕 **والآلية غادرت هذا الملف إلى `components/sections/rail.tsx`**
+         * لمّا طلب بدر أن يتجانب الأسطول كالمسارات: شريطان ينسخ أحدهما الآخر
+         * ينحرفان عند أول إصلاح (القاعدة الذهبية ١٢). وما كان مكتوباً هنا صار
+         * يُستورد — **ومعه مكسبان لم يكونا هنا**: نقاطُ مؤشّرٍ تحت الشريط،
+         * وتمريرٌ بلوحة المفاتيح (`tabIndex`) كما في التصميم.
          */}
-        <ul
-          role="list"
-          className={cn(
-            "-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6",
-            "md:mx-0 md:grid md:grid-cols-2 md:gap-5 md:overflow-visible md:px-0 md:pb-0 lg:grid-cols-3",
-            content.title && "mt-10 md:mt-14"
-          )}
+        <Rail
+          id="routeRail"
+          label={t("railLabel", "المسارات الشائعة")}
+          gridClassName={RAIL_GRID_3}
+          className={cn(content.title && "mt-10 md:mt-14")}
         >
           {items.map((item, index) => {
             const href = internalPath(item.href);
@@ -177,7 +180,7 @@ export async function RouteRailSection({
               ) : null;
 
             return (
-              <li key={key} className="w-64 shrink-0 snap-start md:w-auto">
+              <RailItem key={key}>
                 <Card
                   className={cn(
                     "group/route relative h-full overflow-hidden rounded-2xl ring-border transition-all duration-300",
@@ -201,10 +204,10 @@ export async function RouteRailSection({
                     <div className="relative z-10 flex h-full flex-col justify-end p-5">{body}</div>
                   )}
                 </Card>
-              </li>
+              </RailItem>
             );
           })}
-        </ul>
+        </Rail>
 
         {content.note ? (
           <p className="mt-6 text-center text-xs leading-6 text-muted-foreground/80">
