@@ -14,7 +14,7 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
 ![Phases](https://img.shields.io/badge/phases-12%2F14-blue)
-![Migrations](https://img.shields.io/badge/migrations-80-informational)
+![Migrations](https://img.shields.io/badge/migrations-83-informational)
 ![Tests](https://img.shields.io/badge/SQL%20suites-27%20green-brightgreen)
 ![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
@@ -34,7 +34,7 @@
 
 Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a single Next.js 16 application on top of one Supabase (Postgres) project. A customer picks two points and a passenger count, gets an instant final price per eligible vehicle class, books as a guest and pays in full or by deposit; the confirmed booking is then broadcast in timed waves to approved **subcontractors** who cover that route, and the first to accept wins the trip — atomically, enforced by a partial unique index in Postgres. Every money and pricing calculation lives in Postgres functions and views; TypeScript only formats and renders. The system is white-label by construction: no brand string is hardcoded, and a second brand means a separate Supabase project, host and domain — not a `tenant_id`.
 
-Phases 1–12 of 14 are built — **80 migrations applied and 27 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
+Phases 1–12 of 14 are built — **83 migrations applied and 27 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
 
 Two systems ship **switched off by design** and wait on an owner decision: coupons and loyalty. A loyalty programme that starts itself starts owing money.
 
@@ -224,7 +224,7 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ٨٠** في `supabase/migrations/` من `0001_core.sql` إلى `0080_map_default_center.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار السبع والعشرون** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
+**الترحيلات الـ ٨٣** في `supabase/migrations/` من `0001_core.sql` إلى `0080_map_default_center.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار السبع والعشرون** في `supabase/tests/`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 
 ---
 

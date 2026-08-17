@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ITEM_KEY_FIELD, mintItemKey } from "@/lib/page-builder/item-keys";
 import { Textarea } from "./fields";
 
 /**
@@ -42,11 +43,31 @@ export function ItemsEditor({
   const [items, setItems] = React.useState<Record<string, string>[]>(initialItems);
   const baseId = React.useId();
 
-  const emptyItem = React.useCallback(() => {
-    const out: Record<string, string> = {};
-    for (const f of fields) out[f.key] = "";
-    return out;
-  }, [fields]);
+  /**
+   * 🔴 **العنصر يُولد بمفتاحه، لا يكتسبه لاحقاً** (العقد §٤).
+   *
+   * كان العنصر الجديد هنا حقولاً نصّية فارغة بلا `_k`، فعنوان ترجمته **ترتيبه**
+   * — وأول سحبةٍ بعد ذلك تنقل ترجمته إلى جاره. وسكُّه هنا أرخص من سكّه لاحقاً:
+   * المفتاح المنشور لا يُسحب، فالعنصر الذي وُلد مفتاحاً لا يدفع ثمن الهجرة
+   * الذي يدفعه العنصر الذي وُلد بلا مفتاح (تحذير «ثبّت المفاتيح» في المنشئ).
+   *
+   * و`taken` تُقرأ من العناصر الحاضرة لا من مجموعةٍ فارغة: التصادم هنا يعني
+   * عنوانَي ترجمةٍ واحداً لعنصرين، وهو أسوأ من فقد المفتاح لأنه يُقرأ خبراً.
+   */
+  const emptyItem = React.useCallback(
+    (existing: readonly Record<string, string>[]) => {
+      const out: Record<string, string> = {};
+      for (const f of fields) out[f.key] = "";
+      const taken = new Set<string>();
+      for (const item of existing) {
+        const key = item[ITEM_KEY_FIELD];
+        if (typeof key === "string" && key !== "") taken.add(key);
+      }
+      out[ITEM_KEY_FIELD] = mintItemKey(taken);
+      return out;
+    },
+    [fields]
+  );
 
   const update = (index: number, key: string, value: string) =>
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [key]: value } : it)));
@@ -146,7 +167,7 @@ export function ItemsEditor({
         variant="outline"
         size="sm"
         disabled={disabled}
-        onClick={() => setItems((prev) => [...prev, emptyItem()])}
+        onClick={() => setItems((prev) => [...prev, emptyItem(prev)])}
       >
         <Plus />
         {addLabel}

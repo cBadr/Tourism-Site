@@ -241,7 +241,8 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', '01000000000', null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', '01000000000',
+    now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   -- (أ-١) الإجمالي = ناتج quote_price حرفياً (لا سعر من المستدعي إطلاقاً)
@@ -328,7 +329,7 @@ begin
         '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
         '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
         v_pax::integer, false, 0, 220, 180, 'osrm', v_class, 'full',
-        'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+        'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
       ) t;
     exception
       when others then
@@ -352,7 +353,7 @@ begin
       '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
       '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
       1, false, 0, 220, 180, 'osrm', 'طائرة-مروحية', 'full',
-      'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+      'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
     ) t;
   exception
     when others then
@@ -374,7 +375,7 @@ begin
       '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
       '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
       1, false, 0, 220, 180, 'osrm', v_class, 'full',
-      '   ', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+      '   ', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
     ) t;
   exception
     when others then
@@ -417,7 +418,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   if v_res.amount_due <> v_res.total then
@@ -441,7 +442,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   if v_res.amount_due <> v_res.total or v_res.amount_remaining <> 0 then
@@ -479,7 +480,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   -- (د-١) الرفع من pending_payment ينجح وينقل الحالة
@@ -578,7 +579,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
   select * into v_att from public.attach_receipt(
     v_book.public_token, v_book.public_token || '/ok.jpg', null, null
@@ -627,7 +628,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
   select * into v_att from public.attach_receipt(
     v_book.public_token, v_book.public_token || '/bad.jpg', null, null
@@ -697,7 +698,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   -- (و-٣) قفزة ممنوعة: انتظار الدفع ← مؤكد مباشرة
@@ -795,7 +796,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
   insert into public.payments (booking_id, account_id, amount, receipt_path, status)
   values (v_book.id, v_acc, 900, 'fixture/paid.jpg', 'approved');
@@ -860,7 +861,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   select count(*) into v_n from public.get_booking_by_token(v_book.public_token);
@@ -1077,7 +1078,7 @@ begin
       '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
       '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
       1, false, 0, 100, 90, 'osrm', v_class, 'full',
-      'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+      'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
     ) t;
   exception
     when others then
@@ -1103,7 +1104,7 @@ begin
       '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
       '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
       1, false, 0, 4000, 3000, 'osrm', v_class, 'full',
-      'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+      'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
     ) t;
   exception
     when others then
@@ -1123,7 +1124,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   ) t;
   if v_ref is null then
     raise exception '(ي-٧) مسافة واقعية رُفضت — الحارس أضيق مما ينبغي';
@@ -1166,7 +1167,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   -- (ك-١) مبلغ خرافي من غير مشرف يُتجاهَل ويُثبَّت عند amount_due
@@ -1185,7 +1186,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
   select * into v_att from public.attach_receipt(
     v_book.public_token, v_book.public_token || '/dust.jpg', null, 1
@@ -1201,7 +1202,7 @@ begin
       '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
       '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
       1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-      'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+      'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
     );
     perform set_config('request.jwt.claim.sub', v_admin, true);
     select * into v_att from public.attach_receipt(
@@ -1268,7 +1269,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
   v_token := v_book.public_token;
 
@@ -1577,7 +1578,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار آلي', '01000000000', null, null, 'BOOKING_TESTS_FIXTURE'
+    'اختبار آلي', '01000000000', null, now() + interval '30 days', 'BOOKING_TESTS_FIXTURE'
   );
 
   -- (ن-١) التوكن الصحيح يرى نفس ما تراه النسخة أحادية الوسيط

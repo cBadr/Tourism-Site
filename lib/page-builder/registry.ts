@@ -415,7 +415,18 @@ export const BUILDER_ERROR_MESSAGES: Record<BuilderErrorCode | string, string> =
   "block-unknown": "نوع الكتلة غير مسجَّل في الكتالوج — لا تُحفظ كتلة لا تعرفها القاعدة.",
   "block-placement":
     "موضع كتلة مخالف: كتلة «مرة واحدة لكل صفحة» مكررة، أو كتلة الرئيسية خارج الرئيسية، أو كتلة داخل كتلة داخل كتلة (العمق مستوى واحد: كتلة أعمدة وأبناؤها فقط).",
-  "item-key": "مفاتيح العناصر مكررة أو مخالفة للنمط — ست خانات لاتينية صغيرة وأرقام.",
+  /**
+   * 🔴 **«ناقصة» كانت الحالة الواقعة، ولم تكن في الرسالة** (2026-08-17).
+   *
+   * النصّ السابق: «مكررة أو مخالفة للنمط». والحالة المقيسة على خمسة صفوف حيّة
+   * كانت الثالثة — **بلا مفتاح إطلاقاً**. فالمالك يقرأ «مكررة أو مخالفة»
+   * فيفتش عن مفتاحٍ خاطئ لا وجود له، ولا شيء يقول له إن العلاج زرٌّ اسمه
+   * «ثبّت مفاتيح العناصر» داخل الكتلة نفسها.
+   *
+   * والرسالة تصف **الحالات الثلاث** وتقول الفعل — لا تصف الشكل وحده.
+   */
+  "item-key":
+    "عناصر إحدى الكتل بلا مفاتيح ثابتة (أو مفاتيحها مكررة أو مخالفة للنمط — ست خانات لاتينية صغيرة وأرقام). افتح الكتلة واضغط «ثبّت مفاتيح العناصر»، ثم أعِد الحفظ.",
   "template-shape": "القالب المستورد لا يطابق قواعد المنشئ، فلم يُقبل بلا تحويلٍ بالتخمين.",
   "not-found": "الصفحة أو اللقطة غير موجودة.",
   slug: "المعرّف غير صالح — حروف لاتينية صغيرة وأرقام تفصلها شرطات فقط.",
@@ -428,9 +439,17 @@ export const BUILDER_ERROR_MESSAGES: Record<BuilderErrorCode | string, string> =
   "slug-redirect": "يوجد تحويل رابط يخطف هذا المسار — الصفحة لن تُرى أبداً.",
 };
 
-export function builderErrorMessage(code: string | null): string | null {
+/**
+ * الرمز ⇐ جملة. و`blockType` **رمزٌ آخر** يصل من الخادم في الـ query string
+ * ويُترجَم هنا باسم الكتلة العربي — فالخادم لا يرسل جملةً واحدة، والشاشة تركّب
+ * الجملتين. (اتفاقية المشروع: الخادم يرسل رموزاً، والشاشة تترجمها.)
+ */
+export function builderErrorMessage(code: string | null, blockType?: string | null): string | null {
   if (!code) return null;
-  return BUILDER_ERROR_MESSAGES[code] ?? "حدث خطأ غير متوقع.";
+  const message = BUILDER_ERROR_MESSAGES[code] ?? "حدث خطأ غير متوقع.";
+  if (blockType && BLOCK_LABELS[blockType])
+    return `الكتلة «${blockLabel(blockType).label}» — ${message}`;
+  return message;
 }
 
 export const PUBLISH_BLOCKER_MESSAGES: Record<PublishBlockerCode | string, string> = {

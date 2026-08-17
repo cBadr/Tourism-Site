@@ -32,6 +32,10 @@
 --       (ج) و(د) و(هـ). وهذا وحده ما يُثبت أن تلك الأقسام تقيس **القيد** لا
 --       مصادفةً في الشكل: تأكيدٌ لا يمكن أن يفشل ليس حارساً (النمط ٩ في
 --       `LESSONS.md`، وD-58).
+--   (ل) مرساة الخريطة (0080) إعدادُ مالكٍ داخل نطاق التشغيل وحده.
+--   (م) 🔴 **تعريفٌ واحد لمصر**: صندوق القاعدة هو `SERVICE_BOUNDS` بحوافه
+--       الأربع الشاملة، ونقطةٌ خارجه — ومنها الإحداثيات التي ردّتها تفاصيل
+--       جوجل فعلاً لبرج خليفة — لا تُقبل. 🧬 **وبطفرةٍ** تُنزع القيد فتمرّ.
 --   (ي) 🔴 **RLS هي الحاجز الوحيد** (D-20): `authenticated` يملك صلاحيات الجدول
 --       الأربع، فما بينه وبين الصفّ سياسات `is_admin()` وحدها. والمقيس:
 --       السياسات الأربع بأسمائها وأوامرها، كلٌّ مشروطةٌ بـ`is_admin()` ولا
@@ -65,11 +69,14 @@ begin
     raise exception '(٠) دوال ناقصة: % — طبّق هجرة 0076 أولاً', v_missing;
   end if;
 
-  -- اللقطة تُحفظ في إعداد جلسة، ويقارنها القسم (ك) في آخر الملف
+  -- اللقطة تُحفظ في إعداد جلسة، ويقارنها القسم (ك) في آخر الملف.
+  -- ⚠ **والمرساة داخل اللقطة**: قسمان يكتبان فيها (‏ل و م)، وقرار المالك في
+  --   موضع فتح الخريطة لا يجوز أن يُزحزح باختبار (الأوامر الدائمة §٣).
   select format(
-           '%s|%s|%s|%s|%s|%s',
+           '%s|%s|%s|%s|%s|%s|%s|%s',
            google_enabled, primary_provider, map_picker_enabled,
-           quote_fallback_enabled, min_query_chars, debounce_ms
+           quote_fallback_enabled, min_query_chars, debounce_ms,
+           default_center_lat, default_center_lng
          )
     into v_before
     from public.place_search_settings
@@ -668,6 +675,139 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (م) 🔴 «مصر» تعريفٌ واحد — ونقطةٌ خارجها لا تصير مكاناً يُبنى عليه حجز
+--
+-- ── ما الذي يقيسه هذا القسم بالضبط، وما الذي لا يستطيع قياسه ────────────────
+--
+-- أمر المالك (2026-08-17): «نطاق التشغيل الحالي داخل مصر فقط، وبالتالي لا يمكن
+-- أن يقوم المستخدم بالبحث عن وجهات خارج مصر». وفرضُ ذلك يقع في أربع طبقات:
+--
+--   ١) البحث النصّي: `countrycodes=eg` عند Nominatim، و`includedRegionCodes`
+--      مع `locationRestriction` عند جوجل — **قيدٌ في الطلب** لا ترشيحٌ بعده.
+--   ٢) التحويل (`/api/geocode/resolve`): `isWithinServiceArea` على ما تردّه
+--      تفاصيل جوجل — وهو المسار الوحيد الذي **لا يقبل قيداً إقليمياً في
+--      الطلب** (‏`places/{id}` يأخذ معرّفاً ويردّ مكانه أينما كان).
+--   ٣) الدبوس (`/api/geocode/reverse`): نفس الدالة، بالرمز `out-of-area`.
+--   ٤) القاعدة: قيد `place_search_settings_center_in_service_area` (‏0080).
+--
+-- ⚠ **والأربعة تقرأ أربعة أرقام: ٢٠ و٣٤ و٢٣ و٣٨.** ثلاثةٌ منها في TypeScript
+-- تشتقّ من ثابتٍ واحد (`SERVICE_BOUNDS`)، والرابع مكتوبٌ في القاعدة لأن الجدول
+-- يُحرَّر من محرّر SQL بجلسة مشرف فحارسٌ في TypeScript وحده ليس حارساً (0080).
+-- **وهذا القسم هو ما يمنع النسختين من الانحراف**: من عدّل الصندوق في مكانٍ
+-- ونسي الآخر يسقط هنا، لا في حجزٍ سُعِّر لمسارٍ لا نصله.
+--
+-- 🔒 **وما لا يدّعيه هذا القسم**: SQL لا ترى نداء HTTP، فلا تُثبت أن المسار
+-- ردّ `out-of-area`. ما تُثبته أن **الحدّ الذي يفرضه المسار هو هذا الحدّ
+-- بالضبط، وأنه حيٌّ**. والباقي في `lib/geo/*` ويقيسه البناء والفحص الحي.
+--
+-- ── والنقطة المقيسة ليست مخترعة ─────────────────────────────────────────────
+--
+-- (25.197197، 55.274376) هي ما ردّته **تفاصيل جوجل الحيّة** (2026-08-17) للمعرّف
+-- العلني `ChIJS-JnijRDXz4R4rfO4QLlRf8` — برج خليفة، دبي. وقبل إصلاح اليوم كان
+-- ذلك المعرّف يخرج من `/api/geocode/resolve` مكاناً تامّاً قابلاً للحجز.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_probe  record;
+  v_state  text;
+  v_passed boolean;
+begin
+  begin
+    -- ── (م-١) الحدود الأربعة **شاملة**، ومطابقةٌ لـ`isWithinServiceArea` ────
+    --
+    -- والقياس على الحافة لا في وسط المدى: قيدٌ بـ`>` بدل `>=` يمرّ من أي اختبار
+    -- يجرّب القاهرة، ويسقط هنا وحده. والميكرودرجة هي أدقّ ما يمثّله
+    -- `numeric(9,6)` — أي أضيق فرقٍ يستطيع العمود أن يفرّق به.
+    for v_probe in
+      select * from (values
+        (20.000000::numeric, 31.000000::numeric, 'OK'   , 'حافة العرض الدنيا ٢٠ — شاملة'),
+        (19.999999::numeric, 31.000000::numeric, '23514', 'تحت الحافة الدنيا بميكرودرجة'),
+        (34.000000::numeric, 31.000000::numeric, 'OK'   , 'حافة العرض العليا ٣٤ — شاملة'),
+        (34.000001::numeric, 31.000000::numeric, '23514', 'فوق الحافة العليا بميكرودرجة'),
+        (30.000000::numeric, 23.000000::numeric, 'OK'   , 'حافة الطول الدنيا ٢٣ — شاملة'),
+        (30.000000::numeric, 22.999999::numeric, '23514', 'غرب الحافة الدنيا بميكرودرجة'),
+        (30.000000::numeric, 38.000000::numeric, 'OK'   , 'حافة الطول العليا ٣٨ — شاملة'),
+        (30.000000::numeric, 38.000001::numeric, '23514', 'شرق الحافة العليا بميكرودرجة')
+      ) as p(lat, lng, expect, name)
+    loop
+      v_state := null;
+      begin
+        update public.place_search_settings
+           set default_center_lat = v_probe.lat, default_center_lng = v_probe.lng
+         where id;
+        v_state := 'OK';
+      exception when others then
+        get stacked diagnostics v_state = returned_sqlstate;
+      end;
+
+      if v_state <> v_probe.expect then
+        raise exception
+          '(م-١) 🔴 «%» (%، %) انتهت بـ«%» والمتوقع «%» — صندوق القاعدة لم يعد SERVICE_BOUNDS (٢٠/٣٤/٢٣/٣٨)',
+          v_probe.name, v_probe.lat, v_probe.lng, v_state, v_probe.expect;
+      end if;
+    end loop;
+
+    -- ── (م-٢) نقاطٌ حقيقية خارج مصر — ولا واحدة تمرّ ────────────────────────
+    for v_probe in
+      select * from (values
+        (25.197197::numeric, 55.274376::numeric, 'برج خليفة، دبي — ما ردّته تفاصيل جوجل فعلاً'),
+        (24.711667::numeric, 46.674167::numeric, 'الرياض'),
+        (41.902800::numeric, 12.496400::numeric, 'روما'),
+        (30.100000::numeric, 55.274376::numeric, 'عرضٌ مصريّ مع طولٍ إماراتي — نصفُ إحداثيّ')
+      ) as p(lat, lng, name)
+    loop
+      v_state := null;
+      begin
+        update public.place_search_settings
+           set default_center_lat = v_probe.lat, default_center_lng = v_probe.lng
+         where id;
+        v_state := '(قُبلت)';
+      exception when others then
+        get stacked diagnostics v_state = returned_sqlstate;
+      end;
+
+      if v_state <> '23514' then
+        raise exception
+          '(م-٢) 🔴 «%» (%، %) انتهت بـ«%» لا 23514 — نقطةٌ خارج مصر مرّت',
+          v_probe.name, v_probe.lat, v_probe.lng, v_state;
+      end if;
+    end loop;
+
+    -- شاهدٌ موجب أخير: مطار القاهرة — وإلا كان الرفض رفضاً لكل شيء
+    update public.place_search_settings
+       set default_center_lat = 30.121900, default_center_lng = 31.405600
+     where id;
+
+    -- ── (م-٣) 🧬 **الطفرة** — بنزع القيد يجب أن تمرّ دبي ────────────────────
+    --
+    -- وبدونها يبقى احتمالٌ قائم أن الرفض أعلاه جاء من نوع العمود أو من مشغّل
+    -- أو من مصادفة، وأن **حذف القيد من 0080 لا يُسقط تأكيداً واحداً** — وهو
+    -- بعينه «حارسٌ يطمئنك ولا يحرس» (النمط ٩ في `LESSONS.md` · D-58).
+    alter table public.place_search_settings
+      drop constraint place_search_settings_center_in_service_area;
+
+    begin
+      update public.place_search_settings
+         set default_center_lat = 25.197197, default_center_lng = 55.274376
+       where id;
+      v_passed := true;
+    exception when others then v_passed := false;
+    end;
+
+    if not v_passed then
+      raise exception
+        '(م-٣) الطفرة لم تُغيّر السلوك: دبي رُفضت حتى بعد نزع القيد ⇒ (م-١) و(م-٢) لا تقيسان القيد';
+    end if;
+
+    raise notice '✔ (م) صندوق القاعدة هو SERVICE_BOUNDS بحوافه الأربع الشاملة، ودبي والرياض وروما ونصفُ الإحداثيّ مرفوضة، ومطار القاهرة يمرّ — 🧬 والطفرة أثبتت أن القيد هو الحارس';
+    raise exception 'ROLLBACK_MARKER';
+  exception when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+  end;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ك) التنظيف — صفّ المالك والقيود كما كانا حرفاً بحرف
 -- ----------------------------------------------------------------------------
 do $$
@@ -677,9 +817,10 @@ declare
   v_checks integer;
 begin
   select format(
-           '%s|%s|%s|%s|%s|%s',
+           '%s|%s|%s|%s|%s|%s|%s|%s',
            google_enabled, primary_provider, map_picker_enabled,
-           quote_fallback_enabled, min_query_chars, debounce_ms
+           quote_fallback_enabled, min_query_chars, debounce_ms,
+           default_center_lat, default_center_lng
          )
     into v_after
     from public.place_search_settings
@@ -690,7 +831,7 @@ begin
       '(ك-١) صفّ المالك تغيّر! قبل «%» وبعد «%» — كتلةٌ ما لم تتراجع', v_before, v_after;
   end if;
 
-  -- والقيود عادت بعد الطفرة (DDL معاملاتي — والتأكيد يُثبته لا يفترضه)
+  -- والقيود عادت بعد الطفرتين (DDL معاملاتي — والتأكيد يُثبته لا يفترضه)
   select count(*) into v_checks
     from pg_constraint
    where conrelid = 'public.place_search_settings'::regclass
@@ -704,8 +845,19 @@ begin
     raise exception '(ك-٢) القيود بعد الطفرة % من ٣ — التراجع لم يُعدها', v_checks;
   end if;
 
+  -- 🔴 وقيدُ منطقة الخدمة بمفرده — نزعته طفرة (م-٣)، وبقاؤه منزوعاً يعني
+  --    جدولاً يقبل مركزاً في دبي، ورسالةَ نجاحٍ لا تشي بشيء.
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.place_search_settings'::regclass
+       and conname  = 'place_search_settings_center_in_service_area'
+  ) then
+    raise exception
+      '(ك-٣) 🔴 قيد منطقة الخدمة لم يعد بعد طفرة (م-٣) — الجدول مفتوحٌ لمركزٍ خارج مصر';
+  end if;
+
   perform set_config('tours.place_search_before', '', false);
-  raise notice '✔ (ك) التنظيف تم — صفّ المالك كما كان (%)، والقيود الثلاثة عادت', v_after;
+  raise notice '✔ (ك) التنظيف تم — صفّ المالك كما كان بمرساته (%)، والقيود الأربعة عادت', v_after;
 end;
 $$;
 
@@ -714,6 +866,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — إعدادات بحث الأماكن (0076): الافتراضيات تُعيد سلوك اليوم، والقيود الثلاثة حيّة أثبتتها طفرة، والقارئ يُرجع صفاً واحداً على جدول فارغ، وanon بلا أي صلاحية (ولا TRUNCATE)، وRLS تحجب متعهداً مسجَّلاً عن القراءة والتحديث معاً — ومرساة الخريطة (0080) إعدادُ مالكٍ مقيَّدٌ داخل نطاق التشغيل وحده';
+  raise notice 'ALL PASSED — إعدادات بحث الأماكن (0076): الافتراضيات تُعيد سلوك اليوم، والقيود الثلاثة حيّة أثبتتها طفرة، والقارئ يُرجع صفاً واحداً على جدول فارغ، وanon بلا أي صلاحية (ولا TRUNCATE)، وRLS تحجب متعهداً مسجَّلاً عن القراءة والتحديث معاً — ومرساة الخريطة (0080) إعدادُ مالكٍ مقيَّدٌ داخل نطاق التشغيل وحده، وصندوقُ القاعدة هو SERVICE_BOUNDS نفسه بحوافه الشاملة فلا يمرّ منه برج خليفة ولا الرياض ولا روما (🧬 بطفرةٍ تُثبت أن القيد هو الحارس)';
 end;
 $$;

@@ -982,7 +982,7 @@ begin
     '{"label": "مصر الجديدة", "lat": 30.0808, "lng": 31.3222}'::jsonb,
     '{"label": "المعمورة", "lat": 31.2790, "lng": 30.0170}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_c1, 'full',
-    'عميل اختبار التغطية', '01000000000', null, null, 'COVERAGE_TESTS_FIXTURE'
+    'عميل اختبار التغطية', '01000000000', null, now() + interval '30 days', 'COVERAGE_TESTS_FIXTURE'
   );
 
   select b.* into v_row from public.bookings b where b.id = v_book.id;
@@ -1015,7 +1015,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "أسوان", "lat": 24.0889, "lng": 32.8998}'::jsonb,
     1, false, 0, 900, 600, 'osrm', v_c1, 'full',
-    'عميل اختبار التغطية', '01000000000', null, null, 'COVERAGE_TESTS_FIXTURE'
+    'عميل اختبار التغطية', '01000000000', null, now() + interval '30 days', 'COVERAGE_TESTS_FIXTURE'
   );
 
   select b.* into v_row from public.bookings b where b.id = v_book.id;

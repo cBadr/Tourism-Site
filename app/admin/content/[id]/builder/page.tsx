@@ -70,6 +70,8 @@ export default async function PageBuilderScreen({
     discarded: sp.discarded === "1",
     imported: sp.imported === "1",
     error: typeof sp.error === "string" ? sp.error : null,
+    // رمز نوع الكتلة المخالفة — يُرسله `saveDraft` مع `item-key` وحدها
+    errorBlock: typeof sp.block === "string" ? sp.block : null,
   };
 
   if (data.access === "denied") {

@@ -1,6 +1,28 @@
 import { SECTION_TYPE_LABELS, type Section, type SectionContentMap, type SectionType } from "@/lib/content-types";
+import { preservedItemFields } from "@/lib/page-builder/item-keys";
 import { Field, TextareaField } from "../../_components/fields";
 import { ItemsEditor } from "../../_components/items-editor";
+
+/**
+ * 🔴 **إسقاطُ عنصرٍ إلى نموذج التحرير — والمفاتيح المصانة تعبر معه.**
+ *
+ * كان السطر هنا `({ q: it.q ?? "", a: it.a ?? "" })` — وهو الموضع الذي مات
+ * فيه `_k` فعلاً. لا في إجراء الحفظ (ينقله بأمانة عبر `ITEM_PRESERVED_KEYS`)
+ * ولا في الجزيرة (تمرّر ما تُعطى)، بل **هنا**: الإسقاط يبني كائناً جديداً
+ * بحقلَين اثنين، فيصل المتصفحَ عنصرٌ بلا مفتاح، ويعود بلا مفتاح، ويُكتب بلا
+ * مفتاح — وحارسُ الخادم يبحث عمّا لم يُرسَل قط.
+ *
+ * والثمن مقيس: خمسة صفوف حيّة فقدت مفاتيحها، ثلاثةٌ منها على الرئيسية،
+ * فصار المنشئ يرفض حفظ الصفحة كلها — ولو كان المحرَّر كتلةً أخرى سليمة.
+ */
+function editableItem<K extends string>(
+  item: Record<string, unknown>,
+  fields: readonly K[]
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const field of fields) out[field] = typeof item[field] === "string" ? (item[field] as string) : "";
+  return { ...out, ...preservedItemFields(item) };
+}
 
 /** بطاقةٌ تقول أين تُحرَّر هذه الكتلة بدل أن تتركها فارغة بلا تفسير */
 function BuilderOwned({ type }: { type: SectionType }) {
@@ -104,7 +126,7 @@ export function SectionFields({ section, disabled }: { section: Section; disable
               { key: "q", label: "السؤال" },
               { key: "a", label: "الإجابة", multiline: true },
             ]}
-            initialItems={(c.items ?? []).map((it) => ({ q: it.q ?? "", a: it.a ?? "" }))}
+            initialItems={(c.items ?? []).map((it) => editableItem(it, ["q", "a"]))}
           />
         </div>
       );
@@ -127,10 +149,7 @@ export function SectionFields({ section, disabled }: { section: Section; disable
               { key: "title", label: "عنوان الميزة" },
               { key: "text", label: "نص الميزة", multiline: true },
             ]}
-            initialItems={(c.items ?? []).map((it) => ({
-              title: it.title ?? "",
-              text: it.text ?? "",
-            }))}
+            initialItems={(c.items ?? []).map((it) => editableItem(it, ["title", "text"]))}
           />
         </div>
       );

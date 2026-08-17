@@ -174,7 +174,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
 
   -- (أ-٢) إدراج خام لا يذكر العمودين إطلاقاً — هذا هو شكل إدراج 0020 حرفياً
@@ -235,7 +235,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
 
   -- إيصالان: أحدهما ظاهر والآخر مخفي. الإدراج مباشر عمداً — المُختبَر هنا دالة
@@ -384,7 +384,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
 
   v_raised := false;
@@ -434,7 +434,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
   perform public.set_booking_status(v_other.id, 'cancelled', 'اختبار: حجز ملغى');
 
@@ -458,7 +458,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
   -- المرور بـ under_review إلزامي في آلة الحالات (0007) — وهي حالة **مقبولة**
   perform public.set_booking_status(v_walk.id, 'under_review', 'اختبار: مرور');
@@ -495,7 +495,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
   insert into public.payments (booking_id, amount, status)
   values (v_pend.id, v_pend.amount_due, 'pending');
@@ -521,7 +521,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
   v_path := 'admin/' || v_ok.id || '/ADMIN_RECEIPT_FIXTURE.jpg';
 
@@ -697,7 +697,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
   v_path := 'admin/' || v_ok2.id || '/ADMIN_RECEIPT_FIXTURE.jpg';
   insert into storage.objects (bucket_id, name) values ('receipts', v_path);
@@ -753,7 +753,7 @@ begin
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'deposit',
-    'اختبار إيصال الأدمن', '01000000000', null, null, 'ADMIN_RECEIPT_FIXTURE'
+    'اختبار إيصال الأدمن', '01000000000', null, now() + interval '30 days', 'ADMIN_RECEIPT_FIXTURE'
   );
 
   insert into public.payments (booking_id, amount, status, visible_to_customer)

@@ -1326,7 +1326,7 @@ $$;
 --   (ع-٣) خارجها بدقيقة ⇒ **مقبول** (شاهدٌ إيجابي: الرفض ليس لسببٍ آخر)
 --   (ع-٤) على الحدّ بالضبط ⇒ **مقبول** — الحدّ أقرب لحظة مسموحة لا أول ممنوعة
 --   (ع-٥) الإعداد هو الذي يحكم: موعدٌ **واحد** يُقبل بمهلةٍ ويُرفض بأخرى
---   (ع-٦) بلا موعد ⇒ يمرّ (‏`p_pickup_at` يقبل null منذ 0007 ولا يخالف مهلة)
+--   (ع-٦) 🔴 بلا موعد ⇒ **يُرفض** بتلميح `pickup-required` (‏0081، قرار المالك)
 -- ----------------------------------------------------------------------------
 do $$
 declare
@@ -1463,20 +1463,55 @@ begin
     raise exception '(ع-٥ب) 🔴 الموعد نفسه مرّ بمهلة ٢٤٠ كما مرّ بمهلة ٦٠ — الحدّ ثابتٌ لا يتبع الإعداد';
   end if;
 
-  -- (ع-٦) بلا موعد ⇒ يمرّ. `p_pickup_at` يقبل null منذ 0007، وحجزٌ بلا موعد
-  --       لا يخالف مهلةً أصلاً — ورفضُه هنا كان سيكسر مستدعياً قائماً لسببٍ
-  --       لا علاقة له بهذه القاعدة.
+  -- (ع-٦) 🔴 **بلا موعد ⇒ مرفوض** — 0081، قرار المالك 2026-08-17: «غير موافق
+  --       على الحجز بدون موعد».
+  --
+  --       وكان هذا التأكيد مقلوباً حتى 0081 («يمرّ»)، بحجّةٍ صحيحة في نطاقها:
+  --       حجزٌ بلا موعد لا يخالف **مهلةً** أصلاً. لكن الحجّة كانت تُجيب عن سؤال
+  --       المهلة وحده، وتترك الباب مفتوحاً لِما هو أوسع: حجزٌ بلا موعد لا يُبَثّ
+  --       ولا يُكنس ولا يُنفَّذ، **ويتجاوز حارس المهلة كلياً** لأن شرطه مشروطٌ
+  --       بـ`is not null`. فصار الرفض في الدالة نفسها.
+  --
+  -- 🔒 والتلميح لا نصّ الرسالة: الواجهة تفرّع عليه (‏`pickup-required` ⇒ ٤٠٠
+  --    وإعادةُ العميل إلى الخطوة الأولى)، و`invalid-input` كان سيعطيه «راجع
+  --    الحقول» على نموذجٍ حقلُه الناقص واحدٌ معروف.
+  v_ok := false;
+  begin
+    perform * from public.create_booking(
+      '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+      '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+      1, false, 0, 220, 180, 'osrm', v_class, 'full',
+      'اختبار المهلة', '01000000000', null, null, 'TRIP_SWEEP_FIXTURE'
+    );
+  exception when others then
+    v_ok  := true;
+    v_msg := sqlerrm;
+    get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+
+  if not v_ok then
+    raise exception '(ع-٦أ) 🔴 حجزٌ بلا موعد مرّ — قرار المالك «لا حجز بلا موعد» غير مفروضٍ في القاعدة';
+  end if;
+  if coalesce(v_hint, '') <> 'pickup-required' then
+    raise exception '(ع-٦ب) رُفض بتلميح «%» لا «pickup-required» — الواجهة تفرّع على التلميح (الرسالة: %)',
+      coalesce(v_hint, 'بلا تلميح'), v_msg;
+  end if;
+
+  -- (ع-٧) 🔒 **والحدّ لم يزحف**: الموعد الموجود الصحيح ما زال يمرّ بعد 0081.
+  --       بدون هذا الشاهد قد يكون (ع-٦) رفضاً عاماً أصاب كل حجز.
+  update public.trip_settings set min_lead_minutes = 0 where id;
   select * into v_res from public.create_booking(
     '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
     '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
     1, false, 0, 220, 180, 'osrm', v_class, 'full',
-    'اختبار المهلة', '01000000000', null, null, 'TRIP_SWEEP_FIXTURE'
+    'اختبار المهلة', '01000000000', null,
+    now() + interval '3 days', 'TRIP_SWEEP_FIXTURE'
   );
   if v_res.public_token is null then
-    raise exception '(ع-٦) حجزٌ بلا موعد رُفض والمهلة ٢٤٠ — الحارس يتجاوز نطاقه';
+    raise exception '(ع-٧) حجزٌ بموعدٍ صحيح رُفض بعد 0081 — الحارس ابتلع الحالة السليمة';
   end if;
 
-  raise notice '✔ (ع) الحارس في القاعدة: داخل النافذة مرفوض بـlead-time، وخارجها والحدُّ نفسه مقبولان، والإعداد هو الحاكم، وبلا موعدٍ يمرّ';
+  raise notice '✔ (ع) الحارس في القاعدة: داخل النافذة مرفوض بـlead-time، وخارجها والحدُّ نفسه مقبولان، والإعداد هو الحاكم، وبلا موعدٍ **مرفوض** بـpickup-required';
   raise exception 'ROLLBACK_MARKER';
 exception
   when others then
@@ -1565,6 +1600,97 @@ begin
   end if;
 
   raise notice '✔ (ف) اختبار الطفرة: نزع الحارس يجعل الحجز يمرّ ⇒ تأكيد (ع-٢) يحرس الحارس نفسه لا شيئاً آخر';
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ق) 🧬 **الطفرة الثانية** — هل لتأكيد (ع-٦) قوّة تمييز؟
+--
+-- (ع-٦) يقول: «حجزٌ بلا موعد يُرفض بـ`pickup-required`». وسؤال النمط ٥ هو
+-- نفسه: **لو انعكس السلوك، هل يفشل التأكيد؟** ولا يُجاب بالقراءة.
+--
+-- ⚠ وموضع الطفرة هنا غير موضع أختها في (ف): هناك كان للحارس **مصدرٌ خارجي**
+-- (`booking_min_pickup_at`) فكفى تحييده. وهنا الحارس **ثلاثة أسطر داخل جسم
+-- `create_booking` نفسه**، فلا مصدرَ يُحيَّد — والطفرة تُبنى بنزع تلك الأسطر
+-- من **الجسم الحيّ نصّاً** (‏D-58: من `pg_get_functiondef` لا من ملف هجرة)،
+-- ثم يُعاد التعريف الأصلي من النسخة نفسها.
+--
+-- والمطلوب أن **تنجو الطفرة**: أي أن نزع الأسطر يجعل حجزاً بلا موعد يمرّ.
+-- فلو بقي مرفوضاً لكان رفضُ (ع-٦) من مكانٍ آخر — و(ع-٦) كله زينة.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_class    text := nullif(current_setting('tours.test_class', true), '');
+  v_original text;
+  v_mutant   text;
+  v_res      record;
+  v_survived boolean;
+begin
+  if v_class is null then
+    raise notice '  ↳ (ق) لا فئة سيارات نشطة — اختبار الطفرة الثانية يُتخطّى';
+    raise exception 'ROLLBACK_MARKER';
+  end if;
+
+  select pg_get_functiondef(p.oid) into v_original
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'create_booking';
+
+  if v_original is null then
+    raise exception '(ق-٠) create_booking غير موجودة';
+  end if;
+
+  -- 🧬 نزع الحارس نصّاً من الجسم الحيّ. و`perform 1` بدل الحذف الكامل كي يبقى
+  --    الفرع `if … then … end if;` نحوياً سليماً.
+  v_mutant := replace(
+    v_original,
+    $need$    raise exception 'موعد الانطلاق مطلوب — لا يُنشأ حجزٌ بلا موعد'
+      using hint = 'pickup-required';$need$,
+    $none$    perform 1; /* MUTANT_0081 */$none$
+  );
+
+  -- 🔴 والطفرة **تُبنى فعلاً أو يسقط الاختبار**: نصٌّ لم يتغيّر يعني أن الحارس
+  --    ليس في الجسم بهذه الصياغة — فلا يُقاس بعده شيء، ولا يُقال «نجحت».
+  if v_mutant = v_original then
+    raise exception '(ق-١) 🧬 الطفرة لم تُبنَ: أسطر الحارس غير موجودة في الجسم الحيّ بنصّها — إمّا 0081 لم تُطبَّق وإمّا صياغتها تغيّرت';
+  end if;
+
+  execute v_mutant;
+
+  update public.trip_settings set min_lead_minutes = 0 where id;
+
+  v_survived := false;
+  begin
+    select * into v_res from public.create_booking(
+      '{"label": "القاهرة", "lat": 30.0444, "lng": 31.2357}'::jsonb,
+      '{"label": "الإسكندرية", "lat": 31.2001, "lng": 29.9187}'::jsonb,
+      1, false, 0, 220, 180, 'osrm', v_class, 'full',
+      'اختبار الطفرة', '01000000000', null, null, 'TRIP_SWEEP_FIXTURE'
+    );
+    v_survived := v_res.public_token is not null;
+  exception when others then
+    v_survived := false;
+  end;
+
+  -- الاستعادة **قبل** أي رفع خطأ: لا تُترك دالةُ الحجز مُطفَّرة بحال
+  execute v_original;
+
+  if not v_survived then
+    raise exception
+      '(ق-٢) 🧬 الطفرة قُتلت: نزعنا أسطر الحارس والحجزُ بلا موعد ما زال مرفوضاً. أي أن رفض (ع-٦) ليس من هذا الحارس — التأكيد لا يحرس ما نظنّه';
+  end if;
+
+  if position('MUTANT_0081' in (
+       select pg_get_functiondef(p.oid)
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = 'create_booking')) > 0 then
+    raise exception '(ق-٣) الطفرة نجت بعد الاستعادة — create_booking الحيّة ما زالت المُطفَّرة';
+  end if;
+
+  raise notice '✔ (ق) 🧬 الطفرة الثانية: نزع أسطر الحارس يجعل الحجز بلا موعد يمرّ ⇒ تأكيد (ع-٦) حيّ';
   raise exception 'ROLLBACK_MARKER';
 exception
   when others then

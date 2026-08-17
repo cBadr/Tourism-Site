@@ -74,8 +74,14 @@ import {
  * النموذج بلا إثبات ملكيته، فلا يُمرَّر المعامل أصلاً. التفصيل الكامل ومطلبُ
  * هجرة التصليب في الفرع (١ب) أدناه وفي `lib/loyalty/types.ts`.
  *
+ * 🔴 المرحلة 0081 — **لا حجز بلا موعد.** قرار المالك 2026-08-17 حرفياً: «غير
+ * موافق على الحجز بدون موعد». وكان `pickupAt` الغائب يمرّ بـ٢٠٠ ويُنشئ حجزاً
+ * بموعدٍ فارغ **يتجاوز حارس المهلة كلياً**. والحارس المُلزِم في `create_booking`
+ * (تلميح `pickup-required`) لا هنا — وهذا المسار يمسكه مبكراً ويترجم حكمها.
+ *
  * رموز الخطأ (الواجهة تعرض `message` مباشرة في كل الحالات):
  *   invalid-input     ٤٠٠ — مدخلات ناقصة أو خارج الحدود
+ *   pickup-required   ٤٠٠ — بلا موعد انطلاق (تُعيد الواجهة العميل إلى الخطوة ١)
  *   class-unavailable ٤٠٩ — الفئة المختارة لم تعد صالحة لهذه الرحلة
  *   coupon-rejected   ٤٠٩ — رمز الخصم لم يعد صالحاً لحظة الحجز (تُسقطه الواجهة)
  *   redeem-rejected   ٤٠٩ — تعذّر استبدال النقاط لحظة الحجز (تُسقطه الواجهة)
@@ -131,7 +137,7 @@ type CreateBookingRow = {
 
 type ParseResult =
   | { ok: true; value: CreateBookingRequestWithExtras }
-  | { ok: false; message: string };
+  | { ok: false; code?: string; message: string };
 
 function errorJson(code: string, message: string, status: number): Response {
   const body: BookingError = { ok: false, code, message };
@@ -172,18 +178,42 @@ function parsePhone(value: unknown): string | null {
   return raw;
 }
 
-/** موعد الانطلاق: ISO صالح في المستقبل القريب — أو null (اختياري) */
-function parsePickupAt(value: unknown): { ok: true; value: string | null } | { ok: false } {
-  if (value === undefined || value === null || value === "") return { ok: true, value: null };
-  if (typeof value !== "string") return { ok: false };
+/**
+ * موعد الانطلاق: ISO صالح في المستقبل القريب — و**الغياب رفضٌ لا اختيار**.
+ *
+ * ── العطل الذي وُجد هذا التفريع لأجله (قرار المالك 2026-08-17) ─────────────
+ *
+ * كان الفرع الأول `{ ok: true, value: null }`، أي أن **حقلاً غائباً في الجسم**
+ * يمرّ بلا اعتراض — وقيس حياً: `POST /api/booking` بلا `pickupAt` يُرجع ٢٠٠
+ * وينشئ حجزاً بموعدٍ فارغ، **ويتجاوز حارس المهلة كلياً** لأن شرطه في
+ * `create_booking` مشروطٌ بـ`p_pickup_at is not null`. فأشدّ ما بُني في أ‑٢
+ * كان يسقط بحذف مفتاح.
+ *
+ * وقال المالك: «غير موافق على الحجز بدون موعد» ⇒ **عيبٌ يُسدّ لا حالةٌ مشروعة.**
+ *
+ * ⚠ **والحارس الحقيقي في القاعدة** (‏`0081`، تلميح `pickup-required`): هذا
+ * المسار ليس الطريق الوحيد إلى `create_booking`، وكل من يملك مفتاح الخدمة
+ * يناديها مباشرةً. وما هنا يوفّر رحلة شبكة ويعطي رسالةً أدقّ، لا أكثر.
+ *
+ * ⚠ **والسبب يخرج مسمّى** (`missing` مقابل `invalid`): الرمزان يقودان الشاشة
+ * إلى فعلين مختلفين — الغائب يعيد العميل إلى خطوة الموعد، والفاسد يقول إن ما
+ * كُتب ليس تاريخاً. ورسالةٌ واحدة للاثنين تجعل نصفَ الحالات نصيحةً خاطئة.
+ */
+function parsePickupAt(
+  value: unknown
+): { ok: true; value: string } | { ok: false; reason: "missing" | "invalid" } {
+  if (value === undefined || value === null || value === "") {
+    return { ok: false, reason: "missing" };
+  }
+  if (typeof value !== "string") return { ok: false, reason: "invalid" };
 
   const date = new Date(value);
   const time = date.getTime();
-  if (Number.isNaN(time)) return { ok: false };
+  if (Number.isNaN(time)) return { ok: false, reason: "invalid" };
 
   const now = Date.now();
-  if (time < now - CLOCK_SKEW_MS) return { ok: false };
-  if (time > now + MAX_AHEAD_MS) return { ok: false };
+  if (time < now - CLOCK_SKEW_MS) return { ok: false, reason: "invalid" };
+  if (time > now + MAX_AHEAD_MS) return { ok: false, reason: "invalid" };
 
   return { ok: true, value: date.toISOString() };
 }
@@ -289,7 +319,14 @@ function parseBody(body: unknown): ParseResult {
 
   const pickup = parsePickupAt(body.pickupAt);
   if (!pickup.ok) {
-    return { ok: false, message: "موعد الانطلاق يجب أن يكون تاريخاً صحيحاً في المستقبل." };
+    return pickup.reason === "missing"
+      ? {
+          ok: false,
+          // 🔒 رمزٌ مستقل تقرؤه `Checkout` فتعيد العميل إلى خطوة الموعد
+          code: "pickup-required",
+          message: "حدد موعد الانطلاق — لا نقبل حجزاً بلا موعد.",
+        }
+      : { ok: false, message: "موعد الانطلاق يجب أن يكون تاريخاً صحيحاً في المستقبل." };
   }
 
   const back = parseReturnAt(body.returnAt, pickup.value);
@@ -371,6 +408,25 @@ function mapDbError(error: { code?: string; message?: string; details?: string; 
   status: number;
 } {
   const hint = (error.hint ?? "").trim();
+
+  /**
+   * ── موعد الانطلاق مطلوب (‏0081، قرار المالك 2026-08-17) ──────────────────
+   *
+   * `create_booking` ترفع `pickup-required` حين يصلها `p_pickup_at` فارغاً.
+   * ولا يقع هذا الفرع من مسار الحجز العادي — `parseBody` يمسكه قبل أي نداء —
+   * **وبقاؤه هو المقصود**: القاعدة هي الحارس، وهذا المسار يترجم حكمها لا
+   * يستبدله. فمن نادى الدالة بجسمٍ ناقص من طريقٍ آخر يجد الجملة نفسها.
+   *
+   * ورمزٌ مستقل لا `invalid-input`: العلاج **اختيارُ موعد** لا مراجعةُ حقول،
+   * و`Checkout` تعيد العميل إلى الخطوة الأولى عليه — نظير `lead-time` تماماً.
+   */
+  if (hint === "pickup-required") {
+    return {
+      code: "pickup-required",
+      message: "حدد موعد الانطلاق — لا نقبل حجزاً بلا موعد.",
+      status: 400,
+    };
+  }
 
   if (hint === "invalid-input") {
     return {
@@ -493,7 +549,7 @@ export async function POST(request: Request) {
   }
 
   const parsed = parseBody(raw);
-  if (!parsed.ok) return errorJson("invalid-input", parsed.message, 400);
+  if (!parsed.ok) return errorJson(parsed.code ?? "invalid-input", parsed.message, 400);
   const input = parsed.value;
 
   // (١) عميل الخدمة أولاً — غيابه (SUPABASE_SERVICE_ROLE_KEY غير مضبوط) يعني أن

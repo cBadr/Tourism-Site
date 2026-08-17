@@ -1782,6 +1782,201 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (س) 🔴 `0082` — **عنصرٌ يُكتب بلا مفتاح ثابت صالح وفريد: شكلٌ لا يُكتب**
+--
+-- ── العطب الذي وُلد منه هذا الفحص، مقيساً لا متوقَّعاً (2026-08-17) ─────────
+--
+-- المالك حرّر الجُمل المتناوبة في بطل الرئيسية فرُفض حفظه بـ`item-key`، وكتلة
+-- البطل مفاتيحها سليمة: الرفض جاء من ثلاث كتلٍ أخرى على الصفحة نفسها عناصرها
+-- **بلا `_k` إطلاقاً**. وخمسة صفوف حيّة كانت كذلك، منها صفٌّ كتبته `0062`
+-- بمفاتيحه ثم سُلبت منه — فالمحرر القديم كان يُسقط `_k` وهو يرسم نموذجه.
+--
+-- 🔒 **ولماذا الحارس في القاعدة لا في `validateBlocks`:** الرفض في TypeScript
+-- كان قائماً **طوال** الوقت الذي وقع فيه العطب — ولم يمنعه، لأن الكاتب الذي
+-- سلب المفاتيح محرّرٌ آخر لا يمرّ عليه. ومنعُ الشكل حيث لا يُتخطى هو نفس مذهب
+-- `sections_guard_depth` في `0058` §(٩)، ونفس مذهب العقد §٦: «الشكل غير
+-- القانوني لا يُكتب».
+--
+-- ⚠ وكل حالةٍ أدناه **كتابةٌ حقيقية** لا نداء دالة، ويليها شاهدٌ إيجابي —
+--   وإلا أثبتنا أن الجدول مغلق لا محروس.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_page constant uuid := '0b580000-0000-4000-8000-000000000801';
+  v_sec  constant uuid := '0b580000-0000-4000-8000-000000000802';
+  v_case  record;
+  v_ok    boolean;
+  v_hint  text;
+  v_n     integer;
+  v_key   text;
+  v_taken text[];
+begin
+  insert into public.pages (id, slug, kind, title, published, sort)
+  values (v_page, '0b58-itemkeys', 'static', 'فيكسترة مفاتيح العناصر', false, 981);
+
+  -- (س-١) الأشكال المرفوضة — والحالات الثلاث التي يجمعها الرمز الواحد:
+  --       **غائب** · **مخالف للنمط** · **مكرر**
+  for v_case in
+    select * from (values
+      ('بلا مفتاح إطلاقاً (الحالة الواقعة)',
+        '{"items":[{"q":"س","a":"ج"}]}'::jsonb,                                'item-key'),
+      ('مفتاحٌ فارغ',
+        '{"items":[{"_k":"","q":"س"}]}'::jsonb,                                'item-key'),
+      ('حروفٌ كبيرة — النمط لاتينيٌّ صغير',
+        '{"items":[{"_k":"A1B2C3","q":"س"}]}'::jsonb,                          'item-key'),
+      ('خمس خانات لا ست',
+        '{"items":[{"_k":"a1b2c","q":"س"}]}'::jsonb,                           'item-key'),
+      ('سبع خانات لا ست',
+        '{"items":[{"_k":"a1b2c3d","q":"س"}]}'::jsonb,                         'item-key'),
+      ('شرطة داخل المفتاح',
+        '{"items":[{"_k":"a1b-c3","q":"س"}]}'::jsonb,                          'item-key'),
+      ('مفتاحٌ ليس نصّاً',
+        '{"items":[{"_k":123456,"q":"س"}]}'::jsonb,                            'item-key'),
+      ('🔴 مفتاحان متطابقان — عنوانا ترجمةٍ واحدٌ لعنصرين',
+        '{"items":[{"_k":"a1b2c3","q":"س١"},{"_k":"a1b2c3","q":"س٢"}]}'::jsonb, 'item-key'),
+      ('واحدٌ مفتاحٌ وواحدٌ بلا — الجزئي مرفوضٌ كالكامل',
+        '{"items":[{"_k":"a1b2c3","q":"س١"},{"q":"س٢"}]}'::jsonb,              'item-key'),
+      ('items كائنٌ لا مصفوفة',
+        '{"items":{"q":"س"}}'::jsonb,                                          'template-shape'),
+      ('عنصرٌ نصٌّ لا كائن',
+        '{"items":["س"]}'::jsonb,                                              'template-shape'),
+      ('عنصرٌ مصفوفةٌ متداخلة',
+        '{"items":[["س"]]}'::jsonb,                                            'template-shape')
+    ) as t(label, content, expected_hint)
+  loop
+    v_ok := false; v_hint := null;
+    begin
+      insert into public.sections (page_id, type, content, sort, visible)
+      values (v_page, 'faq', v_case.content, 0, true);
+      v_ok := true;
+    exception when others then get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+
+    if v_ok then
+      delete from public.sections where page_id = v_page;
+      raise exception '(س-١) قُبل شكلٌ غير قانوني في العناصر: %', v_case.label;
+    end if;
+    if v_hint is distinct from v_case.expected_hint then
+      raise exception '(س-١) «%» رُفض بـ[%] لا بـ[%]',
+        v_case.label, coalesce(v_hint, '∅'), v_case.expected_hint;
+    end if;
+  end loop;
+
+  -- (س-٢) شاهدٌ إيجابي — الشكل القانوني يُكتب فعلاً، وقائمةٌ فارغة تمرّ
+  --       (كتلةٌ قيد البناء لا شيء يُعاد ترتيبه فيها فلا شيء يُكسر)
+  insert into public.sections (id, page_id, type, content, sort, visible)
+  values (v_sec, v_page, 'faq',
+          '{"items":[{"_k":"a1b2c3","q":"س١","a":"ج١"},{"_k":"z9y8x7","q":"س٢","a":"ج٢"}]}'::jsonb,
+          0, true);
+  if not exists (select 1 from public.sections where id = v_sec) then
+    raise exception '(س-٢) الشكل القانوني لم يُكتب — الحارس يرفض كل شيء';
+  end if;
+
+  insert into public.sections (page_id, type, content, sort, visible)
+  values (v_page, 'faq', '{"items":[]}'::jsonb, 1, true);
+
+  -- (س-٣) 🔴 **اتجاه التحديث — وهو الاتجاه الذي وقع فعلاً.**
+  --       العطب لم يكن إدراج صفٍّ جديد بلا مفاتيح، بل **سلبَ** مفاتيح صفٍّ
+  --       قائم عند الحفظ. فحارسٌ على الإدراج وحده كان سيمرّره حرفاً.
+  v_ok := false; v_hint := null;
+  begin
+    update public.sections
+       set content = '{"items":[{"q":"س١","a":"ج١"},{"q":"س٢","a":"ج٢"}]}'::jsonb
+     where id = v_sec;
+    v_ok := true;
+  exception when others then get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+  if v_ok then
+    raise exception '(س-٣) قُبل تحديثٌ يسلب المفاتيح — وهو بعينه ما أصاب خمسة صفوف حيّة';
+  end if;
+  if v_hint is distinct from 'item-key' then
+    raise exception '(س-٣) سلبُ المفاتيح رُفض بـ[%] لا بـitem-key', coalesce(v_hint, '∅');
+  end if;
+
+  -- والتحديث الذي لا يمسّ المحتوى يمرّ بلا ثمن (إعادة الترتيب تحدّث `sort` وحده)
+  update public.sections set sort = 5 where id = v_sec;
+
+  -- (س-٤) 🔬 **الطفرة ٣ — إثباتٌ أن التأكيد حيّ لا أنه يمرّ لسببٍ آخر.**
+  --       يُعطَّل الحارس، ويُكتب **نفس** الشكل المرفوض أعلاه فينجح، ثم يُعاد
+  --       تشغيله فيُرفض ثانيةً. «فحصٌ لا يمكن أن يفشل هو زينة» (النمط ٩).
+  alter table public.sections disable trigger sections_guard_item_keys;
+
+  v_ok := false;
+  begin
+    update public.sections
+       set content = '{"items":[{"q":"س١","a":"ج١"},{"q":"س٢","a":"ج٢"}]}'::jsonb
+     where id = v_sec;
+    v_ok := true;
+  exception when others then null;
+  end;
+
+  alter table public.sections enable trigger sections_guard_item_keys;
+
+  if not v_ok then
+    raise exception '(س-٤) الطفرة: الكتابة فشلت والحارس معطَّل — الرفض في (س-٣) لم يكن من هذا الحارس';
+  end if;
+  if public.items_key_check((select content -> 'items' from public.sections where id = v_sec))
+     is distinct from 'item-key' then
+    raise exception '(س-٤) الطفرة لم تكتب الشكل المخالف — فلا شيء أثبتته';
+  end if;
+
+  -- ويعود الصفّ إلى شكله القانوني، والحارس شغّالٌ الآن فالكتابة نفسها إثبات
+  update public.sections
+     set content = '{"items":[{"_k":"a1b2c3","q":"س١","a":"ج١"},{"_k":"z9y8x7","q":"س٢","a":"ج٢"}]}'::jsonb
+   where id = v_sec;
+
+  select count(*) into v_n
+  from pg_trigger
+  where tgrelid = 'public.sections'::regclass
+    and tgname = 'sections_guard_item_keys'
+    and tgenabled = 'O';
+  if v_n <> 1 then
+    raise exception '(س-٤) الحارس لم يعُد إلى حالته بعد الطفرة — الفحص ترك القاعدة أضعف مما وجدها';
+  end if;
+
+  -- (س-٥) السكّاك: ست خانات من `[a-z0-9]`، ولا يصادم ما هو محجوز
+  for v_n in 1..40 loop
+    v_key := public.mint_item_key(array['a1b2c3']);
+    if v_key !~ '^[a-z0-9]{6}$' then
+      raise exception '(س-٥) mint_item_key أخرج «%» وهو خارج النمط', v_key;
+    end if;
+    if v_key = 'a1b2c3' then
+      raise exception '(س-٥) mint_item_key أعاد مفتاحاً محجوزاً — التصادم عنوانا ترجمةٍ واحد';
+    end if;
+    v_taken := coalesce(v_taken, '{}') || v_key;
+  end loop;
+  if (select count(distinct x) from unnest(v_taken) x) < 35 then
+    raise exception '(س-٥) السكّ يكرر نفسه — % مفتاحاً متمايزاً من ٤٠',
+      (select count(distinct x) from unnest(v_taken) x);
+  end if;
+
+  -- (س-٦) 🔴 **حالة القاعدة الحيّة**: لا صفَّ واحداً يرفضه الحكم.
+  --       وهذا هو التأكيد الذي كان غيابُه يعني أن المالك يكتشف العطب بنفسه.
+  select count(*) into v_n
+  from public.sections s
+  where s.page_id <> v_page
+    and public.items_key_check(s.content -> 'items') is not null;
+  if v_n <> 0 then
+    raise exception '(س-٦) % صفاً حيّاً عناصره بلا مفاتيح صالحة — المنشئ يرفض حفظ صفحاتها', v_n;
+  end if;
+
+  -- وشاهدٌ إيجابي على (س-٦): الصفر أعلاه ليس لأن لا شيء يحمل عناصر
+  select count(*) into v_n
+  from public.sections s
+  where s.page_id <> v_page
+    and jsonb_typeof(s.content -> 'items') = 'array'
+    and jsonb_array_length(s.content -> 'items') > 0;
+  if v_n < 50 then
+    raise exception '(س-٦) شاهدٌ إيجابي غائب — % صفاً حيّاً يحمل عناصر', v_n;
+  end if;
+
+  delete from public.sections where page_id = v_page;
+
+  raise notice '✔ (س-١..٦) العنصر بلا مفتاح صالح فريد لا يُكتب — إدراجاً وتحديثاً · والقانوني يمرّ · 🔬 والطفرة ٣ تثبت أن الحارس هو الرافض · و% صفاً حيّاً كلها مفتاحة', v_n;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ل) التنظيف — صفر أثر، والقاعدة كما وُجدت
 -- ----------------------------------------------------------------------------
 do $$
@@ -1845,6 +2040,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — منشئ الصفحات: مرساةُ البند خارج فهرس الترجمة وخارج التطبيق ورقمُه وخلايا الجدول داخلهما · صورةُ العنصر وأيقونتُه خارج فهرس الترجمة وخارج التطبيق و`alt` داخلهما · النشر فرقٌ بالمعرّف فتنجو الترجمات (وطفرة «احذف ثم أدرج» تُبيدها) · العمق مستوى واحد من الطرفين · محجوزات المسار تُرفض برمزها · الكتالوج = BLOCK_CATALOGUE ولا يقبل شكلاً غير معنوَن · بوابة النشر ترجع كل رمز في حالته وتقرأ الكتالوج فعلاً · anon صفر منحة ولا TRUNCATE لأحد · والمتعهد صفر مسودة وops قراءةٌ فقط';
+  raise notice 'ALL PASSED — منشئ الصفحات: عنصرٌ بلا مفتاح ثابت صالح وفريد لا يُكتب إدراجاً ولا تحديثاً (وطفرةٌ تثبت أن الحارس هو الرافض) · مرساةُ البند خارج فهرس الترجمة وخارج التطبيق ورقمُه وخلايا الجدول داخلهما · صورةُ العنصر وأيقونتُه خارج فهرس الترجمة وخارج التطبيق و`alt` داخلهما · النشر فرقٌ بالمعرّف فتنجو الترجمات (وطفرة «احذف ثم أدرج» تُبيدها) · العمق مستوى واحد من الطرفين · محجوزات المسار تُرفض برمزها · الكتالوج = BLOCK_CATALOGUE ولا يقبل شكلاً غير معنوَن · بوابة النشر ترجع كل رمز في حالته وتقرأ الكتالوج فعلاً · anon صفر منحة ولا TRUNCATE لأحد · والمتعهد صفر مسودة وops قراءةٌ فقط';
 end;
 $$;

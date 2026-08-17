@@ -247,6 +247,31 @@ export function validateBlocks(blocks: readonly BuilderBlock[]): BuilderErrorCod
   return null;
 }
 
+/**
+ * 🔴 **أيُّ كتلةٍ بالضبط أسقطت الحفظ بـ`item-key`؟** — يرجع نوعها أو `null`.
+ *
+ * ── لماذا وُجدت هذه الدالة (عطبٌ مقيس، 2026-08-17) ────────────────────────
+ *
+ * `validateBlocks` تحكم على **الصفحة** وتُرجع رمزاً واحداً بلا عنوان. والمالك
+ * كان يحرّر جُمل البطل المتناوبة — وكتلة البطل مفاتيحها سليمة — فيصطدم برسالةٍ
+ * عن «مفاتيح العناصر» لا يرى لها أثراً في الحقل الذي يكتب فيه، والسبب كتلتان
+ * أخريان أسفل الصفحة لم يفتحهما. رسالةٌ صحيحةٌ في مضمونها **تصف مكاناً آخر**
+ * أسوأ من رسالةٍ عامة، لأنها ترسله يبحث حيث لا شيء.
+ *
+ * والنوع **رمزٌ لا جملة** (اتفاقية المشروع): يسافر في الـ query string
+ * وتترجمه `blockLabel` في الشاشة.
+ */
+export function findInvalidItemBlock(blocks: readonly BuilderBlock[]): string | null {
+  for (const block of blocks) {
+    const items = (block.content ?? {})[ITEMS_FIELD];
+    if (items !== undefined && isItemArray(items) && items.length > 0 && !itemsAreKeyed(items))
+      return block.type;
+    const child = findInvalidItemBlock(block.children ?? []);
+    if (child) return child;
+  }
+  return null;
+}
+
 /** فحص المواضع على مستوى الصفحة (‏`once-per-page` و`home-only`) */
 export function validatePlacement(
   blocks: readonly BuilderBlock[],

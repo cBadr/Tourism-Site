@@ -33,9 +33,33 @@ import { Share2 } from "lucide-react";
  * يعترض هذا الملف النقرة ويفتح منتقي المشاركة الأصلي — فيصل النصّ إلى تليجرام
  * أو الرسائل أو أي تطبيق يختاره، بدل حبسه في واتساب.
  *
- * ⚠ والاعتراض **لا يقع إلا بعد التركيب**: `canShare` تبدأ `false` وتُضبط في
- *   `useEffect`، فما يُصيَّر على الخادم وما يُصيَّر أول مرة في المتصفح واحد.
+ * ⚠ والاعتراض **لا يقع إلا بعد التركيب**: لقطة الخادم `false` دائماً، فما
+ *   يُصيَّر خادمياً وما يُصيَّر أول مرة في المتصفح واحد — والوسم يعمل بينهما.
  */
+
+/**
+ * هل يملك هذا المتصفح `navigator.share`؟
+ *
+ * ── لماذا `useSyncExternalStore` لا `useState` + `useEffect` ────────────────
+ *
+ * الشكل السابق كان `setCanShare(...)` **داخل جسم تأثير**، وهو ما تُسقطه قاعدة
+ * `react-hooks/set-state-in-effect`: تصييرٌ متتالٍ لكل تركيب، وحالةٌ تصف
+ * **المتصفح** لا تصف هذا المكوّن — فتخزينها في حالته مصدرُها الخطأ من الأصل.
+ *
+ * وهذه الخطّاف موجود لهذه الحالة بعينها: **قراءة قيمةٍ من خارج React مع لقطة
+ * خادمية مستقلة**. فـ`getServerSnapshot` تعود `false` — فيتطابق ما يُصيَّر على
+ * الخادم وأول تصييرٍ في المتصفح حرفياً (وهو الشرط الذي حفظ التحسين التدريجي
+ * هنا: الوسم `<a>` يعمل بلا جافاسكربت أصلاً) — ثم يعيد React التصيير بقيمة
+ * المتصفح بعد الترطيب فيبدأ الاعتراض.
+ *
+ * ولا اشتراك: القدرة لا تتبدّل خلال حياة الصفحة، فالمُشترِك يعود بمُلغٍ فارغ
+ * ولا يُسجّل مستمعاً لحدثٍ لا يقع.
+ */
+const subscribeNever = () => () => {};
+const readCanShare = () =>
+  typeof navigator !== "undefined" && typeof navigator.share === "function";
+const noShareOnServer = () => false;
+
 export function TripShare({
   /** النصّ كاملاً كما ركّبه الخادم — لا يُبنى هنا ولا يُضاف إليه */
   text,
@@ -55,11 +79,11 @@ export function TripShare({
   label: string;
   className?: string;
 }) {
-  const [canShare, setCanShare] = React.useState(false);
-
-  React.useEffect(() => {
-    setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
-  }, []);
+  const canShare = React.useSyncExternalStore(
+    subscribeNever,
+    readCanShare,
+    noShareOnServer
+  );
 
   async function handleClick(event: React.MouseEvent<HTMLAnchorElement>) {
     if (!canShare) return; // بلا اعتراض: الوسم يذهب إلى واتساب كما هو

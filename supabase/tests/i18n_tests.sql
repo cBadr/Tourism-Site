@@ -150,6 +150,20 @@ begin
     '{"title":"عنوان سيو لاختبار الترجمة","description":"وصف سيو لاختبار الترجمة."}'::jsonb,
     true, 999);
 
+  /**
+   * ⚠ **الفيكسترة على الصيغة الترتيبية القديمة — وهي شكلٌ لم يعد يُكتب.**
+   *
+   * `sections_guard_item_keys` (‏`0082`) يمنع كتابة عنصرٍ بلا `_k`، وهو المطلوب:
+   * العطب الذي وُلد منه ذلك الحارس أن محرراً كان **يسلب** المفاتيح من صفوفٍ
+   * حيّة، فيرفض المنشئ حفظ صفحاتها. لكن **العنونة الترتيبية تبقى مقروءة**
+   * (‏`0059`: الصيغة القديمة لا تُكسر — ١٢٤ مفتاحاً قائماً بُني عليها)، وهذا
+   * الملف هو ما يحرس بقاءها.
+   *
+   * فالفيكسترة تكتب شكلاً لا يستطيع أي محرر أن ينتجه اليوم — وتُصرّح بذلك
+   * بتعطيل الحارس لسطرٍ واحد بدل أن تتحايل عليه. والحارس يعود فوراً، وفحصٌ في
+   * آخر المجموعة يثبت عودته.
+   */
+  alter table public.sections disable trigger sections_guard_item_keys;
   insert into public.sections (id, page_id, type, content, sort, visible)
   values
     (v_s1, v_page, 'rich-text',
@@ -158,6 +172,7 @@ begin
     (v_s2, v_page, 'faq',
      '{"title":"أسئلة اختبار الترجمة","items":[{"q":"السؤال الأول للاختبار؟","a":"الجواب الأول للاختبار."},{"q":"السؤال الثاني للاختبار؟","a":"الجواب الثاني للاختبار."}]}'::jsonb,
      1, true);
+  alter table public.sections enable trigger sections_guard_item_keys;
 
   raise notice '✔ (أ) الفيكسترة جاهزة: لغة zz وصفحة بقسمَين';
 end;
@@ -516,6 +531,11 @@ begin
   values (v_page, v_slug, 'static', 'صفحة اختبار مفاتيح العناصر',
           '{"title":"مفاتيح العناصر","description":"فيكسترة اختبار _k."}'::jsonb, true, 998);
 
+  -- ⚠ الحارس معطَّل حتى نهاية (هـ-ك-٤): هذه المجموعة تقيس **الصيغة الترتيبية**
+  --   بعينها، وشكلُها لم يعد يُكتب منذ `0082`. والتعطيل مصرَّحٌ به هنا ومقيَّدٌ
+  --   بمداه، ويعود قبل (هـ-ك-٥) كي يكون سكُّ المفاتيح هناك **كتابةً محروسة**.
+  alter table public.sections disable trigger sections_guard_item_keys;
+
   insert into public.sections (id, page_id, type, content, sort, visible)
   values
     (v_k, v_page, 'faq', jsonb_build_object(
@@ -712,6 +732,10 @@ begin
       v_items -> 0 ->> 'q';
   end if;
 
+  -- ⚠ ينتهي مدى التعطيل هنا: ما بقي من هذه المجموعة سكٌّ للمفاتيح، وهو كتابةٌ
+  --   قانونية يجب أن تمرّ **من تحت الحارس** لا من حوله — وهو شاهدُها الإيجابي.
+  alter table public.sections enable trigger sections_guard_item_keys;
+
   -- ══════════════════════════════════════════════════════════════════════════
   -- (هـ-ك-٥) 🔴 سكُّ المفاتيح على قائمةٍ **لها ترجمات ترتيبية منشورة** —
   --          وهو حرفياً ما يفعله زرّ «ثبّت مفاتيح العناصر» في المنشئ
@@ -764,9 +788,20 @@ begin
   delete from public.sections s where s.page_id = v_page;
   delete from public.pages    p where p.id      = v_page;
 
+  -- 🔒 والحارس عاد إلى حالته: فحصٌ يمنع أن يترك هذا الملف القاعدة أضعف مما
+  --    وجدها. تعطيلٌ يُنسى هنا يعني أن كل الاختبارات بعده تجري بلا حارس.
+  select count(*) into v_n
+  from pg_trigger
+  where tgrelid = 'public.sections'::regclass
+    and tgname = 'sections_guard_item_keys'
+    and tgenabled = 'O';
+  if v_n <> 1 then
+    raise exception '(هـ-ك-٦) حارس مفاتيح العناصر بقي معطَّلاً بعد المجموعة';
+  end if;
+
   raise notice
     '✔ (هـ-ك) `_k`: الترجمة تتبع العنصر بعد التبديل، والترتيبية تعمل لمن لا مفتاح له، '
-    'والمعرّف والتنسيق خارج الطابور';
+    'والمعرّف والتنسيق خارج الطابور، وحارس 0082 عاد إلى حالته';
 end;
 $$;
 

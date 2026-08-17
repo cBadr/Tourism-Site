@@ -1148,6 +1148,33 @@ const MOTION_CSS = `
  */
 const COUNTDOWN_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * هل يقع موعد الكنس داخل نافذة العدّاد؟
+ *
+ * ⚠ **ودالةٌ في جذر الملف لا سطرٌ داخل الصفحة — بنفس حجّة `holdWindowPassed`
+ * و`phoneWindowClosed` حرفاً بحرف**: قراءة الساعة أثرٌ جانبي لا يُكتب في جسم
+ * مكوّن (‏`react-hooks/purity`). وكان السطر `holdUntilMs - Date.now()` مكتوباً
+ * في جسم الصفحة فأسقطته القاعدة، **وهو الموضع الذي يستضيف عدّاد مهلة الدفع
+ * بعينه** — والقاعدة أولى بالطاعة حيث يقظتها في محلّها.
+ *
+ * ── وما يقوله القياس بدقّة، كي لا يُصلَح غيرُ العطل ────────────────────────
+ * هذه الصفحة **مكوّن خادمي** (`async` · `await params` · `cookies()`): لا
+ * تُصيَّر في المتصفح أصلاً فلا تعارض ترطيبٍ فيها. والعدّاد نفسه
+ * (`HoldCountdown`) جزيرةٌ عميلة تأخذ `holdUntil` **لحظةً مطلقة من القاعدة**
+ * وتحسب الباقي عندها وحدها، ولا تُصيَّر شيئاً قبل أول `useEffect` — فرقمٌ
+ * يقفز مستحيلٌ بنيويّاً هنا. فما أُصلح **خرقُ قاعدة نقاء التصيير** لا عدّادٌ
+ * يكذب؛ وتوحيدُ قراءة الساعة في دوالّ الجذر يُبقيها كذلك.
+ *
+ * ولا يُؤخذ الوقت من حمولة الخادم بديلاً: `readPaymentHold` تُرجع
+ * `{ enabled, holdUntil }` وحدهما، وإضافةُ «الآن» إليها تصنع **مصدراً ثانياً
+ * للزمن** في ملفٍّ كل قراره مبنيٌّ على لحظةٍ واحدة — وهو النمط ٨ بعينه.
+ */
+function withinCountdownWindow(holdUntil: string | null): boolean {
+  if (holdUntil === null) return false;
+  const at = Date.parse(holdUntil);
+  return Number.isFinite(at) && at - new Date().getTime() <= COUNTDOWN_WINDOW_MS;
+}
+
 export default async function BookingStatusPage({ params }: PageParams) {
   const { token } = await params;
 
@@ -1362,12 +1389,7 @@ export default async function BookingStatusPage({ params }: PageParams) {
    * أيُعرض العدّاد؟ — يُقرَّر على الخادم بموعدٍ **من القاعدة** لا بحسابٍ موازٍ.
    * والشرط شرطان: مهلةٌ لم تنقضِ بعد، وموعد الكنس داخل النافذة أعلاه.
    */
-  const holdUntilMs = hold.holdUntil === null ? NaN : Date.parse(hold.holdUntil);
-  const showCountdown =
-    hold.enabled &&
-    !holdPassed &&
-    Number.isFinite(holdUntilMs) &&
-    holdUntilMs - Date.now() <= COUNTDOWN_WINDOW_MS;
+  const showCountdown = hold.enabled && !holdPassed && withinCountdownWindow(hold.holdUntil);
 
   // حسابات الاستقبال المتاحة للمبلغ المطلوب — تُفلترها SQL بحدودها اليومية/الشهرية.
   // التوكن جزء من النداء: الصيغة المقصورة على التوكن هي وحدها الممنوحة للزائر،

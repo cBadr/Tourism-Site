@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { GeoPlace } from "@/lib/pricing-types";
-import { formatCoordsLabel } from "@/lib/place-search-types";
+import { formatCoordsLabel, isWithinServiceArea } from "@/lib/place-search-types";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { afterResponse } from "@/lib/geo/background";
 
@@ -102,6 +102,26 @@ async function fetchNominatim(normalized: string): Promise<GeoPlace[]> {
     const lat = Number(item.lat);
     const lng = Number(item.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !item.display_name) continue;
+
+    /**
+     * 🔴 حارسُ منطقة الخدمة — **آخرُ ما يقف بين اقتراحٍ ومكانٍ قابل للحجز.**
+     *
+     * القيد الحقيقي `countrycodes=eg` أعلاه، وهو في **الطلب** كما يجب. وهذا
+     * السطر لا يحلّ محلّه بل يغطي ما لا يغطيه: اقتراح Nominatim **يحمل
+     * إحداثياته معه**، فالواجهة تثبّته بلا أي نداءِ تحويل — أي أنه المسار
+     * الوحيد الذي تصير فيه نتيجةُ بحثٍ مكاناً مسعَّراً **بلا أن تمرّ ببوابةٍ
+     * خادمية ثانية**. ونظيره عند جوجل محروسٌ في `googlePlaceDetails`.
+     *
+     * ⚠ ولا يخالف قاعدة «قيّد في الطلب لا على النتائج»: تلك قاعدةٌ **ثمنها
+     * مال** (نتيجةٌ مرشَّحة كان قد دُفع ثمنها)، و Nominatim مجاني — فالترشيح
+     * هنا لا يشتري الصحة بشيء. وهو كذلك **قبل** كتابة الكاش، فلا يدخل
+     * `geocode_cache` سطرٌ خارج ما نخدمه.
+     *
+     * وموضعه هنا لا في `search.ts` ليشمل **كل** قارئ: `searchPlaces` القديمة
+     * وبورتال المتعهدين و`GET /api/geocode` والمحرّك رباعي الطبقات معاً.
+     */
+    if (!isWithinServiceArea(lat, lng)) continue;
+
     const label = toLabel(item.display_name);
     if (seen.has(label)) continue; // إسقاط التكرارات المتطابقة الوسم
     seen.add(label);

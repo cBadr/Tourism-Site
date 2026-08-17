@@ -8,6 +8,7 @@ import type { BuilderBlock } from "@/lib/page-builder-types";
 import { importTemplate } from "@/lib/page-builder/template";
 import {
   blocksToSections,
+  findInvalidItemBlock,
   readSnapshot,
   stampContentVersion,
   validateBlocks,
@@ -38,6 +39,19 @@ import {
 
 const builderUrl = (pageId: string, qs?: string) =>
   qs ? `/admin/content/${pageId}/builder?${qs}` : `/admin/content/${pageId}/builder`;
+
+/**
+ * رمز الشكل + **عنوانه** حين يكون العنوان معروفاً.
+ *
+ * `item-key` وحدها تحتاج عنواناً: بقية الرموز تصف الكتلة التي يحرّرها المالك
+ * الآن، أما هذه فقد تصف كتلةً لم يفتحها في هذه الجلسة أصلاً — والحفظ حفظةٌ
+ * واحدة للصفحة كلها (D-48)، فرفضُ كتلةٍ يرفض عمل الصفحة كله.
+ */
+function shapeErrorQuery(code: string, blocks: readonly BuilderBlock[]): string {
+  if (code !== "item-key") return `error=${code}`;
+  const type = findInvalidItemBlock(blocks);
+  return type ? `error=${code}&block=${encodeURIComponent(type)}` : `error=${code}`;
+}
 
 /** رمز الخطأ الذي يبعثه الحارس داخل الدالة يصل في `hint` (قناة المشروع المعتمدة) */
 function codeFromError(error: { hint?: string | null; code?: string | null } | null): string {
@@ -95,7 +109,7 @@ export async function saveDraft(pageId: string, formData: FormData) {
   const page = pageRes.data as { kind: string; slug: string; title: string };
 
   const shapeError = validateBlocks(blocks) ?? validatePlacement(blocks, page.kind);
-  if (shapeError) redirect(builderUrl(pageId, `error=${shapeError}`));
+  if (shapeError) redirect(builderUrl(pageId, shapeErrorQuery(shapeError, blocks)));
 
   // ختم إصدار الشكل على كل كتلة يكتبها المنشئ (العقد §٥) — يجعل أي ترحيلٍ لاحق
   // لشكل `content` قابلاً للتمييز بلا تخمين، ويكلّف مفتاحاً واحداً في `style`.
@@ -290,7 +304,7 @@ export async function importTemplateIntoPage(pageId: string, formData: FormData)
   const page = pageRes.data as { kind: string; slug: string; title: string };
 
   const shapeError = validateBlocks(result.blocks) ?? validatePlacement(result.blocks, page.kind);
-  if (shapeError) redirect(builderUrl(pageId, `error=${shapeError}`));
+  if (shapeError) redirect(builderUrl(pageId, shapeErrorQuery(shapeError, result.blocks)));
 
   const existingDraft = await supabase
     .from("page_revisions")

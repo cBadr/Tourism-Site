@@ -67,7 +67,15 @@ type Props = {
   rev: number;
   hasUnpublishedChanges: boolean;
   blockers: string[];
-  status: { saved: boolean; published: string | null; discarded: boolean; imported: boolean; error: string | null };
+  status: {
+    saved: boolean;
+    published: string | null;
+    discarded: boolean;
+    imported: boolean;
+    error: string | null;
+    /** نوع الكتلة التي أسقطت الحفظ — رمزٌ تترجمه الشاشة، و`null` حين لا يُعرف */
+    errorBlock: string | null;
+  };
   saveAction: (formData: FormData) => void | Promise<void>;
   publishAction: (formData: FormData) => void | Promise<void>;
   discardAction: (formData: FormData) => void | Promise<void>;
@@ -501,7 +509,7 @@ function AddBlockCard({
 }
 
 function StatusRow({ status }: { status: Props["status"] }) {
-  const errorMessage = builderErrorMessage(status.error);
+  const errorMessage = builderErrorMessage(status.error, status.errorBlock);
   return (
     <>
       {status.saved && (

@@ -71,18 +71,31 @@ export async function POST(request: NextRequest) {
     return json({ ok: false, code: "invalid-input" }, 400);
   }
 
-  const place = await resolveSuggestion({
+  const result = await resolveSuggestion({
     ref,
     provider,
     sessionToken: typeof sessionToken === "string" ? sessionToken : undefined,
     locale: typeof locale === "string" ? locale : undefined,
   });
 
+  /**
+   * 🔴 **خارج منطقة الخدمة رمزٌ مستقل — بنفس حكم `/api/geocode/reverse` حرفياً.**
+   *
+   * الدبوس في روما يُرفض بـ`out-of-area` منذ أول يوم، **والمعرّف في دبي كان
+   * يمرّ**: `ChIJS-JnijRDXz4R4rfO4QLlRf8` يردّ من جوجل `200` بإحداثيات دبي،
+   * فكان يخرج من هنا `{ ok: true, place }` قابلاً للحجز (مقيسٌ 2026-08-17).
+   * والفرق بين البابين أن هذا يقبل **معرّفاً علنياً** لا إحداثيات، فبدا بريئاً.
+   *
+   * ⚠ ولا يُدمج بـ`not-found`: «لا أعرف هذا المرجع» شيء، و«أعرفه وهو خارج ما
+   *   نخدم» شيءٌ آخر — والعقد يحمل الرمزين، والواجهة تقول لكلٍّ جملته.
+   */
+  if (result.status === "out-of-area") return json({ ok: false, code: "out-of-area" }, 400);
+
   // 🔒 بلا إحداثيات لا مكان — ولا يُسعَّر نصٌّ لم يُحلّ (D-09). والواجهة تُخرج
   //    العميل إلى الخريطة عند هذا الرمز، فلا يقف أمام سطرٍ لا يُختار.
-  if (!place) return json({ ok: false, code: "not-found" }, 404);
+  if (result.status !== "ok") return json({ ok: false, code: "not-found" }, 404);
 
-  return json({ ok: true, place, provider }, 200);
+  return json({ ok: true, place: result.place, provider }, 200);
 }
 
 function json(payload: ResolveResponse, status: number) {

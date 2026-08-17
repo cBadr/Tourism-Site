@@ -979,6 +979,11 @@ begin
   -- ==========================================================================
 
   -- (ج-٥-١) عودة بلا انطلاق ⇒ رفض
+  --
+  -- ⚠ **والتلميح صار `pickup-required` لا `invalid-input` منذ 0081.** الحالة
+  --   نفسها والرفض نفسه، لكن السبب المعلَن صار **أدقّ**: بعد قرار المالك «لا
+  --   حجز بلا موعد» يقع حارس الموعد الغائب أولاً، فيسمّي الحقل الناقص بعينه
+  --   بدل «راجع الحقول». والتأكيد يقيس ما يهمّ فعلاً — أن الطلب **لا يمرّ**.
   v_raised := false; v_hint := null;
   begin
     perform public.create_booking(
@@ -995,8 +1000,8 @@ begin
   if not v_raised then
     raise exception '(ج-٥-١) قُبِل تاريخ عودة بلا تاريخ انطلاق';
   end if;
-  if v_hint is distinct from 'invalid-input' then
-    raise exception '(ج-٥-١) رمز الرفض «%» — المتوقع invalid-input', coalesce(v_hint, 'بلا');
+  if v_hint is distinct from 'pickup-required' then
+    raise exception '(ج-٥-١) رمز الرفض «%» — المتوقع pickup-required (0081)', coalesce(v_hint, 'بلا');
   end if;
 
   -- (ج-٥-٢) عودة ليست بعد الانطلاق ⇒ رفض (لا تجاهلاً صامتاً)

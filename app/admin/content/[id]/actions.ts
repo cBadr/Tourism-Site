@@ -8,7 +8,7 @@ import {
   SECTION_TYPE_LABELS,
   type SectionType,
 } from "@/lib/content-types";
-import { NON_TEXT_FIELD_NAMES } from "@/lib/item-fields-types";
+import { ITEM_PRESERVED_KEYS } from "@/lib/page-builder/item-keys";
 
 /**
  * إجراءات محرر المحتوى — كلها على اتفاقية «إعادة التوجيه بعد العملية» (اعتبار ٨):
@@ -80,19 +80,12 @@ const DEFAULT_SECTION_CONTENT: Record<SectionType, Record<string, unknown>> = {
 const PRESERVED_CONTENT_KEYS = ["style"] as const;
 
 /**
- * مفاتيح تُنقل داخل عنصر `items` كما هي.
- *
- *   • `_k` عنوان ترجمة العنصر الثابت — إسقاطه يعيد العنونة إلى الترتيب.
- *   • و**الأسماء غير النصّية الأربعة** (م‑٧): هذا المحرر لا يعرض لها إدخالاً،
- *     فبناءُ العنصر من النموذج كان سيمحو أيقونة الميزة وصورتها صامتاً.
- *
- * 🔒 **وهي قائمةٌ لا تنحرف بالبناء**: `NON_TEXT_FIELD_NAMES` فضاءٌ **مغلق**
- * يحرسه `block_registry_check` و`i18n_non_text_field` معاً، فاسمٌ يُضاف هناك
- * يصل هنا بلا سطر. وهذا هو الفرق بين هذه القائمة وبين `PRESERVED_CONTENT_KEYS`
- * التي حذّر العقد §١٢ من انحرافها — ولذلك عولج المستوى الأعلى بالكاتب الواحد
- * لا بالتوسيع.
+ * ⚠ **`ITEM_PRESERVED_KEYS` انتقل إلى `lib/page-builder/item-keys.ts` ولم
+ * يُنسخ** (2026-08-17). كان معرَّفاً هنا وحده، فحرسَ نصف الرحلة وحدها: هذا
+ * الإجراء ينقل `_k` من الحمولة الواردة بأمانة، بينما الشاشة التي ترسم النموذج
+ * كانت تُسقطه **قبل** أن يصل المتصفح — فلم يكن هناك ما يُنقل. المصدر واحدٌ الآن
+ * يقرؤه الطرفان: من يرسم ومن يكتب.
  */
-const ITEM_PRESERVED_KEYS = ["_k", ...NON_TEXT_FIELD_NAMES] as const;
 
 /** نص مُشذّب أو undefined — undefined تعني إسقاط المفتاح من الـ JSONB */
 function str(formData: FormData, name: string): string | undefined {

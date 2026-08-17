@@ -2,7 +2,7 @@ import "server-only";
 
 import type { GeoPlace } from "@/lib/pricing-types";
 import type { PlaceSuggestion } from "@/lib/place-search-types";
-import { isSessionToken } from "@/lib/place-search-types";
+import { isSessionToken, isWithinServiceArea, SERVICE_BOUNDS } from "@/lib/place-search-types";
 
 /**
  * محوّل Google Places API (New) — الطبقة الأولى في بحث الأماكن.
@@ -46,8 +46,47 @@ const AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete";
 const DETAILS_URL = "https://places.googleapis.com/v1/places";
 const TIMEOUT_MS = 6000;
 const MAX_RESULTS = 5;
-/** كل بحثنا داخل مصر — نفس قيد Nominatim حرفياً */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  🔴 «نطاق التشغيل داخل مصر فقط» — والقيد **في الطلب**، مرتين ومتقاطعتين
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * أمر المالك (2026-08-17): «نطاق التشغيل الحالي داخل مصر فقط، وبالتالي لا يمكن
+ * أن يقوم المستخدم بالبحث عن وجهات خارج مصر».
+ *
+ * **ولماذا في الطلب لا على النتائج:** نتيجةٌ رجعت ثم أسقطناها **قد دُفع ثمنها
+ * بالفعل** — الفوترة على النداء لا على ما نعرضه. فالترشيح بعد الردّ يشتري
+ * الصحة بمال، والقيد قبل الإرسال يشتريها بلا شيء.
+ *
+ * وهما قيدان بقصد، ويتقاطعان عند جوجل (لا يتّحدان):
+ *
+ *   ١) `includedRegionCodes: ["eg"]` — تعريف **جوجل** لمصر (‏CLDR).
+ *   ٢) `locationRestriction` بمستطيلٍ **مشتقٍّ من `SERVICE_BOUNDS`** — تعريفنا
+ *      نحن لمنطقة الخدمة، وهو نفس الصندوق الذي يرفض به `/api/geocode/reverse`
+ *      دبوسَ الخريطة، وتقصّ إليه الخريطة نفسها، ويحرسه قيد 0080 في القاعدة.
+ *
+ * 🔒 **والرقم لا يُكتب هنا بحال** — يُقرأ من الثابت. تعريفان لمصر ينحرفان يوماً،
+ * فيبحث الحقل حيث لا يقبل المسار.
+ *
+ * ⚠ **وقياسٌ حيّ قبل هذا التعديل وبعده** (2026-08-17، مفتاح الإنتاج): القيد
+ * الإقليمي كان قائماً سلفاً ويعمل — «برج خليفة» يردّ خمسة أبراجٍ **في مصر**
+ * (مرسى مطروح، بني سويف، الأقصر…) ولا يذكر دبي؛ و«Burj Khalifa» و«مطار دبي
+ * الدولي» و«برج المملكة الرياض» تردّ `200 {}`؛ و«الرياض» تردّ خمس قرىً مصرية.
+ * وبإضافة المستطيل: **النتائج نفسها حرفاً بحرف** في التسعة استعلامات المقيسة
+ * (بما فيها الشواهد الموجبة: مطار القاهرة ٥، ماريوت مينا هاوس ١، مدينتي ٠).
+ * فالمكسب ليس تغييرَ سلوكٍ اليوم بل **ربطُ حدّ البحث بحدّ الخدمة**: من يوسّع
+ * `SERVICE_BOUNDS` غداً يوسّع البحث معه، ولا يبقى نصفُ النظام على مصر ونصفه
+ * على تعريفٍ آخر.
+ */
 const REGION_CODES = ["eg"];
+
+/** مستطيل القيد — **مشتقٌّ** من `SERVICE_BOUNDS`، ولا رقم مكتوب هنا */
+const LOCATION_RESTRICTION = {
+  rectangle: {
+    low: { latitude: SERVICE_BOUNDS.minLat, longitude: SERVICE_BOUNDS.minLng },
+    high: { latitude: SERVICE_BOUNDS.maxLat, longitude: SERVICE_BOUNDS.maxLng },
+  },
+} as const;
 
 /**
  * FieldMask إلزامي عند جوجل، **وهو ضابط تكلفة لا تحسيناً**: الحقول المطلوبة
@@ -67,10 +106,15 @@ const DETAILS_FIELDS = ["id", "displayName", "formattedAddress", "location"].joi
 /**
  * نتيجة نداء جوجل — **ثلاث حالات لا اثنتان**.
  *
- * التمييز بين `ok` بصفر نتيجة وبين `unavailable` هو قلب قاعدة الارتداد:
- *   • `unavailable` (مفتاح مفقود · حصّة · شبكة · جسم فاسد) ⇒ ننزل لـ Nominatim.
- *   • `ok` بصفر نتيجة ⇒ **ليست فشلاً**، ولا ننزل لمزوّدٍ ثانٍ: نذهب مباشرةً
- *     إلى الخريطة. (أمر المالك صراحةً.)
+ * التمييز بين `ok` بصفر نتيجة وبين `unavailable` هو قلب قاعدة الارتداد،
+ * **ويبقى قلبها بعد تعديل 2026-08-17** وإن تغيّر ما يترتب عليه:
+ *   • `unavailable` (مفتاح مفقود · حصّة · شبكة · جسم فاسد) ⇒ المزوّد **لم يجب**،
+ *     فننزل للتالي بلا شرط، ولا يُحتسب هذا جواباً في حصيلة «هل بحث أحد؟».
+ *   • `ok` بصفر نتيجة ⇒ **جوابٌ حقيقي** لا فشل. وننزل للتالي **حين يكون
+ *     مجانياً وحده** (`mayFallThroughOnEmpty` في `lib/geo/search.ts`).
+ *
+ * ⚠ ولا تُدمج الحالتان «تبسيطاً»: عليهما يقوم الفرق بين أن يُقال للعميل
+ * «بحثنا ولم نجد» وأن يُقال له «البحث متعطّل مؤقتاً».
  */
 export type GoogleSuggestResult =
   | { status: "ok"; suggestions: PlaceSuggestion[] }
@@ -137,7 +181,11 @@ export async function googleAutocomplete(
       body: JSON.stringify({
         input,
         languageCode,
+        // 🔴 القيدان معاً — تعريف جوجل لمصر، وتعريفُنا لمنطقة الخدمة. والتقاطع
+        //    هو المفروض (شرط جوجل: `locationRestriction` مع `includedRegionCodes`
+        //    يتقاطعان)، فلا يتسع أحدهما على الآخر.
         includedRegionCodes: REGION_CODES,
+        locationRestriction: LOCATION_RESTRICTION,
         ...sessionField(sessionToken),
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -215,20 +263,53 @@ function googleLabel(displayName: string | undefined, formattedAddress: string |
 }
 
 /**
+ * نتيجة التحويل — **ثلاث حالات**، والثالثة أُضيفت 2026-08-17.
+ *
+ * `out-of-area` ليست نوعاً من `not-found`: الأولى «عرفتُه، وهو خارج ما نخدم»،
+ * والثانية «لا أعرف هذا المرجع». والمسار يترجمهما إلى رمزين مختلفين، ورسالةُ
+ * العميل فيهما ليست واحدة.
+ */
+export type GoogleDetailsResult =
+  | { status: "ok"; place: GeoPlace }
+  | { status: "out-of-area" }
+  | { status: "not-found" };
+
+/**
  * تفاصيل المكان المختار — **وهذا النداء هو ما يُنهي جلسة الفوترة**.
  *
  * فالترتيب الذي يجعل «القاهرة» فاتورةً واحدة: سبعة نداءات إكمال بنفس الرمز،
  * ثم هذا النداء بنفس الرمز — تُغلق الجلسة، ويتلف العميل الرمز.
  *
- * لا يرمي أبداً: `null` تعني «تعذّر التحويل»، وتترجمها طبقة المسار إلى رمز.
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 وهنا **وحدها** يُفحص الموقع بعد الردّ لا قبله — والسبب ليس تراخياً
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * قاعدةُ هذا العمل أن يُقيَّد النطاق **في الطلب** (انظر ترويسة القيدين أعلاه):
+ * نتيجةٌ تُسقَط بعد الردّ قد دُفع ثمنها. لكن `places/{id}` **لا يقبل قيداً
+ * إقليمياً ولا صندوقاً** — يأخذ معرّفاً ويردّ مكانه أينما كان. فلا يوجد شيءٌ
+ * «قبل الإرسال» يمكن فعله، والفحص بعد الردّ هو الوحيد الممكن.
+ *
+ * ⚠ **وهو ليس تحسيناً بل ثغرةٌ مقيسة** (2026-08-17، مفتاح الإنتاج): المعرّف
+ * `ChIJS-JnijRDXz4R4rfO4QLlRf8` (برج خليفة، دبي) — وهو معرّفٌ **علنيٌّ يلتقطه
+ * أيٌّ كان من خرائط جوجل — كان يردّ `HTTP 200` بإحداثيات
+ * `25.197197, 55.274376` **فيخرج من هنا `GeoPlace` تامّاً قابلاً للحجز خارج
+ * مصر**. و`ref` و`provider` يصلان من المتصفح (‏`/api/geocode/resolve`)، فلا
+ * يلزم لبلوغ ذلك إلا `fetch` واحد. ومن بعدها: محرّك مسافاتٍ يُنفق نداءً مدفوعاً
+ * على القاهرة–دبي، **ويخزّنه في `distance_cache`**، وسعرٌ حقيقيٌّ لرحلةٍ لا
+ * يمكن أن ننفّذها — وهي بعينها العاقبة التي وُلد `SERVICE_BOUNDS` لمنعها.
+ *
+ * 🔒 والحارس هو `isWithinServiceArea` نفسها التي يفرضها `/api/geocode/reverse`
+ * وتقصّ إليها الخريطة ويحرسها قيد 0080 — **تعريفٌ واحد لمصر لا أربعة**.
+ *
+ * لا يرمي أبداً.
  */
 export async function googlePlaceDetails(
   placeId: string,
   sessionToken: string | undefined,
   languageCode: string
-): Promise<GeoPlace | null> {
+): Promise<GoogleDetailsResult> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) return { status: "not-found" };
 
   const params = new URLSearchParams({ languageCode });
   // ⚠ الرمز هنا وسيط استعلام لا حقل جسم — والتفاصيل نداء GET
@@ -244,26 +325,34 @@ export async function googlePlaceDetails(
         cache: "no-store",
       }
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { status: "not-found" };
     body = (await res.json()) as DetailsBody;
   } catch {
-    return null;
+    return { status: "not-found" };
   }
 
   const lat = Number(body?.location?.latitude);
   const lng = Number(body?.location?.longitude);
   // 🔒 بلا إحداثيات لا مكان: النص وحده لا يُسعَّر (D-09)
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { status: "not-found" };
+
+  // 🔴 آخر بوابةٍ قبل أن تصير نتيجةُ جوجل مكاناً قابلاً للحجز — انظر الترويسة.
+  //    والرفض **قبل** بناء الوسم بقصد: مكانٌ خارج مصر لا يُصاغ له سطرُ عرضٍ
+  //    أصلاً، فلا يوجد في هذا الملف مسارٌ يخرج منه كائنٌ خارج منطقة الخدمة.
+  if (!isWithinServiceArea(lat, lng)) return { status: "out-of-area" };
 
   const label = googleLabel(body.displayName?.text, body.formattedAddress);
-  if (!label) return null;
+  if (!label) return { status: "not-found" };
 
   return {
-    label,
-    lat,
-    lng,
-    // `place_id` وحده مما ترجعه جوجل يجوز الاحتفاظ به بلا أجل — وهو المعرّف
-    // الذي يسافر مع لقطة الرحلة، فيبقى الحجز قابلاً للتفسير لاحقاً.
-    ref: body.id ?? placeId,
+    status: "ok",
+    place: {
+      label,
+      lat,
+      lng,
+      // `place_id` وحده مما ترجعه جوجل يجوز الاحتفاظ به بلا أجل — وهو المعرّف
+      // الذي يسافر مع لقطة الرحلة، فيبقى الحجز قابلاً للتفسير لاحقاً.
+      ref: body.id ?? placeId,
+    },
   };
 }
