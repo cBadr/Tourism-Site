@@ -4,6 +4,7 @@ import {
   CSV_FORMULA_PREFIXES,
   CSV_NUMERIC_LITERAL,
 } from "@/lib/export-types";
+import { siteTimeZone } from "@/lib/site-timezone";
 
 /**
  * مُسلسِل CSV عربي — نقيّ، بلا اعتماديات، ولا حساب فيه.
@@ -201,10 +202,8 @@ export function csvBool(value: unknown): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* التواريخ — بتوقيت القاهرة، بصيغة تُرتّبها إكسل                        */
+/* التواريخ — بمنطقة الموقع، بصيغة تُرتّبها إكسل                          */
 /* ------------------------------------------------------------------ */
-
-const TIME_ZONE = "Africa/Cairo";
 
 /** تاريخ صرف بلا لحظة زمنية — عمود `date` في Postgres */
 const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -212,21 +211,28 @@ const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 
 /**
- * مُنسِّق القاهرة — يُبنى مرة واحدة، ولغته `en-US` **عمداً**: هي التي تُخرج
- * خانات لاتينية من `formatToParts` في كل بيئة تشغيل. ولا نصّ منه يصل المستخدم؛
- * نقرأ أجزاءه ونركّب الصيغة بأيدينا.
+ * مُنسِّق منطقة الموقع — يُبنى مرة واحدة **لكل منطقة**، ولغته `en-US` **عمداً**:
+ * هي التي تُخرج خانات لاتينية من `formatToParts` في كل بيئة تشغيل. ولا نصّ منه
+ * يصل المستخدم؛ نقرأ أجزاءه ونركّب الصيغة بأيدينا.
+ *
+ * ⚠ **والذاكرة مفتاحُها المنطقة لا مجرّد «بُني أم لا»** (هجرة 0075): مُنسِّقٌ
+ * محفوظٌ بلا مفتاح كان سيبقى على المنطقة القديمة بعد أن يغيّرها المالك، فيصدّر
+ * الملفُّ ساعاتٍ لا تطابق ما على الشاشة — وهو صنف العيب الذي لا يشتكي منه أحد.
  *
  * `undefined` = لم يُحاوَل بعد · `null` = بيئة بلا بيانات مناطق زمنية.
  */
-let cairoFormat: Intl.DateTimeFormat | null | undefined;
+let zoneFormat: Intl.DateTimeFormat | null | undefined;
+let zoneFormatKey: string | undefined;
 
 type Stamp = { year: number; month: number; day: number; hour: number; minute: number };
 
-function cairoStamp(date: Date): Stamp {
-  if (cairoFormat === undefined) {
+function zonedStamp(date: Date): Stamp {
+  const zone = siteTimeZone();
+  if (zoneFormat === undefined || zoneFormatKey !== zone) {
+    zoneFormatKey = zone;
     try {
-      cairoFormat = new Intl.DateTimeFormat("en-US", {
-        timeZone: TIME_ZONE,
+      zoneFormat = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -235,11 +241,11 @@ function cairoStamp(date: Date): Stamp {
         hourCycle: "h23",
       });
     } catch {
-      cairoFormat = null;
+      zoneFormat = null;
     }
   }
 
-  if (cairoFormat === null) {
+  if (zoneFormat === null) {
     // نفس احتياط `components/booking/format.ts`: UTC بدل الانهيار
     return {
       year: date.getUTCFullYear(),
@@ -250,7 +256,7 @@ function cairoStamp(date: Date): Stamp {
     };
   }
 
-  const parts = cairoFormat.formatToParts(date);
+  const parts = zoneFormat.formatToParts(date);
   const read = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
   return {
     year: read("year"),
@@ -263,7 +269,7 @@ function cairoStamp(date: Date): Stamp {
 }
 
 /**
- * طابع زمني ⇒ `YYYY-MM-DD HH:mm` بتوقيت القاهرة.
+ * طابع زمني ⇒ `YYYY-MM-DD HH:mm` بمنطقة الموقع.
  *
  * **لماذا هذه الصيغة بالذات:** هي الوحيدة التي يرتّبها إكسل نصّياً وزمنياً
  * بالنتيجة نفسها (الأكبر أهمّيةً أولاً)، فيصحّ الفرز حتى لو لم يتعرّف عليها
@@ -271,7 +277,7 @@ function cairoStamp(date: Date): Stamp {
  * بمدى.
  *
  * **والتاريخ الصرف يمرّ كما هو ولا يمسّه تحويل**: عمود `date` لا لحظة له،
- * وتمريره على `Date` يفسّره منتصف ليل UTC ثم يعرضه بتوقيت القاهرة، فيصير
+ * وتمريره على `Date` يفسّره منتصف ليل UTC ثم يعرضه بمنطقة الموقع، فيصير
  * «١ أغسطس» يوم «٣١ يوليو» أو العكس بحسب إشارة الإزاحة. نفس فخّ `dateLabel`
  * في `app/admin/finance/_components/range.ts` وقد نصّ عليه هناك.
  */
@@ -283,7 +289,7 @@ export function csvDate(value: unknown): string {
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return "";
 
-  const s = cairoStamp(date);
+  const s = zonedStamp(date);
   return `${s.year}-${pad2(s.month)}-${pad2(s.day)} ${pad2(s.hour)}:${pad2(s.minute)}`;
 }
 

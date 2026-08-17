@@ -1,4 +1,5 @@
 import { MAX_DERIVED_WAITING_HOURS, type ExtraSelection } from "@/lib/extras-types";
+import { siteTimeZone } from "@/lib/site-timezone";
 import type { ExtraServiceRow } from "@/lib/extras-types";
 import type { CreateBookingRequest } from "@/lib/booking-types";
 import type { VerifyCouponRequest } from "@/lib/discounts/types";
@@ -224,11 +225,16 @@ export function toSelection(quantities: Record<string, number>): ExtraSelection[
 /* تقدير ساعات الانتظار — للعرض وحده                                     */
 /* ------------------------------------------------------------------ */
 
-/** مكوّنات اليوم بتوقيت القاهرة — نفس منطقة `derive_waiting_hours` حرفياً */
-function cairoDayKey(date: Date): string {
+/**
+ * مكوّنات اليوم بمنطقة الموقع — **نفس منطقة `derive_waiting_hours` حرفياً**:
+ * الدالة في Postgres تقرأ `public.site_time_zone()` وهذه تقرأ `siteTimeZone()`،
+ * وكلاهما عمود `trip_settings.time_zone` نفسه (هجرة 0075). ولو افترق الطرفان
+ * لأظهرت الشاشة ساعاتِ انتظارٍ تخالف ما يحتسبه الحجز.
+ */
+function siteDayKey(date: Date): string {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Africa/Cairo",
+      timeZone: siteTimeZone(),
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -268,7 +274,7 @@ export function estimateWaitingHours(
   const back = new Date(returnIso);
   if (Number.isNaN(pickup.getTime()) || Number.isNaN(back.getTime())) return null;
   if (back.getTime() <= pickup.getTime()) return 0;
-  if (cairoDayKey(pickup) !== cairoDayKey(back)) return 0;
+  if (siteDayKey(pickup) !== siteDayKey(back)) return 0;
   const hours = Math.ceil((back.getTime() - pickup.getTime()) / 3_600_000);
   return Math.min(hours, MAX_DERIVED_WAITING_HOURS);
 }
@@ -279,5 +285,5 @@ export function isReturnAnotherDay(pickupIso: string | null, returnIso: string |
   const pickup = new Date(pickupIso);
   const back = new Date(returnIso);
   if (Number.isNaN(pickup.getTime()) || Number.isNaN(back.getTime())) return false;
-  return cairoDayKey(pickup) !== cairoDayKey(back);
+  return siteDayKey(pickup) !== siteDayKey(back);
 }

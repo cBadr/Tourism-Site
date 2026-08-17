@@ -43,6 +43,7 @@ import {
   type QueueStats,
   type SendOutcome,
 } from "@/lib/notifications/types";
+import { getSiteTimeZone } from "@/lib/site-timezone.server";
 
 /**
  * عامل الإشعارات — قلب أنبوب Outbox (قرار ٦ من خارطة الطريق).
@@ -423,9 +424,18 @@ async function deliverOne(
   const delivering =
     to.audience === "ops" && recipientKind === "partner" ? DEFAULT_CHANNELS : requested;
 
+  /**
+   * ⚠ **والجمهور يُمرَّر إلى الراسمَين معاً** — لا إلى راسم البثّ وحده.
+   *
+   * كان `renderNotification` يُنادى بلا جمهور، فيبني وجهةً واحدة للجميع هي
+   * صفحةُ العميل: فالمالك يهبط على `/booking/<token>` بدل صفحة الطلب في لوحته
+   * (بلاغ المالك 2026-08-17)، **وأيُّ حدثٍ غير بثّي يُوجَّه غداً إلى متعهد**
+   * كان سيسلّمه إجماليَ العميل ومرجعه واسمه وإحداثيات التقاطه (D-19 · D-46).
+   * و`to.audience` محسوبٌ أعلاه بالفعل — فتمريره هو كل ما كان ينقص.
+   */
   const message = isDispatchEvent(event)
     ? renderDispatchNotification(event, record.payload ?? null, ctx, to.audience)
-    : renderNotification(event, record.payload ?? null, ctx);
+    : renderNotification(event, record.payload ?? null, ctx, to.audience);
 
   const outcomes: ChannelOutcome[] = [];
 
@@ -605,16 +615,26 @@ async function deliverOne(
  * ترجع false حين تفشل الكتابة تماماً: عندها يبقى الصف «في الطابور» وسيُعاد
  * إرساله في الدورة القادمة، لذلك نرفع الأمر في ملخّص الدورة بدل ابتلاعه
  * (تكرار صامت بلا سبب ظاهر أسوأ عطب ممكن في طابور إشعارات).
+ *
+ * ── التراجع **ثلاث درجات** لا درجتان (0077) ────────────────────────────────
+ *
+ * `channel_outcomes` عمودٌ جديد، وقاعدةٌ لم تُهاجَر بعد ترفض الكتابة كلها.
+ * ولو بقي التراجع درجتين (كامل ⇒ `status` وحدها) لكان أول خادمٍ بلا الهجرة
+ * **يفقد `attempts` و`error` و`escalation` معاً** — أي يفقد سببَ الفشل نفسه
+ * الذي وُجد العمود ليوضّحه. فالدرجة الوسطى تحفظ ما كان يُكتب قبل 0077 حرفياً.
  */
 async function writeResult(
   supabase: SupabaseClient,
   record: NotificationRecord,
   status: NotificationStatus,
   errorText: string | null,
-  escalation?: string
+  escalation?: string,
+  /** حصيلة كل قناة — تُخزَّن كما حُسبت، ولا تُذاب في جملة (0077) */
+  channelOutcomes?: ChannelOutcome[]
 ): Promise<boolean> {
   const attempts = typeof record.attempts === "number" ? record.attempts + 1 : 1;
-  const full: Record<string, unknown> = {
+  /** ما كان يُكتب قبل 0077 — وهو درجة التراجع الوسطى بعينها */
+  const legacy: Record<string, unknown> = {
     status,
     attempts,
     error: errorText,
@@ -622,7 +642,14 @@ async function writeResult(
     escalation: escalation ?? null,
   };
   // delivered_at يُكتب مرة واحدة عند أول تسليم ناجح ولا يُمسح بعدها
-  if (status === "sent" && !record.delivered_at) full.delivered_at = new Date().toISOString();
+  if (status === "sent" && !record.delivered_at) legacy.delivered_at = new Date().toISOString();
+
+  const full: Record<string, unknown> = {
+    ...legacy,
+    // مصفوفةٌ دائماً (القيد في القاعدة يفرض ذلك) — و«صفر قناة خارجية» تُكتب `[]`
+    // لا `null`: الفرق بين «لا قناة» و«قبل 0077» يجب أن يبقى مقروءاً في الشاشة.
+    channel_outcomes: channelOutcomes ?? [],
+  };
 
   const first = await supabase.from("notifications").update(full).eq("id", record.id).select("id");
   // فخ الصفوف الصفرية: نجاح ظاهري بصفر صفوف = الكتابة لم تحدث
@@ -630,10 +657,17 @@ async function writeResult(
 
   const second = await supabase
     .from("notifications")
+    .update(legacy)
+    .eq("id", record.id)
+    .select("id");
+  if (!second.error && (second.data?.length ?? 0) > 0) return true;
+
+  const third = await supabase
+    .from("notifications")
     .update({ status })
     .eq("id", record.id)
     .select("id");
-  return !second.error && (second.data?.length ?? 0) > 0;
+  return !third.error && (third.data?.length ?? 0) > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -666,6 +700,15 @@ export async function dispatchNotifications(
   const startedAt = Date.now();
 
   try {
+    /**
+     * 🔴 **منطقة الموقع أولاً** (هجرة 0075): هذا العامل يعمل من `/api` ومن زرّ
+     * اللوحة، ومسار `/api` **لا يمرّ بالتخطيط** فلا يضبط `i18n/request.ts`
+     * الوحدةَ المشتركة. وبلا هذا السطر تُرسَم مواعيد الرحلات في تليجرام
+     * والبريد بالمنطقة الافتراضية بينما تعرضها الشاشة بمنطقة المالك —
+     * رقمان لشيء واحد، وأسوأهما أن المتعهد يقرأ الخطأ لا نحن.
+     */
+    await getSiteTimeZone();
+
     const supabase = createServiceSupabase();
     if (!supabase) return emptySummary("no-service-client");
 
@@ -737,7 +780,8 @@ export async function dispatchNotifications(
               record,
               outcome.status,
               errorText,
-              outcome.escalation
+              outcome.escalation,
+              outcome.channels
             );
             return { outcome, wrote };
           } catch (err) {

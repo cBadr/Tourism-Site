@@ -6,10 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type { BookingStatus } from "@/lib/booking-types";
 import { cn } from "@/lib/utils";
+import { DEFAULT_SITE_TIME_ZONE, siteTimeZone } from "@/lib/site-timezone";
 
 /**
  * لبنات مشتركة لشاشات الطلبات (قائمة + تفاصيل) — بنفس إيقاع شاشتي الأسطول والإعدادات:
- * وسوم حالة ملوّنة، وقت نسبي عربي، تاريخ بتوقيت القاهرة، وبطاقات تنبيه عبر الـ query string.
+ * وسوم حالة ملوّنة، وقت نسبي عربي، تاريخ بمنطقة الموقع، وبطاقات تنبيه عبر الـ query string.
  *
  * كلها مكوّنات خادمية الصلاحية (بلا "use client") — تُستدعى داخل مكوّنات الخادم فقط،
  * فلا خطر اختلاف ICU بين الخادم والمتصفح لأن الناتج نص جاهز في الـ HTML.
@@ -182,10 +183,15 @@ export const PLAN_LABELS: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// الوقت — كل التواريخ تُعرض بتوقيت القاهرة لأن التشغيل والعملاء في مصر
+// الوقت — كل التواريخ تُعرض **بمنطقة الموقع** لأن التشغيل والعملاء فيها
+//
+// كانت مثبّتة على القاهرة، وصارت إعداد مالك في `/admin/settings` (هجرة 0075).
+// والقراءة عند النداء لا عند تحميل الوحدة: القيمة الافتراضية للوسيط `timeZone`
+// تُقيَّم في كل استدعاء، فتتبع الإعداد بلا أن يمسّ أيٌّ من سبعة مستدعين.
 // ---------------------------------------------------------------------------
 
-export const CAIRO_TIME_ZONE = "Africa/Cairo";
+/** @deprecated الافتراضي وحده — القيمة السارية من `siteTimeZone()` */
+export const CAIRO_TIME_ZONE = DEFAULT_SITE_TIME_ZONE;
 
 const AR_MONTHS = [
   "يناير",
@@ -205,7 +211,7 @@ const AR_MONTHS = [
 /** أجزاء التاريخ في منطقة زمنية بعينها — أرقام لاتينية جاهزة للحساب */
 export function zonedParts(
   date: Date,
-  timeZone: string = CAIRO_TIME_ZONE
+  timeZone: string = siteTimeZone()
 ): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone,

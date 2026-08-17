@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { DEFAULT_TRIP_SETTINGS } from "@/lib/booking-types";
+import { listSupportedTimeZones, timeZoneLabel } from "@/lib/site-timezone";
 import { readDispatchSettings } from "@/lib/dispatch/settings";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
@@ -361,6 +362,34 @@ function MirrorLine({ row }: { row: MirrorRow }) {
   );
 }
 
+/**
+ * خيارات المنتقي: قائمة زمن التشغيل **مضموماً إليها القيمة السارية**.
+ *
+ * والضمّ ليس احتياطاً نظرياً: الصفّ قابل للتحرير من محرّر SQL، وقائمة ICU
+ * تحمل الأسماء القانونية وحدها (‏٤١٧) بينما تقبل Postgres مرادفاتٍ أكثر
+ * (‏`Egypt` · `US/Eastern`). فمنتقٍ لا يحمل المحفوظ كان سيعرض أول عنصرٍ في
+ * القائمة كأنه المحفوظ، **فيبدّل منطقةَ الموقع بمجرد ضغط «حفظ»** — تغييرٌ لم
+ * يطلبه أحد ولا رسالة تنبّه إليه.
+ */
+function timeZoneOptions(current: string): readonly string[] {
+  const list = listSupportedTimeZones();
+  return list.includes(current) ? list : [current, ...list];
+}
+
+/** الساعة الآن في تلك المنطقة — يقرؤها المالك فيتأكد قبل الحفظ */
+function nowInZone(zone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date());
+  } catch {
+    return "—";
+  }
+}
+
 export async function TripSettingsSection({ wired }: { wired: boolean }) {
   const supabase = await createServerSupabase();
 
@@ -370,6 +399,8 @@ export async function TripSettingsSection({ wired }: { wired: boolean }) {
         { settings: DEFAULT_TRIP_SETTINGS, loaded: false, reason: "no-client" },
         EMPTY_MIRRORS,
       ];
+
+  const zoneOptions = timeZoneOptions(trip.settings.timeZone);
 
   // الهجرة غير مطبَّقة ⇒ لا نموذج يُعرض بلا مكان يُحفظ فيه (نمط الفشل ٣)
   const tableReady = trip.loaded || trip.reason === "empty";
@@ -506,6 +537,91 @@ export async function TripSettingsSection({ wired }: { wired: boolean }) {
             </p>
           ) : null}
         </div>
+
+        {/* ── المنطقة الزمنية للموقع (هجرة 0075) ── */}
+        <div className="space-y-1.5">
+          <Label htmlFor={TRIP_SETTINGS_COLUMNS.timeZone} className="flex items-center gap-1.5">
+            المنطقة الزمنية للموقع
+            <HelpTip>
+              الساعة التي يعمل بها الموقع كله: بها <strong>يُفهم</strong> الموعد الذي يكتبه
+              العميل في نموذج الحجز، وبها <strong>يُعرض</strong> كل تاريخ في الموقع واللوحة
+              والبورتال والإشعارات، وعليها تُجمَّع أيام التقارير والإحصاءات.
+              <br />
+              <strong>ولا تُغيّر حجزاً قائماً.</strong> الموعد محفوظ لحظةً مطلقة لا ساعةَ
+              حائط؛ فتبديل المنطقة يعرض الحجز نفسه بساعة البلد الجديد — نفس اللحظة، لا
+              تقديمَ ولا تأخير. والذي يتغيّر فعلاً: تفسير <em>المواعيد الجديدة</em>، وحدود
+              أيام التقارير.
+              <br />
+              القائمة من قاعدة المناطق التي يشغّلها الخادم نفسه — تُراعي التوقيت الصيفي
+              تلقائياً، ولذلك اسمُ مدينة لا إزاحة مثل <code dir="ltr">+02:00</code>.
+            </HelpTip>
+          </Label>
+          <select
+            id={TRIP_SETTINGS_COLUMNS.timeZone}
+            name={TRIP_SETTINGS_COLUMNS.timeZone}
+            defaultValue={trip.settings.timeZone}
+            disabled={!canEdit}
+            required
+            dir="ltr"
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-80"
+          >
+            {zoneOptions.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            السارية الآن: <strong>{timeZoneLabel(trip.settings.timeZone, "ar")}</strong>{" "}
+            <span dir="ltr">({trip.settings.timeZone})</span> — الساعة عندها الآن{" "}
+            <strong dir="ltr">{nowInZone(trip.settings.timeZone)}</strong>.
+          </p>
+          {zoneOptions.length <= 1 ? (
+            <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+              زمن التشغيل لا يُخرج قائمة المناطق، فالقائمة تحمل القيمة الحالية وحدها —
+              وتغييرها يحتاج تحديث المنطقة مباشرةً في قاعدة البيانات.
+            </p>
+          ) : null}
+        </div>
+
+        {/* ── خريطة المسار على صفحة متابعة الحجز (هجرة 0078) ── */}
+        <Label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-input p-3 text-sm font-normal">
+          <span className="leading-relaxed">
+            <span className="flex items-center gap-1.5 font-medium">
+              خريطة مسار الرحلة
+              <HelpTip>
+                صورة ثابتة تُظهر نقطة الانطلاق ونقطة الوصول والخط بينهما، تظهر في صفحة
+                متابعة الحجز التي يفتحها العميل، وفي بطاقة الرحلة داخل بورتال المتعهد.
+                <br />
+                <strong>لا تظهر قبل تأكيد الحجز</strong> — قبله يرى العميل مكانها لوحةً
+                تشرح أن التجهيز يبدأ بالتأكيد وتدلّه على الدفع. و<strong>العربون
+                يؤكّد</strong>: من دفع عربوناً يرى خريطته كمن دفع كاملاً.
+                <br />
+                وللمتعهد <strong>بعد قبوله الرحلة وحده</strong> — قبل القبول لا تصله ولا
+                يستطيع طلبها، كما لا يصله العنوان الدقيق نصّاً.
+                <br />
+                <strong>ولماذا مفتاح إطفاء أصلاً:</strong> خدمة الخرائط تُحاسِب على كل
+                صورة. والصورة تُولَّد <em>مرة واحدة لكل حجز</em> وتُخزَّن عندنا، فلا
+                تتكرر الكلفة مهما فُتحت الصفحة. وإطفاؤه هنا يوقف التوليد <em>ويخفي</em>
+                المخزَّن معاً، بلا نشر جديد.
+                <br />
+                ⚠ ومفتاح الخدمة نفسه (<code dir="ltr">GOOGLE_MAPS_API_KEY</code>) في بيئة
+                الخادم لا في هذه الشاشة — <strong>وبدونه لا خريطة أصلاً</strong> مهما كان
+                هذا المفتاح مفعّلاً.
+              </HelpTip>
+            </span>
+            <span className="block text-muted-foreground">
+              صورة واحدة لكل حجز تُولَّد عند التأكيد وتُخزَّن — الإطفاء يوقف الكلفة فوراً.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            name={TRIP_SETTINGS_COLUMNS.routeMapEnabled}
+            defaultChecked={trip.settings.routeMapEnabled}
+            disabled={!canEdit}
+            className="size-5 shrink-0 accent-primary"
+          />
+        </Label>
 
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!canEdit}>

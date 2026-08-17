@@ -6,6 +6,7 @@ import {
   PayoutBlock,
   TripFacts,
   TripFlight,
+  TripMap,
   TripNotes,
   TripRoute,
   TripStatusChip,
@@ -28,6 +29,7 @@ import {
   CREW_SAVED_MESSAGE,
   TripCrewPanel,
 } from "../requests/crew-panel";
+import { routeMapAvailability } from "@/lib/maps/route-map";
 import { loadTrips, splitTrips, type PortalTrip } from "../requests/data";
 
 /**
@@ -64,7 +66,19 @@ const ERROR_MESSAGES: Record<string, string> = {
 const ACCEPTED_MESSAGE =
   "قبلت الرحلة وأصبحت مُسندة إليك وحدك — بيانات تواصل العميل ظاهرة لك الآن في بطاقتها.";
 
-function TripCard({ trip, past }: { trip: PortalTrip; past?: boolean }) {
+function TripCard({
+  trip,
+  past,
+  hasMap,
+  mapApproximate,
+}: {
+  trip: PortalTrip;
+  past?: boolean;
+  /** له صورةٌ مخزَّنة الآن؟ — بلا صفٍّ لا تُرسم `<img>` تنتهي بـ٤٠٤ مكسورة */
+  hasMap?: boolean;
+  /** ورُسمت بخطٍّ مستقيم لا بمسار قيادة (0079) — يُقال ولا يُترك للتخمين */
+  mapApproximate?: boolean;
+}) {
   return (
     <Card className={cn("gap-4 p-5", past && "bg-muted/30")}>
       <div className="flex flex-wrap items-center gap-2">
@@ -101,6 +115,13 @@ function TripCard({ trip, past }: { trip: PortalTrip; past?: boolean }) {
           whatsapp={trip.customerWhatsapp}
         />
       </div>
+
+      {/*
+        خريطة المسار (م‑١١) — **هنا وحدها**: بطاقة رحلةٍ مُسنَدة. ولا نظير لها
+        في `OfferCard` قبل القبول، وحارسُ نقطة الصورة نفسه يرفض من ليس مُسنَداً
+        إليه (‏`partner_route_map_visible` في 0078).
+      */}
+      {hasMap ? <TripMap bookingId={trip.bookingId} approximate={mapApproximate} /> : null}
 
       <TripFacts trip={trip} />
       {/*
@@ -160,6 +181,10 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
   // يجب أن يبقى ثابتاً بين تصييرين متطابقين
   const { trips, ready, failed, now } = await loadTrips();
   const { upcoming, past } = splitTrips(trips, now);
+
+  // استعلامٌ واحد لكل البطاقات لا صفٌّ لكل بطاقة — و`Set` فارغة حين يُطفئ
+  // المالك المفتاح، فتختفي الخرائط من البورتال كما تختفي من صفحة العميل.
+  const mapsReady = await routeMapAvailability(trips.map((trip) => trip.bookingId ?? ""));
 
   // وجهةٌ واحدة لإجراءين، فعَلَما النجاح منفصلان ولا يجتمعان: كل إعادة توجيه
   // تحمل واحداً منهما. والجملة تتبع العلم لأن «قبلت الرحلة» و«سجّلنا الطاقم»
@@ -228,7 +253,15 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
             رحلات قادمة
           </h3>
           {upcoming.map((trip) => (
-            <TripCard key={trip.offerId} trip={trip} />
+            <TripCard
+              key={trip.offerId}
+              trip={trip}
+              hasMap={trip.bookingId !== null && mapsReady.has(trip.bookingId)}
+              mapApproximate={
+                trip.bookingId !== null &&
+                mapsReady.get(trip.bookingId)?.geometrySource === "straight"
+              }
+            />
           ))}
         </section>
       ) : null}
@@ -240,7 +273,16 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
             رحلات سابقة
           </h3>
           {past.map((trip) => (
-            <TripCard key={trip.offerId} trip={trip} past />
+            <TripCard
+              key={trip.offerId}
+              trip={trip}
+              past
+              hasMap={trip.bookingId !== null && mapsReady.has(trip.bookingId)}
+              mapApproximate={
+                trip.bookingId !== null &&
+                mapsReady.get(trip.bookingId)?.geometrySource === "straight"
+              }
+            />
           ))}
         </section>
       ) : null}

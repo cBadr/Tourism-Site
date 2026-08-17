@@ -1680,6 +1680,188 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ق) م‑١١ — مفتاح خريطة المسار، والحارس الذي يمنع وجودها قبل التأكيد
+--
+-- ثلاثة توكيدات، وكلٌّ منها يمسك خطأً مختلفاً:
+--
+--   (ق-١) العمود موجود وافتراضه `true` — من أسقطه أو قلبه بهجرةٍ تالية يُمسَك.
+--   (ق-٢) 🔴 **الحارس حيّ**: المُشغّل يرفض صفَّ خريطةٍ على حجزٍ بانتظار الدفع
+--         ويقبله على حجزٍ مؤكَّد. وهذا هو تنفيذ D-48 مقلوباً: الحجز لحظة
+--         `create_booking` حالته `pending_payment`، فنداءُ خرائطَ خارجيّ لا
+--         يستطيع أن يدخل معاملة الحجز أصلاً — ثمرتُه مرفوضة في القاعدة.
+--         **والشاهد الموجب لازم**: بلا قبولٍ على المؤكَّد لا يفرّق الفحص بين
+--         «حارسٌ يعمل» و«جدولٌ لا يقبل شيئاً».
+--   (ق-٣) الجدول مغلق على الأدوار العامة، وحارس الجمهور غير ممنوح لـ`anon`.
+--
+-- والقياس كله داخل معاملةٍ فرعية تُرجَع: لا حجز ولا صفَّ تدقيق يبقى.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_pend constant uuid := 'ac110000-0000-4000-8000-0000000000d1';
+  v_conf constant uuid := 'ac110000-0000-4000-8000-0000000000c1';
+  v_def  text;
+  v_hint text;
+  v_no   boolean := false;
+  v_yes  boolean := false;
+  v_open text;
+begin
+  -- (ق-١) العمود وافتراضه
+  select column_default into v_def
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name   = 'trip_settings'
+    and column_name  = 'route_map_enabled';
+
+  if v_def is null then
+    raise exception '(ق-١) العمود route_map_enabled غائب — هجرة 0078 غير مطبَّقة أو أُزيح العمود';
+  end if;
+  if v_def not like 'true%' then
+    raise exception '(ق-١) افتراض route_map_enabled «%» — المتوقع true', v_def;
+  end if;
+
+  -- (ق-٢) الحارس — بمحاولتَي إدراجٍ حيّتين، سالبةٍ ثم موجبة
+  begin
+    insert into public.bookings
+      (id, reference, public_token, status, class_slug, class_title, total, currency,
+       plan, amount_due, amount_remaining, customer_name, customer_phone, trip)
+    values
+      (v_pend, 'TR-Q11D11', repeat('q', 40), 'pending_payment', 'm11-probe',
+       'م‑١١ فئة فحص', 1000, 'EGP', 'full', 1000, 0, 'فحص م‑١١', '01000000011',
+       '{}'::jsonb),
+      (v_conf, 'TR-Q11C11', repeat('w', 40), 'confirmed', 'm11-probe',
+       'م‑١١ فئة فحص', 1000, 'EGP', 'full', 1000, 0, 'فحص م‑١١', '01000000011',
+       '{}'::jsonb);
+
+    begin
+      insert into public.booking_route_maps
+        (booking_id, storage_path, provider, width, height, byte_size)
+      values (v_pend, 'probe/m11-d.png', 'google', 640, 360, 1);
+    exception when others then
+      get stacked diagnostics v_hint = pg_exception_hint;
+      v_no := (v_hint = 'booking-not-confirmed');
+    end;
+
+    begin
+      insert into public.booking_route_maps
+        (booking_id, storage_path, provider, width, height, byte_size)
+      values (v_conf, 'probe/m11-c.png', 'google', 640, 360, 1);
+      v_yes := true;
+    exception when others then
+      v_yes := false;
+    end;
+
+    if not v_no then
+      raise exception
+        '(ق-٢) 🔴 المُشغّل قَبِل خريطةً على حجزٍ بانتظار الدفع (التلميح: %) — فلا شيء يمنع نداء خرائط داخل معاملة الحجز (D-48)',
+        coalesce(v_hint, '(بلا)');
+    end if;
+    if not v_yes then
+      raise exception
+        '(ق-٢) المُشغّل رفض خريطةً على حجزٍ مؤكَّد — الحارس يمنع الميزة كلها لا ما قبل التأكيد';
+    end if;
+
+    raise exception 'ROLLBACK_MARKER';
+  exception
+    when others then
+      if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+  end;
+
+  -- (ق-٣) المنح: لا شيء لدورٍ عام، ولا تنفيذ لـ`anon`
+  select string_agg(distinct grantee || ':' || privilege_type, '، ') into v_open
+  from information_schema.role_table_grants
+  where table_schema = 'public'
+    and table_name   = 'booking_route_maps'
+    and grantee in ('anon', 'authenticated', 'PUBLIC');
+  if v_open is not null then
+    raise exception '(ق-٣) booking_route_maps مفتوح لدورٍ عام (%)', v_open;
+  end if;
+
+  -- شاهدٌ موجب لكاشف منح الدوال قبل الحكم بالسالب
+  if not has_function_privilege('authenticated',
+        'public.partner_route_map_visible(uuid)', 'execute') then
+    raise exception '(ق-٣) المتعهد لا يستطيع تنفيذ حارس الخريطة — الميزة مقفلة عليه كلها';
+  end if;
+  if has_function_privilege('anon', 'public.partner_route_map_visible(uuid)', 'execute') then
+    raise exception '(ق-٣) partner_route_map_visible ممنوحة لـ anon — والزائر ليس متعهداً';
+  end if;
+
+  raise notice '✔ (ق) مفتاح الخريطة افتراضه true، والمُشغّل يرفضها قبل التأكيد ويقبلها بعده، والجدول مغلق';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ق-٤) 🔴 هندسةُ الخط تُخزَّن — فالنصّ تحت الصورة يصدق (0079)
+--
+-- ملاحظة المالك (2026-08-17): الخط المستقيم بين نقطتين غير منطقي — **والسعر
+-- مشتقٌّ من مسافة طريق**، فمستقيمٌ يعبر النيل أو الصحراء يوحي بمسافةٍ لم
+-- نُسعّرها. والهندسة قد تسقط (مزوّدٌ لا يردّ)، فالمختار: تُرسم مستقيمةً
+-- **وتُوسم تقريبية**، والوسم يُقرأ من هذا العمود لا يُخمَّن.
+--
+-- ولذلك يُفحص شيئان: أن القيمة الرابعة مرفوضة، وأن الافتراضي هو **الأحوط**
+-- (`straight`) لا الأجمل — فكاتبٌ ينسى العمود يحصل على «تقريبي» لا على ادّعاء
+-- مسار قيادة لم يقع.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_conf constant uuid := 'ac110000-0000-4000-8000-0000000000c4';
+  v_state text;
+  v_def   text;
+begin
+  select column_default into v_def
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name   = 'booking_route_maps'
+    and column_name  = 'geometry_source';
+
+  if v_def is null then
+    raise exception '(ق-٤) العمود geometry_source غائب — هجرة 0079 غير مطبَّقة';
+  end if;
+  if v_def not like '''straight''%' then
+    raise exception
+      '(ق-٤) افتراض geometry_source «%» — والمتوقع straight (الأحوط: لا يدّعي مساراً)', v_def;
+  end if;
+
+  begin
+    insert into public.bookings
+      (id, reference, public_token, status, class_slug, class_title, total, currency,
+       plan, amount_due, amount_remaining, customer_name, customer_phone, trip)
+    values
+      (v_conf, 'TR-Q11G11', repeat('e', 40), 'confirmed', 'm11-probe',
+       'م‑١١ فئة فحص', 1000, 'EGP', 'full', 1000, 0, 'فحص م‑١١', '01000000011',
+       '{}'::jsonb);
+
+    v_state := null;
+    begin
+      insert into public.booking_route_maps
+        (booking_id, storage_path, provider, width, height, byte_size, geometry_source)
+      values (v_conf, 'probe/m11-g.png', 'google', 640, 360, 1, 'guess');
+      v_state := '(قُبلت)';
+    exception when others then
+      get stacked diagnostics v_state = returned_sqlstate;
+    end;
+
+    if v_state <> '23514' then
+      raise exception
+        '(ق-٤) هندسةٌ بقيمةٍ رابعة انتهت بـ«%» لا 23514 — القيد غائب، والنصّ تحت الصورة يصير تخميناً',
+        v_state;
+    end if;
+
+    -- شاهدٌ موجب: القيمة المشروعة تمرّ
+    insert into public.booking_route_maps
+      (booking_id, storage_path, provider, width, height, byte_size, geometry_source)
+    values (v_conf, 'probe/m11-g.png', 'google', 640, 360, 1, 'osrm');
+
+    raise exception 'ROLLBACK_MARKER';
+  exception
+    when others then
+      if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+  end;
+
+  raise notice '✔ (ق-٤) هندسة الخط مخزَّنة ومقيَّدة بثلاث قيم، وافتراضها الأحوط (straight)';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ل) التنظيف — لا شيء من صفوف الاختبار يبقى، والجلسة تعود كما كانت
 --
 -- كل كتلة كنس تراجعت عن نفسها، فلا يُتوقع بقاء صف. والتنظيف هنا يغطي تشغيلاً

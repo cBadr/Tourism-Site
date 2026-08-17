@@ -13,11 +13,13 @@
  *     عرضها هنا رغم ذلك: مؤشر «−١٢٪» بلا ذكر ما قُورِن به ادعاء لا معلومة،
  *     والمالك يجب أن يقرأ «مقارنةً بـ ١ – ٧ أغسطس» بعينه.
  *
- * (٣) **التوقيت المرجعي القاهرة.** كل تجميع يومي في هذا المستودع يقع على
- *     `(occurred_at at time zone 'Africa/Cairo')::date`؛ فلو قرأت الواجهة
- *     «اليوم» بتوقيت الخادم (UTC على المنصات السحابية) لانزاح النطاق يوماً
- *     كاملاً عن أرقام المرحلة ٧، وهو بالضبط العطب الذي تحرّمه قاعدة «رقمان
- *     لنفس الشيء في شاشتين».
+ * (٣) **التوقيت المرجعي منطقةُ الموقع.** كل تجميع يومي في هذا المستودع يقع على
+ *     `(occurred_at at time zone public.site_time_zone())::date`؛ فلو قرأت
+ *     الواجهة «اليوم» بتوقيت الخادم (UTC على المنصات السحابية) لانزاح النطاق
+ *     يوماً كاملاً عن أرقام المرحلة ٧، وهو بالضبط العطب الذي تحرّمه قاعدة
+ *     «رقمان لنفس الشيء في شاشتين». والمنطقة إعداد مالك منذ هجرة 0075،
+ *     **والطرفان يقرآن العمود نفسه** — `siteTimeZone()` هنا و`site_time_zone()`
+ *     هناك — فلا ينفصل الحدّ عن التجميع.
  *
  * ولماذا لا يُستورَد نطاق شاشة المالية (`app/admin/finance/_components/range.ts`)؟
  * لسببين: مفرداته غير مفردات هذه المرحلة (اليوم / هذا الشهر / الشهر الماضي
@@ -25,6 +27,8 @@
  * بعينه. الدوال التقويمية المكررة أدناه بدائية ولا تحمل أي قرار عمل، فلا يوجد
  * «مصدر حقيقة ثانٍ» ينحرف.
  */
+
+import { siteTimeZone } from "@/lib/site-timezone";
 
 /** مفاتيح الفترة — القيم كما تُكتب في الرابط `?range=` */
 export type StatRangeKey = "last7" | "last30" | "last90" | "custom";
@@ -67,7 +71,6 @@ const QUICK_DAYS: Record<Exclude<StatRangeKey, "custom">, number> = {
 };
 
 const ISO_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const TIME_ZONE = "Africa/Cairo";
 
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 
@@ -78,14 +81,17 @@ export const isoOf = (year: number, month: number, day: number): string =>
 const toLatinDigits = (s: string) => s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
 
 /**
- * «اليوم» بتوقيت القاهرة. السقوط إلى UTC عند غياب بيانات المناطق الزمنية
- * (بيئات تشغيل مقلّمة) — انزياح ساعتين أهون من انهيار الشاشة.
+ * «اليوم» بمنطقة الموقع. السقوط إلى UTC عند غياب بيانات المناطق الزمنية
+ * (بيئات تشغيل مقلّمة) — انزياح ساعات أهون من انهيار الشاشة.
+ *
+ * ⚠ الاسم تاريخيّ (كانت المنطقة مثبّتة على القاهرة قبل 0075) ويقرؤه ستة
+ * مستدعين؛ والسلوك هو ما تغيّر لا الاسم.
  */
 export function cairoToday(): string {
   const now = new Date();
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: TIME_ZONE,
+      timeZone: siteTimeZone(),
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -215,7 +221,7 @@ export function statHref(basePath: string, params: Record<string, string | undef
  * معامل سلة، و`v_stats_treasury` مجمَّع باليوم كذلك)، فحُذفت الدالة بدل أن
  * تبقى فخاً يعيد نفسه: كل مصادر المخططات اليوم يومية، والشاشات تمرّر "day"
  * صراحةً. وإن أُضيفت سلال أسبوعية/شهرية يوماً فمكان تجميعها Postgres
- * (`date_trunc` بتوقيت Africa/Cairo) لا TypeScript.
+ * (`date_trunc` بمنطقة `site_time_zone()`) لا TypeScript.
  */
 export type StatGranularity = "day" | "week" | "month";
 

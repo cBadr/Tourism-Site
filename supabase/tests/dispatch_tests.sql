@@ -642,9 +642,71 @@ begin
     raise exception '(ب-٦) portal_offers أرجعت % صفاً للمتعهد ب وهو خارج الموجة ١', v_n;
   end if;
 
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (ب-٧) 🔴 م‑١١ — **لا خريطة دقيقة قبل القبول**
+  -- ══════════════════════════════════════════════════════════════════════════
+  --
+  -- الوسم المعمَّم في (ب-٤) يمنع رقم العقار **نصّاً**؛ وخريطةٌ دقيقة كانت
+  -- ستُعيده **صورةً**. فالتوكيد هنا هو نظير (ب-٤) على القناة الأخرى، ونظيرُه
+  -- المقابل في (ز-٤): نفس المتعهد ونفس الحجز بعد القبول ⇒ `true`.
+  --
+  -- وطبقتان تُقاسان معاً:
+  --   • **بنيوية**: `portal_offers()` لا تُرجع `booking_id` أصلاً — فالمتعهد
+  --     قبل القبول لا يملك المعرّف الذي تُطلب به الصورة، ولا يُخمَّن (uuid).
+  --   • **حارس**: `partner_route_map_visible(booking)` = `false` — يُقاس
+  --     **بمعرّف حقيقي** نأخذه من الإعداد لا من الدالة، فالفحص يقيس الحارس
+  --     نفسه لا غيابَ المدخل.
+
+  -- شاهدٌ موجب لآلية فحص الأعمدة (نفس منطق ب-١)، ثم الفحص
+  if not exists (
+    select 1
+    from pg_proc p,
+         unnest(p.proargnames, p.proargmodes) as a(argname, argmode)
+    where p.oid = 'public.portal_offers()'::regprocedure
+      and a.argmode in ('o', 't')
+      and a.argname = 'offer_id'
+  ) then
+    raise exception '(ب-٧) آلية فحص نوع الإرجاع معطلة — لم نجد عمود offer_id في portal_offers';
+  end if;
+
+  if exists (
+    select 1
+    from pg_proc p,
+         unnest(p.proargnames, p.proargmodes) as a(argname, argmode)
+    where p.oid = 'public.portal_offers()'::regprocedure
+      and a.argmode in ('o', 't')
+      and a.argname in ('booking_id', 'bookingid')
+  ) then
+    raise exception
+      '(ب-٧) portal_offers صارت تُرجع معرّف الحجز — وبه يُطلب عنوان الخريطة الدقيقة قبل القبول';
+  end if;
+
+  -- الحارس بهوية «أ»: عرضٌ معلّق لا إسناد ⇒ لا خريطة
+  perform set_config('request.jwt.claim.sub', v_prof_a::text, false);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_prof_a)::text, false);
+
+  -- 🔴 والحارس نفسه يحكم **رابط خرائط جوجل** لا الصورة وحدها: رابطٌ يكشف نقطة
+  --    الالتقاط الدقيقة قبل القبول هو نفس التسريب في غلافٍ آخر، فلا يجوز أن
+  --    يمرّ ببوابةٍ أوسع. ولذلك يمرّ مسارا `/portal/trips/map/*` و
+  --    `/portal/trips/directions/*` **بهذه الدالة بعينها**، وهذا التوكيد
+  --    يغطّيهما معاً — لا توكيدٌ لكل مسار ينحرف عن أخيه.
+  if public.partner_route_map_visible(
+       current_setting('tours.d_booking1', true)::uuid) then
+    raise exception
+      '(ب-٧) 🔴 ثغرة خصوصية: المتعهد «أ» يرى خريطة المسار الدقيقة ورابط اتجاهاتها **قبل قبوله** — وهي تنقض تعميم dispatch_public_label بصورة بدل نصّ (D-19 · D-46)';
+  end if;
+
+  -- والمتعهد «ب» كذلك (ولا عرض له أصلاً)
+  perform set_config('request.jwt.claim.sub', v_prof_b::text, false);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_prof_b)::text, false);
+  if public.partner_route_map_visible(
+       current_setting('tours.d_booking1', true)::uuid) then
+    raise exception '(ب-٧) ثغرة: متعهدٌ خارج الموجة يرى خريطة الحجز الدقيقة';
+  end if;
+
   perform set_config('request.jwt.claim.sub', '', false);
   perform set_config('request.jwt.claims', '', false);
-  raise notice '✔ (ب) قبل القبول: لا اسم ولا هاتف ولا عنوان دقيق ولا سعر عميل — ومستحقه وحده';
+  raise notice '✔ (ب) قبل القبول: لا اسم ولا هاتف ولا عنوان دقيق ولا سعر عميل ولا خريطة دقيقة ولا رابط اتجاهات — ومستحقه وحده';
 exception
   when others then
     perform set_config('request.jwt.claim.sub', '', false);
@@ -1322,9 +1384,31 @@ begin
     raise exception '(ز-٣) ثغرة: الخاسر يرى % رحلة مُسندة لغيره', v_n;
   end if;
 
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- (ز-٤) م‑١١ — الخريطة الدقيقة تتبع الإسناد، لا العرض
+  -- ══════════════════════════════════════════════════════════════════════════
+  --
+  -- النصف المقابل لـ(ب-٧): **نفس المتعهد ونفس الحجز**، والفارق الوحيد أنه قَبِل.
+  -- وبالثنائية معاً يصير التوكيد قياساً لا تمنّياً: لو أُسقط شرطُ الإسناد من
+  -- `partner_route_map_visible` لسقط (ب-٧)، ولو أُغلقت الدالة على الجميع لسقط
+  -- هذا. ولا يمرّ الاثنان إلا بحدٍّ يعمل في الاتجاهين.
+  --
+  -- وحدُّه هو حدُّ `portal_trips()` نفسه — لا حدٌّ ثانٍ: الخاسر أعلاه صفرُ
+  -- رحلات، وهو هنا صفرُ خرائط.
+  if public.partner_route_map_visible(v_b1) then
+    raise exception '(ز-٤) ثغرة: الخاسر يرى خريطة رحلةٍ مُسندة لغيره';
+  end if;
+
+  perform set_config('request.jwt.claim.sub', v_prof_a::text, false);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_prof_a)::text, false);
+  if not public.partner_route_map_visible(v_b1) then
+    raise exception
+      '(ز-٤) المنفّذ لا يرى خريطة رحلته بعد إسنادها إليه — الحارس يمنع الميزة كلها لا ما قبل القبول';
+  end if;
+
   perform set_config('request.jwt.claim.sub', '', false);
   perform set_config('request.jwt.claims', '', false);
-  raise notice '✔ (ز) بعد الإسناد وحده: اسم العميل وهاتفه والعنوان الدقيق للمنفّذ لا لغيره';
+  raise notice '✔ (ز) بعد الإسناد وحده: اسم العميل وهاتفه والعنوان الدقيق وخريطة المسار للمنفّذ لا لغيره';
 exception
   when others then
     perform set_config('request.jwt.claim.sub', '', false);

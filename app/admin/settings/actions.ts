@@ -10,6 +10,7 @@ import {
   type BrandPalette,
 } from "@/lib/site-config";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { isSupportedTimeZone } from "@/lib/site-timezone";
 import {
   MAX_LEAD_MINUTES,
   MAX_UNPAID_TIMEOUT_MINUTES,
@@ -208,6 +209,25 @@ export async function saveTripSettings(formData: FormData) {
     redirect(tripUrl("error=lead"));
   }
 
+  /**
+   * المنطقة الزمنية (0075) — **تحقّقٌ مزدوج بقاعدتَي مناطق مختلفتين**:
+   * هنا بقائمة زمن تشغيل JS (‏`Intl.supportedValuesOf`)، وفي القاعدة بمُشغّلٍ
+   * يسأل `pg_timezone_names`. ولا واحدة منهما مصفوفةٌ مكتوبة بيد. والقيمة لا
+   * تمرّ إلا إن عرفها **الاثنان** — فما يُحفَظ منطقةٌ يستطيع Postgres أن يجمّع
+   * بها ويستطيع المتصفح أن يُنسّق بها معاً.
+   *
+   * ورمز خطأ مستقل: «فشل الحفظ» لاسم منطقةٍ خاطئ يتّهم الصلاحيات بلا سبب.
+   */
+  const zone = formData.get(TRIP_SETTINGS_COLUMNS.timeZone);
+  if (typeof zone !== "string" || !isSupportedTimeZone(zone.trim())) {
+    redirect(tripUrl("error=timezone"));
+  }
+  const timeZone = zone.trim();
+
+  // خريطة المسار (0078) — مفتاح إطفاء كلفة، لا خيار مظهر. ومربعٌ غير مؤشَّر لا
+  // يُرسل أصلاً، فالغياب «مطفأ» كنظيره أعلاه. ولا تحقّق مدى: منطقيٌّ بقيمتين.
+  const routeMap = formData.get(TRIP_SETTINGS_COLUMNS.routeMapEnabled) != null;
+
   // جدول غائب = هجرة 0027 لم تُنفَّذ؛ وأي فشل آخر رفضُ قراءةٍ من RLS
   const existing = await supabase.from(TRIP_SETTINGS_TABLE).select("id").limit(1);
   if (existing.error) {
@@ -223,12 +243,20 @@ export async function saveTripSettings(formData: FormData) {
         [TRIP_SETTINGS_COLUMNS.unpaidCancelEnabled]: enabled,
         [TRIP_SETTINGS_COLUMNS.unpaidTimeoutMinutes]: minutes,
         [TRIP_SETTINGS_COLUMNS.minLeadMinutes]: lead,
+        [TRIP_SETTINGS_COLUMNS.timeZone]: timeZone,
+        [TRIP_SETTINGS_COLUMNS.routeMapEnabled]: routeMap,
       },
       { onConflict: "id" }
     )
     .select();
 
-  // صفر صفوف مع نجاح ظاهري = RLS رفضت الكتابة (المستخدم ليس admin)
+  /**
+   * صفر صفوف مع نجاح ظاهري = RLS رفضت الكتابة (المستخدم ليس admin).
+   *
+   * و`invalid-timezone` رمزٌ يرفعه مُشغّل 0075 حين يعرف ICU المنطقةَ ولا
+   * يعرفها Postgres — تُقال بالاسم بدل أن تُتَّهم الصلاحيات بخطأ إدخال.
+   */
+  if (res.error?.hint === "invalid-timezone") redirect(tripUrl("error=timezonedb"));
   if (res.error || !res.data || res.data.length === 0) redirect(tripUrl("error=tripsave"));
 
   // (٤) إبطال الكاش ثم إعادة توجيه بنجاح

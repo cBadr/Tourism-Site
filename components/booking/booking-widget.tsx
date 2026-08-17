@@ -2,6 +2,7 @@ import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
 import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
+import { readPlaceSearchSettings } from "@/lib/geo/place-search-settings";
 import { SearchWidget } from "./search-widget";
 import { getPublicExtras } from "./extras-catalog";
 import { getFleetCaps } from "./fleet-luggage";
@@ -36,8 +37,15 @@ export async function BookingWidget({
   locale?: string;
   className?: string;
 }) {
-  const [discountEnabled, loyaltyEnabled, offerBanners, checkoutBanners, extras, fleet] =
-    await Promise.all([
+  const [
+    discountEnabled,
+    loyaltyEnabled,
+    offerBanners,
+    checkoutBanners,
+    extras,
+    fleet,
+    placeSearch,
+  ] = await Promise.all([
       isDiscountEnabled(),
       // راية الولاء (١٢ب) — تُقرأ هنا لا في الجزيرة، ولنفس سبب أختها: قراءةُ
       // إعدادٍ من المتصفح رحلةُ شبكة على أسخن مسار في الموقع.
@@ -51,6 +59,11 @@ export async function BookingWidget({
       // عدّادٌ يصعد فوق أكبر سعة يعرض على العميل رقماً يضمن «لا توجد فئة».
       // والفشل يعيد null للرقمين فيبقى الثابتان كما كانا.
       getFleetCaps(),
+      // 🔒 إعدادات بحث الأماكن (0076) — تُقرأ هنا لا في الجزيرة، ولسبب أقوى من
+      // إخوتها: مفتاح قطع جوجل **يجب أن يسري فور حفظه**، وقراءةٌ من المتصفح
+      // كانت ستضيف رحلة شبكة قبل أول حرف يكتبه الزائر. ولا يعبر إلى المتصفح
+      // مفتاحٌ ولا اسمُ متغيّر بيئة — راياتٌ ورقمان لا غير.
+      readPlaceSearchSettings(),
     ]);
 
   return (
@@ -66,6 +79,7 @@ export async function BookingWidget({
       extras={extras}
       maxLuggage={fleet.maxLuggage}
       maxPassengers={fleet.maxPassengers}
+      placeSearch={placeSearch}
     />
   );
 }

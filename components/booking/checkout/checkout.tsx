@@ -2,11 +2,11 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useTimeZone } from "next-intl";
 import {
   ArrowRight,
   BadgeCheck,
   CalendarClock,
-  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -29,11 +29,13 @@ import {
 } from "@/lib/booking-types";
 import { DEFAULT_LOCALE, localePath } from "@/lib/i18n-types";
 import { useT, type Tx } from "@/components/site/i18n";
+import { DEFAULT_SITE_TIME_ZONE, timeZoneLabel } from "@/lib/site-timezone";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import type { PromoBanner } from "@/lib/discount-types";
 import type { AppliedDiscount } from "@/lib/discounts/types";
 import type { AppliedRedemption } from "@/lib/loyalty/types";
 import { createFormatter, type LocaleFormatter } from "../format";
+import { CollapsedStep } from "../collapsed-step";
 import { CouponField, DiscountRows } from "../coupon-field";
 import { RedeemField, RedeemRows } from "../redeem-field";
 import { PromoBanners } from "../promo-banner";
@@ -150,6 +152,15 @@ const STEPS: { index: Step; key: string; title: string }[] = [
   { index: 3, key: "steps.payment", title: "الدفع" },
 ];
 
+/**
+ * أقصى ما يُعرض من الملاحظات في سطر الملخّص المطويّ.
+ *
+ * حقل الملاحظات يقبل ألف حرف؛ ونصٌّ بهذا الطول في سطرٍ «مطويّ» يُبطل الطيّ
+ * نفسه — أي يعيد الشاشة الطويلة التي أُنشئ الطيّ ليقصّرها. والنصّ كاملاً على
+ * بعد نقرة «تعديل» واحدة، ولا يُمسّ ما يُرسَل بحرف.
+ */
+const NOTES_PREVIEW_LENGTH = 32;
+
 /** نفس تحقق الخادم شكلياً — رسالة فورية بلا رحلة شبكة */
 const PHONE_PATTERN = /^[+\d\s()-]{8,20}$/;
 
@@ -164,54 +175,69 @@ function isPhoneValid(value: string): boolean {
 /* أجزاء العرض                                                          */
 /* ------------------------------------------------------------------ */
 
-function StepsBar({ current, t, fmt }: { current: Step; t: Tx; fmt: LocaleFormatter }) {
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  مؤشّر التقدّم — سطرٌ واحد **بدل** رصيف الدوائر الثلاث، لا فوقه            ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * ── لماذا استبدالٌ لا إضافة ────────────────────────────────────────────────
+ *
+ * أمرُ المالك كان «مؤشّر تقدّم يشجّع على الإكمال» على شاشةٍ **نحاول تقصيرها**.
+ * وشريطٌ يُضاف فوق رصيفٍ يقول الشيء نفسه هو ارتفاعٌ خالص: الرصيف القديم كان
+ * يعرض ثلاث دوائر بعناوينها، والشريط كان سيعرض الموضع نفسه مرةً ثانية. فحلّ
+ * هذا السطر محلّه: **موضعٌ صريح بالكلمات** («الخطوة ٢ من ٣») ومسطرةٌ من ثلاث
+ * قطع، في ارتفاع سطرٍ واحد بدل ارتفاع دائرةٍ ٣٢ بكسل وعناوين تُبتر عند ٣٧٥.
+ *
+ * وما فقده الرصيف لم يُفقد: **الخطوة المكتملة صارت سطر ملخّصٍ بقيمه** أسفل
+ * هذا السطر مباشرة — وهو أكثر مما كانت تقوله دائرةٌ فيها علامة صح.
+ *
+ * ── 🔴 والصدق شرطٌ في الملء، لا في النصّ وحده ──────────────────────────────
+ *
+ * القطعة **الحالية لا تُملأ**: تُملأ ما اكتمل فقط، والخطوة التي أنت فيها لم
+ * تكتمل بعد. فلا تبلغ المسطرة تمامها داخل النموذج إطلاقاً — وهو المطلوب
+ * حرفياً: عند الخطوة ٣ ما زال أمام العميل اختيار خطة الدفع، ثم **صفحة الحجز**
+ * حيث يحوّل ويرفع الإيصال. مسطرةٌ ممتلئة هناك تَعِد بانتهاءٍ لم يقع.
+ *
+ * والمجموع «٣» **يخصّ هذا النموذج وحده** — وعنوانه فوقه مباشرةً («إتمام
+ * الحجز»)، فالوعد محصورٌ فيما يفي به.
+ *
+ * ⚠ والقطع `aria-hidden`: النصّ يقول ما تقوله بالضبط، وإعادتُه لقارئ الشاشة
+ *   ثرثرةٌ لا معلومة.
+ */
+function StepsProgress({ current, t, fmt }: { current: Step; t: Tx; fmt: LocaleFormatter }) {
+  const active = STEPS[current - 1];
   return (
-    <ol className="flex items-center gap-2" aria-label={t("stepsLabel", "خطوات الحجز")}>
-      {STEPS.map((step, index) => {
-        const done = step.index < current;
-        const active = step.index === current;
-        return (
-          <li key={step.index} className="flex flex-1 items-center gap-2">
-            <span
-              aria-current={active ? "step" : undefined}
-              className={cn(
-                "grid size-8 shrink-0 place-items-center rounded-full text-sm font-bold transition-colors",
-                done
-                  ? "bg-primary/15 text-primary"
-                  : active
-                    ? "bg-primary text-primary-foreground shadow-sm shadow-primary/30"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {done ? (
-                <Check className="size-4" aria-hidden="true" />
-              ) : (
-                fmt.digits(step.index)
-              )}
-            </span>
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate text-xs font-medium sm:text-sm",
-                active ? "text-foreground" : "text-muted-foreground"
-              )}
-            >
-              {t(step.key, step.title)}
-            </span>
-            {index < STEPS.length - 1 ? (
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "hidden h-px flex-1 sm:block",
-                  done ? "bg-primary/40" : "bg-border"
-                )}
-              />
-            ) : null}
-          </li>
-        );
-      })}
-    </ol>
+    <div className="flex items-center gap-3" aria-label={t("stepsLabel", "خطوات الحجز")}>
+      <p className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 text-sm leading-6">
+        <span className="font-semibold">
+          {t("stepStatus", "الخطوة {index} من {total}", {
+            index: fmt.digits(current),
+            total: fmt.digits(STEPS.length),
+          })}
+        </span>
+        {active ? (
+          <span className="min-w-0 truncate text-muted-foreground">
+            {t(active.key, active.title)}
+          </span>
+        ) : null}
+      </p>
+
+      <span aria-hidden="true" className="flex shrink-0 items-center gap-1">
+        {STEPS.map((step) => (
+          <span
+            key={step.index}
+            className={cn(
+              "h-1.5 w-7 rounded-full transition-colors",
+              step.index < current ? "bg-primary" : "bg-border"
+            )}
+          />
+        ))}
+      </span>
+    </div>
   );
 }
+
+/* سطر الخطوة المنتهية مشتركٌ مع ويدجت البحث — انظر `../collapsed-step.tsx` */
 
 /** بطاقة الملخص الثابتة: المسار والفئة والسعر — حاضرة في الخطوات الثلاث */
 function SummaryCard({
@@ -302,9 +328,25 @@ export function Checkout({
   const tDiscount = useT("discount");
   const tLoyalty = useT("loyalty");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
+  /**
+   * منطقة الموقع من next-intl — **نفس القيمة** التي قرأها `i18n/request.ts`
+   * من `public.site_time_zone()`، لا مسارٌ ثانٍ. الدوال الصرفة في `datetime.ts`
+   * تقرأ الوحدة المشتركة التي يملؤها `SiteTimeZoneSync` من هنا نفسه.
+   */
+  const activeTimeZone = useTimeZone() ?? DEFAULT_SITE_TIME_ZONE;
   const uid = React.useId();
 
   const [step, setStep] = React.useState<Step>(1);
+  /**
+   * أبعد خطوة بلغها العميل — و**كل خطوة حتى هذه تبقى على الشاشة**: المفتوحة
+   * هي `step`، وما عداها سطرُ ملخّصٍ قابلٌ للنقر.
+   *
+   * 🔴 ولولاها لكان «تعديل» على الخطوة الأولى **يمحو الخطوتين بعدها من الشاشة**
+   * (المؤشّر الواحد لا يعرف إلا موضعه)، فيظنّ العميل أن ما ملأه ضاع. والقيم
+   * نفسها لم تكن لتضيع — حالتها في هذا المكوّن لا في الشجرة — لكن **الاختفاء
+   * وحده يقرأه العميل ضياعاً**، فيعيد إدخال ما لم يُفقد.
+   */
+  const [reached, setReached] = React.useState<Step>(1);
 
   const [pickupDate, setPickupDate] = React.useState("");
   const [pickupTime, setPickupTime] = React.useState("");
@@ -346,6 +388,13 @@ export function Checkout({
   const [lead, setLead] = React.useState<LeadTime | null>(null);
 
   const topRef = React.useRef<HTMLDivElement | null>(null);
+  /** اللوحة المفتوحة الآن — مرجعٌ واحد لأن واحدةً فقط تُصيَّر في كل لحظة */
+  const stepPanelRef = React.useRef<HTMLDivElement | null>(null);
+  /**
+   * «هذا الانتقال جاء من زرّ تعديل» — رايةٌ تعيش لحظةً واحدة بين معالج الحدث
+   * وأثر التمرير. ومرجعٌ لا حالة: لا تُرسم على الشاشة، فحالةٌ لها تصييرٌ زائد.
+   */
+  const openedByEdit = React.useRef(false);
   const todayValue = React.useMemo(() => todayInputValue(), []);
 
   /**
@@ -408,14 +457,36 @@ export function Checkout({
     return () => controller.abort();
   }, []);
 
-  // كل انتقال خطوة يعيد الزائر إلى رأس النموذج (مهم على الجوال)
+  /**
+   * التمرير بعد تبدّل الخطوة — **وجهتان لا واحدة**.
+   *
+   * (أ) «التالي» و«السابق»: رأس النموذج، كما كان (مهم على الجوال).
+   *
+   * (ب) 🔴 **«تعديل»: اللوحة نفسها، حيث كان العميل ينظر.** أمرُ المالك حرفياً:
+   *     «تعيده إلى حيث كان، لا إلى رأس النموذج». ومن ضغط «تعديل» على سطرٍ في
+   *     منتصف الشاشة ثم قفزت به الصفحة إلى أعلاها يفقد موضعه مرتين: مرةً حين
+   *     يبحث عن الحقل، ومرةً حين يعود.
+   *
+   * 🔒 **والتركيز قبل التمرير وبـ`preventScroll`.** الزرّ الذي ضُغط اختفى من
+   *    الشجرة (‏صار لوحةً)، فبلا نقلٍ صريح يقذف المتصفح التركيز إلى `<body>`
+   *    ويستأنف صاحب لوحة المفاتيح من أول الصفحة — وهو **بعينه** العطل الموثّق
+   *    في `footer-accordion.tsx`. و`preventScroll` كي لا يتنازع تمريران.
+   */
   React.useEffect(() => {
-    if (!topRef.current) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    topRef.current.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
-      block: "nearest",
-    });
+    const behavior: ScrollBehavior = reduceMotion ? "auto" : "smooth";
+
+    if (openedByEdit.current) {
+      openedByEdit.current = false;
+      const panel = stepPanelRef.current;
+      if (!panel) return;
+      panel.focus({ preventScroll: true });
+      panel.scrollIntoView({ behavior, block: "nearest" });
+      return;
+    }
+
+    if (!topRef.current) return;
+    topRef.current.scrollIntoView({ behavior, block: "nearest" });
   }, [step]);
 
   /** موعد الانطلاق: من الحاسبة حين جمعته (ذهاب وعودة)، وإلا من حقلَي هذه الخطوة */
@@ -660,13 +731,31 @@ export function Checkout({
     const found = step === 1 ? validateStepOne() : step === 2 ? validateStepTwo() : {};
     setErrors(found);
     if (Object.keys(found).length > 0) return;
-    setStep((current) => (current === 1 ? 2 : 3));
+    const next: Step = step === 1 ? 2 : 3;
+    setStep(next);
+    // أبعدُ ما بُلغ لا يتراجع — سطور الملخّص أسفلَه تبقى معروضة عند العودة
+    setReached((current) => (next > current ? next : current));
   }
 
   function goPrevious() {
     setErrors({});
     setSubmitError(null);
     setStep((current) => (current === 3 ? 2 : 1));
+  }
+
+  /**
+   * فتح خطوةٍ مطويّة من سطر ملخّصها.
+   *
+   * ⚠ **ولا يُمسّ `reached`:** ما بعدها يبقى معروضاً مطويّاً بقيمه — فمن عاد من
+   * الدفع إلى «بياناتك» يرى خطة دفعه ما زالت مختارة أسفل الشاشة، ويعود إليها
+   * بنقرةٍ واحدة. والقيم كلها في حالة هذا المكوّن أصلاً، فلا يُفقد شيء بحال.
+   */
+  function editStep(target: Step) {
+    if (target === step) return;
+    setErrors({});
+    setSubmitError(null);
+    openedByEdit.current = true;
+    setStep(target);
   }
 
   async function submit() {
@@ -793,6 +882,105 @@ export function Checkout({
     void submit();
   }
 
+  /* ---------------------------------------------------------------- */
+  /* سطور الملخّص — **من نفس الحالة التي تملأ الحقول**، لا نسخةٌ عنها   */
+  /* ---------------------------------------------------------------- */
+
+  const editLabel = t("editStep", "تعديل");
+  const doneLabel = t("stepDone", "مكتملة");
+
+  const pickupLabel = fmt.dateTime(pickupIso);
+  const returnLabel = trip.returnAt ? fmt.dateTime(trip.returnAt) : null;
+  const notesTrimmed = notes.trim();
+  const flightTrimmed = flightNumber.trim();
+  const nameTrimmed = name.trim();
+  const whatsappTrimmed = whatsapp.trim();
+
+  /** الخطوة ١: الموعد أولاً — هو أهمّ ما يريد العميل التأكد منه بلا فتح */
+  const tripSummary: React.ReactNode[] = [];
+  if (pickupLabel) {
+    // الوسم يلزم حين يوجد موعدان: تاريخان متجاوران بلا وسمٍ لغزٌ لا ملخّص
+    tripSummary.push(
+      returnLabel ? `${t("trip.pickupAt", "الانطلاق")}: ${pickupLabel}` : pickupLabel
+    );
+  }
+  if (returnLabel) tripSummary.push(`${t("trip.returnAt", "العودة")}: ${returnLabel}`);
+  if (airportTrip && flightTrimmed.length > 0) {
+    tripSummary.push(
+      <bdi key="flight" dir="ltr" className="font-mono uppercase">
+        {flightTrimmed}
+      </bdi>
+    );
+  }
+  if (notesTrimmed.length > 0) {
+    tripSummary.push(
+      notesTrimmed.length > NOTES_PREVIEW_LENGTH
+        ? `${notesTrimmed.slice(0, NOTES_PREVIEW_LENGTH)}…`
+        : notesTrimmed
+    );
+  }
+
+  /**
+   * الخطوة ٢: الاسم ثم الرقم — و**الرقم بالشكل الذي أقرّه العميل** (‏`echo`)
+   * لا بنصّه الخام حين يتوفر: هو نفسه المعروض في بطاقة الإقرار أعلاه، فلا
+   * يقرأ العميل رقمه بصيغتين في شاشةٍ واحدة.
+   */
+  const customerSummary: React.ReactNode[] = [];
+  if (nameTrimmed.length > 0) customerSummary.push(nameTrimmed);
+  const phoneShown = echo?.display ?? trimmedPhoneValue;
+  if (phoneShown.length > 0) {
+    customerSummary.push(
+      <bdi key="phone" dir="ltr">
+        {phoneShown}
+      </bdi>
+    );
+  }
+  if (!sameWhatsapp && whatsappTrimmed.length > 0) {
+    customerSummary.push(
+      <span key="whatsapp">
+        {t("customer.whatsapp", "رقم الواتساب")}: <bdi dir="ltr">{whatsappTrimmed}</bdi>
+      </span>
+    );
+  }
+
+  /** الخطوة ٣: الخطة ومبلغها — والمبلغ من `splitAmounts` نفسها التي تعرضه أعلاه */
+  const paymentSummary: React.ReactNode[] = [
+    plan === "deposit"
+      ? t("summary.planDeposit", "عربون")
+      : t("summary.planFull", "كامل المبلغ"),
+    fmt.money(amounts.amountDue, offer.currency),
+  ];
+
+  /**
+   * 🔴 زوج أزرار التنقل — **قاعدةٌ واحدة، والفرق سطحٌ لا مقاس**.
+   *
+   * شكوى المالك: الزرّان مختلفان بما يكفي ليُقرأ عطلاً. وكان الفرق حقيقياً ولا
+   * يخدم شيئاً: `text-sm` مقابل `text-base`، و`px-5` مقابل `px-6`، و`flex-1`
+   * على أحدهما وحده، و`opacity` مختلفة عند التعطيل.
+   *
+   * والشكل المتَّبع في هذا المستودع أصلاً موجودٌ في `../offers.tsx` (زرّ الحجز
+   * الأول مقابل بقية البطاقات): **سلسلة أصنافٍ واحدة حرفاً**، ثم `bg-primary`
+   * أو `border … bg-background` وحدها تفرّق الأولوية. فلا صنف ثالث يُخترع هنا.
+   *
+   * ولوحة الألوان: `primary` و`border` و`background` و`muted` من الرموز الـ١٧
+   * وحدها — ولا لون مكتوب.
+   */
+  const navButtonBase = cn(
+    "inline-flex items-center justify-center gap-2 rounded-2xl px-5 text-base font-semibold transition-all focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60",
+    fieldHeight
+  );
+
+  /**
+   * 🔒 لوحةٌ تُفتح تستقبل التركيز — `tabIndex={-1}` يجعلها هدفاً برمجياً بلا
+   * أن تدخل ترتيب `Tab`؛ و`outline-none` لأن التركيز هنا **إعلانٌ لقارئ الشاشة
+   * لا تنقّلٌ بصري**، والحقل الذي سينتقل إليه العميل يحمل حلقته الخاصة.
+   */
+  const stepPanelProps = {
+    ref: stepPanelRef,
+    tabIndex: -1,
+    className: "flex flex-col gap-4 outline-none",
+  } as const;
+
   return (
     <div ref={topRef} className="flex flex-col gap-5">
       {/* الترويسة: رجوع + عنوان */}
@@ -809,7 +997,7 @@ export function Checkout({
         </button>
       </div>
 
-      <StepsBar current={step} t={t} fmt={fmt} />
+      <StepsProgress current={step} t={t} fmt={fmt} />
 
       {/* بانرات موضع «الحجز» — تحفيز بلا أثر على السعر */}
       <PromoBanners banners={banners} compact={compact} />
@@ -827,10 +1015,30 @@ export function Checkout({
         fmt={fmt}
       />
 
+      {/*
+        ══════════════════════════════════════════════════════════════════════
+         الخطوات: المفتوحة واحدة، وما قبلها وما بعدها **سطور ملخّصٍ بقيمها**
+        ══════════════════════════════════════════════════════════════════════
+
+        `step` هي المفتوحة، و`reached` أبعدُ ما بُلغ. فكل خطوة `≤ reached` تُصيَّر:
+        الحالية لوحةً، والباقية سطراً واحداً ينقر عليه العميل فيفتحها. وما لم
+        يُبلغ بعد لا يُصيَّر أصلاً — سطرُ ملخّصٍ فارغ لخطوةٍ لم تُملأ لا يقول شيئاً.
+      */}
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         {/* ------------------------- الخطوة ١ ------------------------- */}
+        {step !== 1 ? (
+          <CollapsedStep
+            title={t(STEPS[0].key, STEPS[0].title)}
+            parts={tripSummary}
+            editLabel={editLabel}
+            doneLabel={doneLabel}
+            onEdit={() => editStep(1)}
+            disabled={submitting}
+          />
+        ) : null}
+
         {step === 1 ? (
-          <div className="flex flex-col gap-4">
+          <div {...stepPanelProps}>
             <p className="flex items-center gap-2 text-sm font-semibold">
               <CalendarClock className="size-4 shrink-0 text-primary" aria-hidden="true" />
               {t("trip.heading", "موعد الانطلاق")}
@@ -839,18 +1047,24 @@ export function Checkout({
             {/*
               🔴 وسم التوقيت — يظهر في الفرعين معاً (المُثبَّت والقابل للكتابة).
 
-              كل موعد في هذا المنتج بتوقيت القاهرة: المكتوب هنا يُفسَّر به
+              كل موعد في هذا المنتج **بمنطقة الموقع**: المكتوب هنا يُفسَّر بها
               (‏`toIsoFromCairoInputs`)، والمعروض أعلاه وفي صفحة المتابعة يُعرض
-              به (‏`format.ts`). ومن يحجز من الخليج أو أوروبا لا يعرف ذلك من
+              بها (‏`format.ts`). ومن يحجز من الخليج أو أوروبا لا يعرف ذلك من
               تلقاء نفسه — وحقلا التاريخ والوقت في المتصفح لا يقولان منطقةً
               بحال. فالسطر ليس تزييناً: هو الفرق بين «كتبتُ ١٠:٠٠ بتوقيت بلدي»
-              و«كتبتُ ١٠:٠٠ بتوقيت مصر»، وثمن الالتباس سائقٌ يصل بساعة خطأ.
+              و«كتبتُ ١٠:٠٠ بتوقيت الموقع»، وثمن الالتباس سائقٌ يصل بساعة خطأ.
+
+              ⚠ **واسم المنطقة لم يعد مكتوباً في نصّ الرسالة** (هجرة 0075):
+              كان «القاهرة (مصر)» محفوراً في `messages/*.json`، فلو بدّل مالكُ
+              نسخةٍ منطقتَه إلى الرياض لبقي السطر يقول «مصر» — إعدادٌ يعمل
+              وسطرٌ يكذّبه. والاسم الآن من ICU بلغة الزائر (`timeZoneLabel`).
             */}
             <p className="flex items-start gap-2 rounded-2xl border border-border bg-muted/40 px-3 py-2 text-xs leading-6 text-muted-foreground">
               <Clock className="mt-1 size-3.5 shrink-0 text-primary" aria-hidden="true" />
               {t(
                 "trip.timeZoneNote",
-                "كل المواعيد بتوقيت القاهرة (مصر) — اكتب موعد الانطلاق كما هو في مصر لا بتوقيت بلدك."
+                "المواعيد كلها على {zone} — اكتب موعد الانطلاق كما هو هناك لا بتوقيت بلدك.",
+                { zone: timeZoneLabel(activeTimeZone, locale) }
               )}
             </p>
 
@@ -1067,8 +1281,19 @@ export function Checkout({
         ) : null}
 
         {/* ------------------------- الخطوة ٢ ------------------------- */}
+        {reached >= 2 && step !== 2 ? (
+          <CollapsedStep
+            title={t(STEPS[1].key, STEPS[1].title)}
+            parts={customerSummary}
+            editLabel={editLabel}
+            doneLabel={doneLabel}
+            onEdit={() => editStep(2)}
+            disabled={submitting}
+          />
+        ) : null}
+
         {step === 2 ? (
-          <div className="flex flex-col gap-4">
+          <div {...stepPanelProps}>
             <p className="flex items-center gap-2 text-sm font-semibold">
               <User className="size-4 shrink-0 text-primary" aria-hidden="true" />
               {t("customer.heading", "بيانات التواصل")}
@@ -1234,8 +1459,19 @@ export function Checkout({
         ) : null}
 
         {/* ------------------------- الخطوة ٣ ------------------------- */}
+        {reached >= 3 && step !== 3 ? (
+          <CollapsedStep
+            title={t(STEPS[2].key, STEPS[2].title)}
+            parts={paymentSummary}
+            editLabel={editLabel}
+            doneLabel={doneLabel}
+            onEdit={() => editStep(3)}
+            disabled={submitting}
+          />
+        ) : null}
+
         {step === 3 ? (
-          <div className="flex flex-col gap-4">
+          <div {...stepPanelProps}>
             {/*
               حقل الكوبون قبل اختيار خطة الدفع عمداً: العربون نسبة من الإجمالي،
               فتطبيق الخصم بعد اختيار الخطة يغيّر الرقم تحت يد الزائر.
@@ -1491,19 +1727,21 @@ export function Checkout({
           </p>
         ) : null}
 
-        {/* أزرار التنقل */}
+        {/*
+          أزرار التنقل — زوجٌ واحد: نفس الارتفاع ونفس الحواف ونفس المقاس
+          ونفس حلقة التركيز، و`navButtonBase` أعلاه هو المصدر الوحيد لكلّ ذلك.
+          والمكتب يفرّقهما بالموضع (رجوعٌ في المبدأ وتقدّمٌ في المنتهى)،
+          والجوال بالترتيب: الرئيسي فوق (‏`flex-col-reverse`) لأنه ما يُضغط.
+        */}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
           {step > 1 ? (
             <button
               type="button"
               onClick={goPrevious}
               disabled={submitting}
-              className={cn(
-                "inline-flex items-center justify-center gap-1.5 rounded-2xl border border-border bg-background px-5 text-sm font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
-                fieldHeight
-              )}
+              className={cn(navButtonBase, "border border-border bg-background hover:bg-muted")}
             >
-              <ChevronRight className="size-4" aria-hidden="true" />
+              <ChevronRight className="size-5" aria-hidden="true" />
               {t("actions.previous", "الخطوة السابقة")}
             </button>
           ) : (
@@ -1514,8 +1752,8 @@ export function Checkout({
             type="submit"
             disabled={submitting}
             className={cn(
-              "inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-base font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60 sm:flex-none",
-              fieldHeight
+              navButtonBase,
+              "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90"
             )}
           >
             {submitting ? (
@@ -1526,7 +1764,7 @@ export function Checkout({
             ) : step < 3 ? (
               <>
                 {t("actions.next", "التالي")}
-                <ChevronLeft className="size-4" aria-hidden="true" />
+                <ChevronLeft className="size-5" aria-hidden="true" />
               </>
             ) : (
               <>
@@ -1543,7 +1781,10 @@ export function Checkout({
           ? t("actions.confirmingStatus", "جارٍ تأكيد الحجز")
           : submitError
             ? submitError
-            : t("stepStatus", "الخطوة {index}", { index: fmt.digits(step) })}
+            : t("stepStatus", "الخطوة {index} من {total}", {
+                index: fmt.digits(step),
+                total: fmt.digits(STEPS.length),
+              })}
       </span>
     </div>
   );

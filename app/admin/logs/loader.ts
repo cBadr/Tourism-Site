@@ -190,7 +190,7 @@ export function readFilters(
  * حدّا الترشيح على عمود `timestamptz` — [منتصف ليل القاهرة، منتصف ليل اليوم التالي).
  *
  * ⚠ ولماذا لا تُمرَّر `YYYY-MM-DD` مباشرة؟ لأن `audit_search` تقارن
- * `(occurred_at at time zone 'Africa/Cairo')::date`، بينما مقارنة `timestamptz`
+ * `(occurred_at at time zone public.site_time_zone())::date`، بينما مقارنة `timestamptz`
  * عبر PostgREST تُفسَّر بمنطقة الجلسة (UTC). فبلا هذا التحويل يصير «يوم ١٢» في
  * تبويب المحاولات ممتداً من الثالثة صباحاً إلى الثالثة صباحاً — أي تبويبان على
  * الشاشة الواحدة يعنيان بـ«اليوم» شيئين. و`cairoMidnightUtc` مستوردة من نطاق

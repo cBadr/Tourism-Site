@@ -13,6 +13,7 @@ import { getFleetCaps } from "@/components/booking/fleet-luggage";
 import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
 import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
+import { readPlaceSearchSettings } from "@/lib/geo/place-search-settings";
 
 /**
  * صفحة الحجز (/book) — الصفحة المخصصة لمحرك التسعير: ترويسة قصيرة،
@@ -83,6 +84,7 @@ export default async function BookPage() {
     loyaltyEnabled,
     extras,
     fleet,
+    placeSearch,
   ] = await Promise.all([
       getSettings(locale),
       getT("pages.book", locale),
@@ -98,6 +100,9 @@ export default async function BookPage() {
       // العميل أرقاماً تضمن معها القاعدةُ صفرَ عروض. والفشل يعيد null للرقمين
       // فيبقى الثابتان كما كانا.
       getFleetCaps(),
+      // إعدادات بحث الأماكن (0076) — نفس القراءة التي يفعلها `BookingWidget`،
+      // ولأن هذه الصفحة تُركّب `SearchWidget` مباشرةً لا عبر الغلاف.
+      readPlaceSearchSettings(),
     ]);
   const contact = {
     whatsapp: settings.contact.whatsapp,
@@ -149,6 +154,7 @@ export default async function BookPage() {
               extras={extras}
               maxLuggage={fleet.maxLuggage}
               maxPassengers={fleet.maxPassengers}
+              placeSearch={placeSearch}
             />
           </div>
         </section>

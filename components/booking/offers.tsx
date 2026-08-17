@@ -219,6 +219,24 @@ export type OffersProps = {
   offerBanners?: PromoBanner[];
   /** بانرات موضع «صفحة الحجز» — تمرّ إلى مسار الحجز */
   checkoutBanners?: PromoBanner[];
+  /**
+   * 🔴 «مسار إتمام الحجز مفتوح الآن» — يُبلَّغ به الويدجت فوقنا.
+   *
+   * ولماذا يحتاجه: الويدجت يطوي نموذج بيانات الرحلة إلى **سطرٍ فيه «تعديل»**
+   * بعد وصول الأسعار. وذلك السطر صحيحٌ فوق البطاقات، **وخطرٌ فوق مسار الحجز**
+   * لسببين:
+   *
+   * ١ **تكرار**: بطاقة الملخّص أعلى المسار تقول الشيء نفسه حرفاً (المسار
+   *   والركاب والحقائب ونوع الرحلة) — فسطرٌ ثانٍ ارتفاعٌ بلا معلومة، على
+   *   شاشةٍ نقصّرها.
+   *
+   * ٢ 🔒 **وفقدُ بيانات**: تعديلُ أي مُدخل سعري يغيّر `tripKey` أدناه فيسقط
+   *   `bookingOffer`، **ويُفكَّك مسار الحجز بما فيه** — الاسم والهاتف
+   *   والملاحظات. وهو سلوكٌ صحيح (سعرٌ قديم لا يُحجَز به)، لكن وضعَ زرّ
+   *   «تعديل» فوق النموذج مباشرةً دعوةٌ إليه. والطريق الصحيح للرجوع معلَنٌ
+   *   داخل المسار نفسه: «رجوع إلى العروض».
+   */
+  onCheckoutOpenChange?: (open: boolean) => void;
 };
 
 /** أيقونة لكل فئة — بديل محايد لأي فئة يضيفها المالك لاحقاً من اللوحة */
@@ -728,10 +746,20 @@ export function Offers({
   loyaltyEnabled = false,
   offerBanners = [],
   checkoutBanners = [],
+  onCheckoutOpenChange,
 }: OffersProps) {
   const t = useT("booking.offers");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
   const [bookingOffer, setBookingOffer] = React.useState<OfferWithExtras | null>(null);
+
+  /**
+   * إبلاغ الأب بحالة المسار — **في أثر لا أثناء التصيير**: تعديلُ حالة مكوّنٍ
+   * آخر أثناء تصيير هذا يرفضه React. والأثر يشمل الإسقاط التلقائي أدناه
+   * (بحثٌ جديد يُلغي مساراً مفتوحاً) فلا يبقى الأب على خبرٍ قديم.
+   */
+  React.useEffect(() => {
+    onCheckoutOpenChange?.(bookingOffer !== null);
+  }, [bookingOffer, onCheckoutOpenChange]);
 
   const checkoutTrip = toCheckoutTrip(trip);
   const canBook = checkoutTrip !== null;

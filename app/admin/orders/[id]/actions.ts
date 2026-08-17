@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { trackBookingPaid } from "@/lib/analytics/emit";
 import type { BookingStatus } from "@/lib/booking-types";
 import { startDispatchFor } from "@/lib/dispatch/start";
+import { scheduleBookingRouteMap } from "@/lib/maps/route-map";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -121,6 +122,12 @@ export async function verifyTransfer(bookingId: string, approve: boolean, formDa
   // تحويل وصل فعلاً.
   if (approve) {
     await startDispatchFor(bookingId);
+
+    // خريطة المسار (م‑١١) — تُجهَّز الآن كي يجدها العميل جاهزةً حين يفتح صفحته.
+    // مجدولة بعد الاستجابة ولا يُنتظر ردّها: نداءُ خدمة خرائط لا يجوز أن يؤخّر
+    // — ولا أن يُفشل — اعتمادَ تحويلٍ وصل فعلاً. وأول فتحٍ للصفحة يولّدها إن
+    // تعذّرت هنا، فلا شيء يعتمد على نجاح هذا السطر.
+    scheduleBookingRouteMap(bookingId);
 
     // حدث الشراء (المرحلة ١٠) — **التوأم المنسي** لخطاف الويبهوك: التحويل
     // البنكي المعتمد يدوياً هو المسار الافتراضي في هذه المنصة، وتجاهل هذه

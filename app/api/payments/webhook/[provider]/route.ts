@@ -1,5 +1,6 @@
 import { trackBookingPaid } from "@/lib/analytics/emit";
 import { startDispatchFor } from "@/lib/dispatch/start";
+import { scheduleBookingRouteMap } from "@/lib/maps/route-map";
 import { isPaymentProviderError } from "@/lib/payments/errors";
 import { bookingIdForRef, settleIntent } from "@/lib/payments/intents";
 import { findAdapter } from "@/lib/payments/registry";
@@ -203,6 +204,11 @@ export async function POST(
       //     وكل مسارات الخطأ مبتلعة داخلياً. أي throw هنا كان سيقلب ٢٠٠ إلى
       //     خطأ فيعيد المزوّد الإرسال إلى الأبد ثم يعطّل نقطة النهاية.
       trackBookingPaid(bookingId);
+
+      // (٧) خريطة المسار (م‑١١) — نفس خطّاف الاعتماد اليدوي، وبنفس عقده:
+      //     مجدولة بعد الرد ولا تُنتظر ولا ترمي. وأي `throw` هنا كان سيقلب
+      //     ٢٠٠ إلى خطأ فيعيد المزوّد إرسال الحدث بلا نهاية.
+      scheduleBookingRouteMap(bookingId);
     }
   }
 

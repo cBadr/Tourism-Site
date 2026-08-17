@@ -4,6 +4,7 @@ import {
   passengersLabel,
   toArabicDigits,
 } from "@/components/booking/format";
+import { siteTimeZone } from "@/lib/site-timezone";
 
 /**
  * صياغة نص الإشعار بالعربية — وحدة محايدة (بلا استيراد خادمي) يستعملها
@@ -167,10 +168,117 @@ export function bookingReference(payload: Payload): string | null {
   return firstStr(payload, ["reference", "bookingReference"]);
 }
 
-/** مسار المتابعة النسبي — الجرس يستعمله كما هو */
+/**
+ * مسار المتابعة النسبي — **وجهةُ العميل وحده**.
+ *
+ * ⚠ ولا يُنادى من شاشةٍ ولا من قناةٍ مباشرةً: مناديه الوحيد `audienceLink`
+ * أدناه، وهناك يُختار بحسب الجمهور. ونداؤه مباشرةً هو بعينه العيب الذي أُصلح
+ * (انظر ترويسة `audienceLink`).
+ */
 export function bookingPath(payload: Payload): string | null {
   const token = bookingToken(payload);
   return token ? `/booking/${token}` : null;
+}
+
+// ---------------------------------------------------------------------------
+// وجهة الإشعار بحسب جمهوره — مكانٌ واحد لا ثلاثة
+// ---------------------------------------------------------------------------
+
+/**
+ * جمهور الإشعار. ثلاثة لا رابع لهم، ولكلٍّ **صفحته هو**.
+ *
+ * و`ops` جمهورٌ واحد وإن تعدّدت أسطحه: جرسُ اللوحة و`/admin/notifications`
+ * وتليجرام التشغيل وبريده كلها العين نفسها — يفرّق بينها `baseUrl` وحده
+ * (فارغٌ ⇒ مسارٌ نسبي داخل اللوحة، ومملوءٌ ⇒ رابطٌ مطلق في رسالةٍ خارجية).
+ */
+export type NotificationAudience = "ops" | "partner" | "customer";
+
+/**
+ * 🔒 **وجهةُ كل جمهور — قرارٌ في موضعٍ واحد، على طراز `audienceReference`.**
+ *
+ * ── العيب الذي وُجدت هذه الدالة لتغلقه (بلاغ المالك 2026-08-17) ─────────────
+ *
+ * كان الرابط يُبنى من `bookingPath(payload)` في **ثلاثة مواضع مستقلة** — في
+ * `renderNotification` هنا، وفي `dispatchLink` بـ`lib/dispatch/messages.ts`
+ * احتياطاً، وفي جرس اللوحة مباشرةً. وثلاثتها تسأل السؤال نفسه: «ما توكن
+ * الحجز؟» — أي أنها تبني **وجهة العميل** لكل من يقرأ، أياً كان.
+ *
+ * فالمالك ينقر إشعاراً في جرس لوحته فيهبط على `/booking/<token>`: الصفحة
+ * المصمَّمة **لتُخفي** عنه ما يحتاجه. مقيسٌ على القاعدة الحيّة: ٥٧٤ صفاً من
+ * `booking_created` و`booking_confirmed` و`receipt_uploaded` كلها كانت تقود
+ * إلى صفحة العميل، بينما تحمل حمولاتُها `bookingId` كاملاً (٥٧٤ من ٥٧٤).
+ *
+ * ── ولماذا هي **حارسٌ أمني** لا تحسينُ تنقّل ─────────────────────────────────
+ *
+ * قِيس ما تعرضه `/booking/<token>` لحاملِ توكنٍ اليوم: **إجمالي العميل**
+ * (3845.00) · **مرجع الحجز** (`TR-…`) · اسمه كاملاً · و`destLabel` وإحداثيات
+ * ونصّ ملاحظاته الحرّ **بلا تقنيع** (‏`dispatch_public_label` و
+ * `dispatch_safe_notes` لا تمرّان على هذه الصفحة). و`0049` قنّعت الهاتف
+ * والواتساب — ولم تجعلها غير ضارّة: متعهدٌ يعرف **مستحقه**، فإجمالي العميل في
+ * يده = **هامشنا** على تلك الرحلة. وذلك نقضٌ مباشر لـ**D-19** و**D-46**، وهو
+ * نفسه البابُ الذي أغلقته `0056` من جهة المرجع.
+ *
+ * ── والقاعدة التي تمنع عودته ────────────────────────────────────────────────
+ *
+ * فرعُ `ops` **لا يقرأ التوكن إطلاقاً** — لا شرطاً ولا احتياطاً ولا `??`.
+ * فحتى لو حملت حمولةٌ توكناً (وكلها تحمله)، **لا يوجد في هذا الملف مسارٌ
+ * يسوق به إدارياً إلى صفحة العميل**. وهي حرفياً قاعدةُ `audienceReference`
+ * نفسها مطبَّقةً على الوجهة بدل المعرّف؛ فالاحتياطُ لو كُتب هنا
+ * `adminPath ?? bookingPath` لأعاد العيب في أول حمولةٍ بلا معرّف.
+ *
+ * ⚠ **وسقوطُ الرابط أهون من سقوطه على الوجهة الخطأ**: حمولةٌ بلا `bookingId`
+ * ولا `quoteRequestId` تُنتج **بلا رابط** لا رابطاً إلى صفحة العميل. وقِيس أن
+ * ذلك لا يُفقد صفاً واحداً رابطَه اليوم: كل حمولةٍ غير بثّية تحمل `bookingId`،
+ * و`quote_requested` — وهي الوحيدة بلا معرّف حجزٍ ولا توكن — تحمل
+ * `quoteRequestId` فتُوصَل إلى شاشتها.
+ *
+ * ── ولماذا هنا لا في `lib/dispatch/messages.ts` بجوار `audienceReference` ───
+ *
+ * لأن اتجاه الاستيراد يفرضه: `messages.ts` يستورد من هذا الملف، فالوجهةُ
+ * موضوعةً هناك لا يستطيع `renderNotification` هنا أن يناديها إلا بحلقةٍ
+ * دائرية. والمقصود من السابقة محفوظٌ كاملاً — **آلةٌ واحدة تقرّر لكل الجماهير**
+ * يناديها الراسمان معاً — لا موضعُها من شجرة الملفات.
+ */
+export function audienceLink(
+  payload: Payload,
+  audience: NotificationAudience,
+  baseUrl?: string
+): { label: string; href: string } | null {
+  const base = (baseUrl ?? "").replace(/\/+$/, "");
+
+  // المتعهد: شاشتُه هو — لا صفحةَ العميل ولا اللوحة. ولا يقرأ هذا الفرع
+  // الحمولةَ أصلاً، فلا مفتاحَ فيها يستطيع أن يغيّر وجهته.
+  if (audience === "partner") {
+    return { label: "صندوق طلباتي في البورتال", href: `${base}/portal/requests` };
+  }
+
+  // العميل: صفحته الوحيدة. ولا مستهلكَ لهذا الفرع في أنبوب الإشعارات اليوم
+  // (لا صفَّ `notifications` موجَّهاً إلى عميل — `recipient_kind` إمّا `ops`
+  // أو `partner`)، وهو مكتوبٌ لأن الخريطة تُقرأ كاملةً أو لا تُقرأ: من يضيف
+  // غداً إشعاراً للعميل يجد وجهته هنا بدل أن يستنسخ `bookingPath` من جديد —
+  // وذلك الاستنساخ بعينه هو ما أنتج هذا العيب.
+  if (audience === "customer") {
+    const path = bookingPath(payload);
+    return path ? { label: "صفحة متابعة الحجز", href: `${base}${path}` } : null;
+  }
+
+  // فريق التشغيل: صفحة الطلب في اللوحة — حيث التكلفة والهامش والمتعهد والأزرار
+  const bookingId = str(payload, "bookingId");
+  if (bookingId) {
+    return { label: "صفحة الطلب في اللوحة", href: `${base}/admin/orders/${bookingId}` };
+  }
+
+  // طلب عرض السعر ليس حجزاً: لا معرّف حجزٍ له ولا توكن — ومرساةُ شاشته هي
+  // وجهته (‏`#status-<id>` موجودة على بطاقة كل طلب في `/admin/quote-requests`).
+  const quoteRequestId = str(payload, "quoteRequestId");
+  if (quoteRequestId) {
+    return {
+      label: "طلب عرض السعر في اللوحة",
+      href: `${base}/admin/quote-requests#status-${quoteRequestId}`,
+    };
+  }
+
+  return null;
 }
 
 /** «القاهرة ← الغردقة» — يرجع null إن غابت الأطراف */
@@ -207,7 +315,15 @@ export function notificationBrief(payload: Payload): string | null {
   return parts.length > 0 ? parts.slice(0, 2).join(" · ") : null;
 }
 
-/** التاريخ والوقت بالعربية — يعمل في الخادم والمتصفح بنفس النتيجة (UTC+ثابت) */
+/**
+ * التاريخ والوقت بالعربية — يعمل في الخادم والمتصفح بنفس النتيجة.
+ *
+ * المنطقة **من إعداد الموقع** لا نصّاً في السطر (هجرة 0075). ومساراه اثنان:
+ * شاشات اللوحة والبورتال (يضبطها `i18n/request.ts` مع تصيير الجذر)، وعامل
+ * الإشعارات في `/api/notifications/dispatch` — **وهو ينادي `getSiteTimeZone()`
+ * صراحةً قبل أن يرسم أي رسالة**، لأن مسار `/api` لا يمرّ بالتخطيط فلا يُضبط
+ * تلقائياً. وبلا ذلك كانت رسالة تليجرام وحدها تخالف الشاشة في الساعة.
+ */
 export function formatDateTime(iso: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);
@@ -216,7 +332,7 @@ export function formatDateTime(iso: string | null): string | null {
     return new Intl.DateTimeFormat("ar-EG", {
       dateStyle: "medium",
       timeStyle: "short",
-      timeZone: "Africa/Cairo",
+      timeZone: siteTimeZone(),
     }).format(date);
   } catch {
     return date.toISOString().replace("T", " ").slice(0, 16);
@@ -268,7 +384,13 @@ function push(lines: MessageLine[], label: string, value: string | null | undefi
 export function renderNotification(
   event: string,
   payload: Payload,
-  ctx: RenderContext
+  ctx: RenderContext,
+  /**
+   * ⚠ والافتراضُ `ops` يسقط في الاتجاه الآمن: من نسي تمريره يحصل على رابط
+   * `/admin` — وهو محروسٌ بالدور (**D-22**) فيردّ غيرَ الإداري ولا يعرض شيئاً.
+   * ولو كان الافتراض `customer` لكان النسيانُ **تسريباً** لا رابطاً ميّتاً.
+   */
+  audience: NotificationAudience = "ops"
 ): RenderedMessage {
   const currency = str(payload, "currency") ?? ctx.currency;
   const reference = bookingReference(payload);
@@ -366,10 +488,8 @@ export function renderNotification(
     }
   }
 
-  const path = bookingPath(payload);
-  const base = (ctx.baseUrl ?? "").replace(/\/+$/, "");
-  const linkLabel = event === "quote_requested" ? "صفحة متابعة الطلب" : "صفحة متابعة الحجز";
-  const link = path ? { label: linkLabel, href: `${base}${path}` } : null;
+  // 🔒 الوجهة من الآلة الواحدة — ولا يُبنى هنا مسارٌ باليد بعد اليوم
+  const link = audienceLink(payload, audience, ctx.baseUrl);
 
   return { emoji, title, lead, lines, link, reference };
 }

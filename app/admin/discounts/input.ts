@@ -10,6 +10,8 @@
  * `handover/LESSONS.md`).
  */
 
+import { siteTimeZone } from "@/lib/site-timezone";
+
 /** الأرقام العربية الهندية تُقبل في كل حقل رقمي وتُحوَّل قبل التحقق */
 export const toLatinDigits = (s: string) =>
   s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
@@ -89,27 +91,40 @@ export function classSlugs(formData: FormData): string[] | false {
 }
 
 // ---------------------------------------------------------------------------
-// نافذة الصلاحية — التاريخ يُكتب يوماً، ويُخزَّن لحظةً بتوقيت القاهرة
+// نافذة الصلاحية — التاريخ يُكتب يوماً، ويُخزَّن لحظةً بمنطقة الموقع
+//
+// المنطقة إعداد مالك منذ هجرة 0075، ولذلك **لا مُنسِّق مبنيّ في نطاق الوحدة**:
+// واحدٌ كهذا يتجمّد على منطقة أول استيراد فيظل يحوِّل حدود الكوبونات بالقديمة
+// بعد أن يغيّر المالك الإعداد — خطأ ساعاتٍ في حدٍّ مالي لا يشتكي منه أحد.
+// الذاكرة أدناه مفتاحُها المنطقة نفسها.
 // ---------------------------------------------------------------------------
-
-const TIME_ZONE = "Africa/Cairo";
-
-const CAIRO_PARTS = new Intl.DateTimeFormat("en-US", {
-  timeZone: TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hourCycle: "h23",
-});
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** الساعة الجدارية في القاهرة للحظة معطاة، بالمللي ثانية «كأنها UTC» */
+let zoneParts: Intl.DateTimeFormat | undefined;
+let zonePartsKey: string | undefined;
+
+function zonedFormatter(): Intl.DateTimeFormat {
+  const zone = siteTimeZone();
+  if (zoneParts === undefined || zonePartsKey !== zone) {
+    zonePartsKey = zone;
+    zoneParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+  }
+  return zoneParts;
+}
+
+/** الساعة الجدارية بمنطقة الموقع للحظة معطاة، بالمللي ثانية «كأنها UTC» */
 function cairoWallClock(instant: number): number {
-  const parts = CAIRO_PARTS.formatToParts(new Date(instant));
+  const parts = zonedFormatter().formatToParts(new Date(instant));
   const read = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
   return Date.UTC(
     read("year"),
@@ -122,7 +137,7 @@ function cairoWallClock(instant: number): number {
 }
 
 /**
- * يوم مكتوب في حقل `type="date"` ← لحظة حقيقية بتوقيت القاهرة.
+ * يوم مكتوب في حقل `type="date"` ← لحظة حقيقية بمنطقة الموقع.
  *
  * `edge = "start"` تعني منتصف ليل ذلك اليوم، و`"end"` تعني آخر ثانية فيه —
  * فـ«ينتهي ٣١ أغسطس» يعني نهاية ٣١ لا بدايته (وهو ما يفهمه المالك، وخلافه
@@ -154,7 +169,7 @@ export function cairoInstant(value: string | null, edge: "start" | "end"): strin
 
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return false;
-  // تحقق أخير: هل يقع اليوم المطلوب فعلاً في القاهرة؟ (حدّ التوقيت الصيفي)
+  // تحقق أخير: هل يقع اليوم المطلوب فعلاً في منطقة الموقع؟ (حدّ التوقيت الصيفي)
   const back = new Date(cairoWallClock(instant));
   if (back.getUTCFullYear() !== y || back.getUTCMonth() + 1 !== m || back.getUTCDate() !== d)
     return false;
@@ -162,7 +177,7 @@ export function cairoInstant(value: string | null, edge: "start" | "end"): strin
   return date.toISOString();
 }
 
-/** لحظة مخزَّنة ← اليوم كما يُكتب في حقل `type="date"` بتوقيت القاهرة */
+/** لحظة مخزَّنة ← اليوم كما يُكتب في حقل `type="date"` بمنطقة الموقع */
 export function cairoDateInput(value: string | null | undefined): string {
   if (!value) return "";
   const at = new Date(value);

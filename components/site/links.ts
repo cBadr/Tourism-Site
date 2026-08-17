@@ -212,6 +212,20 @@ export function telHref(phone: string): string {
  */
 export const BOOKING_PATH = "/book";
 
+/**
+ * 🔴 مرساة «لا شريط سفلي قبل أن تغادر هذه الشاشة» — ويدجت الحجز في الرئيسية.
+ *
+ * شكوى المالك من الجوال (2026-08-17): شريط الحجز اللاصق يصل و**زرّ «احسب
+ * السعر» ما زال معروضاً** — إجراءان رئيسيان في إطارٍ واحد.
+ *
+ * والمعرّف مُصدَّرٌ من هنا لأن طرفيه ملفّان لا يعرف أحدهما الآخر:
+ * `components/sections/hero.tsx` يضعه على غلاف الويدجت، و`components/site/
+ * cta-bar.tsx` يمرّره إلى `SlideUpBar`. ونصّان حرفيّان في ملفين ينحرفان بأول
+ * إعادة تسمية — **وانحرافُهما صامت**: الشريط يعود إلى حدّ البطل بلا خطأ ولا
+ * سجلّ، أي يعود العيب نفسه بالضبط.
+ */
+export const BOOKING_WIDGET_ANCHOR_ID = "booking-widget";
+
 export function bookingHref(_settings?: SiteSettings, locale: string = DEFAULT_LOCALE): string {
   return localeHref(BOOKING_PATH, locale);
 }

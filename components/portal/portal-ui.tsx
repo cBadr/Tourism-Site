@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { PriceListStatus, SubcontractorStatus } from "@/lib/subcontractor-types";
 import { cn } from "@/lib/utils";
+import { siteTimeZone } from "@/lib/site-timezone";
 
 /**
  * لبنات واجهة بورتال المتعهدين.
@@ -449,8 +450,6 @@ export function CheckboxField({
 /* أدوات عرض                                                            */
 /* ------------------------------------------------------------------ */
 
-const CAIRO_TIME_ZONE = "Africa/Cairo";
-
 const AR_MONTHS = [
   "يناير",
   "فبراير",
@@ -466,13 +465,13 @@ const AR_MONTHS = [
   "ديسمبر",
 ];
 
-/** تاريخ قصير بتوقيت القاهرة — التشغيل والمتعهدون في مصر */
+/** تاريخ قصير بمنطقة الموقع — التشغيل والمتعهدون في مصر */
 export function dateLabel(value: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: CAIRO_TIME_ZONE,
+    timeZone: siteTimeZone(),
     year: "numeric",
     month: "numeric",
     day: "numeric",

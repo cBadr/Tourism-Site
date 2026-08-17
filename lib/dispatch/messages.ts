@@ -6,11 +6,12 @@ import {
   toArabicDigits,
 } from "@/components/booking/format";
 import {
-  bookingPath,
+  audienceLink,
   bookingReference,
   formatDateTime,
   str,
   type MessageLine,
+  type NotificationAudience,
   type RenderContext,
   type RenderedMessage,
 } from "@/lib/notifications/render";
@@ -55,7 +56,15 @@ import type { EscalationCode, RecipientKind } from "@/lib/partner-alerts-types";
  * أي مفتاح إضافي يُتجاهَل بلا ضرر، وأي مفتاح ناقص يحذف سطره فقط.
  */
 
-export type DispatchAudience = "partner" | "ops";
+/**
+ * جمهور أحداث البثّ — **تضييقٌ** لـ`NotificationAudience` لا نوعٌ مستقل.
+ *
+ * صفُّ البثّ لا يُوجَّه إلى عميل أبداً (`recipient_kind` إمّا `ops` أو
+ * `partner`)، فيبقى `dispatchRecipients` دقيقاً ولا يستطيع أن يُرجع `customer`
+ * سهواً؛ وفي الوقت نفسه يمرّ ما يُرجعه إلى `audienceLink` بلا تحويل. ولو كُتب
+ * النوعان مستقلَّين لانحرفا عند أول جمهورٍ يُضاف.
+ */
+export type DispatchAudience = Extract<NotificationAudience, "partner" | "ops">;
 
 type Payload = Record<string, unknown> | null | undefined;
 
@@ -363,26 +372,20 @@ export function dispatchRecipients(
 // بناء الرسالة
 // ---------------------------------------------------------------------------
 
-function dispatchLink(
-  payload: Payload,
-  ctx: RenderContext,
-  audience: DispatchAudience
-): { label: string; href: string } | null {
-  const base = (ctx.baseUrl ?? "").replace(/\/+$/, "");
-
-  if (audience === "partner") {
-    return { label: "صندوق طلباتي في البورتال", href: `${base}/portal/requests` };
-  }
-
-  const bookingId = firstStr(payload, ["bookingId", "id"]);
-  if (bookingId) {
-    return { label: "صفحة الطلب في اللوحة", href: `${base}/admin/orders/${bookingId}` };
-  }
-
-  // احتياط: لو لم تحمل الحمولة معرّف الحجز نستعمل رابط المتابعة العام
-  const path = bookingPath(payload);
-  return path ? { label: "صفحة متابعة الحجز", href: `${base}${path}` } : null;
-}
+/*
+ * ── حُذف `dispatchLink` وحلّت محلّه `audienceLink` المشتركة ──────────────────
+ *
+ * كانت هذه الوحدة تحمل خريطةَ وجهاتٍ **ثانية** بجوار التي في
+ * `lib/notifications/render.ts`، وكان الفرقُ بينهما هو العيب: هذه تعرف اللوحة
+ * وتلك لا تعرف إلا صفحة العميل — فأحداثُ البثّ كانت تصل اللوحة صحيحةً بينما
+ * أحداثُ الحجز الأربعة تسوق المالك إلى صفحة عميله. فصارتا واحدة.
+ *
+ * وسقط معها احتياطُها الأخير: `bookingPath` حين يغيب `bookingId`. وهو بعينه
+ * الاحتياط الذي كان يعيد العيب في أول حمولةٍ ناقصة، ولا يفقد صفاً واحداً اليوم
+ * (كل حمولات البثّ تحمل `bookingId` — مقيسٌ لا مُقدَّر). وسقطت معه قراءةُ
+ * المفتاح العاري `id`: `str` تبحث داخل `trip` أيضاً، فمفتاحُ `id` يُضاف هناك
+ * غداً كان سيبني `/admin/orders/<شيءٍ ليس حجزاً>`.
+ */
 
 /**
  * يبني رسالة حدث بث واحد. الأسطر مرتّبة بأولوية التصرّف: ما يحتاجه المستلم
@@ -521,7 +524,8 @@ export function renderDispatchNotification(
     title,
     lead,
     lines,
-    link: dispatchLink(payload, ctx, audience),
+    // 🔒 الوجهة من الآلة الواحدة نفسها التي يناديها `renderNotification`
+    link: audienceLink(payload, audience, ctx.baseUrl),
     reference,
   };
 }

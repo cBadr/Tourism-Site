@@ -11,6 +11,7 @@ import {
 import { csvBool, csvDate, csvMoney, csvNumber, csvText } from "@/lib/export/csv";
 import { csvFileResponse } from "@/lib/export/response";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getSiteTimeZone } from "@/lib/site-timezone.server";
 
 /**
  * ‏GET /api/admin/export/[kind] — منفذ التصدير الوحيد للأنواع الأربعة.
@@ -1110,6 +1111,13 @@ export async function GET(
       503
     );
   }
+
+  /**
+   * 🔴 **منطقة الموقع قبل أي `csvDate`** (هجرة 0075): مسار `/api` لا يمرّ
+   * بالتخطيط، فلا يضبط `i18n/request.ts` الوحدةَ المشتركة. وبلا هذا السطر
+   * يخرج الملفّ بساعاتٍ تخالف ما على الشاشة — وملفٌّ مصدَّر لا يُراجَع.
+   */
+  await getSiteTimeZone();
 
   // النوع يُمرَّر إلى الحارس ليصير سطر السجل مفيداً: «حاول تصدير الحجوزات» لا
   // «حاول تصديراً». وهو مسمّىً عربي من `PENDING_LABELS` كما يقرؤه المالك.

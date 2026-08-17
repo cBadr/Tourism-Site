@@ -17,6 +17,14 @@
 --   • ما يعدّله مؤقتاً (مفتاح إعدادات payment) يُعاد كما كان حتى عند الفشل.
 --   • حساب استقبال الاختبار بمعرّف ثابت يُحذف في الطرفين.
 --
+-- ⚠ **لا إدراج في `storage.objects` خارج كتلة راجعة ذاتياً.** الحذف المباشر منها
+--   ممنوع بمُشغّل Supabase‏ `protect_objects_delete`، فما يُلتزم به لا يُنظَّف
+--   أبداً. القسم (ل-١٣) وحده يكتب هناك، وداخل كتلة تنتهي بـ ROLLBACK_MARKER
+--   (نفس نمط `receipt_tests.sql` القسم ج)، ويحرسه تأكيدان يقيسان العدّ:
+--   (ل-١٣ب) في موضعه، و(ع-٢) في التنظيف. وسبب التشدّد مقيس: قبل 2026-08-17 كان
+--   القسم يحذف الصفوف حذفاً مباشراً، فيفشل الحذف صامتاً ويتسرّب عشرة صفوف في كل
+--   تشغيل — ١٨٦٠ صفاً تراكمت في دلو receipts قبل أن تُكنس.
+--
 -- الاختبارات لا تفترض أسعاراً مثبتة ولا فئات بعينها: تستخرج أصغر فئة نشطة من
 -- المحرك نفسه وتعيد اشتقاق كل رقم متوقع من quote_price ومن إعدادات الدفع الحية،
 -- فتبقى صحيحة بعد أن يعاير المالك التعريفة أو نسبة العربون من اللوحة.
@@ -1224,7 +1232,8 @@ declare
   v_mimes   text[];
   v_has_col boolean;
   v_can_obj boolean := true;
-  v_flood   boolean := false;
+  v_before  integer;
+  v_objs    integer;
   v_i       integer;
 begin
   -- (ل-١) حدود الدلو نفسه: ٥ ميغابايت وأربعة أنواع
@@ -1291,7 +1300,29 @@ begin
     raise exception '(ل-١٢) توكن لا يخص أي حجز قُبل';
   end if;
 
-  -- (ل-١٣) سقف ١٠ ملفات لكل توكن — يحتاج كتابة في storage.objects
+  -- (ل-١٣) سقف ١٠ ملفات لكل توكن — يحتاج كتابة حقيقية في storage.objects
+  --
+  -- ⚠ الإدراج كله داخل **كتلة راجعة ذاتياً** تنتهي بـ ROLLBACK_MARKER — نفس نمط
+  --   receipt_tests.sql القسم (ج) حرفياً، ولا نمط ثالث. والسبب مدفوع الثمن:
+  --   الحذف المباشر من storage.objects ممنوع بمُشغّل Supabase‏
+  --   protect_objects_delete («Direct deletion from storage tables is not
+  --   allowed»)، فالحذف الذي كان هنا كان **يفشل في كل مرة** وفشله يُبتلع بإشعار
+  --   فقط — فتسرّبت عشرة صفوف في كل تشغيل منذ 2026-08-12 حتى بلغت ١٨٦٠ صفاً.
+  --   الكتلة الراجعة تُلغي الإدراج أصلاً: لا صفَّ يُلتزم به، ولا حذف يُطلب.
+  --   وكتلة الاستثناء في plpgsql نقطةُ حفظ ضمنية، فأي تأكيد يفشل بالداخل يرفع
+  --   رسالته هو، والمعالج يعيد رفعها لأنها ليست العلامة — فلا يبتلع النمط فشلاً.
+  --   ولا `return` داخل الكتلة بحال: يخرج قبل بلوغ العلامة ⇒ التزامٌ صامت.
+  select count(*) into v_before
+  from storage.objects o
+  where o.bucket_id = 'receipts'
+    and left(o.name, length(v_token) + 1) = v_token || '/';
+
+  -- يقرؤه قسم التنظيف (ع) ليؤكد أن لا أثر بقي تحت هذا التوكن
+  perform set_config('tours.test_flood_token', v_token, false);
+
+  -- ── بداية الكتلة الراجعة ذاتياً ──────────────────────────────────────────
+  begin
+
   begin
     for v_i in 1 .. 10 loop
       insert into storage.objects (bucket_id, name)
@@ -1304,21 +1335,42 @@ begin
   end;
 
   if v_can_obj then
-    v_flood := public.receipt_upload_allowed(v_token || '/f11.jpg');
+    -- شاهد إيجابي أولاً: العشرة موجودة فعلاً تحت بادئة التوكن. بدونه يصير
+    -- الرفض التالي رفضاً لسببٍ آخر (مسار خاطئ مثلاً) ولا يثبت السقف.
+    select count(*) into v_objs
+    from storage.objects o
+    where o.bucket_id = 'receipts'
+      and left(o.name, length(v_token) + 1) = v_token || '/';
+    if v_objs <> v_before + 10 then
+      raise exception
+        '(ل-١٣) لم تُدرج العشرة كائنات (كان % وصار %) — تأكيد السقف بلا معنى',
+        v_before, v_objs;
+    end if;
+
+    if public.receipt_upload_allowed(v_token || '/f11.jpg') then
+      raise exception '(ل-١٣) سقف العشرة ملفات لكل توكن غير مفروض — الدلو قابل للإغراق';
+    end if;
   end if;
 
-  -- التنظيف قبل الحكم حتى لا يبقى أثر مهما كانت النتيجة
-  begin
-    delete from storage.objects o
-     where o.bucket_id = 'receipts'
-       and left(o.name, length(v_token) + 1) = v_token || '/';
-  exception
-    when others then
-      raise notice '  ↳ تعذّر حذف الكائنات التجريبية (%)', sqlerrm;
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
   end;
+  -- ── نهاية الكتلة الراجعة ذاتياً ──────────────────────────────────────────
 
-  if v_can_obj and v_flood then
-    raise exception '(ل-١٣) سقف العشرة ملفات لكل توكن غير مفروض — الدلو قابل للإغراق';
+  -- (ل-١٣ب) 🔴 حارس التسريب: العدّ عاد إلى ما كان عليه بالضبط.
+  --   هذا هو التأكيد الذي كان غائباً خمسة أيام: التنظيف الفاشل كان يُبتلع بإشعار
+  --   فيمرّ الملف أخضر وهو يترك عشرة صفوف. من ينقل الإدراج خارج الكتلة الراجعة —
+  --   أو يحذف العلامة — يُسقط هذا السطر أحمر بدل أن يتراكم الدلو بصمت.
+  select count(*) into v_objs
+  from storage.objects o
+  where o.bucket_id = 'receipts'
+    and left(o.name, length(v_token) + 1) = v_token || '/';
+  if v_objs <> v_before then
+    raise exception
+      '(ل-١٣ب) 🔴 تسريب في storage.objects: كان % كائناً تحت توكن الاختبار وصار % — الكتلة الراجعة لم ترجع، والحذف المباشر ممنوع بمُشغّل protect_objects_delete',
+      v_before, v_objs;
   end if;
 
   -- (ل-١٤) سياسة الحذف للضيف موجودة بنفس الشرط (تنظيف الملف اليتيم)
@@ -1644,7 +1696,9 @@ do $$
 declare
   v_admin   uuid := nullif(current_setting('tours.test_admin', true), '')::uuid;
   v_fixture text := current_setting('tours.test_admin_fixture', true);
+  v_flood   text := nullif(current_setting('tours.test_flood_token', true), '');
   v_left    integer;
+  v_objs    integer;
 begin
   delete from public.notifications n
    where n.payload ->> 'bookingId' in (
@@ -1679,13 +1733,31 @@ begin
     raise exception '(ع) بقيت % من صفوف الاختبار بعد التنظيف', v_left;
   end if;
 
+  -- (ع-٢) 🔴 صفر كائن تخزين تحت توكن قسم (ل). هذا الحارس الثاني — مستقل عن
+  -- الحارس داخل (ل-١٣ب) — لأن الحذف المباشر من storage.objects ممنوع بمُشغّل
+  -- protect_objects_delete: ما يُلتزم به هنا لا يمكن تنظيفه لاحقاً إطلاقاً، فلا
+  -- يبقى إلا منعُ الالتزام أصلاً (كتلة راجعة) وإثباتُه عدّاً — كما في
+  -- receipt_tests.sql القسم (و-٢).
+  if v_flood is not null then
+    select count(*) into v_objs
+    from storage.objects o
+    where o.bucket_id = 'receipts'
+      and left(o.name, length(v_flood) + 1) = v_flood || '/';
+    if v_objs <> 0 then
+      raise exception
+        '(ع-٢) بقي % كائناً تجريبياً في دلو receipts — إدراجٌ وقع خارج الكتلة الراجعة، والحذف المباشر ممنوع',
+        v_objs;
+    end if;
+  end if;
+
   perform set_config('tours.test_admin', '', false);
   perform set_config('tours.test_admin_fixture', '', false);
   perform set_config('tours.test_class', '', false);
   perform set_config('tours.test_tamper_pax', '', false);
+  perform set_config('tours.test_flood_token', '', false);
   perform set_config('request.jwt.claim.sub', '', false);
 
-  raise notice '✔ (ع) التنظيف تم — لا صفوف اختبار متبقية';
+  raise notice '✔ (ع) التنظيف تم — لا صفوف اختبار ولا كائنات تخزين متبقية';
 end;
 $$;
 

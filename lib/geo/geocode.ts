@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { GeoPlace } from "@/lib/pricing-types";
+import { formatCoordsLabel } from "@/lib/place-search-types";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { afterResponse } from "@/lib/geo/background";
 
@@ -17,6 +18,7 @@ import { afterResponse } from "@/lib/geo/background";
  */
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 /** سياسة Nominatim تُلزم بهوية واضحة للتطبيق */
 const USER_AGENT = "Tours01/1.0";
 const TIMEOUT_MS = 6000;
@@ -119,25 +121,49 @@ async function fetchNominatim(normalized: string): Promise<GeoPlace[]> {
 }
 
 /**
+ * نتيجة نداء Nominatim — **ثلاث حالات لا اثنتان**.
+ *
+ * أُضيفت حين صار البحث رباعي الطبقات (`lib/geo/search.ts`): محرّكٌ يرتدّ بين
+ * مزوّدَين يحتاج أن يفرّق بين «بحثتُ فلم أجد» وبين «لم أستطع البحث» — الأولى
+ * جوابٌ نهائي يمضي إلى الخريطة، والثانية تستدعي المزوّد الآخر.
+ *
+ * 🔒 **والكاش لم يُمسّ بحرف**: نفس القراءة، ونفس الكتابة بعد الاستجابة، ونفس
+ * تخزين النتيجة الفارغة (استعلامٌ بلا نتائج يستحق الخدمة من الكاش أيضاً)،
+ * ونفس امتناع الكتابة عند فشل المزوّد (تسميم الكاش).
+ */
+export type NominatimResult =
+  | { status: "ok"; places: GeoPlace[] }
+  | { status: "unavailable" };
+
+/**
  * طلبات جارية بنفس المفتاح — تُشارَك بدل تكرار النداء الخارجي.
  * سياسة Nominatim تسمح بطلب واحد في الثانية، وويدجت البحث أثناء الكتابة
  * قد يُطلق عدة طلبات متزامنة بنفس النص؛ المشاركة تحمي المزوّد المجاني.
  */
-const inFlight = new Map<string, Promise<GeoPlace[]>>();
+const inFlight = new Map<string, Promise<NominatimResult>>();
 
 /**
  * البحث عن أماكن داخل مصر. لا ترمي أبداً — الفشل الخارجي يعني [].
+ *
+ * الشكل التاريخي، وهو ما يستعمله `/api/geocode` وبورتال المتعهدين: من لا
+ * يفرّق بين الفشل والفراغ يرى الاثنين `[]` كما كان دائماً.
  */
 export async function searchPlaces(q: string): Promise<GeoPlace[]> {
+  const result = await searchPlacesResult(q);
+  return result.status === "ok" ? result.places : [];
+}
+
+/** نفس البحث، بالحالة الثلاثية التي يحتاجها المحرّك متعدد الطبقات */
+export async function searchPlacesResult(q: string): Promise<NominatimResult> {
   const normalized = normalizeQuery(q);
-  if (normalized.length < 2) return [];
+  if (normalized.length < 2) return { status: "ok", places: [] };
 
   const key = cacheKey(normalized);
   const running = inFlight.get(key);
   if (running) return running;
 
   const task = lookup(normalized, key)
-    .catch((): GeoPlace[] => [])
+    .catch((): NominatimResult => ({ status: "unavailable" }))
     .finally(() => {
       inFlight.delete(key);
     });
@@ -145,7 +171,7 @@ export async function searchPlaces(q: string): Promise<GeoPlace[]> {
   return task;
 }
 
-async function lookup(normalized: string, key: string): Promise<GeoPlace[]> {
+async function lookup(normalized: string, key: string): Promise<NominatimResult> {
   const supabase = createServiceSupabase();
 
   // (١) الكاش الدائم — يخدم الاستعلامات المكررة بلا أي نداء خارجي
@@ -156,7 +182,7 @@ async function lookup(normalized: string, key: string): Promise<GeoPlace[]> {
         .select("places")
         .eq("query_key", key)
         .maybeSingle();
-      if (data && isGeoPlaceArray(data.places)) return data.places;
+      if (data && isGeoPlaceArray(data.places)) return { status: "ok", places: data.places };
     } catch {
       // فشل قراءة الكاش لا يمنع البحث المباشر
     }
@@ -167,7 +193,9 @@ async function lookup(normalized: string, key: string): Promise<GeoPlace[]> {
   try {
     places = await fetchNominatim(normalized);
   } catch {
-    return [];
+    // ٤٢٩ أو 5xx أو شبكة — **لا يُكتب شيء في الكاش** (كما كان)، والمنادي
+    // يعرف الآن أن هذا فشلٌ لا فراغ فيستطيع أن يجرّب المزوّد الآخر
+    return { status: "unavailable" };
   }
 
   // (٣) كتابة الكاش بعد الاستجابة (لا تؤخر الرد) — حتى النتائج الفارغة تُخزَّن
@@ -178,5 +206,74 @@ async function lookup(normalized: string, key: string): Promise<GeoPlace[]> {
     );
   }
 
-  return places;
+  return { status: "ok", places };
+}
+
+/* ------------------------------------------------------------------ */
+/* الجيوكودنج العكسي — وسمُ الدبوس الذي أسقطه العميل                     */
+/* ------------------------------------------------------------------ */
+
+type NominatimReverse = {
+  lat?: string;
+  lon?: string;
+  display_name?: string;
+  osm_type?: string;
+  osm_id?: number;
+};
+
+/**
+ * إحداثيات ← وسمٌ مقروء، للطبقة الثالثة (منتقي الخريطة).
+ *
+ * 🔴 **الإحداثيات هي الناتج، والوسم زينة.** الدبوس أدقّ من أي بحث نصّي، ولا
+ * يُسمح لفشل التسمية أن يُسقط اختياراً صحيحاً: تعذُّر النداء يُرجع مكاناً
+ * بنفس الإحداثيات ووسمٍ من الأرقام. فالعميل الذي حدّد موقعه **لا يُطرد لأن
+ * OSM لا يعرف اسم شارعه**.
+ *
+ * ⚠ وبـNominatim لا بجوجل بقصد: العكسيُّ عندنا مجاني ومفتوح البيانات، ولا
+ * يستدعي أي سؤالٍ عن تخزين محتوى Places (انظر ترويسة `places-google.ts`).
+ * والدبوس أصلاً لا يمرّ بمزوّدٍ مدفوع — وهذه أرخص طبقة في المحرّك كله.
+ *
+ * ولا يُكتب في `geocode_cache`: مفتاحه نصُّ بحثٍ لا إحداثيات، وحشوُ إحداثيات
+ * فيه يفسد شكل المفتاح على قارئه الآخر.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<GeoPlace> {
+  const fallback: GeoPlace = {
+    // وسمُ الطوارئ: إحداثيات مقرَّبة — مفهومة، وتُظهر للعميل أن اختياره وصل.
+    // والصياغة من العقد لا محلية: نفس النص يبنيه العميل حين تسقط الشبكة كلها.
+    label: formatCoordsLabel(lat, lng),
+    lat,
+    lng,
+  };
+
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lng),
+    format: "jsonv2",
+    "accept-language": "ar",
+    zoom: "18",
+    addressdetails: "0",
+  });
+
+  try {
+    const res = await fetch(`${NOMINATIM_REVERSE_URL}?${params.toString()}`, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      cache: "no-store",
+    });
+    if (!res.ok) return fallback;
+
+    const item = (await res.json()) as NominatimReverse;
+    if (!item?.display_name) return fallback;
+
+    return {
+      label: toLabel(item.display_name),
+      // 🔒 إحداثيات **العميل** لا إحداثيات ما طابقه المزوّد: الدبوس هو الحقيقة،
+      //    والمزوّد قد يُرجع مركز الشارع كله فينزلق موقع الالتقاط عشرات الأمتار.
+      lat,
+      lng,
+      ref: item.osm_type && item.osm_id != null ? `${item.osm_type}/${item.osm_id}` : undefined,
+    };
+  } catch {
+    return fallback;
+  }
 }

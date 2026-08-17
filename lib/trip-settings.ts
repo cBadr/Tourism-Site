@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { DEFAULT_TRIP_SETTINGS, type TripSettings } from "@/lib/booking-types";
+import { resolveSiteTimeZone } from "@/lib/site-timezone";
 import { isMissingFunction, isMissingTable } from "@/lib/dispatch/settings";
 
 /**
@@ -43,6 +44,8 @@ export const TRIP_SETTINGS_COLUMNS = {
   unpaidCancelEnabled: "unpaid_cancel_enabled",
   unpaidTimeoutMinutes: "unpaid_timeout_minutes",
   minLeadMinutes: "min_lead_minutes",
+  timeZone: "time_zone",
+  routeMapEnabled: "route_map_enabled",
 } as const;
 
 /**
@@ -147,6 +150,9 @@ export async function readTripSettings(supabase: SupabaseClient): Promise<TripSe
     // 0067 — عمودٌ قد لا يكون موجوداً على قاعدةٍ لم تصلها الهجرة بعد، فغيابه
     // يسقط إلى افتراضي العقد (صفر = مطفأة) لا إلى رقمٍ يُخترع.
     const lead = counter(row, ["min_lead_minutes", "minLeadMinutes"]);
+    // 0075 — نفس الحكم: عمودٌ غائب ⇒ افتراضي العقد. و`resolveSiteTimeZone`
+    // ترفض ما لا يعرفه زمن التشغيل فلا تعرض الشاشة منطقةً لا تُنسِّق شيئاً.
+    const zone = row["time_zone"] ?? row["timeZone"];
 
     return {
       loaded: true,
@@ -164,6 +170,15 @@ export async function readTripSettings(supabase: SupabaseClient): Promise<TripSe
           lead === null
             ? DEFAULT_TRIP_SETTINGS.minLeadMinutes
             : Math.min(MAX_LEAD_MINUTES, Math.max(MIN_LEAD_MINUTES_FLOOR, Math.round(lead))),
+        timeZone: resolveSiteTimeZone(zone),
+        // 0078 — نفس حكم العمودين قبله: عمودٌ غائب على قاعدةٍ لم تصلها الهجرة
+        // يسقط إلى افتراضي العقد. و`flag` تقبل `true` و`'t'` و`'1'` معاً لأن
+        // PostgREST قد يرسل المنطقي نصّاً.
+        routeMapEnabled: flag(
+          row,
+          ["route_map_enabled", "routeMapEnabled"],
+          DEFAULT_TRIP_SETTINGS.routeMapEnabled
+        ),
       },
     };
   } catch {

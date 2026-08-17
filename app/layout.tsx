@@ -7,6 +7,7 @@ import { paletteVars } from "@/lib/site-config";
 import { getActiveLocale, getActiveLocaleDef } from "@/i18n/server";
 import { AnalyticsTags } from "@/lib/analytics/tags";
 import { normalizeIntegrations, resolveIntegration } from "@/lib/analytics/services";
+import { SiteTimeZoneSync } from "@/components/shared/site-time-zone-sync";
 import "./globals.css";
 
 /**
@@ -249,7 +250,14 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col font-sans">
         {/* مزوّد الرسائل لجزر العميل (ويدجت البحث، مسار الحجز، نماذج الطلب) */}
-        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+        <NextIntlClientProvider>
+          {/* 🔴 أول ابنٍ عمداً: يعكس منطقة الموقع إلى `lib/site-timezone.ts`
+              **أثناء التصيير**، فتستقر قبل أن يُصيَّر أي شيء يقرؤها. الأخوة
+              يُصيَّرون بالترتيب، والتأثيرات تعمل بعد الشجرة كلها — فـ`useEffect`
+              كان سيصل متأخراً بتصييرة كاملة (ترويسة المكوّن). */}
+          <SiteTimeZoneSync />
+          {children}
+        </NextIntlClientProvider>
         {/* وسوم القياس من اللوحة (المرحلة ١٠) — ترجع null بلا أي سكربت حين
             لا خدمة مضبوطة ومفعّلة. وسما التحقق في generateMetadata أعلاه. */}
         <AnalyticsTags />

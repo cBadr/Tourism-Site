@@ -8,7 +8,7 @@ import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
 import { createFormatter } from "@/components/booking/format";
 import { LocaleSwitcher } from "./locale-switcher";
-import { FooterAccordionSync } from "./footer-accordion";
+import { SingleOpenAccordion } from "./single-open-accordion";
 import {
   TRACK_LINK_KEY,
   accountLinks,
@@ -35,6 +35,12 @@ const LEGAL_PAGES = [
 const LEGAL_SLUGS: ReadonlySet<string> = new Set(LEGAL_PAGES.map((page) => page.slug));
 
 /**
+ * نطاق مجموعة الأكورديون. والتذييل يظهر مرةً واحدة في الصفحة، فمعرّفٌ ثابت
+ * يكفي — بخلاف الأسئلة الشائعة التي قد تتكرر فتشتقّ نطاقها من `sectionId`.
+ */
+const FOOTER_NAV_ID = "site-footer-nav";
+
+/**
  * عمود روابط موحّد في التذييل — **مطويّ على الجوال ومفتوحٌ على المكتب**.
  *
  * ── الشكوى المقيسة ─────────────────────────────────────────────────────────
@@ -51,7 +57,7 @@ const LEGAL_SLUGS: ReadonlySet<string> = new Set(LEGAL_PAGES.map((page) => page.
  *
  * 🔒 **و`<details>` بلا `open` في الماركب هو الشكل المرفوض**: بلا جافاسكربت
  * كان الزاحف والزائر يريان أربعة عناوين وصفر رابط. فالعمود يخرج من الخادم
- * **مفتوحاً**، و`FooterAccordionSync` يطويه على الجوال بعد الترطيب — فالفشل
+ * **مفتوحاً**، و`SingleOpenAccordion` يطويه على الجوال بعد الترطيب — فالفشل
  * يقع إلى «كما كان» لا إلى «محجوب».
  *
  * ⚠ **والأكورديون صار أحادي الفتح** بأمر بدر (2026-08-17): فتحُ عمودٍ يطوي
@@ -77,13 +83,13 @@ function FooterLinkColumn({
   return (
     <nav aria-label={title} className="border-t border-border/60 md:border-t-0">
       <details
-        data-ftr-acc
+        data-acc
         /*
           `open` على الأربعة جميعاً — لا على هذا وحده. والسمة أدناه تقول
           «ابدأ من هنا **بعد** الترطيب» ولا تقول «الوحيد المفتوح في الـHTML».
         */
         open
-        {...(defaultOpen ? { "data-ftr-default": "" } : null)}
+        {...(defaultOpen ? { "data-acc-default": "" } : null)}
         className="group"
       >
         <summary
@@ -92,7 +98,7 @@ function FooterLinkColumn({
             /**
              * على المكتب: عنوانٌ ساكن لا زرّ — لا مؤشّر ولا نقر ولا سهم.
              * و`pointer-events-none` تمنع النقر بالفأرة، **والنقر بلوحة
-             * المفاتيح يمنعه حارس `toggle` في `FooterAccordionSync`** — فعمودٌ
+             * المفاتيح يمنعه حارس `toggle` في `SingleOpenAccordion`** — فعمودٌ
              * أُغلق على المكتب لا يجد ما يفتحه (الأسهم مخفية هناك).
              */
             "md:pointer-events-none md:cursor-default md:py-0 md:pb-3",
@@ -238,15 +244,26 @@ export async function SiteFooter({
 
   return (
     <footer className="border-t bg-muted/30">
-      {/* يطوي الأعمدة على الجوال بعد الترطيب — والفشل يقع إلى «الكل مفتوح» */}
-      <FooterAccordionSync />
+      {/*
+        يطوي الأعمدة إلى واحدٍ على الجوال بعد الترطيب — والفشل يقع إلى «الكل
+        مفتوح». والمقبضان هما كل الفرق بينه وبين أكورديون الأسئلة الشائعة:
+        عمودٌ يبدأ مفتوحاً، وفوق `md` تُفتح الأعمدة كلها ويُعطَّل الطيّ.
+      */}
+      <SingleOpenAccordion
+        scopeId={FOOTER_NAV_ID}
+        defaultAttr="data-acc-default"
+        openAllAbove="(min-width: 768px)"
+      />
       <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 md:py-16">
         {/**
          * على الجوال: عمودٌ واحد بلا فجوة — الفصل يأتي من حدّ كل عمود
          * (`border-t` في `FooterLinkColumn`) فيمتد الخط عبر العرض كاملاً
          * ويُقرأ صفَّ أكورديون. وفوق `sm` تعود الفجوة والأعمدة.
          */}
-        <div className="grid gap-0 sm:grid-cols-2 sm:gap-8 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1fr] lg:gap-6">
+        <div
+          id={FOOTER_NAV_ID}
+          className="grid gap-0 sm:grid-cols-2 sm:gap-8 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1fr] lg:gap-6"
+        >
           {/* الهوية */}
           <div className="flex max-w-sm flex-col gap-3 pb-6 sm:pb-0">
             <div className="flex items-center gap-3">

@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import { ArrowLeft, MapPin, MessageCircle, Phone, Plane } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  MapPin,
+  MessageCircle,
+  Navigation,
+  Phone,
+  Plane,
+} from "lucide-react";
 
 import {
   formatAmount,
@@ -10,8 +18,10 @@ import {
   waitingLabel,
 } from "@/components/booking/format";
 import { Badge } from "@/components/ui/badge";
+import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
 import { telLink, waLink } from "@/lib/phone";
 import { cn } from "@/lib/utils";
+import { siteTimeZone } from "@/lib/site-timezone";
 
 /**
  * لبنات بطاقة الرحلة في البورتال — يتشاركها صندوق العروض وشاشة الرحلات المُسندة.
@@ -23,8 +33,6 @@ import { cn } from "@/lib/utils";
  *
  * كلها مكوّنات خادمية: لا "use client" ولا حالة — نص جاهز في الـ HTML.
  */
-
-const CAIRO_TIME_ZONE = "Africa/Cairo";
 
 const AR_MONTHS = [
   "يناير",
@@ -43,14 +51,14 @@ const AR_MONTHS = [
 
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 
-/** تاريخ ووقت بتوقيت القاهرة — مثال: ١٢ أغسطس ٢٠٢٦ · ٧:٣٠ م */
+/** تاريخ ووقت بمنطقة الموقع — مثال: ١٢ أغسطس ٢٠٢٦ · ٧:٣٠ م */
 export function dateTimeLabel(iso: string | null): string {
   if (!iso) return "—";
   const parsed = Date.parse(iso);
   if (!Number.isFinite(parsed)) return "—";
 
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: CAIRO_TIME_ZONE,
+    timeZone: siteTimeZone(),
     hour12: false,
     year: "numeric",
     month: "2-digit",
@@ -136,6 +144,113 @@ export function TripRoute({
         {roundTrip ? "ذهاب وعودة" : "اتجاه واحد"}
       </Badge>
     </div>
+  );
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *  خريطة المسار للمتعهد — 🔴 **بعد الإسناد وحده، ولا لبنةَ لها في بطاقة العرض**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * الحدّ القائم منذ `0014` و`0028`: قبل القبول وسمٌ معمَّم بلا رقم عقار
+ * (`dispatch_public_label`) وملاحظةٌ منقّحة؛ وبعد الإسناد الوسمُ الخام بعنوانه
+ * الدقيق وهاتف العميل (`portal_trips()`). **وخريطةٌ دقيقة قبل القبول تنقض ذلك
+ * بصورةٍ بدل نصّ** — والرابط يُعاد توجيهه، ولهذا قنّعت `0049` الهاتف أصلاً.
+ *
+ * ولذلك ثلاث طبقاتٍ متتالية، كلٌّ منها كافيةٌ وحدها:
+ *
+ *   ١. **بنيوية:** `portal_offers()` لا تُرجع `booking_id` أصلاً — فبطاقة العرض
+ *      لا تملك ما تمرّره لهذه اللبنة حتى لو استُدعيت هناك بالخطأ.
+ *   ٢. **تركيبية:** هذه اللبنة تُركَّب في `TripCard` وحدها (شاشة «رحلاتي»)
+ *      ولا تُركَّب في `OfferCard`.
+ *   ٣. **حارسٌ في القاعدة:** `partner_route_map_visible(uuid)` — وجسمُه شرطُ
+ *      `where` في `portal_trips()` حرفاً بحرف — يحرس نقطةَ الصورة نفسها، فمن
+ *      استنسخ العنوان لا يُجاب.
+ *
+ * ولا `next/image`: المصدر نقطةُ نهايةٍ خاصة، ومحسّن الصور يضع نسخةً منها في
+ * كاشٍ مشترك على القرص خارج الدلو الخاص.
+ */
+export function TripMap({
+  bookingId,
+  approximate,
+}: {
+  bookingId: string | null;
+  /** رُسم الخط مستقيماً لتعذّر الهندسة — تُقال، ولا تُترك للتخمين (0079) */
+  approximate?: boolean;
+}) {
+  if (!bookingId) return null;
+  return (
+    <figure className="flex flex-col gap-2.5 print:break-inside-avoid">
+      {/*
+        ══ 🔴 الرابط أولاً، والصورة بعده — وهذا ترتيبٌ لا تنسيق ══════════════
+        فعلُ المتعهد ليس تأمّل المسار بل **الوصول إلى العميل**. والصورة تُطبع
+        على ورقة الرحلة وتُقرأ بنظرة، أما الملاحة الحيّة بالمرور والاتجاهات
+        فلا تعطيها صورةٌ ثابتة أبداً — فهي الأولى لمن سيقود.
+
+        ولا إحداثيات في هذه الحمولة: الرابطان يمرّان بمسارٍ يحوّل بعد أن يتحقق
+        من الحارس، فتبقى `portal_trips()` بلا إحداثيات كما هي (D-19).
+      */}
+      <div className={cn("flex flex-wrap gap-2", PRINT_HIDDEN_CLASS)}>
+        <a
+          href={`/portal/trips/directions/${bookingId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <Navigation className="size-4 shrink-0" aria-hidden="true" />
+          الملاحة إلى نقطة الالتقاط
+        </a>
+        <a
+          href={`/portal/trips/directions/${bookingId}?to=route`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <ExternalLink className="size-4 shrink-0" aria-hidden="true" />
+          مسار الرحلة كاملاً
+        </a>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-border bg-muted/40">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`/portal/trips/map/${bookingId}`}
+          alt={
+            approximate
+              ? "خريطة تُظهر نقطة الالتقاط ونقطة الوصول وخطاً تقريبياً بينهما."
+              : "خريطة تُظهر نقطة الالتقاط ونقطة الوصول ومسار القيادة بينهما."
+          }
+          width={1280}
+          height={720}
+          loading="lazy"
+          decoding="async"
+          className="block h-auto w-full"
+        />
+      </div>
+
+      <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
+        <li className="flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="size-2.5 shrink-0 rounded-full bg-[#2563eb] ring-2 ring-[#2563eb]/25"
+          />
+          <span className="font-medium">نقطة الالتقاط</span>
+        </li>
+        <li className="flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="size-2.5 shrink-0 rounded-full bg-[#16a34a] ring-2 ring-[#16a34a]/25"
+          />
+          <span className="font-medium">نقطة الوصول</span>
+        </li>
+      </ul>
+
+      {approximate ? (
+        <figcaption className="text-xs leading-6 text-muted-foreground">
+          تعذّر رسم مسار القيادة، فالخط تقريبي بين النقطتين — والعنوان المكتوب أعلاه هو المرجع.
+        </figcaption>
+      ) : null}
+    </figure>
   );
 }
 

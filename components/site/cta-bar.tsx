@@ -3,7 +3,7 @@ import { SlideUpBar } from "@/components/motion";
 import type { SiteSettings } from "@/lib/site-config";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
 import { getT } from "@/lib/i18n/content";
-import { bookingHref, waHref } from "./links";
+import { BOOKING_WIDGET_ANCHOR_ID, bookingHref, waHref } from "./links";
 import { WhatsAppIcon } from "./social-icons";
 
 /**
@@ -25,7 +25,7 @@ import { WhatsAppIcon } from "./social-icons";
  *
  * | التصميم (`style.css` §١٨ + `main.js` §٩) | هنا |
  * |---|---|
- * | يظهر عند `pageYOffset > hero.offsetHeight − 140` | `SlideUpBar` بحدّه نفسه (‏`offset = 140`) |
+ * | يظهر عند `pageYOffset > hero.offsetHeight − 140` | **لم يعد** — انظر «الحدّ صار الويدجت» أدناه |
  * | `translateY(115%)` ⇐ `none` | `motion.module.css` §٧ حرفاً |
  * | مخفيّ فوق ‎٩٠٠px | `md:hidden` (‏٧٦٨ — نقطة هذا المستودع) |
  * | زرّ الحجز `flex:2` وواتساب `flex:1` بحدّ ‎٩٦px | نفسها |
@@ -39,6 +39,26 @@ import { WhatsAppIcon } from "./social-icons";
  *     **صفحات التصفّح وحدها**، فحشوٌ عامٌّ كان يترك فراغاً ٦٨ بكسل أسفل `/book`
  *     و`/account` بلا شريطٍ يملؤه. والفاصل يولد ويموت مع الشريط بالضبط —
  *     فلا يُغطّى آخرُ سطرٍ في أي صفحة، ولا يبقى فراغٌ في صفحةٍ بلا شريط.
+ *
+ * ── 🔴 الحدّ صار **الويدجت** لا البطل (شكوى المالك 2026-08-17) ──────────────
+ *
+ * > الشريط يظهر و«احسب السعر» ما زال على الشاشة — إجراءان رئيسيان في إطارٍ
+ * > واحد. «المفروض يظهر لما العميل ينزل عند الأسطول.»
+ *
+ * والعطل **في المقياس لا في الميزة**: على الجوال يعيش ويدجت الحجز أسفل البطل
+ * ومتداخلاً معه، فحدّ التصميم (`ارتفاع البطل − ١٤٠`) يقع **داخل** الويدجت.
+ * وهو حدٌّ صحيح في صفحةٍ واحدةٍ بلا ويدجت — وهي الصفحة التي نُقل عنها.
+ *
+ * فصار `afterId` يقيس **قاع الويدجت نفسه**: لا شريط قبل أن يغادر الشاشة
+ * كاملاً. وهذا هو القرار (٢) أدناه مطبَّقاً على **جزءٍ** من صفحةٍ بدل صفحةٍ
+ * كاملة: «لا شريط فوق شاشةٍ فيها زرّ إرسال».
+ *
+ * ⚠ وأثرٌ ثانٍ مقصود: بعد ضغط «احسب السعر» تنمو بطاقاتُ الأسعار ثم مسارُ إتمام
+ *   الحجز **داخل الويدجت نفسه**، فيظلّ الشريط غائباً طوال ذلك — ولا يقع فوق
+ *   «تأكيد الحجز» في الرئيسية كما لا يقع فوقه في `/book`.
+ *
+ * 🔒 وصفحات بلا ويدجت (خدمات · مسارات · الباني) لا يتغيّر سلوكها: غياب المرساة
+ *   يُسقط الحدّ إلى البطل حرفاً (`slide-up-bar.tsx`).
  *
  * 🔴 **(٢) لا يُركَّب على صفحات الحجز ولا الحساب** (‏`/book` · `/booking/[token]`
  *     · `/track` · `/quote-request` · `/account/**` · `/payment/return`).
@@ -86,7 +106,7 @@ export async function SiteCtaBar({
         className="h-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:hidden"
       />
 
-      <SlideUpBar className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-card/95 px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shadow-lg shadow-black/25 backdrop-blur-sm md:hidden">
+      <SlideUpBar afterId={BOOKING_WIDGET_ANCHOR_ID} className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-card/95 px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shadow-lg shadow-black/25 backdrop-blur-sm md:hidden">
         <div className="mx-auto flex max-w-lg items-center gap-2">
           <a
             href={bookingHref(settings, locale)}

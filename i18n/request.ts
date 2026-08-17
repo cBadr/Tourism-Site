@@ -1,4 +1,6 @@
 import { getRequestConfig } from "next-intl/server";
+import { getSiteTimeZone } from "@/lib/site-timezone.server";
+import { DEFAULT_SITE_TIME_ZONE } from "@/lib/site-timezone";
 import { DEFAULT_LOCALE, isRoutingLocale } from "./config";
 import { BASE_CATALOG, getMessages, readMessage } from "./messages";
 import { getActiveLocale } from "./server";
@@ -11,11 +13,20 @@ import { getActiveLocale } from "./server";
  * (العربية بلا بادئة — القاعدة ١). و`requestLocale` يبقى محترماً لأن الدوال
  * الخادمية قد تُمرَّر لغة صريحة: `getTranslations({ locale: "en" })`.
  *
- * المنطقة الزمنية مثبّتة على القاهرة مثل `components/booking/checkout/datetime.ts`:
- * الخادم يعمل بـ UTC والعميل في مصر، فبلا تثبيتها يظهر موعد الانطلاق بساعة أخرى.
+ * ── المنطقة الزمنية: **إعداد مالكٍ يُقرأ هنا مرةً واحدة** (هجرة 0075) ────────
+ *
+ * كانت مثبّتة على القاهرة، وصارت عمود `trip_settings.time_zone` يقرؤه
+ * `public.site_time_zone()` في القاعدة و`getSiteTimeZone()` هنا. **وهذا الملف
+ * هو معبرها الوحيد إلى الواجهة**: القيمة تدخل إعداد next-intl، فتصل تلقائياً
+ * إلى كل `useFormatter` وكل `useTimeZone()` على الخادم وفي المتصفح معاً عبر
+ * `NextIntlClientProvider` (بلا وسائط) في `app/layout.tsx`.
+ *
+ * ⚠ **ولا يُثبَّت اسمُ منطقةٍ في أي ملفّ آخر.** الافتراضي المستورد أدناه
+ * fallback للحظة التي تتعذّر فيها القراءة، لا مصدرٌ ثانٍ.
  */
 
-export const TIME_ZONE = "Africa/Cairo";
+/** @deprecated الاسم القديم — يبقى للتوافق. المصدر `lib/site-timezone.ts` */
+export const TIME_ZONE = DEFAULT_SITE_TIME_ZONE;
 
 export default getRequestConfig(async ({ locale: requested }) => {
   const candidate = requested ?? (await getActiveLocale());
@@ -23,7 +34,8 @@ export default getRequestConfig(async ({ locale: requested }) => {
 
   return {
     locale,
-    timeZone: TIME_ZONE,
+    // القراءة مذاكَرة لكل طلب، وتضبط الوحدة المشتركة للدوال الصرفة معها
+    timeZone: await getSiteTimeZone(),
     messages: getMessages(locale),
 
     /**

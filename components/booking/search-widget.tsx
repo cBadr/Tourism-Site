@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   CalendarClock,
   ChevronDown,
-  CircleCheck,
   Flag,
   LoaderCircle,
   Luggage,
@@ -15,16 +14,19 @@ import {
   Search,
   TriangleAlert,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import type { GeoPlace, QuoteError } from "@/lib/pricing-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
-import { useT, type Tx } from "@/components/site/i18n";
+import { useT } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import type { PromoBanner } from "@/lib/discount-types";
-import { createFormatter, type LocaleFormatter } from "./format";
+import { PLACE_SEARCH_DEFAULTS, type PlaceSearchSettings } from "@/lib/place-search-types";
+import { createFormatter } from "./format";
+import { CollapsedStep } from "./collapsed-step";
+import { PlaceField } from "./place-field";
 import {
+  buildQuoteRequestHref,
   NoClassesRescue,
   Offers,
   type BookingContact,
@@ -107,8 +109,6 @@ import {
  *     مشتقّةً من `booking_min_pickup_at()` وحدها بلا معادلة ثانية.
  */
 
-const MIN_QUERY_LENGTH = 2;
-const DEBOUNCE_MS = 350;
 const MIN_PASSENGERS = 1;
 /** عدد الركاب المبدئي — ومنه تشتقّ الحقائب مبدئياً (انظر `luggageDefault`) */
 const DEFAULT_PASSENGERS = 2;
@@ -135,11 +135,6 @@ const NO_CLASSES_REASONS: Record<string, NoClassesReason> = {
   "no-classes": "passengers",
   "no-classes-luggage": "luggage",
 };
-
-/** استجابة /api/geocode كما نتعامل معها في العميل */
-type GeocodeResponse =
-  | { ok: true; places: GeoPlace[] }
-  | { ok: false; code: string; message: string };
 
 export type SearchWidgetProps = {
   /** قنوات التواصل لأزرار الحجز المرحلية — من إعدادات الموقع */
@@ -186,254 +181,13 @@ export type SearchWidgetProps = {
    * و`null`/`undefined` = تعذّرت القراءة فيبقى الثابت المطلق كما كان.
    */
   maxPassengers?: number | null;
+  /**
+   * إعدادات بحث الأماكن (هجرة 0076) — تصل من الصفحة الخادمية وحدها التي تقرأ
+   * `place_search_config()`. وغيابها يعني **سلوك اليوم حرفياً**: جوجل مطفأ،
+   * وحرفان، و٣٥٠ مللي — وهي القيم التي كانت محفورة في هذا الملف قبل الإعدادات.
+   */
+  placeSearch?: PlaceSearchSettings;
 };
-
-/* ------------------------------------------------------------------ */
-/* حقل مكان بإكمال تلقائي (نمط combobox)                                */
-/* ------------------------------------------------------------------ */
-
-type PlaceFieldProps = {
-  id: string;
-  label: string;
-  placeholder: string;
-  icon: React.ReactNode;
-  value: string;
-  place: GeoPlace | null;
-  onValueChange: (value: string) => void;
-  onPlaceChange: (place: GeoPlace | null) => void;
-  fieldHeight: string;
-  t: Tx;
-  fmt: LocaleFormatter;
-};
-
-function PlaceField({
-  id,
-  label,
-  placeholder,
-  icon,
-  value,
-  place,
-  onValueChange,
-  onPlaceChange,
-  fieldHeight,
-  t,
-  fmt,
-}: PlaceFieldProps) {
-  const [places, setPlaces] = React.useState<GeoPlace[]>([]);
-  /** النص الذي تخصّه النتائج الحالية — مصدر اشتقاق «جارٍ البحث» وحارس التكرار */
-  const [resultsQuery, setResultsQuery] = React.useState<string | null>(null);
-  const [open, setOpen] = React.useState(false);
-  const [activeIndex, setActiveIndex] = React.useState(-1);
-
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
-
-  const listboxId = `${id}-listbox`;
-  const helperId = `${id}-helper`;
-  const optionId = (index: number) => `${id}-option-${index}`;
-
-  const query = value.trim();
-  const tooShort = query.length < MIN_QUERY_LENGTH;
-  /** النتائج الحاضرة تخص النص الحالي فعلاً */
-  const isFresh = resultsQuery === query;
-  /** حالة الانتظار مشتقّة لا مخزَّنة: نص طويل كفايةً بلا نتائج تخصّه بعد */
-  const loading = !tooShort && !isFresh;
-  const hasSuggestions = !tooShort && places.length > 0;
-  const listOpen = open && hasSuggestions;
-  const showEmptyState = open && !tooShort && isFresh && places.length === 0;
-  /** إرشاد لطيف: كُتب نص لكن لم يُختر مكان من القائمة بعد */
-  const needsPick = !place && !tooShort;
-
-  // بحث مؤجل ٣٥٠ مللي ثانية مع إلغاء الطلب السابق عند كل ضغطة مفتاح.
-  // كل تغييرات الحالة داخل نداءات لاحقة (لا تحديث متزامن داخل التأثير).
-  React.useEffect(() => {
-    if (tooShort || isFresh) return;
-
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`, {
-            signal: controller.signal,
-          });
-          const json = (await res.json()) as GeocodeResponse;
-          const next = json.ok ? json.places : [];
-          setPlaces(next);
-          setResultsQuery(query);
-          setActiveIndex(next.length > 0 ? 0 : -1);
-          setOpen(true);
-        } catch {
-          // إلغاء أو فشل شبكة: لا اقتراحات، والزائر يكمل بلا رسالة خطأ مزعجة
-          if (controller.signal.aborted) return;
-          setPlaces([]);
-          setResultsQuery(query);
-          setActiveIndex(-1);
-          setOpen(true);
-        }
-      })();
-    }, DEBOUNCE_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [query, tooShort, isFresh]);
-
-  function selectPlace(selected: GeoPlace) {
-    onValueChange(selected.label);
-    onPlaceChange(selected);
-    setPlaces([]);
-    // تثبيت النص المختار كنتيجة «طازجة» يمنع بحثاً جديداً عن الاسم نفسه
-    setResultsQuery(selected.label.trim());
-    setActiveIndex(-1);
-    setOpen(false);
-    inputRef.current?.focus();
-  }
-
-  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (!hasSuggestions) return;
-      event.preventDefault();
-      setOpen(true);
-      setActiveIndex((current) => {
-        const step = event.key === "ArrowDown" ? 1 : -1;
-        const next = current + step;
-        if (next < 0) return places.length - 1;
-        if (next >= places.length) return 0;
-        return next;
-      });
-      return;
-    }
-
-    if (event.key === "Enter") {
-      const highlighted = listOpen && activeIndex >= 0 ? places[activeIndex] : undefined;
-      if (highlighted) {
-        // لا نرسل النموذج بينما القائمة مفتوحة — الإدخال هنا اختيارٌ لا إرسال
-        event.preventDefault();
-        selectPlace(highlighted);
-      }
-      return;
-    }
-
-    if (event.key === "Escape") {
-      setOpen(false);
-      setActiveIndex(-1);
-      return;
-    }
-
-    if (event.key === "Tab") setOpen(false);
-  }
-
-  return (
-    <div className="relative flex flex-col gap-1.5">
-      <Label htmlFor={id} className="text-sm font-medium">
-        {label}
-      </Label>
-
-      <div className="relative">
-        <span
-          className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          aria-hidden="true"
-        >
-          {icon}
-        </span>
-
-        <Input
-          id={id}
-          ref={inputRef}
-          type="text"
-          role="combobox"
-          autoComplete="off"
-          aria-expanded={listOpen}
-          aria-controls={listboxId}
-          aria-autocomplete="list"
-          aria-describedby={helperId}
-          aria-activedescendant={
-            listOpen && activeIndex >= 0 ? optionId(activeIndex) : undefined
-          }
-          placeholder={placeholder}
-          value={value}
-          onChange={(event) => {
-            onValueChange(event.target.value);
-            onPlaceChange(null);
-          }}
-          onKeyDown={handleKeyDown}
-          onFocus={() => {
-            if (hasSuggestions) setOpen(true);
-          }}
-          onBlur={() => setOpen(false)}
-          className={cn(
-            "rounded-2xl bg-background ps-10 pe-10 text-base md:text-base",
-            fieldHeight
-          )}
-        />
-
-        <span className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2">
-          {loading ? (
-            <LoaderCircle className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />
-          ) : place ? (
-            <CircleCheck className="size-4 text-primary" aria-hidden="true" />
-          ) : null}
-        </span>
-
-        {/* قائمة الاقتراحات */}
-        <ul
-          id={listboxId}
-          role="listbox"
-          aria-label={t("suggestionsFor", "اقتراحات {field}", { field: label })}
-          className={cn(
-            "absolute inset-x-0 top-[calc(100%+0.375rem)] z-50 max-h-72 overflow-y-auto rounded-2xl border border-border bg-popover p-1.5 text-popover-foreground shadow-xl",
-            listOpen ? "block" : "hidden"
-          )}
-        >
-          {places.map((suggestion, index) => (
-            <li
-              key={`${suggestion.label}-${suggestion.lat}-${suggestion.lng}`}
-              id={optionId(index)}
-              role="option"
-              aria-selected={index === activeIndex}
-              // منع فقدان التركيز قبل النقر حتى لا تُغلق القائمة بالـ blur
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => selectPlace(suggestion)}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-sm leading-6 transition-colors",
-                index === activeIndex ? "bg-muted text-foreground" : "text-foreground"
-              )}
-            >
-              <MapPin className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="min-w-0 flex-1">{suggestion.label}</span>
-            </li>
-          ))}
-        </ul>
-
-        {/* لا نتائج */}
-        {showEmptyState ? (
-          <div className="absolute inset-x-0 top-[calc(100%+0.375rem)] z-50 rounded-2xl border border-border bg-popover px-3 py-2.5 text-sm leading-6 text-muted-foreground shadow-xl">
-            {t("noResults", "لا نتائج مطابقة — جرّب اسماً أوضح مثل «مطار القاهرة الدولي».")}
-          </div>
-        ) : null}
-      </div>
-
-      {/* إرشاد لطيف: النص وحده لا يكفي، لا بد من اختيار مكان محدد */}
-      <p
-        id={helperId}
-        className={cn("text-xs leading-5", needsPick ? "text-muted-foreground" : "sr-only")}
-      >
-        {needsPick
-          ? t("pickFromList", "اختر المكان من قائمة الاقتراحات لتحديد الموقع بدقة.")
-          : t("typeTwoLetters", "اكتب حرفين على الأقل ثم اختر المكان من قائمة الاقتراحات.")}
-      </p>
-
-      <span className="sr-only" role="status" aria-live="polite">
-        {listOpen
-          ? t("suggestionsCount", `${fmt.number(places.length)} اقتراحات متاحة`, {
-              count: places.length,
-            })
-          : ""}
-      </span>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* شطر قيمة datetime-local إلى الحقلين اللذين يعرفهما مسار التحويل      */
@@ -447,6 +201,26 @@ function PlaceField({
  * ساعة القاهرة. وأي `new Date(value)` في هذا الملف كان سيفسّره **بمنطقة جهاز
  * الزائر**، وهو بعينه العطل الذي عولج في الدفعة م‑٢.
  */
+/**
+ * 🔴 اسمُ المكان في سطر الملخّص — **المقطع الأول قبل الفاصلة وحده**.
+ *
+ * وسمُ Nominatim عنوانٌ إداريٌّ كامل: «مطار القاهرة الدولى، شارع محمود عصمت
+ * حمدى، بلوك 1228» — خمسون حرفاً تبتلع سطر الملخّص كلَّه على ٣٧٥ بكسل، فيُقصّ
+ * ما بعدها (الوجهة والركاب والحقائب) وهو **بيتُ القصيد**: أمرُ المالك أن يعرض
+ * السطر القيم لا «مكتملة». فتقصيرُ الاسم هنا هو ما يُبقي بقية القيم مرئية.
+ *
+ * 🔒 **ولا يُمسّ ما يُرسَل بحرف**: `trip.originLabel` كما هو يمضي إلى
+ * `/api/booking`، والوسم الكامل معروضٌ في بطاقة العروض وفي ملخّص مسار الحجز
+ * تحته مباشرة — فلا تختفي معلومة، بل تُختصر في موضع الاختصار وحده.
+ *
+ * ومقطعٌ قصيرٌ جداً (رقمٌ أو حرف) يعني وسماً لا يبدأ باسمٍ، فيُترك كاملاً:
+ * قصٌّ أعمى أسوأ من طولٍ مفهوم.
+ */
+function shortPlaceLabel(label: string): string {
+  const head = label.split(/[,،]/)[0]?.trim() ?? "";
+  return head.length >= 3 ? head : label;
+}
+
 function splitLocalDateTime(value: string): [string, string] {
   if (!value) return ["", ""];
   const [date = "", rest = ""] = value.split("T");
@@ -559,6 +333,7 @@ export function SearchWidget({
   extras = [],
   maxLuggage = null,
   maxPassengers = null,
+  placeSearch = PLACE_SEARCH_DEFAULTS,
 }: SearchWidgetProps) {
   const t = useT("booking.search");
   const fmt = React.useMemo(() => createFormatter(locale), [locale]);
@@ -610,6 +385,41 @@ export function SearchWidget({
 
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
   const todayValue = React.useMemo(() => todayInputValue(), []);
+
+  /* ---------------------------------------------------------------- */
+  /* 🔴 الخطوة المنتهية تُطوى — شكوى المالك على الجوال (2026-08-17)     */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * > «الخطوات المكتملة تبقى مفتوحة، فالنموذج يصير هائلاً في آخره.»
+   *
+   * وهذا النموذج بعينه هو الخطوة الأولى في العمود: بعد أن تصل الأسعار — ثم
+   * بطاقاتُها، ثم مسار إتمام الحجز بخطواته الثلاث — **يبقى هو مفتوحاً بحقوله
+   * التسعة أعلى الشاشة كلها**. أي أن العميل الذي بلغ الدفع يحمل فوقه نموذجاً
+   * أنهاه ولا يعود إليه.
+   *
+   * فيُطوى إلى سطرٍ واحد بقيمه لحظةَ وصول العرض، ويُفتح بـ«تعديل».
+   *
+   * 🔒 **والقيم من `trip` لا من الحقول**: `trip` هو ما سُعِّرت عليه البطاقات
+   * المعروضة تحته. وقراءةُ الحقول كانت ستصف حالةً قد تكون تغيّرت — أي سطر
+   * ملخّصٍ يصف رحلةً غير التي تحمل أسعارها.
+   *
+   * ⚠ ولا يُطوى في حالة «لا توجد فئة» (‏`rescue`): مخرجُها الوحيد أن يغيّر
+   *   العميل مُدخلاته، فطيُّ الحقول هناك يخفي العلاج نفسه.
+   */
+  const [editingTrip, setEditingTrip] = React.useState(false);
+  const formRef = React.useRef<HTMLFormElement | null>(null);
+  /** «هذا الفتح جاء من زرّ تعديل» — رايةٌ بين معالج الحدث وأثر التركيز */
+  const reopenedTrip = React.useRef(false);
+  /**
+   * مسار إتمام الحجز مفتوح — يصل من `Offers` (التعليل الكامل عند
+   * `onCheckoutOpenChange` هناك). وأثره هنا شيئان: النموذج يبقى مطويّاً حتى لو
+   * كان العميل قد فتحه قبل أن يحجز، **وسطرُ الملخّص نفسه يغيب** — بطاقة
+   * الملخّص أعلى المسار تقول ما يقوله، وزرُّ «تعديل» فوقها طريقٌ إلى إسقاط ما
+   * كتبه العميل في المسار.
+   */
+  const [checkoutOpen, setCheckoutOpen] = React.useState(false);
+  const tripCollapsed = result !== null && trip !== null && (!editingTrip || checkoutOpen);
 
   /* ---------------------------------------------------------------- */
   /* أ‑٢ — أدنى مهلة قبل الانطلاق، لمنتقي الذهاب والعودة                */
@@ -1033,6 +843,8 @@ export function SearchWidget({
         returnAt,
         extras: selection,
       });
+      // العرض وصل ⇒ خطوة «بيانات الرحلة» انتهت، فتُطوى إلى سطرها
+      setEditingTrip(false);
     } catch {
       setResult(null);
       setTrip(null);
@@ -1067,6 +879,24 @@ export function SearchWidget({
     void runQuoteRef.current?.({ silent: true });
   }, [pending, roundTrip, pickupAt, returnAt, returnBeforePickup]);
 
+  /**
+   * فتحُ «بيانات الرحلة» من سطرها — **حيث كان العميل، لا في رأس النموذج**.
+   *
+   * أمرُ المالك حرفياً: «تعيده إلى حيث كان». والزرّ الذي ضُغط اختفى من الشجرة
+   * (‏صار نموذجاً)، فبلا نقلٍ صريح للتركيز يقذفه المتصفح إلى `<body>` ويستأنف
+   * صاحبُ لوحة المفاتيح من أول الصفحة — درسُ أكورديون التذييل نفسه.
+   * و`preventScroll` كي لا يتنازع تمريران على الشاشة.
+   */
+  React.useEffect(() => {
+    if (!reopenedTrip.current || tripCollapsed) return;
+    reopenedTrip.current = false;
+    const form = formRef.current;
+    if (!form) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    form.focus({ preventScroll: true });
+    form.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+  }, [tripCollapsed]);
+
   // إظهار النتائج للزائر فور وصولها — مهم خاصة في نسخة البطل المضغوطة.
   // وبطاقة الإنقاذ نتيجةٌ كالعروض: من لا يراها يظن أن الضغطة لم تفعل شيئاً.
   React.useEffect(() => {
@@ -1077,6 +907,41 @@ export function SearchWidget({
       block: "nearest",
     });
   }, [result, rescue]);
+
+  /**
+   * قيمُ السطر المطويّ — **بالترتيب الذي يسأل به العميل نفسه**: إلى أين، لكم،
+   * وهل يعود. وكلها من `trip` أي من الرحلة التي تحمل بطاقاتُها أسعارَها.
+   */
+  const tripSummaryParts: React.ReactNode[] = [];
+  if (trip) {
+    tripSummaryParts.push(
+      <span key="route">
+        {shortPlaceLabel(trip.originLabel)}
+        {/* السهم زخرفةٌ لقارئ الشاشة: «من» و«إلى» يفصلهما الترتيب لا الرمز */}
+        <span className="mx-1.5 text-muted-foreground" aria-hidden="true">
+          ←
+        </span>
+        {shortPlaceLabel(trip.destinationLabel)}
+      </span>
+    );
+    tripSummaryParts.push(fmt.passengers(trip.passengers));
+    if ((trip.luggage ?? 0) > 0) tripSummaryParts.push(fmt.bags(trip.luggage ?? 0));
+    tripSummaryParts.push(
+      trip.roundTrip
+        ? t("tripType.roundTrip", "ذهاب وعودة")
+        : t("summary.oneWay", "ذهاب فقط")
+    );
+    // الموعدان يُجمعان هنا في الذهاب والعودة وحدها — فلا يُعرضان إلا حيث وُجدا
+    if (trip.pickupAt) tripSummaryParts.push(fmt.dateTime(trip.pickupAt) ?? "");
+    if (trip.returnAt) tripSummaryParts.push(fmt.dateTime(trip.returnAt) ?? "");
+    if ((trip.extras ?? []).length > 0) {
+      tripSummaryParts.push(
+        t("summary.extras", "خدمات إضافية: {count}", {
+          count: fmt.number((trip.extras ?? []).length),
+        })
+      );
+    }
+  }
 
   return (
     <div
@@ -1093,8 +958,51 @@ export function SearchWidget({
         </div>
       ) : null}
 
-      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
-        {/* الانطلاق والوصول */}
+      {/*
+        سطر «بيانات الرحلة» المطويّ — بديلُ النموذج لا إضافةٌ فوقه.
+        والقيم من `trip` (ما سُعِّرت عليه البطاقات) لا من الحقول.
+      */}
+      {tripCollapsed && trip && !checkoutOpen ? (
+        <CollapsedStep
+          title={t("summary.title", "بيانات الرحلة")}
+          editLabel={t("summary.edit", "تعديل")}
+          doneLabel={t("summary.done", "مكتملة")}
+          disabled={pending}
+          onEdit={() => {
+            reopenedTrip.current = true;
+            setEditingTrip(true);
+          }}
+          parts={tripSummaryParts}
+        />
+      ) : null}
+
+      {/*
+        🔒 **يُخفى ولا يُفكَّك.** حقلا المكان جزيرتان بحالةٍ داخلية (قائمة
+        الاقتراحات و«أي نصٍّ تخصّه»)، وتفكيكُهما ثم إعادةُ تركيبهما يجعل
+        `isFresh` كاذباً عند الفتح — فينطلق بحثٌ جديد عن النص نفسه **وتُفتح
+        قائمة الاقتراحات في وجه العميل** بلا أن يطلبها. والإخفاء يُبقي الحالة
+        كما تركها، ويُخرج الحقول من ترتيب `Tab` ومن شجرة الوصول معاً
+        (‏`display:none`) فلا يقع تركيزٌ في نموذجٍ لا يُرى.
+      */}
+      <form
+        ref={formRef}
+        tabIndex={-1}
+        onSubmit={handleSubmit}
+        noValidate
+        className={cn("flex-col gap-4 outline-none", tripCollapsed ? "hidden" : "flex")}
+      >
+        {/*
+          الانطلاق والوصول — والحقلان الآن واجهةُ محرّكٍ رباعي الطبقات
+          (`components/booking/place-field.tsx`).
+
+          🔒 **وما يخرج منهما لم يتغيّر بحرف**: `GeoPlace` بإحداثيات، تصل
+          `/api/quote` بنفس الأسماء والأنواع. ما تغيّر هو **من يجدها** وماذا
+          يحدث حين لا يجدها أحد.
+
+          و`buildQuoteHref` يُبنى هنا لا داخل الحقل: الحقل يعرف نصَّه وحده،
+          والرابط يحتاج **الحقلين معاً وعدد الركاب** — فمن يملك المعرفة هو من
+          يبني. والنص الممرَّر هو ما كتبه العميل في الحقل العاجز بعينه.
+        */}
         <div className="grid gap-4 md:grid-cols-2">
           <PlaceField
             id={originId}
@@ -1108,6 +1016,16 @@ export function SearchWidget({
             fieldHeight={fieldHeight}
             t={t}
             fmt={fmt}
+            settings={placeSearch}
+            locale={locale}
+            buildQuoteHref={(typed) =>
+              buildQuoteRequestHref(locale, {
+                passengers,
+                pickupAt,
+                from: typed,
+                to: destination?.label || destinationText || null,
+              })
+            }
           />
           <PlaceField
             id={destinationId}
@@ -1121,6 +1039,16 @@ export function SearchWidget({
             fieldHeight={fieldHeight}
             t={t}
             fmt={fmt}
+            settings={placeSearch}
+            locale={locale}
+            buildQuoteHref={(typed) =>
+              buildQuoteRequestHref(locale, {
+                passengers,
+                pickupAt,
+                from: origin?.label || originText || null,
+                to: typed,
+              })
+            }
           />
         </div>
 
@@ -1595,6 +1523,7 @@ export function SearchWidget({
             loyaltyEnabled={loyaltyEnabled}
             offerBanners={offerBanners}
             checkoutBanners={checkoutBanners}
+            onCheckoutOpenChange={setCheckoutOpen}
           />
         </div>
       ) : null}

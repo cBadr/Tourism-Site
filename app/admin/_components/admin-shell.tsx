@@ -19,6 +19,7 @@ import {
   Handshake,
   Languages,
   LayoutDashboard,
+  MapPin,
   Menu,
   MessageSquareQuote,
   Plug,
@@ -94,6 +95,7 @@ type NavItem = {
     | "/admin/orders"
     | "/admin/payment-accounts"
     | "/admin/payments"
+    | "/admin/place-search"
     | "/admin/pricing"
     | "/admin/quote-requests"
     | "/admin/seo"
@@ -216,6 +218,11 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "السجلات", icon: ScrollText, href: "/admin/logs" },
       { label: "وضع الصيانة", icon: Wrench, href: "/admin/maintenance" },
       { label: "الربط الخارجي", icon: Plug, href: "/admin/integrations" },
+      // «بحث الأماكن» ملاصقة لـ«الربط الخارجي» لا لـ«التسعير»: ما تضبطه هو
+      // **مزوّدٌ خارجي وتكلفته** (تفعيل جوجل · ترتيب المزوّدَين · ضابطا عدد
+      // النداءات) لا سعرٌ يراه العميل. ومفتاح جوجل نفسه في البيئة، فالشاشة
+      // جارةُ الشاشة التي يفتحها المالك حين يفكّر في خدمةٍ خارجية أصلاً.
+      { label: "بحث الأماكن", icon: MapPin, href: "/admin/place-search" },
     ],
   },
 ];
@@ -353,6 +360,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/orders": "الطلبات",
   "/admin/payment-accounts": "حسابات الدفع",
   "/admin/payments": "بوابات الدفع",
+  // بنفس نصّ `export const metadata` في الشاشة، وإلا قرأ المالك عنوانين مختلفين
+  // في الترويسة وتبويب المتصفح
+  "/admin/place-search": "بحث الأماكن",
   "/admin/pricing": "التسعير",
   "/admin/quote-requests": "طلبات الأسعار",
   "/admin/seo": "مركز السيو",

@@ -641,7 +641,21 @@
         "waitingDerivedNote": "Calculated automatically from your return time on the same day — the driver waits for you in between.",
         "pickupAt": "Pickup time",
         "returnAt": "Return time",
-        "notes": "Your notes"
+        "notes": "Your notes",
+        "map": {
+          "pendingLabel": "Trip route",
+          "pendingTitle": "Your route is drawn once the booking is confirmed",
+          "pendingText": "We do not start preparing your trip or send it out for fulfilment before the booking is confirmed — and confirmation happens the moment your payment arrives, whether in full or as a deposit. Your route map appears here then.",
+          "reviewText": "We have received your receipt and the operations team is reviewing it now. As soon as it is approved your booking is confirmed and preparation begins, and your route map appears here — nothing is needed from you.",
+          "payCta": "Complete payment now",
+          "altRoad": "A map showing the pickup point ({origin}), the drop-off point ({dest}) and the driving route between them.",
+          "altStraight": "A map showing the pickup point ({origin}), the drop-off point ({dest}) and an approximate line between them.",
+          "altPlain": "A map showing the pickup point, the drop-off point and the route between them.",
+          "legendOrigin": "Pickup point",
+          "legendDest": "Drop-off point",
+          "openInMaps": "Open the route in Google Maps",
+          "captionStraight": "The driving route could not be drawn right now, so the line is approximate between the two points — the distance shown in your trip details is a road distance, not a straight line."
+        }
       },
       "crew": {
         "sectionLabel": "Your car and driver",

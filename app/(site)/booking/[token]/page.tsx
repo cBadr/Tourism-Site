@@ -51,6 +51,19 @@ import {
   preferredAccountId,
 } from "@/components/booking/checkout/transfer-preference";
 import { CopyButton } from "@/components/booking/checkout/copy-button";
+import {
+  PAY_SECTION_ANCHOR,
+  RouteMapFigure,
+  RoutePendingPanel,
+} from "@/components/booking/route-map";
+import {
+  ensureBookingRouteMap,
+  routeMapEnabled,
+  routeMapStatusReady,
+  withinServiceArea,
+} from "@/lib/maps/route-map";
+import { tripDirectionsUrl } from "@/lib/maps/directions";
+import { isDrawablePoint } from "@/lib/maps/static-map";
 import { PrintButton } from "@/components/booking/print-button";
 import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
 import { readEnabledGateways } from "@/components/booking/checkout/gateways";
@@ -1480,6 +1493,61 @@ export default async function BookingStatusPage({ params }: PageParams) {
       </>
     ) : null;
 
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   *  خريطة المسار (م‑١١) — موضعٌ واحد في «تفاصيل الرحلة»، وحالتان تملآنه
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * 🔴 **الزناد `routeMapStatusReady` لا `amountRemaining === 0`.** الحالات
+   * الثلاث فيه (`confirmed`/`assigned`/`completed`) هي بعينها ما تشترطه
+   * `start_dispatch` ومن بعدها الإسناد — أي **اللحظة التي تبدأ عندها الرحلة
+   * تُجهَّز فعلاً**. وحجزٌ بعربونٍ مدفوع مؤكَّدٌ ويُبَثّ وعليه متبقٍّ يُحصَّل
+   * نقداً مع السائق (D-36)، فربطُ الخريطة بالسداد الكامل كان سيعرض «غير مدفوع»
+   * لمن دفع بالفعل.
+   *
+   * ── والترتيب هنا مقصود لا تجميلياً ──────────────────────────────────────────
+   *
+   * الحالة أولاً — وهي أرخص فحصٍ وأكثرها رفضاً — فحجزٌ بانتظار الدفع **لا
+   * يقرأ إعدادات الرحلات أصلاً** ولا يلمس جدولاً ثانياً. ثم مفتاح الإطفاء، ثم
+   * الضمان (الذي يُنهي نفسه فوراً على صفٍّ موجود بلا أي نداءٍ خارجي).
+   *
+   * والملغى والفاشل خارج الحالتين معاً: لا خريطةَ رحلةٍ لن تقع، ولا دعوةَ دفعٍ
+   * على حجزٍ أُغلق — وهي نفس القاعدة التي أسقطت «المطلوب الآن» عن الفاشل.
+   */
+  const routeMapView =
+    routeMapStatusReady(status) && (await routeMapEnabled())
+      ? await ensureBookingRouteMap(bookingId)
+      : null;
+  // العنوان بلا بادئة لغة: الصورة لا لغة لها، والشكل العربي هو الوحيد الذي لا
+  // يمرّ بتحويل ٣٠٨ في `proxy.ts` (D-24).
+  const routeMapSrc = routeMapView ? `/booking/${token}/map` : null;
+  const showRoutePending = status === "pending_payment" || status === "under_review";
+
+  /**
+   * رابط خرائط جوجل العادي (قرار المالك 2026-08-17) — **بلا API وبلا مفتاح
+   * وبلا فاتورة**، يفتح تطبيق الخرائط على جهاز العميل بالمرور الحيّ.
+   *
+   * ⚠ **بالإحداثيات المجمَّدة في لقطة الحجز لا بأسماء الأماكن**: الاسم نصٌّ
+   * يُفسَّر ببحثٍ عند جوجل فقد يهبط على مكانٍ آخر يحمله — أي مساراً غير الذي
+   * سُعِّرت به الرحلة. وهاتان النقطتان بعينهما ما حُسبت عليه المسافة والسعر.
+   *
+   * 🔴 **وخارج نطاق التشغيل لا رابط**: `withinServiceArea` هي نفسها التي يرفض
+   * بها `/api/geocode/reverse` ويقصّ إليها منتقي الخريطة — حدٌّ واحد لا ثانٍ له.
+   *
+   * ويتبع بوابة الخريطة نفسها (بعد التأكيد): قبله الرسالة أن التجهيز لم يبدأ،
+   * ورابطُ مسارٍ عندها يناقضها.
+   */
+  const originPoint = { lat: readNumber(trip, "originLat", "origin_lat"), lng: readNumber(trip, "originLng", "origin_lng") };
+  const destPoint = { lat: readNumber(trip, "destLat", "dest_lat"), lng: readNumber(trip, "destLng", "dest_lng") };
+  const directionsUrl =
+    routeMapStatusReady(status) &&
+    isDrawablePoint(originPoint) &&
+    isDrawablePoint(destPoint) &&
+    withinServiceArea(originPoint) &&
+    withinServiceArea(destPoint)
+      ? tripDirectionsUrl(originPoint, destPoint)
+      : null;
+
   const whatsapp = settings.contact.whatsapp;
   const phone = settings.contact.phone;
 
@@ -2126,8 +2194,12 @@ export default async function BookingStatusPage({ params }: PageParams) {
           {/* قسم الحالة: الدفع / المراجعة / التأكيد */}
           {status === "pending_payment" ? (
             <section
+              // مرساة زرّ «أكمل الدفع الآن» في لوحة ما قبل التأكيد (م‑١١).
+              // المعرّف ثابتٌ مشترك (`PAY_SECTION_ANCHOR`) فلا ينحرف عن الرابط
+              // الذي يقصده، ولا يعمل بجافاسكربت أصلاً — نزولٌ داخل الصفحة.
+              id={PAY_SECTION_ANCHOR}
               aria-label={t("pay.sectionLabel", "إتمام الدفع")}
-              className="flex flex-col gap-5 rounded-3xl border border-primary/30 bg-card p-5 text-card-foreground shadow-sm shadow-primary/5 sm:p-6"
+              className="flex flex-col gap-5 scroll-mt-6 rounded-3xl border border-primary/30 bg-card p-5 text-card-foreground shadow-sm shadow-primary/5 sm:p-6"
             >
               <div className="flex flex-col gap-2">
                 <h2 className="flex items-center gap-2 text-base font-bold">
@@ -2403,6 +2475,25 @@ export default async function BookingStatusPage({ params }: PageParams) {
               </span>
               <span>{destLabel}</span>
             </p>
+
+            {/*
+              موضع الخريطة — تحت سطر «من ← إلى» مباشرةً لأنها صورتُه، وفوق
+              الحقائق لأن العين تقرأ الشكل قبل الجدول. والحالتان تتقاسمان
+              الموضع نفسه فلا يقفز التخطيط حين يتحول الحجز من «بانتظار الدفع»
+              إلى «مؤكد» بين فتحتين.
+            */}
+            {routeMapSrc && routeMapView ? (
+              <RouteMapFigure
+                src={routeMapSrc}
+                originLabel={originLabel}
+                destLabel={destLabel}
+                geometrySource={routeMapView.geometrySource}
+                directionsUrl={directionsUrl}
+                t={t}
+              />
+            ) : showRoutePending ? (
+              <RoutePendingPanel awaitingPayment={status === "pending_payment"} t={t} />
+            ) : null}
 
             <dl className="grid gap-3 text-sm sm:grid-cols-2">
               <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-3 py-2.5">
