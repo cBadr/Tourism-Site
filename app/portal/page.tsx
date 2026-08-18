@@ -7,7 +7,7 @@ import {
   LIST_STATUS_LABELS,
   NotReadyNotice,
   Notice,
-  PageHeading,
+  PageHeading, PartnerStateBadge,
 } from "@/components/portal/portal-ui";
 import { Card } from "@/components/ui/card";
 import { getSettings } from "@/lib/settings";
@@ -98,7 +98,19 @@ export default async function PortalDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeading title={`مرحباً، ${sub.companyName || "شريكنا"}`}>
+      <PageHeading
+        title={`مرحباً، ${sub.companyName || "شريكنا"}`}
+        action={
+          readiness ? (
+            <PartnerStateBadge
+              status={sub.status}
+              ready={settled && !readiness.pausedByChoice}
+              paused={Boolean(readiness.pausedByChoice) && !debtBlocked}
+              debtBlocked={debtBlocked}
+            />
+          ) : null
+        }
+      >
         {onboarding
           ? "هذه صفحتك التشغيلية، وهي مفتوحة لك من الآن: أكمل بياناتك وأسطولك وسائقيك وقوائم أسعارك حتى يجدك المراجع جاهزاً."
           : "هذه صفحتك التشغيلية: منها تُكمل بياناتك وأسطولك وقوائم أسعارك، ومنها تتابع ما اعتمدته الإدارة وما ينتظر المراجعة."}
@@ -120,7 +132,13 @@ export default async function PortalDashboardPage() {
         بطاقة الحالة تبقى للمعتمَد وحده: المدعوّ يقرأ حالته في المعالج وفي الشريط.
         وجملتُها مقيسة لا ثابتة — انظر ترويسة `readiness-state.tsx`.
       */}
-      {!onboarding && readiness ? (
+      {/*
+        🔴 والبطاقةُ الكبيرة لم تُحذف — صار ظهورُها مشروطاً.
+        المعتمَدُ الجاهز يقرأ حالته من الوسم بجوار اسمه، فتُوفَّر الطيّةُ لما يعمل به.
+        ومَن أوقف الاستقبال بنفسه أو لم يكتمل تجهيزه أو حُجب بدَين **يقرأ البطاقة
+        كاملةً** — لأن الرمز يكفي مَن لا يحتاج شرحاً، ولا يكفي من يحتاج إجراءً.
+      */}
+      {!onboarding && readiness && !(settled && !readiness.pausedByChoice) ? (
         <ReadinessStateCard data={readiness} debtBlocked={debtBlocked} />
       ) : null}
 

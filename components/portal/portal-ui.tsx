@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CheckCircle2, CircleAlert, Info, XCircle } from "lucide-react";
+import { BadgeCheck, BellOff, CheckCircle2, CircleAlert, Info, XCircle } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -54,6 +54,83 @@ export function SubStatusBadge({
   return (
     <Badge variant="outline" className={cn(SUB_STATUS_TONE[status], className)}>
       {SUB_STATUS_LABELS[status]}
+    </Badge>
+  );
+}
+
+/**
+ * وسمُ الحالة التشغيلية بجوار اسم المتعهد — لا قسمٌ يشغل طيّةً كاملة.
+ *
+ * 🔴 شكوى بدر بلفظها: «الجزء الخاص بحالة الحساب كبير جداً على الرغم من أنه يمكننا
+ * الإشارة إلى حالة الحساب عن طريق نجمة زرقاء بجانب اسم المتعهد تدل على أنه متعهد
+ * موثق وغيرها لباقي الحالات، ومنها سنوفر جزءاً كبيراً في تلك الصفحة».
+ *
+ * ⚠ **والاختصارُ للحالة السليمة وحدها.** مَن هو محجوبٌ بدَينٍ أو موقوفٌ أو لم
+ * يُعتمد بعد **يقرأ حالته صريحةً مكتوبة** — فالرمزُ يوفّر مساحةً على من لا يحتاج
+ * شرحاً، ولا يجوز أن يُخفي عن المتوقف أنه متوقف ولا لماذا.
+ */
+export function PartnerStateBadge({
+  status,
+  ready,
+  paused,
+  debtBlocked,
+  className,
+}: {
+  status: SubcontractorStatus;
+  /** `readyToReceive` بعد استثناء الحجب المالي */
+  ready: boolean;
+  /** أوقف الاستقبال بنفسه */
+  paused: boolean;
+  /** من `portal_balance().blocked` */
+  debtBlocked: boolean;
+  className?: string;
+}) {
+  if (debtBlocked) {
+    return (
+      <Badge
+        variant="outline"
+        className={cn("gap-1 border-red-500/40 text-red-700 dark:text-red-300", className)}
+      >
+        <CircleAlert className="size-3.5" aria-hidden="true" />
+        متوقف — دَينٌ بلغ السقف
+      </Badge>
+    );
+  }
+  if (status !== "approved") {
+    // غير المعتمد يقرأ حالته بلفظها، لا برمز
+    return <SubStatusBadge status={status} className={className} />;
+  }
+  if (paused) {
+    return (
+      <Badge
+        variant="outline"
+        className={cn("gap-1 border-amber-500/40 text-amber-700 dark:text-amber-300", className)}
+      >
+        <BellOff className="size-3.5" aria-hidden="true" />
+        أوقفتَ استقبال الطلبات
+      </Badge>
+    );
+  }
+  if (ready) {
+    return (
+      <Badge
+        variant="outline"
+        className={cn("gap-1 border-sky-500/40 text-sky-700 dark:text-sky-300", className)}
+        title="متعهد موثَّق ومستقبِلٌ لعروض الرحلات"
+      >
+        <BadgeCheck className="size-3.5" aria-hidden="true" />
+        متعهد موثَّق
+      </Badge>
+    );
+  }
+  // معتمدٌ ولم يكتمل تجهيزه: لا يُقال «موثَّق» ولا يُترك بلا بيان
+  return (
+    <Badge
+      variant="outline"
+      className={cn("gap-1 border-amber-500/40 text-amber-700 dark:text-amber-300", className)}
+    >
+      <CircleAlert className="size-3.5" aria-hidden="true" />
+      تجهيزُك لم يكتمل
     </Badge>
   );
 }
