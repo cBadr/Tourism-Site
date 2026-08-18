@@ -113,7 +113,10 @@ export async function ThemeToggle({ className }: ThemeToggleProps) {
                  عند الضغط — والنصّ المرئي يبقى الكلمة القصيرة */
               aria-label={t("switchTo", "عرض الموقع بمظهر {mode}", { mode: label })}
               className={cn(
-                "flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                /* `py-3` ⇒ ١٢+١٢+٢٠ = **٤٤ حقيقية**، لا ٤٠ كما قِيست في
+                   الدرج وفي لوح الحساب معاً. وهي صفوفٌ رأسية في حاويةٍ ذات
+                   سعة، فالحشو الحقيقي أصحُّ من هالةٍ تتداخل مع جارتها. */
+                "flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                 isActive
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"

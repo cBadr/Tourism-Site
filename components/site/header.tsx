@@ -8,7 +8,13 @@ import { getSiteNav } from "@/lib/site-nav";
 import { AccountMenu } from "./account-menu";
 import { LocaleSwitcher } from "./locale-switcher";
 import { ThemeToggle } from "./theme-toggle";
-import { bookingHref, externalLinkProps, localeHref } from "./links";
+import {
+  bookingHref,
+  externalLinkProps,
+  localeHref,
+  TAP_TARGET_ROW,
+  TAP_TARGET_SQUARE,
+} from "./links";
 
 /**
  * الترويسة الثابتة: هوية العلامة + تنقّل داخلي + زر «احجز الآن».
@@ -67,7 +73,10 @@ export async function SiteHeader({
         {/* هوية العلامة */}
         <a
           href={localeHref("/", locale)}
-          className="flex items-center gap-3 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className={cn(
+            "flex items-center gap-3 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            TAP_TARGET_ROW
+          )}
           aria-label={settings.brand.name}
         >
           {settings.brand.logoUrl ? (
@@ -156,7 +165,10 @@ export async function SiteHeader({
             <a
               key={link.key}
               href={link.href}
-              className="rounded-lg px-2.5 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              className={cn(
+                "rounded-lg px-2.5 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                TAP_TARGET_ROW
+              )}
             >
               {link.label}
             </a>
@@ -211,7 +223,11 @@ export async function SiteHeader({
             {...externalLinkProps(booking)}
             className={cn(
               buttonVariants({ size: "lg" }),
-              "rounded-xl px-5 font-semibold shadow-sm shadow-primary/20"
+              "rounded-xl px-5 font-semibold shadow-sm shadow-primary/20",
+              /* `h-9` = ٣٦ بصريّاً ويبقى كذلك — والهالة تبلغ به ٤٤ لمساً.
+                 ورفعُه إلى ٤٤ كان يجرّ معه رفعَ حبّتَي اللغة والحساب، وإلا صار
+                 الثانويُّ أطولَ من نداء المنتج الأول (جدول العواقب في `links.ts`). */
+              TAP_TARGET_ROW
             )}
           >
             {t("bookNow", "احجز الآن")}
@@ -223,7 +239,13 @@ export async function SiteHeader({
               معاً. المبرر الكامل للرقم — ومقاسات السبعة روابط — عند `<nav>`. */}
           <details className="group relative xl:hidden">
             <summary
-              className="grid size-9 cursor-pointer list-none place-items-center rounded-xl border border-border bg-background text-foreground transition-colors hover:bg-muted [&::-webkit-details-marker]:hidden"
+              className={cn(
+                "grid size-9 cursor-pointer list-none place-items-center rounded-xl border border-border bg-background text-foreground transition-colors hover:bg-muted [&::-webkit-details-marker]:hidden",
+                /* الهدف الوحيد المربّع في الشريط ⇒ هالةٌ مربّعة: ٣٦×٣٦ يُرى،
+                   و٤٤×٤٤ يُنقر. وقِيس عند ٣٧٥ أن الصفّ لا يملك إلا ١٦٫٥ بكسل
+                   حرّة، فتكبيرُ الصندوق نفسه ثمانيةً كان يستهلك نصفها. */
+                TAP_TARGET_SQUARE
+              )}
               aria-label={t("menu", "القائمة")}
             >
               <Menu className="size-5" aria-hidden="true" />
@@ -245,7 +267,10 @@ export async function SiteHeader({
                   <a
                     key={link.key}
                     href={link.href}
-                    className="rounded-xl px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                    /* `py-3` لا `py-2.5`: ١٢+١٢+٢٠ = **٤٤ حقيقية** بدل ٤٠
+                       المقيسة. والدرج قائمةٌ رأسية ذات سعة (وفيضُها يُمرَّر
+                       بـ`max-h` أعلاه)، فالحشو الحقيقي هو الصواب هنا لا الهالة. */
+                    className="rounded-xl px-3 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
                   >
                     {link.label}
                   </a>

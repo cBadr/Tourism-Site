@@ -594,8 +594,13 @@ begin
     values ('fttest-unused', 'FAILED_TRIP_TESTS سببٌ بلا استعمال', 'none', true, 999);
     delete from public.failure_reasons where slug = 'fttest-unused';
 
+    -- 0119: والإجراء الجديد **`none` لا `pay`** — و«السائق لم يحضر» مُبادِرُه
+    --       `partner`، والقاعدة ترفض «ادفع كاملاً» لمن بادر بالانسحاب بقيدِ
+    --       جدول (`failure_reasons_pay_initiator_chk`). وما يقيسه هذا القسم هو
+    --       أن **اللقطة لا تتبع الكتالوج**، وأيُّ إجراءٍ مختلفٍ يكفي لإثباته —
+    --       فلا معنى في إصرارٍ على قيمةٍ صارت متناقضة بحكم قرار المالك.
     update public.failure_reasons
-       set label = 'FAILED_TRIP_TESTS اسمٌ جديد', default_action = 'pay'
+       set label = 'FAILED_TRIP_TESTS اسمٌ جديد', default_action = 'none'
      where slug = 'driver-no-show';
     select f.reason_label, f.default_action, f.action_taken into v_f
       from public.booking_failures f where f.booking_id = v_ids[3];

@@ -97,6 +97,27 @@ const COUNTED = [
   "ledger_entries", "loyalty_entries", "funnel_events", "quote_requests",
   "translations", "profiles", "subcontractors", "price_lists", "price_list_items",
   "dispatches", "trip_offers", "payments", "expenses", "partner_payouts",
+
+  /* ── أُضيفت 2026-08-18: ستةُ جداولٍ كانت البصمةُ عمياء عنها تماماً ────────
+   *
+   * كلُّ واحدٍ منها **يُكتب فيه من مجموعة اختبارٍ قائمة**، وكان أثرُه المتسرّب
+   * يمرّ أخضر — وهو بعينه العيبُ الذي وُجدت البصمة لتمسكه (سابقة `payment_tests`
+   * التي تركت مزوّد `test` مُشعَلاً أكثر من يوم).
+   *
+   *   subcontractor_drivers      ← `driver_docs_tests`   (سائقون وأرقام رخص)
+   *   trip_completion_requests   ← `completion_apology_tests`
+   *   trip_withdrawals           ← `completion_apology_tests`
+   *   partner_grievances         ← `partner_*_tests`
+   *   partner_presence           ← `presence_tests`
+   *   storage.objects            ← `driver_docs_tests` (وهو **خارج `public`**)
+   *
+   * 🔴 و`storage.objects` أخطرها: ملفٌّ يتيمٌ يبقى في الدلو لا يُرى في أي جدول
+   *   `public`، و`driver_docs_tests` نفسه يحمل حارسَ تسريبٍ داخلياً **لأن
+   *   البوابة العامة لم تكن تراه** — وحارسٌ داخل ملفٍّ يحمي ذلك الملف وحده.
+   * ------------------------------------------------------------------ */
+  "subcontractor_drivers", "trip_completion_requests", "trip_withdrawals",
+  "partner_grievances", "partner_presence",
+  "storage.objects",
 ];
 const HASHED = [
   "payment_providers", "loyalty_settings", "discount_settings", "pricing_settings",
@@ -104,23 +125,39 @@ const HASHED = [
   "site_settings",
 ];
 
+/**
+ * الاسمُ يقبل التأهيلَ بالمخطَّط (`storage.objects`)، وغيرُ المؤهَّل `public`.
+ *
+ * ⚠ ويُفصل بالفاصلة لا بالاقتباس: كل الأسماء هنا مكتوبةٌ في هذا الملف نفسه —
+ * لا تأتي من مُدخَل — فلا سطحَ حقنٍ أصلاً، والتعقيدُ الإضافي يخفي المعنى.
+ */
+const qualify = (name) => (name.includes(".") ? name.split(".", 2) : ["public", name]);
+
 async function fingerprint(client) {
+  const wanted = [...COUNTED, ...HASHED].map(qualify);
   const { rows } = await client.query(
-    `select table_name from information_schema.tables
-      where table_schema = 'public' and table_name = any($1::text[])`,
-    [[...COUNTED, ...HASHED]]
+    `select table_schema || '.' || table_name as qname
+       from information_schema.tables
+      where (table_schema, table_name) in (
+              select * from unnest($1::text[], $2::text[])
+            )`,
+    [wanted.map((q) => q[0]), wanted.map((q) => q[1])]
   );
-  const present = new Set(rows.map((r) => r.table_name));
+  const present = new Set(rows.map((r) => r.qname));
 
   const parts = [];
   for (const t of COUNTED) {
-    if (present.has(t)) parts.push(`'${t}', (select count(*) from public.${t})`);
+    const [schema, table] = qualify(t);
+    if (present.has(`${schema}.${table}`)) {
+      parts.push(`'${t}', (select count(*) from ${schema}.${table})`);
+    }
   }
   for (const t of HASHED) {
-    if (present.has(t)) {
+    const [schema, table] = qualify(t);
+    if (present.has(`${schema}.${table}`)) {
       parts.push(
         `'${t}', (select md5(coalesce(string_agg(x.j, '|' order by x.j), '∅'))
-                    from (select to_jsonb(r)::text as j from public.${t} r) x)`
+                    from (select to_jsonb(r)::text as j from ${schema}.${table} r) x)`
       );
     }
   }

@@ -276,6 +276,8 @@ do $$
 declare
   v_sub_a  constant uuid := 'c0000000-0000-4000-8000-00000000000a';
   v_list_a constant uuid := 'c1000000-0000-4000-8000-00000000000a';
+  v_list_b constant uuid := 'c1000000-0000-4000-8000-00000000000b';
+  v_list_c constant uuid := 'c1000000-0000-4000-8000-00000000000c';
   v_count  integer;
   v_row    record;
   v_km     numeric;
@@ -312,18 +314,28 @@ begin
     raise exception '(أ-٦) نتيجة المطابقة بلا اسم شركة أو عنوان قائمة';
   end if;
 
-  -- (أ-٧) الحالة السالبة: القاهرة ← أسوان خارج التغطية تماماً
+  /*
+   * (أ-٧) الحالة السالبة: القاهرة ← أسوان خارج نطاق قوائم الفيكسترة.
+   *
+   * 🔴 والعدّ محصورٌ في قوائم هذه المجموعة نفسها كما في (أ-٣) — لا مطلقاً.
+   * فالمطلقُ توكيدٌ على **محتوى القاعدة كلِّها**: يوم 2026-08-18 دخلت مئةُ
+   * قائمة أسعارٍ حقيقية ومنها القاهرة ← أسوان، فاحمرّ التوكيد **لأن المشروع
+   * نجح** لا لأن الدالة أخطأت. والمقصود هنا سلوكُ `coverage_matches` نفسها
+   * لا جردُ ما في القاعدة.
+   */
   select count(*) into v_count
-  from public.coverage_matches(30.044400, 31.235700, 24.088900, 32.899800) cm;
+  from public.coverage_matches(30.044400, 31.235700, 24.088900, 32.899800) cm
+  where cm.price_list_id in (v_list_a, v_list_b, v_list_c);
   if v_count <> 0 then
-    raise exception '(أ-٧) القاهرة ← أسوان طابقت % قائمة والمفروض صفر', v_count;
+    raise exception '(أ-٧) القاهرة ← أسوان طابقت % من قوائم الفيكسترة والمفروض صفر', v_count;
   end if;
 
   -- (أ-٨) وطرف واحد داخل النطاق لا يكفي: مصر الجديدة ← أسوان أيضاً بلا تغطية
   select count(*) into v_count
-  from public.coverage_matches(30.080800, 31.322200, 24.088900, 32.899800) cm;
+  from public.coverage_matches(30.080800, 31.322200, 24.088900, 32.899800) cm
+  where cm.price_list_id in (v_list_a, v_list_b, v_list_c);
   if v_count <> 0 then
-    raise exception '(أ-٨) طرف واحد داخل النطاق كفى للمطابقة (% صفاً)', v_count;
+    raise exception '(أ-٨) طرف واحد داخل النطاق كفى للمطابقة (% من قوائم الفيكسترة)', v_count;
   end if;
 
   raise notice '✔ (أ) مثال الرؤية: المعمورة داخل التغطية وأسوان خارجها';

@@ -955,9 +955,17 @@ begin
   if not has_function_privilege('anon', 'public.get_booking_by_token(text)', 'EXECUTE')
      or not has_function_privilege('anon', 'public.attach_receipt(text, text)', 'EXECUTE')
      or not has_function_privilege('anon', 'public.available_payment_accounts(text, numeric)', 'EXECUTE')
-     or not has_function_privilege('anon',
-          'public.create_quote_request(text, text, text, text, text, numeric, numeric, text, numeric, numeric, timestamptz, integer, integer)',
-          'EXECUTE')
+     -- 🔴 بالمعرّف لا بقائمة الأنواع: 0127 أضافت خمسةَ معاملات مصدرٍ بافتراضيّ
+     --    `NULL`، فسقط التوقيعُ الحرفيّ القديم واحمرّ التوكيد على **توسعة**.
+     --    والمقصود أن الزائر يستطيع تنفيذ الدالة، أياً كان عددُ معاملاتها.
+     --    و`coalesce(..., false)` مقصودة: `bool_and` على مجموعةٍ فارغة تُرجع
+     --    `null`، و`not null` لا يُشعل `if` — فتختفي الدالة والشاهدُ أخضر.
+     or not coalesce((
+          select bool_and(has_function_privilege('anon', p.oid, 'EXECUTE'))
+          from pg_catalog.pg_proc p
+          join pg_catalog.pg_namespace ns on ns.oid = p.pronamespace
+          where ns.nspname = 'public' and p.proname = 'create_quote_request'
+        ), false)
      or not has_function_privilege('anon', 'public.receipt_upload_allowed(text)', 'EXECUTE') then
     raise exception '(ط-٤) إحدى دوال الضيف غير قابلة للتنفيذ من anon';
   end if;

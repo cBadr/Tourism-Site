@@ -30,7 +30,14 @@ import {
   TripCrewPanel,
 } from "../requests/crew-panel";
 import { routeMapAvailability } from "@/lib/maps/route-map";
-import { loadTrips, splitTrips, type PortalTrip } from "../requests/data";
+import {
+  loadApologyOptions,
+  loadTrips,
+  splitTrips,
+  type ApologyOptions,
+  type PortalTrip,
+} from "../requests/data";
+import { TripClosurePanel } from "./closure-panel";
 
 /**
  * رحلاتي — ما بعد القبول.
@@ -60,20 +67,60 @@ const ERROR_MESSAGES: Record<string, string> = {
   save: "تعذر تنفيذ العملية — أعد المحاولة.",
   schema: "خدمة بث الطلبات غير مُركَّبة على الخادم بعد — لا إجراء مطلوب منك.",
   ...CREW_ERROR_MESSAGES,
+  // ── رموز إغلاق الرحلة (0119/0121) — لكل رمزٍ جملته، ولا رمزَ بلا جملة ──
+  closure_forbidden:
+    "هذه الرحلة لم تعد مُسنَدة إليك، فلا إجراء مطلوب منك عليها. حدّث الصفحة لترى قائمتك الحالية.",
+  closure_status:
+    "حالة هذه الرحلة تغيّرت ولم تعد تقبل هذا الإجراء — حدّث الصفحة لترى وضعها الآن.",
+  closure_early:
+    "موعد هذه الرحلة لم يحِن بعد، فلا يُعلَن إتمامها قبل تنفيذها. أعلِنه بعد انتهاء الرحلة فعلاً.",
+  closure_duplicate: "أعلنتَ إتمام هذه الرحلة بالفعل، وهي بانتظار اعتماد الإدارة.",
+  closure_pending:
+    "لك إعلانُ إتمامٍ معلّق على هذه الرحلة — لا يُعتذر عنها وهو قائم. انتظر قرار الإدارة، أو راسلها لسحب الإعلان.",
+  closure_reason: "اختر سبباً من القائمة — الأسباب المعروضة هي المقبولة للاعتذار.",
+  closure_gone: "لم نعد نجد هذه الرحلة — حدّث الصفحة.",
+  closure_save: "تعذر تنفيذ العملية — أعد المحاولة، وإن تكرر الأمر راسل الإدارة.",
+  grievance_duplicate: "لك اعتراضٌ مفتوحٌ على هذه الرحلة بالفعل — الإدارة تراجعه الآن.",
+  grievance_short: "اكتب شرحاً لا يقلّ عن عشرة أحرف — الاعتراض المبهم لا يمكن بحثه.",
 };
 
 /** نجاح القبول — الجملة التي تشرح لماذا ظهرت بيانات العميل فجأة */
 const ACCEPTED_MESSAGE =
   "قبلت الرحلة وأصبحت مُسندة إليك وحدك — بيانات تواصل العميل ظاهرة لك الآن في بطاقتها.";
 
+/**
+ * نجاح إعلان الإتمام — والجملة **تنفي** ما قد يُفهم ضمناً.
+ *
+ * «تم» وحدها تُقرأ «قُيِّد مستحقي»، فينتظر الشريك مالاً لم يُقيَّد ويقرأ التأخير
+ * مماطلة. فالنصّ يقول صراحةً أين وقفت العملية، وموعدُ الاعتماد التلقائي معروضٌ
+ * بتاريخه على البطاقة نفسها لا هنا — كي يبقى الرقم في مكانٍ واحد لا مكانين.
+ */
+const COMPLETION_MESSAGE =
+  "وصل إعلانك إلى الإدارة. المستحق لا يُقيَّد في حسابك إلا بعد الاعتماد — وموعد الاعتماد التلقائي مكتوب على بطاقة الرحلة.";
+
+const GRIEVANCE_MESSAGE =
+  "وصل اعتراضك إلى الإدارة وستردّ عليك بقرارٍ مكتوب. ولك اعتراضٌ واحد مفتوح على كل رحلة.";
+
+/** والوجهة كما قرّرتها القاعدة — تُنقل ولا تُعاد حسابها هنا */
+const withdrawnMessage = (routed: string) =>
+  routed === "manual"
+    ? "سجّلنا اعتذارك وأُخرجت الرحلة من يدك. الموعد قريب فانتقلت إلى الإسناد اليدوي، وفريق التشغيل نُبِّه فوراً."
+    : "سجّلنا اعتذارك وأُخرجت الرحلة من يدك، وانطلقت موجة عرضٍ جديدة على متعهدين آخرين. ولن تُعرض عليك هذه الرحلة مرة أخرى.";
+
 function TripCard({
   trip,
   past,
   hasMap,
   mapApproximate,
+  apology,
+  now,
 }: {
   trip: PortalTrip;
   past?: boolean;
+  /** أسبابُ الاعتذار وعتبتُه — تُقرأ مرةً للصفحة كلها لا لكل بطاقة */
+  apology: ApologyOptions;
+  /** ساعةُ الخادم من `loadTrips` — لا يُقرأ الوقت داخل التصيير */
+  now: number;
   /** له صورةٌ مخزَّنة الآن؟ — بلا صفٍّ لا تُرسم `<img>` تنتهي بـ٤٠٤ مكسورة */
   hasMap?: boolean;
   /** ورُسمت بخطٍّ مستقيم لا بمسار قيادة (0079) — يُقال ولا يُترك للتخمين */
@@ -144,6 +191,13 @@ function TripCard({
       */}
       <TripCrewPanel trip={trip} past={past} />
 
+      {/*
+        إغلاق الرحلة (0119/0121) — **تحت لوحة الطاقم**: الترتيب على البطاقة هو
+        ترتيب الزمن نفسه. من يسجّل مركبته وسائقه يفعل ذلك قبل الرحلة، ومن يُعلن
+        إتمامها أو يعتذر عنها يفعل ذلك بعدها. فالعين تنزل مع مجرى اليوم.
+      */}
+      <TripClosurePanel trip={trip} apology={apology} now={now} past={past} />
+
       {trip.assignedAt ? (
         <p className="text-xs text-muted-foreground">أُسندت إليك في {dateTimeLabel(trip.assignedAt)}.</p>
       ) : null}
@@ -179,7 +233,10 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
 
   // `now` من القراءة نفسها لا من التصيير — فصل «القادم» عن «السابق» قرار زمني
   // يجب أن يبقى ثابتاً بين تصييرين متطابقين
-  const { trips, ready, failed, now } = await loadTrips();
+  const [{ trips, ready, failed, now }, apology] = await Promise.all([
+    loadTrips(),
+    loadApologyOptions(),
+  ]);
   const { upcoming, past } = splitTrips(trips, now);
 
   // استعلامٌ واحد لكل البطاقات لا صفٌّ لكل بطاقة — و`Set` فارغة حين يُطفئ
@@ -191,6 +248,9 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
   // خبران مختلفان، وشريطُ نجاحٍ يقول الخبر الخطأ أسوأ من غيابه.
   const accepted = params.accepted === "1";
   const crewSaved = params.crew === "1";
+  const completionSent = params.completion === "1";
+  const grievanceSent = params.grievance === "1";
+  const withdrawn = typeof params.withdrawn === "string" ? params.withdrawn : null;
   const error = typeof params.error === "string" ? params.error : null;
 
   return (
@@ -203,11 +263,26 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
         الاستلام.
       </PageHeading>
 
+      {/*
+        عَلَمُ نجاحٍ واحدٌ لكل إجراء، ولا يجتمعان: كل إعادة توجيه تحمل واحداً.
+        والجملة تتبع العلم لأن «قبلت الرحلة» و«أعلنت إتمامها» و«اعتذرت عنها»
+        أخبارٌ مختلفة — وشريطُ نجاحٍ يقول الخبر الخطأ أسوأ من غيابه.
+      */}
       <Banners
-        saved={accepted || crewSaved}
+        saved={accepted || crewSaved || completionSent || grievanceSent || withdrawn !== null}
         error={error}
         errorMessages={ERROR_MESSAGES}
-        savedMessage={crewSaved ? CREW_SAVED_MESSAGE : ACCEPTED_MESSAGE}
+        savedMessage={
+          completionSent
+            ? COMPLETION_MESSAGE
+            : grievanceSent
+              ? GRIEVANCE_MESSAGE
+              : withdrawn !== null
+                ? withdrawnMessage(withdrawn)
+                : crewSaved
+                  ? CREW_SAVED_MESSAGE
+                  : ACCEPTED_MESSAGE
+        }
       />
 
       {!ready ? <NotReadyNotice what="الرحلات المُسندة" /> : null}
@@ -256,6 +331,8 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
             <TripCard
               key={trip.offerId}
               trip={trip}
+              apology={apology}
+              now={now}
               hasMap={trip.bookingId !== null && mapsReady.has(trip.bookingId)}
               mapApproximate={
                 trip.bookingId !== null &&
@@ -277,6 +354,8 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
               key={trip.offerId}
               trip={trip}
               past
+              apology={apology}
+              now={now}
               hasMap={trip.bookingId !== null && mapsReady.has(trip.bookingId)}
               mapApproximate={
                 trip.bookingId !== null &&

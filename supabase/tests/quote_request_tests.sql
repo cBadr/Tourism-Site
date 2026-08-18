@@ -38,13 +38,32 @@
 do $$
 declare
   v_left integer;
+  v_sig  integer;
 begin
   if to_regclass('public.quote_requests') is null then
     raise exception 'شرط مسبق: الجدول public.quote_requests غير موجود — نفّذ 0007 أولاً';
   end if;
 
-  if to_regprocedure('public.create_quote_request(text,text,text,text,text,numeric,numeric,text,numeric,numeric,timestamptz,integer,integer)') is null then
-    raise exception 'شرط مسبق: التوقيع المُهيكل غير موجود — نفّذ 0084 (pnpm db:migrate)';
+  /*
+   * 🔴 لا يُثبَّت التوقيع كاملاً — يُثبَّت **صدرُه**.
+   *
+   * كان الشرط `to_regprocedure('…13 نوعاً…')`، فلمّا أضافت 0127 خمسةَ معاملات
+   * مصدرٍ **بافتراضيّ `NULL`** لم يعد ذلك التوقيع الحرفيّ موجوداً واحمرّت
+   * المجموعة — **رغم أن كل نداءٍ فيها يعمل**، لأن الافتراضيات تغطّي المنادي
+   * القديم. أي أن التوكيد أمسك **توسعةً** وسمّاها كسراً.
+   *
+   * والمقصودُ أن التوقيع «المُهيكل» قائم: المعاملات الثلاثة عشر الأولى هي هي
+   * بترتيبها وأنواعها. فزيادةُ معاملٍ بافتراضيّ تمرّ، وتغييرُ واحدٍ من الثلاثة
+   * عشر يحمرّ — وهو الفرق الذي يجب أن يقيسه الشاهد.
+   */
+  select count(*) into v_sig
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public'
+    and p.proname = 'create_quote_request'
+    and pg_catalog.pg_get_function_arguments(p.oid) like 'p_service_slug text, p_customer_name text, p_customer_phone text, p_details text, p_origin_label text, p_origin_lat numeric, p_origin_lng numeric, p_dest_label text, p_dest_lat numeric, p_dest_lng numeric, p_pickup_at timestamp with time zone, p_passengers integer, p_luggage integer%';
+  if v_sig <> 1 then
+    raise exception 'شرط مسبق: التوقيع المُهيكل غير موجود (طابقه % دالة) — نفّذ 0084 (pnpm db:migrate)', v_sig;
   end if;
 
   if to_regprocedure('public.set_quote_request_status(uuid,text,numeric,text)') is null then
@@ -910,16 +929,29 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 declare
-  v_structured constant text :=
-    'public.create_quote_request(text, text, text, text, text, numeric, numeric, text, numeric, numeric, timestamptz, integer, integer)';
+  v_can boolean;
 begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     raise notice '  ↳ (ط) تخطٍّ: دور anon غير موجود';
     return;
   end if;
 
-  -- (ط-١) الزائر ينشئ طلباً ولا يقرأ الجدول ولا يكتب فيه مباشرةً
-  if not has_function_privilege('anon', v_structured, 'EXECUTE') then
+  /*
+   * (ط-١) الزائر ينشئ طلباً ولا يقرأ الجدول ولا يكتب فيه مباشرةً.
+   *
+   * 🔴 والفحصُ بالمعرّف لا بقائمة أنواعٍ حرفية: 0127 أضافت خمسةَ معاملات مصدرٍ
+   * بافتراضيّ `NULL`، فسقط التوقيعُ المثبَّت واحمرّ التوكيد على **توسعة** لا
+   * على كسر — والنداءات كلُّها تعمل لأن الافتراضيات تغطّي المنادي القديم.
+   *
+   * و`coalesce(…, false)` مقصودة: `bool_and` على مجموعةٍ فارغة تُرجع `null`،
+   * و`not null` لا يُشعل `if` — فتختفي الدالة من القاعدة ويبقى الشاهد أخضر.
+   */
+  select coalesce(bool_and(has_function_privilege('anon', p.oid, 'EXECUTE')), false)
+    into v_can
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public' and p.proname = 'create_quote_request';
+  if not v_can then
     raise exception '(ط-١) الزائر لا يستطيع إنشاء طلب عرض سعر';
   end if;
   if has_table_privilege('anon', 'public.quote_requests', 'SELECT')

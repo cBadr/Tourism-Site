@@ -457,6 +457,11 @@ const FAILED_HINTS: Record<string, string> = {
   "invalid-action": "failaction",
   "override-note-required": "failnote",
   "deduct-amount-required": "faildeduct",
+  // 0119: 🔴 السقف — رمزان مستقلان لأن رسالتيهما مختلفتان تماماً: الأول «رقمك
+  //       أكبر من المستحق»، والثاني «لا مستحق أصلاً فلا حدّ يُقاس عليه».
+  "deduct-over-cap": "faildeductcap",
+  "deduct-no-cap": "faildeductnocap",
+  "reason-out-of-scope": "failscope",
   "no-partner": "failnopartner",
   "no-payout": "failnopayout",
   "already-failed": "failalready",
@@ -524,4 +529,62 @@ export async function markBookingFailed(bookingId: string, formData: FormData) {
   // صفحة متابعة العميل تقرأ الحالة نفسها — فتُبطَل ذاكرة المسارات كلها كالمعتاد
   revalidatePath("/", "layout");
   redirect(url(bookingId, "saved=failed"));
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  بوابةُ الاكتمال — قرارُ الإدارة على طلب المتعهد (هجرة 0119)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * 🔴 **لماذا يوجد هذا الزرّ أصلاً:** الاكتمال يحرّك المال في اللحظة نفسها —
+ * `ledger_on_booking_completed` تكتب رجلَي الدفتر، و`loyalty_on_booking_completed`
+ * تسكّ نقاط العميل، و`record_partner_settlement` تُبنى على ما اكتمل. فزرُّ «تمّت»
+ * في يد المتعهد بلا حارس يحرّك دفتر المالك **بكلمة المتعهد وحدها**.
+ *
+ * والقرار هنا لا يفعل شيئاً بنفسه: `decide_trip_completion` تكتب القرار بفاعله،
+ * ثم تنقل الحالة فتعمل المُشغّلات الثلاثة داخل المعاملة نفسها (**D-48**).
+ *
+ * ⚠ **والرفض يستلزم سبباً مكتوباً** — قيدُ الدالة لا شرطُ هذه الشاشة: المتعهد
+ * ينتظر مستحقه، و«رُفض» بلا سبب شكوى غداً.
+ */
+const COMPLETION_HINTS: Record<string, string> = {
+  forbidden: "forbidden",
+  "request-not-found": "cmpgone",
+  "already-decided": "cmpdecided",
+  "invalid-status": "cmpstatus",
+  "note-required": "cmpnote",
+};
+
+export async function decideTripCompletion(
+  bookingId: string,
+  requestId: string,
+  approve: boolean,
+  formData: FormData
+) {
+  if (!UUID.test(bookingId)) redirect("/admin/orders");
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url(bookingId, "error=env"));
+  if (!UUID.test(requestId)) redirect(url(bookingId, "error=cmpgone"));
+
+  const note = trimNote(text(formData, "completion_note"));
+  // الشاشة تمنع الإرسال بلا سبب عند الرفض، والقاعدة هي الحارس الحقيقي —
+  // وهذا السطر يوفّر على المستعمل رحلةً إلى الخادم ليقرأ ما تعرفه الشاشة سلفاً
+  if (!approve && !note) redirect(url(bookingId, "error=cmpnote#actions"));
+
+  const { error } = await supabase.rpc("decide_trip_completion", {
+    p_request_id: requestId,
+    p_approve: approve,
+    p_note: note,
+  });
+
+  if (error) {
+    const code = isMissingFunction(error.code)
+      ? "cmpnotready"
+      : hintCode(error, "save", COMPLETION_HINTS);
+    redirect(url(bookingId, `error=${code}#actions`));
+  }
+
+  revalidatePath("/", "layout");
+  redirect(url(bookingId, `saved=${approve ? "cmpapproved" : "cmprejected"}`));
 }

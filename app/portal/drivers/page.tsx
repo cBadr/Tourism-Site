@@ -9,10 +9,15 @@ import {
   PageHeading,
   TextField,
 } from "@/components/portal/portal-ui";
+import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { portalSetupAccess } from "../_lib/session";
+import { DriverDocs, LicenseBadge } from "./_components/driver-docs";
 import { createDriver, deleteDriver, saveDriver, toggleDriver } from "./actions";
 import { loadDrivers, type PortalDriver } from "./data";
 
@@ -27,6 +32,17 @@ import { loadDrivers, type PortalDriver } from "./data";
  * وما يقرؤه العميل من هذا السجلّ بعد الإسناد: الاسم والهاتف لا غير. رقم الرخصة
  * لا يخرج من نوع إرجاع `get_booking_by_token` أصلاً، والهاتف محجوب **داخل
  * القاعدة** حتى تحلّ نافذته قبل موعد الالتقاء — لا في هذه الشاشة ولا في أي JSX.
+ *
+ * ── 🔒 وما أضافته 0120: الصورة والرخصة، وحدودُ من يراهما ─────────────────
+ *
+ * | من | يرى ماذا |
+ * |---|---|
+ * | **العميل** | لا شيء من هذا اللوح — ولا حقلَ صورةٍ ولا رخصةٍ في نوع إرجاع `get_booking_by_token` أصلاً |
+ * | **المتعهد** | صور سائقيه **هو** ورخصهم — والسياسة تقيّد المسار بـ`current_subcontractor_id()` فلا يبلغ منافسه (D-19 · D-20) |
+ * | **اللوحة** | كل شيء، بـ`is_admin()` |
+ *
+ * ولا مسار خام يصل هذه الشاشة: `data.ts` يحوّل المسارات إلى **روابط موقَّعة
+ * عمرها دقيقة**، والتوقيع بجلسة الشريك نفسها — فالسياسة هي الحارس لا `.eq()`.
  */
 
 export const metadata = { title: "سائقيّ" };
@@ -34,7 +50,56 @@ export const metadata = { title: "سائقيّ" };
 const ERROR_MESSAGES: Record<string, string> = {
   name: "اسم السائق حقل إلزامي — اكتبه كاملاً كما سيقرأه العميل.",
   phone: "رقم هاتف السائق غير صالح — اكتب رقماً كاملاً (٨ أرقام فأكثر).",
+  license: "رقم الرخصة قصير — اتركه فارغاً أو اكتبه كاملاً (٣ خانات فأكثر).",
+  expiry: "تاريخ انتهاء الرخصة غير صالح — اختره من التقويم أو اتركه فارغاً.",
+  doc_type: "نوع الملف غير مقبول — ارفع صورة JPG أو PNG أو WEBP أو ملف PDF.",
+  doc_size: "الملف أكبر من ٥ ميجابايت — صغّر الصورة ثم أعد الرفع.",
+  doc_empty: "لم تختر ملفاً — اختر ملفاً من جهازك ثم اضغط رفع.",
+  upload: "تعذّر رفع الملف — تأكد من نوعه وحجمه، وإن تكرر فأبلغ الإدارة.",
 };
+
+/**
+ * حقل تاريخٍ محلّي — `TextField` المشتركة تقبل `text/email/tel/url` لا `date`،
+ * وتوسيعُها ملفٌّ مشترك يبنيه غيري الآن. فالحقل هنا، ونقله إليها لاحقاً توسعة
+ * لا تغيير.
+ */
+function DateField({
+  id,
+  label,
+  name,
+  defaultValue,
+  help,
+  hint,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  name: string;
+  defaultValue?: string | null;
+  help?: string;
+  hint?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="flex items-center gap-1.5">
+        {label}
+        {help ? <HelpTip>{help}</HelpTip> : null}
+      </Label>
+      <Input
+        id={id}
+        name={name}
+        type="date"
+        dir="ltr"
+        defaultValue={defaultValue ?? ""}
+        disabled={disabled}
+        min="1970-01-01"
+        max="2100-01-01"
+      />
+      {hint ? <p className="text-xs leading-5 text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
 
 function DriverCard({ driver }: { driver: PortalDriver }) {
   const f = (field: string) => `${driver.id}-${field}`;
@@ -47,6 +112,7 @@ function DriverCard({ driver }: { driver: PortalDriver }) {
         <Badge variant={driver.active ? "default" : "secondary"}>
           {driver.active ? "في الخدمة" : "خارج الخدمة"}
         </Badge>
+        <LicenseBadge driver={driver} />
         <form action={toggleDriver.bind(null, driver.id)} className="ms-auto">
           <Button
             type="submit"
@@ -93,7 +159,14 @@ function DriverCard({ driver }: { driver: PortalDriver }) {
             dir="ltr"
             defaultValue={driver.licenseNo}
             maxLength={40}
-            help="سجل داخلي بينك وبين الإدارة — لا يصل العميل إطلاقاً."
+            help="سجل داخلي بينك وبين الإدارة — لا يصل العميل إطلاقاً. ويبقى محفوظاً عندنا حتى بعد حذف الصور، كي لا تفقد رحلةٌ قديمة اسم من نفّذها."
+          />
+          <DateField
+            id={f("expiry")}
+            label="انتهاء الرخصة"
+            name="license_expiry"
+            defaultValue={driver.licenseExpiry}
+            help="الاتفاقية تُلزمك بإيقاف أي سائق سقطت رخصته. والتاريخ هنا يجعل ذلك ظاهراً لك ولنا قبل أن يقع."
           />
         </div>
 
@@ -107,6 +180,24 @@ function DriverCard({ driver }: { driver: PortalDriver }) {
           <Button type="submit">حفظ السائق</Button>
         </div>
       </form>
+
+      <Separator />
+
+      {/* المستندات في نماذج مستقلة عن نموذج الحفظ — HTML لا يسمح بتداخل النماذج،
+          ورفعُ ملفٍّ لا يجوز أن يُلزم بإعادة إرسال بقية الحقول */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <h4 className="text-sm font-semibold">مستندات السائق</h4>
+          <Badge variant="outline" className="text-[11px] font-normal">
+            لا تصل العميل
+          </Badge>
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          اختيارية، وتراها أنت والإدارة فقط. أي تعديل على رقم الرخصة أو تاريخها أو صورتها يُلغي
+          توثيق الإدارة السابق تلقائياً، فتُراجَع من جديد.
+        </p>
+        <DriverDocs driver={driver} />
+      </div>
 
       {/* الحذف خطوتان بلا جافاسكربت: الكشف ثم التأكيد — ونموذجه مستقل عن نموذج
           الحفظ لأن HTML لا يسمح بتداخل النماذج */}
@@ -149,7 +240,7 @@ export default async function PortalDriversPage({ searchParams }: PageProps<"/po
     <div className="space-y-6">
       <PageHeading
         title="سائقيّ"
-        help="سجلك أنت لا سجل المنصة: نحن نعرض للعميل من أعلنته، ولا ندير سائقيك ولا نتواصل معهم. والصور غير مطلوبة حالياً — إضافتها تحتاج مساحة تخزين خاصة تحمي بيانات سائقك، وهي مؤجَّلة عمداً."
+        help="سجلك أنت لا سجل المنصة: نحن نعرض للعميل من أعلنته، ولا ندير سائقيك ولا نتواصل معهم. والصور والرخص تُخزَّن في مساحة خاصة لا يصلها العميل ولا أي متعهد آخر، وتُحذف بعد خمس سنوات من انتهاء العلاقة بيننا كما في اتفاقية الشراكة."
       >
         سجّل هنا من يقودون رحلاتك مرة واحدة، ثم اخترهم بنقرتين عند إسناد كل رحلة. العميل يقرأ
         اسم السائق وسيارته ليعرف من سيأتيه — ولا يقرأ اسم شركتك ولا ما تتقاضاه.
@@ -229,7 +320,19 @@ export default async function PortalDriversPage({ searchParams }: PageProps<"/po
               disabled={!ready}
               hint="اختياري — سجل داخلي لا يظهر للعميل."
             />
+            <DateField
+              id="new-expiry"
+              label="انتهاء الرخصة"
+              name="new.license_expiry"
+              disabled={!ready}
+              hint="اختياري — ويظهر لك تنبيه حين تنتهي."
+            />
           </div>
+
+          <p className="text-xs leading-5 text-muted-foreground">
+            وصورة السائق وصورة رخصته تُرفعان من بطاقته بعد إضافته — لأن الملف يُخزَّن باسم
+            السائق نفسه، فلا وجود له قبل أن يوجد هو.
+          </p>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CheckboxField name="new.active" label="السائق في الخدمة" defaultChecked disabled={!ready} />

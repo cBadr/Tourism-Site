@@ -1,4 +1,5 @@
 import { authorizeDispatchRequest, dispatchDenied, NO_STORE } from "@/lib/dispatch/guard";
+import { runDriverDocumentPurge } from "@/lib/drivers/retention";
 import { getDispatchStats, runDispatchTick } from "@/lib/dispatch/tick";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import { runStaleSweep } from "@/lib/trip-settings";
@@ -67,12 +68,40 @@ async function sweepStale(ok: boolean) {
   return { ok: swept, scanned, cancelled, failed, ...(reason ? { reason } : {}) };
 }
 
+/**
+ * كنس مستندات السائقين المنقضية مدّتها (الهجرة 0120) — على الدورة نفسها.
+ *
+ * ولماذا هنا لا في مسارٍ ثالث؟ نفس حجة كنس الطلبات غير المدفوعة أعلاه حرفياً:
+ * هذه هي المهمة المجدولة المضمونة على كل نسخة، ومسارٌ ثانٍ يعني **سرّاً ثانياً
+ * وجدولة ثانية تُنسى**. والحملُ صفرٌ في الحالة العادية — استعلامٌ واحد يُرجع
+ * صفر صفوف ما دام لا شريكَ انتهت علاقتُه منذ خمس سنوات ولا ملفَّ يتيم.
+ *
+ * 🔴 **وبلا هذا النداء تصير الخمس سنوات في اتفاقية الشراكة (0113) وعداً لا
+ * ينفّذه شيء** — وهو ما يجعل «مهلة حفظٍ» كذبةً مكتوبة في عقد.
+ *
+ * ولا يغيّر رمز الحالة ولا نتيجة البث بحال، تماماً كالكنس: فشلُه يظهر في
+ * `driverDocs.reason` ليقرأه المالك، ولا يجعل دورةَ بثٍّ نجحت تبدو فاشلة.
+ * ويعمل **حتى لو أخفق البث** — على خلاف الكنس: إلغاءُ حجوزات على قاعدةٍ ناقصة
+ * خطرٌ، أما حذفُ ملفٍّ انقضت مدّته فالتزامٌ لا علاقة له بحالة البث.
+ */
+async function purgeDriverDocs() {
+  const summary = await runDriverDocumentPurge(createServiceSupabase());
+  return {
+    ok: summary.ok,
+    due: summary.due,
+    deleted: summary.deleted,
+    cleared: summary.cleared,
+    ...(summary.reason ? { reason: summary.reason } : {}),
+  };
+}
+
 async function runAndRespond(): Promise<Response> {
   const summary = await runDispatchTick();
   const sweep = await sweepStale(summary.ok);
+  const driverDocs = await purgeDriverDocs();
 
   return Response.json(
-    { ...summary, sweep },
+    { ...summary, sweep, driverDocs },
     { status: statusFor(summary.reason), headers: NO_STORE }
   );
 }

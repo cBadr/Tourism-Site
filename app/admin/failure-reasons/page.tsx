@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, Plus, Power, PowerOff, Trash2 } from "lucide-react";
+import { AlertTriangle, Plus, Power, PowerOff, Timer, Trash2 } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { SaveButton } from "@/components/admin/save-feedback";
@@ -21,7 +21,13 @@ import {
   FAILURE_ACTION_LABELS,
   pick,
 } from "../orders/_components/booking-ui";
-import { createReason, deleteReason, saveReason, toggleReasonActive } from "./actions";
+import {
+  createReason,
+  deleteReason,
+  saveClosureSettings,
+  saveReason,
+  toggleReasonActive,
+} from "./actions";
 
 /**
  * أسباب فشل الرحلة — كتالوج ما يُختار حين لا تُنفَّذ رحلة (هجرة `0051`).
@@ -68,7 +74,119 @@ type FailureReason = {
   defaultAction: string;
   active: boolean;
   sort: number;
+  /** 0119 — نطاق السبب: `failure` · `apology` · `both` */
+  appliesTo: string;
+  /** ومن بادر: `platform` · `partner` · `any` */
+  initiator: string;
+  /** المبلغ المقترح للخصم — **مسقوفٌ دائماً بمستحق تلك الرحلة** عند التنفيذ */
+  defaultDeduct: number | null;
 };
+
+/** مقابض الإغلاق — صفٌّ واحد في `trip_closure_settings` */
+type ClosureSettings = {
+  approveHours: number;
+  manualHours: number;
+  deductionEnabled: boolean;
+  ready: boolean;
+};
+
+const CLOSURE_FALLBACK: ClosureSettings = {
+  approveHours: 24,
+  manualHours: 6,
+  deductionEnabled: false,
+  ready: false,
+};
+
+/** نطاقُ السبب كما يُقرأ ويُختار */
+const SCOPE_LABELS: Record<string, string> = {
+  failure: "فشل رحلة",
+  apology: "اعتذار متعهد",
+  both: "كلاهما",
+};
+
+const INITIATOR_LABELS: Record<string, string> = {
+  platform: "المنصة أو العميل",
+  partner: "المتعهد",
+  any: "غير محدَّد",
+};
+
+/* ------------------------------------------------------------------ */
+/* 🔴 «يخصم بلا مبلغ» — الفجوة التي تجعل الاتفاقية تَعِد والقاعدة تصمت  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * سببٌ إجراؤه **خصم** ولا `default_deduct_amount` له.
+ *
+ * ── المقيس على القاعدة الحيّة (‏`pg_get_functiondef`، لا ملفّ هجرة — D-58) ──
+ *
+ * المستهلكان اثنان لا ثالث، **وسلوكهما عند الفراغ متعاكس**:
+ *
+ * | المسار | الحساب | ماذا يقع بلا مبلغ |
+ * |---|---|---|
+ * | `mark_booking_failed` (فشلٌ من اللوحة) | `coalesce(p_deduct_amount, default, 0)` | **يرفع خطأً** `deduct-amount-required` ⇒ المدير يكتبه بيده |
+ * | `withdraw_from_trip` (اعتذارٌ من البورتال) | `least(coalesce(default, 0), payout)` ثم `if <= 0 then null` | **صفرٌ صامت**: يُسجَّل الاعتذار بلا اقتراح خصم ولا رسالة |
+ *
+ * فالفجوة **ليست واحدة**: في الفشل إزعاجٌ يُرى، وفي الاعتذار خسارةٌ لا تُرى.
+ * ولذلك يفرّق التحذير أدناه بالنطاق بدل أن يقول جملةً واحدة تصدق في نصف
+ * الحالات — وهو بعينه النمط ٢ في `LESSONS.md`: نصٌّ يَعِد بما لا تنفّذه القاعدة.
+ *
+ * ⚠ **ولا رقم يُبذَر هنا ولا يُخترع**: القيم قرارُ المالك وحده. وظيفة هذه
+ * الشاشة أن تُظهر الفجوة لا أن تسدّها بتخمين.
+ */
+function deductWithoutAmount(reason: FailureReason): boolean {
+  return (
+    reason.defaultAction === "deduct" &&
+    (reason.defaultDeduct === null || reason.defaultDeduct <= 0)
+  );
+}
+
+/** هل يقع هذا السبب في المسار **الصامت** (اعتذار المتعهد)؟ */
+const inApologyPath = (reason: FailureReason) =>
+  reason.appliesTo === "apology" || reason.appliesTo === "both";
+
+/** وهل يقع في مسار الفشل الصاخب كذلك؟ */
+const inFailurePath = (reason: FailureReason) =>
+  reason.appliesTo === "failure" || reason.appliesTo === "both";
+
+/**
+ * التحذير في بطاقة السبب — **صريحٌ لا لمزٌ**، ويقول ما يقع بالضبط في كل مسار
+ * يظهر فيه هذا السبب. وسببُ صراحته: مفتاحُ تنفيذ الخصم مطفأٌ اليوم، فمن يقرأ
+ * «الإجراء: خصم» يظن أن الرقم موجودٌ ينتظر الإشعال — ولا رقمَ أصلاً.
+ */
+function DeductGapNotice({ reason }: { reason: FailureReason }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <div className="space-y-1.5">
+        <p>
+          <span className="font-semibold">
+            هذا السبب إجراؤه «خصم» ولا مبلغ افتراضيّ له — فالخصم المقترح صفر.
+          </span>{" "}
+          والحقل «الخصم المقترح» أعلاه هو موضعه.
+        </p>
+        {inApologyPath(reason) && (
+          <p>
+            🔴 <span className="font-semibold">وفي اعتذار المتعهد يقع هذا بصمت:</span> يُسجَّل
+            الاعتذار بلا اقتراح خصمٍ إطلاقاً — لا رسالة ولا رقم في السجل — لأن قاعدة البيانات
+            تحسب <span dir="ltr" className="font-mono text-xs">least(coalesce(المبلغ, 0), المستحق)</span>{" "}
+            فتخرج صفراً. أي أن «خصم» هنا اليوم لا يفرق عن «لا شيء».
+          </p>
+        )}
+        {inFailurePath(reason) && (
+          <p>
+            <span className="font-semibold">وفي نموذج الفشل لا يقع بصمت:</span> قاعدة البيانات
+            ترفض العملية برسالة «الخصم يستلزم مبلغاً موجباً» حتى يكتب المدير الرقم بيده في كل
+            واقعة.
+          </p>
+        )}
+        <p className="text-amber-900/80 dark:text-amber-100/80">
+          والعلاج أحد اثنين: اكتب المبلغ الافتراضي، أو غيّر الإجراء إلى «لا شيء» كي تقول
+          الشاشة ما يحدث فعلاً.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 /**
  * قراءة الكتالوج + عدّاد استعمال كل سبب.
@@ -116,6 +234,11 @@ async function loadReasons(): Promise<{
     defaultAction: asText(pick(row, ["default_action", "defaultAction"])) ?? "none",
     active: row.active === true,
     sort: asNumber(pick(row, ["sort"])) ?? 0,
+    // قاعدةٌ لم تصلها 0119 لا تُرجع الأعمدة ⇒ الافتراض «فشل · غير محدَّد»،
+    // وهو بعينه ما بذرته الهجرة للصفوف الستّ القديمة، فلا تقفز الشاشة
+    appliesTo: asText(pick(row, ["applies_to", "appliesTo"])) ?? "failure",
+    initiator: asText(pick(row, ["initiator"])) ?? "any",
+    defaultDeduct: asNumber(pick(row, ["default_deduct_amount", "defaultDeductAmount"])),
   }));
 
   const usage = new Map<string, number>();
@@ -129,6 +252,30 @@ async function loadReasons(): Promise<{
   return { reasons, usage, ready: true, usageReady: !usageRes.error };
 }
 
+/**
+ * مقابض الإغلاق. و`ready = false` تعني «هجرة 0119 لم تصل» لا «القيم صفر»: الشاشة
+ * تعرض حينها الافتراضات معطَّلةً وتقول أي هجرة ينقصها — لا حقولاً تُحفظ في العدم.
+ */
+async function loadClosure(): Promise<ClosureSettings> {
+  const supabase = await createServerSupabase();
+  if (!supabase) return CLOSURE_FALLBACK;
+
+  const res = await supabase
+    .from("trip_closure_settings")
+    .select("completion_approve_hours, apology_manual_hours, apology_deduction_enabled")
+    .limit(1)
+    .maybeSingle();
+
+  if (res.error || !res.data) return CLOSURE_FALLBACK;
+  const row = res.data as Record<string, unknown>;
+  return {
+    approveHours: asNumber(pick(row, ["completion_approve_hours"])) ?? 24,
+    manualHours: asNumber(pick(row, ["apology_manual_hours"])) ?? 6,
+    deductionEnabled: pick(row, ["apology_deduction_enabled"]) === true,
+    ready: true,
+  };
+}
+
 const ERROR_MESSAGES: Record<string, string> = {
   env: "قاعدة البيانات غير مربوطة — لا يمكن الحفظ بعد.",
   notready:
@@ -139,6 +286,19 @@ const ERROR_MESSAGES: Record<string, string> = {
   action:
     "اختر الإجراء المالي المقترح — لا شيء، أو دفع كامل المستحق، أو خصم. وسببٌ بلا إجراء ترفضه قاعدة البيانات نفسها.",
   sort: "ترتيب العرض يجب أن يكون عدداً صحيحاً غير سالب.",
+  scope:
+    "اختر نطاق السبب — هل يصلح لتعليم رحلة فاشلة، أم لاعتذار متعهد عن رحلة قبِلها، أم لكليهما؟ والقائمة واحدة بنطاق لا قائمتان.",
+  initiator: "اختر من بادر — المنصة أو العميل، أم المتعهد، أم غير محدَّد.",
+  payinitiator:
+    "«دفع كامل المستحق» لا معنى له حين يكون المبادِر هو المتعهد نفسه: من انسحب بإرادته لا يُدفع له كاملاً. وقاعدة البيانات ترفض هذا الجمع بقيدٍ في الجدول لا بشرطٍ في هذه الشاشة. غيِّر الإجراء، أو غيِّر المبادِر.",
+  deductunused:
+    "كتبت مبلغاً مقترحاً مع إجراء ليس خصماً — رقمٌ لا يقرؤه أحد. امسح المبلغ، أو اجعل الإجراء «خصم».",
+  deductrange:
+    "المبلغ المقترح يجب أن يكون موجباً وفي حدود المليون. (والسقف الحقيقي عند التنفيذ هو مستحق تلك الرحلة نفسها لا هذا الرقم.)",
+  approvehours:
+    "مهلة الاعتماد التلقائي بالساعات بين ١ و٣٣٦ (أسبوعان). وهي المدة التي يُعتمد بعدها إعلانُ المتعهد تلقائياً إن لم تصدر الإدارة قراراً.",
+  manualhours:
+    "عتبة الاعتذار بالساعات بين ٠ و١٦٨. والصفر يعني «ابثَّ الرحلة دائماً مهما قرب الموعد».",
   exists: "يوجد سبب بهذا المعرّف بالفعل — اختر معرّفاً آخر.",
   inuse:
     "لا يمكن حذف سببٍ وقعت عليه رحلة فاشلة — قاعدة البيانات رفضت الحذف حمايةً لتقارير الماضي: سجلّ تلك الرحلات يشير إلى هذا الصف. عطّله بدل حذفه: يختفي من نموذج الفشل فوراً ويبقى سجلّ ما وقع عليه سليماً.",
@@ -147,6 +307,23 @@ const ERROR_MESSAGES: Record<string, string> = {
   missing: "لم يعد هذا السبب موجوداً — أعد تحميل الصفحة لترى القائمة الحقيقية.",
   save: "فشلت العملية — تأكد أنك مسجل الدخول بحساب دوره admin (راجع supabase/README.md، فخ الصفوف الصفرية).",
 };
+
+/**
+ * مجموعتا العرض. و«كلاهما» يظهر في الاثنتين عمداً — لأنه كذلك في القاعدة،
+ * وإخفاؤه من إحداهما يجعل المالك يظن المجموعة ناقصة فيضيف نظيراً مكرراً.
+ */
+const SCOPE_GROUPS = [
+  {
+    key: "failure",
+    title: "أسباب فشل الرحلة",
+    hint: "يختارها المدير من شاشة الطلب حين لا تُنفَّذ رحلة — بعد أن صار لها منفِّذ.",
+  },
+  {
+    key: "apology",
+    title: "أسباب اعتذار المتعهد",
+    hint: "يختارها الشريك من بورتاله حين يعتذر عن رحلة قَبِلها. وما مُبادِرُه «المنصة» لا يظهر له.",
+  },
+] as const;
 
 /** نص «؟» المعرّف — مكتوب مرة ويُقرأ في بطاقة السبب وفي نموذج الإضافة معاً */
 const SLUG_HELP = (
@@ -181,6 +358,264 @@ const ACTION_HELP = (
     السبب تحتفظ بالإجراء الذي كان مقترحاً يومها وبالذي نُفِّذ فعلاً.
   </>
 );
+
+
+/**
+ * نطاقُ السبب ومُبادِرُه — **قائمةٌ واحدة بنطاق لا قائمتان** (قرار المالك).
+ *
+ * ولماذا حقلان لا حقل؟ لأنهما سؤالان مختلفان: «أين يُعرض هذا السبب؟» و«من
+ * تسبَّب؟». والثاني هو ما يجعل «ادفع كاملاً» مقبولةً أو مرفوضة — فمن انسحب
+ * بإرادته لا يُدفع له كاملاً، وقاعدة البيانات ترفض الجمع بقيدِ جدول
+ * (`failure_reasons_pay_initiator_chk`) لا بشرطٍ في هذه الشاشة.
+ */
+const SCOPE_HELP = (
+  <>
+    أين يظهر هذا السبب؟
+    <br />
+    <span className="font-semibold">فشل رحلة:</span> في نموذج تعليم الرحلة فاشلة على شاشة الطلب
+    — لرحلةٍ لم تُنفَّذ.
+    <br />
+    <span className="font-semibold">اعتذار متعهد:</span> في بورتال المتعهد حين يعتذر عن رحلةٍ
+    قَبِلها ثم تعذّر عليه تنفيذها.
+    <br />
+    <span className="font-semibold">كلاهما:</span> يظهر في الموضعين — كعطل المركبة، فهو قبل
+    الموعد اعتذار وبعده فشل.
+  </>
+);
+
+const INITIATOR_HELP = (
+  <>
+    من تسبَّب في ألّا تُنفَّذ الرحلة؟ وهو ما يجعل الإجراء المالي منطقياً أو متناقضاً.
+    <br />
+    <span className="font-semibold">المتعهد:</span> عندها لا يظهر السبب لغيره، و«دفع كامل
+    المستحق» <span className="font-semibold">ترفضه قاعدة البيانات</span> — من انسحب بإرادته لا
+    يُدفع له كاملاً.
+    <br />
+    <span className="font-semibold">المنصة أو العميل:</span> السبب من جهتنا (سحبُ إسناد، أو
+    عميل لم يحضر)، فالدفع الكامل مشروع — و
+    <span className="font-semibold">لا يختاره المتعهد من بورتاله</span>.
+    <br />
+    <span className="font-semibold">غير محدَّد:</span> لا ذنبَ لطرف (ظرف قاهر) — والصفر هنا هو
+    الصواب، وإلا كذب المتعهدون في السبب ففقدت البيانات معناها.
+  </>
+);
+
+const DEDUCT_HELP = (
+  <>
+    مبلغٌ <span className="font-semibold">مقترح</span> يُملأ به حقل الخصم تلقائياً — لا مبلغٌ
+    يُخصم من تلقائه.
+    <br />
+    🔒 <span className="font-semibold">ومسقوفٌ دائماً بمستحق تلك الرحلة نفسها:</span> إن كان
+    مستحق الرحلة أقل من هذا الرقم فالمنفَّذ هو المستحق. وقرار المالك صريح — لا يصير المتعهد
+    مديناً بمالٍ لم يقبضه، ولا تُلاحَق عنده ديون.
+    <br />
+    🔴 <span className="font-semibold">وتركُه فارغاً ليس محايداً — وأثره يختلف بالنطاق:</span>
+    <br />
+    <span className="font-semibold">في نموذج الفشل (اللوحة):</span> يُطالَب المدير بكتابة المبلغ
+    بيده في كل واقعة، وقاعدة البيانات ترفض بلا رقمٍ موجب («الخصم يستلزم مبلغاً موجباً»). أي
+    إزعاجٌ ظاهر لا خسارة صامتة.
+    <br />
+    <span className="font-semibold">في اعتذار المتعهد (البورتال):</span> لا أحد يُسأل — يُسجَّل
+    الاعتذار <span className="font-semibold">بلا اقتراح خصمٍ إطلاقاً وبصمت</span>، لأن الحساب
+    هناك <span dir="ltr" className="font-mono text-xs">least(coalesce(المبلغ, 0), المستحق)</span>{" "}
+    فيخرج صفراً. فاختيار «خصم» بلا مبلغ هناك لا يفرق عن «لا شيء».
+  </>
+);
+
+function ScopeFields({
+  idPrefix,
+  namePrefix,
+  scope,
+  initiator,
+  deduct,
+  disabled,
+}: {
+  idPrefix: string;
+  namePrefix: string;
+  scope: string;
+  initiator: string;
+  deduct: number | null;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-3">
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-scope`} className="flex items-center gap-1.5">
+          نطاق السبب
+          <HelpTip>{SCOPE_HELP}</HelpTip>
+        </Label>
+        <select
+          id={`${idPrefix}-scope`}
+          name={`${namePrefix}applies_to`}
+          defaultValue={scope}
+          disabled={disabled}
+          className={controlClass}
+        >
+          <option value="failure">{SCOPE_LABELS.failure}</option>
+          <option value="apology">{SCOPE_LABELS.apology}</option>
+          <option value="both">{SCOPE_LABELS.both}</option>
+        </select>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-initiator`} className="flex items-center gap-1.5">
+          من بادر
+          <HelpTip>{INITIATOR_HELP}</HelpTip>
+        </Label>
+        <select
+          id={`${idPrefix}-initiator`}
+          name={`${namePrefix}initiator`}
+          defaultValue={initiator}
+          disabled={disabled}
+          className={controlClass}
+        >
+          <option value="any">{INITIATOR_LABELS.any}</option>
+          <option value="partner">{INITIATOR_LABELS.partner}</option>
+          <option value="platform">{INITIATOR_LABELS.platform}</option>
+        </select>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-deduct`} className="flex items-center gap-1.5">
+          الخصم المقترح
+          <HelpTip>{DEDUCT_HELP}</HelpTip>
+        </Label>
+        <Input
+          id={`${idPrefix}-deduct`}
+          name={`${namePrefix}default_deduct_amount`}
+          type="number"
+          inputMode="decimal"
+          dir="ltr"
+          step="1"
+          min={0}
+          placeholder="اتركه فارغاً"
+          defaultValue={deduct !== null && deduct > 0 ? deduct : ""}
+          disabled={disabled}
+        />
+      </div>
+    </div>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* مقابض الإغلاق — ثلاثة أرقامٍ تحكم متى يتحرك المال (0119)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * لماذا هذه البطاقة **على رأس هذه الشاشة** لا في «إعدادات الرحلات»؟
+ *
+ * لأن قارئها واحد: من يضبط أسباب الاعتذار هو من يقرّر متى يُعتمد الإتمام تلقائياً
+ * ومتى يذهب الاعتذارُ إلى الإسناد اليدوي. وثلاثةُ أرقامٍ في شاشةٍ أخرى تعني أن
+ * يقرأ المالك نصفَ السياسة هنا ونصفَها هناك، فلا يرى أثر تغييره على ما أمامه.
+ */
+function ClosureCard({
+  closure,
+  readOnly,
+}: {
+  closure: ClosureSettings;
+  readOnly: boolean;
+}) {
+  return (
+    <form action={readOnly ? undefined : saveClosureSettings}>
+      <Card className="space-y-4 p-5">
+        <div>
+          <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+            <Timer className="size-4 text-primary" />
+            متى تُغلَق الرحلة، ومتى يتحرك المال
+            <HelpTip>
+              الاكتمال يحرّك دفترك في اللحظة نفسها: يُقيَّد مستحق المتعهد وتُسكّ نقاط
+              العميل. لذلك لا يُتمّ المتعهد رحلته بنفسه — <span className="font-semibold">يُعلن</span>{" "}
+              فتعتمد الإدارة، أو يُعتمد تلقائياً بعد المهلة أدناه ويُسجَّل الفاعل «النظام» في
+              السجل لا فراغاً.
+            </HelpTip>
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            ثلاثة مقابض تقرأها قاعدة البيانات مباشرة — لا أرقام مكتوبة في الكود.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="approve-hours" className="flex items-center gap-1.5">
+              مهلة الاعتماد التلقائي (بالساعات)
+              <HelpTip>
+                إن لم تصدر الإدارة قراراً على إعلان المتعهد خلال هذه المدة، يُعتمد الإتمام
+                تلقائياً ويتحرك الدفتر. والمهلة{" "}
+                <span className="font-semibold">تُجمَّد لحظة وصول كل إعلان</span>: تغييرك لها
+                اليوم يسري على القادم وحده، ولا يُقدّم اعتماد إعلانٍ قائم ولا يؤخّره.
+              </HelpTip>
+            </Label>
+            <Input
+              id="approve-hours"
+              name="completion_approve_hours"
+              type="number"
+              inputMode="numeric"
+              dir="ltr"
+              step="1"
+              min={1}
+              max={336}
+              defaultValue={closure.approveHours}
+              disabled={readOnly}
+              required
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="manual-hours" className="flex items-center gap-1.5">
+              عتبة الاعتذار (بالساعات قبل الانطلاق)
+              <HelpTip>
+                حين يعتذر متعهد عن رحلة قَبِلها: إن بقي على الانطلاق{" "}
+                <span className="font-semibold">هذا القدر أو أكثر</span> تنطلق موجة عرضٍ جديدة
+                تلقائياً على متعهدين آخرين؛ وإن كان أقل ذهبت الرحلة إلى الإسناد اليدوي ونُبِّه
+                فريق التشغيل. والافتراض ست ساعات — ثلاثة أضعاف أقل مهلة حجز، فتتّسع لموجة
+                كاملة، وقصيرة بما يكفي ألّا تستيقظ على رحلة بلا منفِّذ.
+              </HelpTip>
+            </Label>
+            <Input
+              id="manual-hours"
+              name="apology_manual_hours"
+              type="number"
+              inputMode="numeric"
+              dir="ltr"
+              step="1"
+              min={0}
+              max={168}
+              defaultValue={closure.manualHours}
+              disabled={readOnly}
+              required
+            />
+          </div>
+        </div>
+
+        <Label className="flex w-fit cursor-pointer items-start gap-2 text-sm font-normal">
+          <input
+            type="checkbox"
+            name="apology_deduction_enabled"
+            defaultChecked={closure.deductionEnabled}
+            disabled={readOnly}
+            className="mt-1 size-4 accent-primary"
+          />
+          <span>
+            السماح بتنفيذ خصمٍ على الاعتذار
+            <HelpTip>
+              🔴 <span className="font-semibold">مطفأ بقرارك حتى الآن.</span> والاعتذار يعمل
+              كاملاً وهو مطفأ: يُسجَّل السبب، ويُحسب المبلغ المقترح مسقوفاً بمستحق الرحلة،
+              ويظهر لك في بطاقة الطلب — <span className="font-semibold">ولا يُكتب قيدٌ واحد
+              في الدفتر</span>. وإشعاله وحده يفتح زرّ التنفيذ، ويبقى الخصم عندها قراراً
+              إدارياً لكل واقعة بسبب مكتوب، وللمتعهد أن يتظلّم عليه. لا تشعله قبل أن يكون
+              للخصم أساس في اتفاقية المتعهدين.
+            </HelpTip>
+          </span>
+        </Label>
+
+        <div className="flex justify-end">
+          <SaveButton label="حفظ المقابض" disabled={readOnly} errorMessages={ERROR_MESSAGES} />
+        </div>
+      </Card>
+    </form>
+  );
+}
 
 function ActionSelect({
   id,
@@ -289,8 +724,30 @@ function ReasonCard({
           {reason.active ? "مفعَّل" : "معطَّل"}
         </Badge>
         <Badge variant="outline" className="text-muted-foreground">
-          المقترح: {FAILURE_ACTION_LABELS[reason.defaultAction] ?? reason.defaultAction}
+          {SCOPE_LABELS[reason.appliesTo] ?? reason.appliesTo}
         </Badge>
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-muted-foreground",
+            // الشارة نفسها تحمل الخبر: من يمسح الصفحة بعينه يرى أي سببٍ ناقص
+            // قبل أن يفتح بطاقته — لا تحذيرٌ مدفونٌ في الأسفل وحده.
+            deductWithoutAmount(reason) &&
+              "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-600 dark:bg-amber-950 dark:text-amber-100"
+          )}
+        >
+          المقترح: {FAILURE_ACTION_LABELS[reason.defaultAction] ?? reason.defaultAction}
+          {reason.defaultDeduct !== null && reason.defaultDeduct > 0
+            ? ` ${toArabicDigits(reason.defaultDeduct)}`
+            : deductWithoutAmount(reason)
+              ? " — بلا مبلغ"
+              : ""}
+        </Badge>
+        {reason.initiator !== "any" ? (
+          <Badge variant="outline" className="text-muted-foreground">
+            بمبادرة: {INITIATOR_LABELS[reason.initiator] ?? reason.initiator}
+          </Badge>
+        ) : null}
         {usageReady && (
           <span className="text-xs text-muted-foreground">
             {usedCount === 0
@@ -344,6 +801,17 @@ function ReasonCard({
             </p>
           </div>
         </div>
+
+        <ScopeFields
+          idPrefix={reason.id}
+          namePrefix=""
+          scope={reason.appliesTo}
+          initiator={reason.initiator}
+          deduct={reason.defaultDeduct}
+          disabled={readOnly}
+        />
+
+        {deductWithoutAmount(reason) && <DeductGapNotice reason={reason} />}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <ActionSelect
@@ -478,9 +946,10 @@ function EmptyState({ hasInactive }: { hasInactive: boolean }) {
 export default async function FailureReasonsPage({
   searchParams,
 }: PageProps<"/admin/failure-reasons">) {
-  const [params, { reasons, usage, ready, usageReady }] = await Promise.all([
+  const [params, { reasons, usage, ready, usageReady }, closure] = await Promise.all([
     searchParams,
     loadReasons(),
+    loadClosure(),
   ]);
 
   const wired = hasSupabaseEnv();
@@ -489,6 +958,12 @@ export default async function FailureReasonsPage({
   const removing = typeof params.remove === "string" ? params.remove : null;
   const readOnly = !ready;
   const activeCount = reasons.filter((reason) => reason.active).length;
+
+  // 🔴 عدّادُ الفجوة — يُحسب على **المفعَّلة وحدها**: سببٌ معطَّل لا يُختار أصلاً
+  //    فتحذيرٌ عليه ضجيجٌ يُفقد التحذيرَ الحقيقي معناه (اتفاقية «إنذارٌ يرنّ
+  //    دائماً لا يُسمع» — LESSONS §١-٣). وبطاقتُه تبقى محذَّرةً حين تُفتح.
+  const deductGaps = reasons.filter((reason) => reason.active && deductWithoutAmount(reason));
+  const silentGaps = deductGaps.filter(inApologyPath);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -518,7 +993,9 @@ export default async function FailureReasonsPage({
         savedMessage={
           savedCode === "deleted"
             ? "حُذف السبب من الكتالوج — لم تقع عليه رحلة فاشلة واحدة، وإلا لرفضت قاعدة البيانات حذفه."
-            : "حُفظ السبب وانعكس على نموذج تعليم الرحلة فاشلة فوراً. والرحلات السابقة لم تتأثر: لكلٍّ منها نسختها المجمَّدة."
+            : savedCode === "closure"
+              ? "حُفظت مقابض الإغلاق. المهلة الجديدة تسري على الإعلانات القادمة وحدها — الإعلانُ القائم يحمل مهلته المجمَّدة لحظة وصوله، فلا يُقدَّم اعتمادُه ولا يؤخَّر."
+              : "حُفظ السبب وانعكس على نموذجَي الفشل والاعتذار فوراً. والرحلات السابقة لم تتأثر: لكلٍّ منها نسختها المجمَّدة."
         }
         readOnlyTitle="كتالوج أسباب الفشل غير جاهز بعد"
         readOnlyBody={
@@ -531,18 +1008,84 @@ export default async function FailureReasonsPage({
         }
       />
 
+      {/*
+        🔴 عدّادُ «يخصم بلا مبلغ» — **أعلى الشاشة قبل أي بطاقة.**
+
+        وسببُ موضعه: الفجوة لا تُرى من القائمة. البطاقة تقول «المقترح: خصم»
+        فيُقرأ أن هناك سياسةً قائمة، والرقمُ الغائب لا يظهر إلا بفتح البطاقة
+        والنظر في حقلٍ فارغ. فالعدّاد هنا يجعل «كم سبباً في هذه الحالة؟» سؤالاً
+        له جوابٌ بلا تصفّح — وهو نفس منطق عدّاد الاستعمال في كل بطاقة: يفسّر
+        ولا يقرّر، ولا يحجب زراً ولا يغيّر رقماً.
+      */}
+      {ready && deductGaps.length > 0 && (
+        <Card className="space-y-2 border-amber-300 bg-amber-50 p-5 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+            <AlertTriangle className="size-4" />
+            {toArabicDigits(deductGaps.length)} من الأسباب المفعَّلة إجراؤها «خصم» ولا مبلغ
+            افتراضيّ لها
+          </h3>
+          <p className="text-sm leading-relaxed">
+            الخصم المقترح لكلٍّ منها <span className="font-semibold">صفر</span>.{" "}
+            {silentGaps.length > 0 ? (
+              <>
+                ومنها <span className="font-semibold">{toArabicDigits(silentGaps.length)}</span>{" "}
+                يظهر في <span className="font-semibold">اعتذار المتعهد</span>، وهناك يقع الصفر{" "}
+                <span className="font-semibold">بلا أي رسالة</span>: يُسجَّل الاعتذار ولا يُقترح
+                خصمٌ ولا يُكتب رقمٌ في السجل. أمّا ما يظهر في نموذج الفشل فقاعدة البيانات ترفضه
+                صراحةً حتى يكتب المدير الرقم بيده.
+              </>
+            ) : (
+              <>
+                وكلُّها في نموذج الفشل وحده، وهناك ترفض قاعدة البيانات العملية صراحةً حتى يكتب
+                المدير الرقم بيده — إزعاجٌ يُرى لا خسارةٌ صامتة.
+              </>
+            )}
+          </p>
+          <p className="text-sm leading-relaxed">
+            الأسباب:{" "}
+            <span className="font-semibold">
+              {deductGaps.map((reason) => reason.label || reason.slug).join(" · ")}
+            </span>
+            . والقيمُ قرارك وحدك — لا تُبذَر ولا تُخمَّن هنا؛ اكتب المبلغ في بطاقة كلٍّ منها،
+            أو غيّر إجراءه إلى «لا شيء».
+          </p>
+        </Card>
+      )}
+
+      <ClosureCard closure={closure} readOnly={readOnly || !closure.ready} />
+
       {ready && activeCount === 0 && <EmptyState hasInactive={reasons.length > 0} />}
 
-      {reasons.map((reason) => (
-        <ReasonCard
-          key={reason.id}
-          reason={reason}
-          usedCount={usage.get(reason.id) ?? 0}
-          usageReady={usageReady}
-          readOnly={readOnly}
-          confirmingDelete={removing === reason.id}
-        />
-      ))}
+      {/*
+        مجموعتان بعنوانٍ لكلٍّ منهما، لا قائمةٌ واحدة من عشر بطاقاتٍ متشابهة.
+        والسبب عمليّ: من يفتح هذه الشاشة يفتحها لغرضٍ واحد — إمّا يضبط ما يختاره
+        المدير عند الفشل، وإمّا ما يختاره الشريك عند الاعتذار. و«كلاهما» يظهر في
+        المجموعتين لأنه كذلك فعلاً في القاعدة، ولا يُخفى من إحداهما فيُظنّ ناقصاً.
+      */}
+      {SCOPE_GROUPS.map((group) => {
+        const rows = reasons.filter(
+          (reason) => reason.appliesTo === group.key || reason.appliesTo === "both"
+        );
+        if (rows.length === 0) return null;
+        return (
+          <section key={group.key} className="space-y-3">
+            <div>
+              <h3 className="font-heading text-base font-bold">{group.title}</h3>
+              <p className="text-sm text-muted-foreground">{group.hint}</p>
+            </div>
+            {rows.map((reason) => (
+              <ReasonCard
+                key={`${group.key}-${reason.id}`}
+                reason={reason}
+                usedCount={usage.get(reason.id) ?? 0}
+                usageReady={usageReady}
+                readOnly={readOnly}
+                confirmingDelete={removing === reason.id}
+              />
+            ))}
+          </section>
+        );
+      })}
 
       {ready && reasons.length > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -594,6 +1137,15 @@ export default async function FailureReasonsPage({
               help={SLUG_HELP}
             />
           </div>
+
+          <ScopeFields
+            idPrefix="new"
+            namePrefix="new."
+            scope="failure"
+            initiator="any"
+            deduct={null}
+            disabled={readOnly}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <ActionSelect

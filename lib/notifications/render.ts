@@ -41,30 +41,119 @@ export type RenderContext = {
   baseUrl?: string;
 };
 
-/** عناوين الأحداث كما تظهر في الجرس وفي جدول الإشعارات */
-export const EVENT_TITLES: Record<string, string> = {
-  booking_created: "حجز جديد بانتظار التحويل",
-  receipt_uploaded: "إيصال تحويل بانتظار المراجعة",
-  booking_confirmed: "تم تأكيد الحجز",
-  booking_cancelled: "تم إلغاء الحجز",
-  quote_requested: "طلب عرض سعر جديد",
-  // أحداث البث والإسناد (المرحلة ٦) — بدونها تظهر كلها بعنوان «إشعار جديد»
-  trip_offered: "عرض رحلة جديد على المتعهدين",
-  trip_assigned: "تم إسناد الرحلة إلى متعهد",
-  dispatch_round_expired: "انتهت مهلة موجة البث",
-  dispatch_exhausted: "لم يقبل أي متعهد — إسناد يدوي",
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  خريطة الأحداث — **مصدرٌ واحد للعنوان والإيموجي معاً**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ── لماذا صفٌّ واحد بحقلين لا خريطتان متوازيتان ─────────────────────────────
+ *
+ * كانت `EVENT_TITLES` و`EVENT_EMOJI` خريطتين مستقلتين بالمفاتيح نفسها، فيُضاف
+ * الحدث إلى إحداهما ويُنسى في الأخرى **بلا خطأ بناءٍ ولا اختبارٍ يسقط**. وهو
+ * النمط ٨ في `LESSONS.md` حرفياً — مصدران لشيءٍ واحد ينحرفان حتماً. والآن
+ * النوعُ نفسه يفرض الحقلين معاً: صفٌّ ناقصٌ **لا يُبنى**.
+ *
+ * ── 🔴 والنقصُ المقيس الذي وُلدت منه هذه الكتلة ──────────────────────────────
+ *
+ * قِيس على القاعدة الحيّة بـ`pg_get_functiondef` على كل دوال `public`: تبعث
+ * الدوالُ **سبعة عشر** حدثاً، وكان لتسعةٍ منها عنوانٌ فقط. فثمانيةٌ تصل الجرسَ
+ * وتليجرام والبريد بعنوان «إشعار جديد» لا يميّزها عن حجزٍ عاديّ:
+ *
+ *   `trip_completion_requested` · `trip_completion_approved` ·
+ *   `trip_completion_rejected` · `trip_withdrawn_manual` ·
+ *   `trip_withdrawn_rebroadcast` · `partner_grievance_filed` ·
+ *   `partner_grievance_resolved` · `ops_job_failed`
+ *
+ * 🚨 **وأخطرها `ops_job_failed`: هو الجرسُ الوحيد** الذي يقول إن
+ * `settle_due_completions` أو `expire_loyalty_points` سقطت داخل `dispatch_tick`
+ * (‏نداءان مقيسان في جسمها، كلٌّ في `exception when others`). أي أن عطلاً في
+ * مالٍ مجدولٍ كان يبدو في الجرس كأنه حجزٌ جديد.
+ *
+ * ── والحارس الذي يمنع عودته ─────────────────────────────────────────────────
+ *
+ *   `node scripts/check-notification-event-titles.mjs`
+ *
+ * يقرأ `pg_get_functiondef` من **القاعدة الحيّة** (‏D-58) فيستخرج ما تبعثه
+ * الدوالُ فعلاً، ويقابله بمفاتيح هذه الخريطة، ويحمرّ على أي حدثٍ بلا عنوان —
+ * وعلى أي مفتاحٍ هنا لا تبعثه دالة. والاكتشافُ اليدوي وقع مرّتين؛ الثالثة
+ * تمسكها الآلة.
+ */
+type EventMeta = {
+  /** عنوان قصير عربيّ — يظهر في الجرس وفي جدول الإشعارات وفي موضوع البريد */
+  title: string;
+  /** رمزٌ واحد يميّز نوع الحدث قبل أن يُقرأ العنوان */
+  emoji: string;
 };
 
-const EVENT_EMOJI: Record<string, string> = {
-  booking_created: "🚗",
-  receipt_uploaded: "🧾",
-  booking_confirmed: "✅",
-  booking_cancelled: "🚫",
-  quote_requested: "📝",
-  trip_offered: "📢",
-  trip_assigned: "🤝",
-  dispatch_round_expired: "⏳",
-  dispatch_exhausted: "🆘",
+export const EVENT_META: Record<string, EventMeta> = {
+  booking_created: { title: "حجز جديد بانتظار التحويل", emoji: "🚗" },
+  receipt_uploaded: { title: "إيصال تحويل بانتظار المراجعة", emoji: "🧾" },
+  booking_confirmed: { title: "تم تأكيد الحجز", emoji: "✅" },
+  booking_cancelled: { title: "تم إلغاء الحجز", emoji: "🚫" },
+  quote_requested: { title: "طلب عرض سعر جديد", emoji: "📝" },
+
+  // أحداث البث والإسناد (المرحلة ٦) — بدونها تظهر كلها بعنوان «إشعار جديد»
+  trip_offered: { title: "عرض رحلة جديد على المتعهدين", emoji: "📢" },
+  trip_assigned: { title: "تم إسناد الرحلة إلى متعهد", emoji: "🤝" },
+  dispatch_round_expired: { title: "انتهت مهلة موجة البث", emoji: "⏳" },
+  dispatch_exhausted: { title: "لم يقبل أي متعهد — إسناد يدوي", emoji: "🆘" },
+
+  // ── إغلاق الرحلة: إعلانُ المتعهد وقرارُ الإدارة (‏`request_trip_completion`
+  //    و`decide_trip_completion` و`settle_due_completions`) ──────────────────
+  trip_completion_requested: {
+    title: "المتعهد أعلن إتمام الرحلة — بانتظار الاعتماد",
+    emoji: "🏁",
+  },
+  // يذهب إلى المتعهد نفسه، ولحظتُه هي التي يتحرك فيها الدفتر: مستحقُّه يُقيَّد
+  // ونقاطُ العميل تُسكّ. فالرمز مالٌ لا علامةُ صح.
+  trip_completion_approved: { title: "اعتُمد إتمام الرحلة — وتحرّك الدفتر", emoji: "💰" },
+  trip_completion_rejected: { title: "رُفض إعلان إتمام الرحلة", emoji: "↩️" },
+
+  // ── اعتذار المتعهد بعد القبول (‏`withdraw_from_trip`) — والوجهة تفرّق ──────
+  //    «يدويّ» يعني: لا منفِّذ لهذه الرحلة الآن وينتظرها إنسان.
+  trip_withdrawn_manual: { title: "اعتذر المتعهد — الرحلة إلى الإسناد اليدوي", emoji: "🛑" },
+  trip_withdrawn_rebroadcast: { title: "اعتذر المتعهد — أُعيد بثّ الرحلة", emoji: "🔁" },
+
+  // ── تظلّمات المتعهدين (‏`file_grievance` / `resolve_grievance`) ────────────
+  partner_grievance_filed: { title: "تظلُّم جديد من متعهد", emoji: "🙋" },
+  partner_grievance_resolved: { title: "صدر قرارٌ في تظلُّم المتعهد", emoji: "⚖️" },
+
+  // ── 🚨 جرسُ الأعطال — لا يشبه غيره بقصد ───────────────────────────────────
+  //    مهمةٌ مجدولة سقطت داخل `dispatch_tick`. وهذا الصفُّ هو **الأثر الوحيد**
+  //    الذي يصل إنساناً؛ ما عداه ابتلعته `exception when others` بهدوء.
+  //    ⚠ ولا يُكرَّر الرمز داخل العنوان: الأسطح التي تعرضهما تعرضهما معاً
+  //      (`{emoji} {title}` في الجرس وفي تليجرام)، فالتكرار يُنتج «🚨 🚨».
+  ops_job_failed: { title: "عطل في مهمة مجدولة — تدخُّل فوري", emoji: "🚨" },
+};
+
+/**
+ * عناوين الأحداث كما تظهر في الجرس وفي جدول الإشعارات.
+ *
+ * ⚠ **إسقاطٌ من `EVENT_META` لا مصدرٌ ثانٍ.** ويبقى مُصدَّراً لأن
+ * `app/admin/notifications/page.tsx` يبني منه قائمة المرشِّحات
+ * (`Object.keys`)، وترتيبُ الإدراج هنا هو ترتيبُها هناك.
+ */
+export const EVENT_TITLES: Record<string, string> = Object.fromEntries(
+  Object.entries(EVENT_META).map(([event, meta]) => [event, meta.title])
+);
+
+export const EVENT_EMOJI: Record<string, string> = Object.fromEntries(
+  Object.entries(EVENT_META).map(([event, meta]) => [event, meta.emoji])
+);
+
+/**
+ * أثرُ سقوط كل مهمةٍ مجدولة — بالعواقب لا بالأسماء.
+ *
+ * المفاتيح هي قيم `'job'` في حمولة `ops_job_failed` كما تكتبها `dispatch_tick`
+ * حرفياً (مقيسةٌ من `pg_get_functiondef`: نداءان لا ثالث لهما). ومهمةٌ تُضاف
+ * غداً بلا سطرٍ هنا **لا تكسر شيئاً** — يسقط سطرُ الأثر وحده وتبقى المهمة
+ * والسبب، وهو الاتجاه الآمن: إنذارٌ ناقصُ سطرٍ خيرٌ من إنذارٍ لا يصل.
+ */
+const OPS_JOB_IMPACT: Record<string, string> = {
+  settle_due_completions:
+    "طلبات إتمامٍ انقضت مهلتها لم تُعتمد — أي مستحقات متعهدين لم تُقيَّد ونقاط عملاء لم تُسكّ بعد.",
+  expire_loyalty_points:
+    "نقاط ولاءٍ بلغت أجلها لم تُطفأ — أي أن رصيداً كان يجب أن يسقط ما زال قابلاً للإنفاق.",
 };
 
 /** أسماء القنوات كما تظهر للمالك */
@@ -475,6 +564,30 @@ export function renderNotification(
       push(lines, "الهاتف", customerPhone);
       push(lines, "واتساب", customerWhatsapp);
       push(lines, "التفاصيل", notes);
+      break;
+    }
+
+    /**
+     * 🚨 **جرسُ الأعطال — ولا يُترك للفرع الافتراضي.**
+     *
+     * حمولتُه مقيسةٌ من `dispatch_tick`: `{ job, error }` ولا شيء غيرهما — لا
+     * مرجعَ ولا عميلَ ولا هاتف. فالفرعُ الافتراضي كان يُنتج له رسالةً **بجسمٍ
+     * فارغ تماماً** (‏`push` يتخطى كل قيمةٍ غائبة) وبجملةٍ عامة تقول «حدث جديد
+     * يحتاج مراجعتك» — أي إنذاراً لا يقول ما الذي سقط ولا ما أثره.
+     *
+     * ولا رابطَ له عمداً: `audienceLink` تُرجع `null` لحمولةٍ بلا `bookingId`
+     * ولا `quoteRequestId`، **وسقوطُ الرابط أهون من سقوطه على وجهةٍ خاطئة**
+     * (انظر ترويسة `audienceLink`). فالمكانُ الذي يُتابَع منه هذا الحدث ليس
+     * صفحةَ طلبٍ أصلاً.
+     */
+    case "ops_job_failed": {
+      const job = firstStr(payload, ["job", "jobName"]);
+      lead =
+        `مهمة مجدولة سقطت داخل دورة البثّ ولم تكتمل — والدورة مضت بعدها. ` +
+        `أثرُها لم يقع، ولا شيء يعيد المحاولة من تلقائه: راجع السبب ثم شغّلها.`;
+      push(lines, "المهمة", job);
+      push(lines, "سبب السقوط", firstStr(payload, ["error", "message", "detail"]));
+      push(lines, "ما الذي لم يقع", job === null ? null : (OPS_JOB_IMPACT[job] ?? null));
       break;
     }
 

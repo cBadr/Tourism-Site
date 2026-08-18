@@ -86,6 +86,7 @@ export const hasSupabaseEnv = () =>
  */
 export { isSchemaMissing } from "@/lib/supabase/schema-errors";
 import { isSchemaMissing } from "@/lib/supabase/schema-errors";
+import { recordPortalPresence } from "./presence";
 
 /** أعمدة المتعهد التي يقرأها البورتال — snake_case مطابق لعقد lib/subcontractor-types.ts */
 const SUB_COLUMNS =
@@ -149,6 +150,24 @@ export const readPortalGate = cache(async (): Promise<PortalGate> => {
   if (!row) return { state: "no-account" };
 
   const sub = toSub(row);
+
+  /**
+   * نبضةُ الحضور — **سطرٌ واحد، وهنا تحديداً**.
+   *
+   * هذه الدالة هي الموضع الوحيد الذي يُحلّ فيه صفُّ المتعهد من الجلسة، وهي
+   * مُذاكَرة بـ`cache()` لكل طلب — فوضعُ النبضة فيها يعني: نبضةً واحدة لكل طلب
+   * موثَّق، تشمل **الأفعال** لا الصفحات وحدها (قبولُ عرضٍ حضورٌ كتصفّحِ صفحة)،
+   * ولا تُكرَّر مهما تعدّد قارئو البوابة في شجرة التصيير.
+   *
+   * ⚠ **و`await` هنا مقصودة ولا تُستبدل بـ`void`.** ما تنتظره ليس الكتابة —
+   * `recordPortalPresence` لا تكتب شيئاً، بل تقرأ الكوكيز وتجدول العمل بـ
+   * `after()` ثم تعود. والكتابة نفسها تقع **بعد إرسال الاستجابة**.
+   * ولو تُركت بلا `await` لجاز أن ينتهي التصيير قبل أن يصل الاستدعاء إلى
+   * `after()` — فيُرمى «خارج نطاق طلب» ويُبتلع، **فلا تُسجَّل نبضةٌ أبداً وبلا
+   * أثر**. التفصيل وثمنُ كل قرارٍ فيها في `./presence.ts`.
+   */
+  await recordPortalPresence(sub.id);
+
   if (sub.status === "suspended") return { state: "suspended", sub };
   if (sub.status !== "approved") return { state: "onboarding", sub };
   return { state: "active", sub };

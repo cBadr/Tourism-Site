@@ -93,6 +93,12 @@ export type LoadedLoyaltySettings = {
   currencyPerPoint: number | null;
   minRedeemPoints: number | null;
   maxRedeemPercent: number | null;
+  /**
+   * أشهرُ صلاحية النقطة **من تاريخ كسبها** (هجرة 0119) — و`0` تعني «بلا انتهاء».
+   * و`null` هنا تعني «القاعدة لم تصلها الهجرة» لا «صفر»: الفرق هو الفرق بين
+   * حقلٍ يُعرض معطَّلاً برسالة هجرة وحقلٍ يقول للمالك إنه أطفأ ما لم يطفئه.
+   */
+  expireMonths: number | null;
 };
 
 /** فراغٌ صريح — كل مقبض `null` أي «لم يصل»، والنظام مطفأ */
@@ -104,6 +110,7 @@ const EMPTY_SETTINGS: LoadedLoyaltySettings = {
   currencyPerPoint: null,
   minRedeemPoints: null,
   maxRedeemPercent: null,
+  expireMonths: null,
 };
 
 /**
@@ -130,6 +137,7 @@ export async function readLoyaltySettings(
     currencyPerPoint: numberOf(row, ["currency_per_point", "currencyPerPoint"]),
     minRedeemPoints: numberOf(row, ["min_redeem_points", "minRedeemPoints"]),
     maxRedeemPercent: numberOf(row, ["max_redeem_percent", "maxRedeemPercent"]),
+    expireMonths: numberOf(row, ["expire_months", "expireMonths"]),
   });
 }
 

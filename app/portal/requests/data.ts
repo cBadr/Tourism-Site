@@ -82,6 +82,25 @@ export type PortalTrip = PortalOffer & {
    * «لم تسجّل مركبة» ونحن لم نسأل أصلاً. (انظر `toCrew` أدناه.)
    */
   crew: TripCrewRef | null;
+  /**
+   * طلبُ إتمام هذه الرحلة (هجرة `0119`) — و`null` تعني **«لم يُطلب»** لا «لا نعرف»:
+   * `portal_trips()` تضمّ الطلب بـ`left join lateral` فتُرجع الأعمدة دائماً، غايةُ
+   * ما هنالك أنها فارغة. وخادمٌ لم تصله الهجرة لا يُرجع الأعمدة أصلاً — وهو نفس
+   * أثر «لم يُطلب» في الشاشة، وهذا مقبول: الزرّ يظهر، والقاعدة ترفض، والرسالة
+   * تقول «الخدمة غير مُركَّبة».
+   */
+  completion: TripCompletion | null;
+};
+
+/** حالةُ طلب الإتمام كما يراها صاحبها */
+export type TripCompletion = {
+  /** `pending` · `approved` · `rejected` */
+  status: string;
+  requestedAt: string | null;
+  /** لحظة الاعتماد التلقائي **المجمَّدة عند الطلب** — لا المحسوبة الآن */
+  autoApproveAt: string | null;
+  /** سببُ الرفض حين رُفض، أو ملاحظة الاعتماد */
+  note: string | null;
 };
 
 /**
@@ -234,6 +253,24 @@ function withContact(base: PortalOffer, row: Record<string, unknown>): PortalTri
     // 0067 — قاعدةٌ لم تصلها الهجرة لا تُرجع العمود، فيعود `null` بلا كسر
     flightNumber: asText(pick(row, ["flight_number", "flightNumber"])),
     crew: toCrew(row),
+    completion: toCompletion(row),
+  };
+}
+
+/**
+ * طلبُ الإتمام من صفّ `portal_trips()` — والقراءة **بالحالة لا بوجود المفتاح**،
+ * بخلاف `toCrew` أعلاه. ولماذا الفرق؟ لأن الغموض هناك كان مكلفاً: «لم تسجّل
+ * مركبة» تُقال لمن سجّلها. وهنا لا غموض — غيابُ الحالة يعني «لا طلب»، وهي
+ * بالضبط الجملة التي تُعرض: زرُّ «أعلن إتمام الرحلة» ظاهرٌ ينتظر ضغطة.
+ */
+function toCompletion(row: Record<string, unknown>): TripCompletion | null {
+  const status = asText(pick(row, ["completion_status", "completionStatus"]));
+  if (!status) return null;
+  return {
+    status,
+    requestedAt: asText(pick(row, ["completion_requested_at", "completionRequestedAt"])),
+    autoApproveAt: asText(pick(row, ["completion_auto_at", "completionAutoAt"])),
+    note: asText(pick(row, ["completion_note", "completionNote"])),
   };
 }
 
@@ -435,4 +472,66 @@ export const loadCrewRoster = cache(async (): Promise<CrewRoster> => {
     vehiclesReady: !isSchemaMissing(vehicleRes.error),
     driversReady: !isSchemaMissing(driverRes.error),
   };
+});
+
+/* ------------------------------------------------------------------ */
+/* الاعتذار بعد الإسناد — أسبابُه وعتبتُه (هجرتا 0119 و0121)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * سببُ اعتذارٍ كما يراه الشريك — **بلا `default_action` وبلا مبلغ**.
+ *
+ * 🔒 وهذا حذفٌ مقصود لا سهو: عرضُ «هذا السبب إجراؤه خصم» على شاشة من يختار
+ * يجعله يختار الأرخص لا الأصدق، فتفقد البيانات معناها — وهي **علّة الكتالوج
+ * نفسها** («كم رحلة فشلت بذنب هذا المتعهد؟» سؤالٌ له جواب). والمبلغ مقترحٌ
+ * مسقوفٌ لا يُنفَّذ إلا بقرار إداري، فلا حقّ له في هذه الشاشة أصلاً.
+ */
+export type ApologyReason = { slug: string; label: string };
+
+export type ApologyOptions = {
+  reasons: ApologyReason[];
+  /** عتبةُ تفرّع الوجهة بالساعات — من `trip_closure_config()` لا من ثابتٍ هنا */
+  thresholdHours: number | null;
+  /** الجدول أو الهجرة غير منشورين ⇒ لا تُعرض شاشةُ الاعتذار أصلاً */
+  ready: boolean;
+};
+
+const NO_APOLOGY: ApologyOptions = { reasons: [], thresholdHours: null, ready: false };
+
+/**
+ * أسبابُ الاعتذار المتاحة للشريك + عتبة اللوحة، في نداءٍ واحد مُذاكَر.
+ *
+ * والتصفية هنا **مرآةُ ما تفرضه `withdraw_from_trip`** حرفاً بحرف: مفعَّل، ونطاقه
+ * `apology` أو `both`، ومُبادِرُه ليس `platform`. ولو انحرف الطرفان لظهر للشريك
+ * خيارٌ ترفضه القاعدة عند الضغط — وهو النمط ٢ في `LESSONS` («الواجهة تَعِد بما لا
+ * تنفّذه القاعدة»). فالقاعدة تبقى الحَكَم، وهذه تصفيةُ عرضٍ لا حارس.
+ */
+export const loadApologyOptions = cache(async (): Promise<ApologyOptions> => {
+  const access = await portalAccess();
+  if (!access.ok) return NO_APOLOGY;
+
+  const [reasonsRes, cfgRes] = await Promise.all([
+    access.supabase
+      .from("failure_reasons")
+      .select("slug, label, applies_to, initiator, active, sort")
+      .eq("active", true)
+      .in("applies_to", ["apology", "both"])
+      .neq("initiator", "platform")
+      .order("sort", { ascending: true }),
+    access.supabase.rpc("trip_closure_config"),
+  ]);
+
+  if (reasonsRes.error) return NO_APOLOGY;
+
+  const reasons = rowsOf(reasonsRes.data)
+    .map((row) => ({
+      slug: asText(pick(row, ["slug"])) ?? "",
+      label: asText(pick(row, ["label"])) ?? "",
+    }))
+    .filter((reason) => reason.slug !== "" && reason.label !== "");
+
+  const cfgRow = rowsOf(cfgRes.data)[0];
+  const hours = cfgRow ? asNumber(pick(cfgRow, ["apology_manual_hours", "apologyManualHours"])) : null;
+
+  return { reasons, thresholdHours: hours, ready: reasons.length > 0 };
 });

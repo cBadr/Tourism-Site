@@ -52,6 +52,8 @@ const MAX_POINTS_PER_CURRENCY = 100;
 const MAX_CURRENCY_PER_POINT = 1_000;
 const MAX_MIN_REDEEM = 1_000_000;
 const MAX_PERCENT = 100;
+/** `loyalty_settings_expire_months_chk` — عشر سنوات سقفاً، والصفر «بلا انتهاء» */
+const MAX_EXPIRE_MONTHS = 120;
 
 export async function saveLoyaltySettings(formData: FormData) {
   // (١) البيئة أولاً — بلا متغيرات Supabase يرجع العميل `null`
@@ -96,6 +98,27 @@ export async function saveLoyaltySettings(formData: FormData) {
     redirect(fail("maxredeem"));
   }
 
+  /**
+   * 🔴 صلاحيةُ النقطة — قرار المالك: ثلاثة أشهر **من تاريخ الكسب**، ويسري على
+   * النقاط القائمة كذلك.
+   *
+   * والصفر ليس خطأً بل **معنى**: «بلا انتهاء» (السلوك السابق حرفياً). ولذلك
+   * يُقبل هنا ولا يُرفض — والقاعدة تقرؤه فتتخطى المهمة المجدولة بهدوء.
+   *
+   * ⚠ و«من تاريخ الكسب» هي ما يفرض تتبّع الدفعات (`loyalty_lots`): الدفتر مُلحَقٌ
+   * برصيدٍ مجمَّع، فبلا ترتيبٍ صريح لا يُعرف أيُّ نقاطٍ استهلكها الاستبدال. وهذا
+   * كله في القاعدة، ولا رقم منه يُحسب هنا.
+   */
+  const expireMonths = num(formData, "expire_months");
+  if (
+    expireMonths === null ||
+    !Number.isInteger(expireMonths) ||
+    expireMonths < 0 ||
+    expireMonths > MAX_EXPIRE_MONTHS
+  ) {
+    redirect(fail("expiremonths"));
+  }
+
   const nextEnabled = checked(formData, "enabled");
 
   // (٣) الحالة القائمة من القاعدة — ومنها يُعرف العبور، ومنها مرشّح التحديث
@@ -116,6 +139,7 @@ export async function saveLoyaltySettings(formData: FormData) {
     currency_per_point: currencyPerPoint,
     min_redeem_points: minRedeemPoints,
     max_redeem_percent: maxRedeemPercent,
+    expire_months: expireMonths,
   };
 
   // (٤) الكتابة — ولا `update` بلا مرشّح أبداً. الصف الوحيد يُقيَّد بعمود `id` إن

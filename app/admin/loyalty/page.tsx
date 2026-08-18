@@ -269,6 +269,19 @@ function SettingsCard({
             max={100}
             help="نسبةً من سعر الرحلة بعد الكوبون. وهذا سقفٌ تجاري لا حاجز أمان: الحاجز الحقيقي أرضية الهامش داخل قاعدة البيانات — سقفٌ واحد للكوبون والنقاط مجتمعين، فلا يمكن لاستبدالٍ أن ينزل بالسعر تحت تكلفة المتعهد زائد أدنى هامش مهما كتبت هنا."
           />
+          <NumberField
+            id="expire-months"
+            label="صلاحية النقطة (شهراً)"
+            name="expire_months"
+            defaultValue={settings.expireMonths}
+            disabled={readOnly}
+            required
+            step="1"
+            min={0}
+            max={120}
+            help="تنتهي النقطة بعد هذه المدة **من تاريخ كسبها هي** لا من آخر نشاط للعميل — فالأقدم يذهب أولاً. والانتهاء يُكتب قيداً في الدفتر لا حذفاً، فيبقى قابلاً للتفسير بعد سنة، ويراه العميل في سجل نقاطه. ويسري على النقاط القائمة كما يسري على الجديدة."
+            hint="صفر يعني «بلا انتهاء» — وهو السلوك قبل تفعيل الصلاحية."
+          />
         </div>
 
         <div className="flex justify-end">
@@ -411,6 +424,7 @@ export default async function LoyaltyPage({ searchParams }: PageProps<"/admin/lo
             currencyPerPoint: null,
             minRedeemPoints: null,
             maxRedeemPercent: null,
+            expireMonths: null,
           },
           "loyalty_settings"
         ),

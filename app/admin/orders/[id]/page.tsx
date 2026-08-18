@@ -68,9 +68,11 @@ import {
 } from "../_components/booking-ui";
 import { DISPATCH_ERRORS } from "../../dispatch/_components/dispatch-ui";
 import { DispatchPanel } from "./_components/dispatch-panel";
+import { SaveButton } from "@/components/admin/save-feedback";
 import {
   cancelBooking,
   changeStatus,
+  decideTripCompletion,
   markBookingFailed,
   setReceiptVisibility,
   setTripCrewByAdmin,
@@ -266,6 +268,10 @@ const SAVED_MESSAGES: Record<string, string> = {
     "أُسقط صف الإيصال من حمولة صفحة العميل نفسها لا من عرضها فقط، فلا يصل متصفحه إطلاقاً — ومعه يسقط سبب رفضه إن كان مرفوضاً. ويبقى هنا كاملاً ويبقى أثره المحاسبي كما هو.",
   failed:
     "سُجِّلت الرحلة فاشلة بسببها وإجرائها المالي، وحالتها الآن «لم يتم التنفيذ» — وهي نهائية لا تعود إلى الطابور. راجع بطاقة «رحلة فاشلة» أعلى الصفحة: فيها ما وقع في الدفتر بالضبط. وردّ مال العميل إجراء مالي مستقل يُنفَّذ من شاشة المالية — لا يقع بتغيير الحالة.",
+  cmpapproved:
+    "اعتمدتَ إتمام الرحلة، وهنا وحدها تحرّك المال: قُيِّد مستحق المتعهد في الدفتر، وسُكَّت نقاط العميل إن كان نظام الولاء مفعَّلاً. والحجز الآن «منفذة».",
+  cmprejected:
+    "رُفض إعلان الإتمام ولم يتحرك دينار — الرحلة ما زالت «مُسندة»، وسببُ الرفض ظاهرٌ للمتعهد في بورتاله. وله أن يتظلّم عليه.",
   crew:
     "سُجِّل طاقم الرحلة موسوماً «أدخلته الإدارة» — ويظهر للعميل في صفحة متابعته فوراً: المركبة ولونها ولوحتها واسم السائق. أما هاتف السائق فتكشفه له قاعدة البيانات وحدها قبل موعد الانطلاق بالمدة المضبوطة في «إعدادات الرحلات»، لا قبلها ولا بقرار من هذه الشاشة.",
 };
@@ -616,6 +622,10 @@ async function loadOrder(id: string): Promise<{
   reclassDeadline: string | null;
   /** أُغلقت النافذة وقت تحميل الصفحة — والقاعدة هي التي تفرضها وقت الضغط */
   reclassClosed: boolean;
+  /** أحدث إعلان إتمامٍ من المتعهد (0119) — `null` قبل الهجرة وقبل أي إعلان */
+  completion: CompletionView | null;
+  /** اعتذاراتٌ عن هذه الرحلة — لقطاتٌ مجمَّدة، الأحدث أولاً */
+  withdrawals: WithdrawalView[];
 }> {
   const blank = {
     ready: false,
@@ -640,6 +650,8 @@ async function loadOrder(id: string): Promise<{
     completedAt: null as string | null,
     reclassDeadline: null as string | null,
     reclassClosed: false,
+    completion: null as CompletionView | null,
+    withdrawals: [] as WithdrawalView[],
   };
 
   const supabase = await createServerSupabase();
@@ -690,6 +702,8 @@ async function loadOrder(id: string): Promise<{
     reasonsRes,
     dispatchRes,
     windowRes,
+    completionRes,
+    withdrawalsRes,
   ] = await Promise.all([
     supabase.from("payments").select("*").eq("booking_id", id),
     supabase.from("booking_events").select("*").eq("booking_id", id),
@@ -724,6 +738,21 @@ async function loadOrder(id: string): Promise<{
       .maybeSingle(),
     // طول نافذة إعادة التصنيف من مصدرها الوحيد — لا رقم مكتوب في الواجهة
     supabase.rpc("failed_reclass_window"),
+    // ── بوابة الاكتمال (0119). القراءة متسامحة كبقية جداول اللوحة: قبل الهجرة
+    //    يعود خطأ «لا جدول» فتغيب البطاقة ولا تسقط الشاشة.
+    supabase
+      .from("trip_completion_requests")
+      .select("id, status, requested_at, auto_approve_at, approve_hours, decision_note, decided_actor")
+      .eq("booking_id", id)
+      .order("requested_at", { ascending: false })
+      .limit(1),
+    // وسجلّ الاعتذارات — لقطةٌ مجمَّدة لما قاله الشريك يومها
+    supabase
+      .from("trip_withdrawals")
+      .select("reason_label, note, routed, hours_to_pickup, deduct_amount, deduct_applied, withdrawn_at")
+      .eq("booking_id", id)
+      .order("withdrawn_at", { ascending: false })
+      .limit(5),
   ]);
 
   const accounts = new Map<string, Account>();
@@ -896,6 +925,34 @@ async function loadOrder(id: string): Promise<{
     completedAt,
     reclassDeadline,
     reclassClosed: reclassDeadline !== null && Date.now() > Date.parse(reclassDeadline),
+    // ── بوابة الاكتمال (0119) ─────────────────────────────────────────────
+    completion: (() => {
+      const row = completionRes.error
+        ? null
+        : ((completionRes.data ?? [])[0] as Record<string, unknown> | undefined);
+      if (!row) return null;
+      return {
+        id: asText(pick(row, ["id"])) ?? "",
+        status: asText(pick(row, ["status"])) ?? "",
+        requestedAt: asText(pick(row, ["requested_at"])),
+        autoApproveAt: asText(pick(row, ["auto_approve_at"])),
+        approveHours: asNumber(pick(row, ["approve_hours"])),
+        decisionNote: asText(pick(row, ["decision_note"])),
+        decidedActor: asText(pick(row, ["decided_actor"])),
+      };
+    })(),
+    withdrawals: (withdrawalsRes.error
+      ? []
+      : ((withdrawalsRes.data ?? []) as Record<string, unknown>[])
+    ).map((row) => ({
+      reasonLabel: asText(pick(row, ["reason_label"])) ?? "—",
+      note: asText(pick(row, ["note"])),
+      routed: asText(pick(row, ["routed"])) ?? "",
+      hoursToPickup: asNumber(pick(row, ["hours_to_pickup"])),
+      deductAmount: asNumber(pick(row, ["deduct_amount"])),
+      deductApplied: pick(row, ["deduct_applied"]) === true,
+      withdrawnAt: asText(pick(row, ["withdrawn_at"])),
+    })),
   };
 }
 
@@ -1529,6 +1586,210 @@ function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: str
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* بوابة الاكتمال والاعتذار (هجرتا 0119 و0121)                          */
+/* ------------------------------------------------------------------ */
+
+type CompletionView = {
+  id: string;
+  status: string;
+  requestedAt: string | null;
+  autoApproveAt: string | null;
+  approveHours: number | null;
+  decisionNote: string | null;
+  decidedActor: string | null;
+};
+
+type WithdrawalView = {
+  reasonLabel: string;
+  note: string | null;
+  routed: string;
+  hoursToPickup: number | null;
+  deductAmount: number | null;
+  deductApplied: boolean;
+  withdrawnAt: string | null;
+};
+
+/**
+ * قرارُ الإدارة على إعلان المتعهد بإتمام رحلته.
+ *
+ * 🔴 **وهذه هي اللحظة التي يتحرك فيها المال** — لا الضغطة التي ضغطها المتعهد:
+ * `ledger_on_booking_completed` تكتب المستحق والتحصيل، و`loyalty_on_booking_completed`
+ * تسكّ نقاط العميل، وكلاهما مُشغّلٌ على انتقال الحالة إلى «منفذة». فالبطاقة
+ * تقول ذلك بنصّها كي لا يُضغط الزرّ ظنّاً أنه إقرارٌ إداريٌّ بلا أثر.
+ *
+ * وموعدُ الاعتماد التلقائي معروضٌ بتاريخه لا بعبارة «قريباً»، ومصدره العمود
+ * **المجمَّد عند الإعلان** لا حسابٌ يجري الآن: تغييرُ المهلة من اللوحة غداً لا
+ * يُقدّم اعتماد إعلانٍ قائم ولا يؤخّره — نفس انضباط لقطة السعر في `create_booking`.
+ */
+function CompletionCard({
+  bookingId,
+  completion,
+  bookingStatus,
+}: {
+  bookingId: string;
+  completion: CompletionView;
+  bookingStatus: string;
+}) {
+  const pending = completion.status === "pending" && bookingStatus === "assigned";
+
+  return (
+    <Card className="no-print space-y-4 border-amber-300 p-5 dark:border-amber-800">
+      <div>
+        <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+          إعلان المتعهد بإتمام الرحلة
+          <HelpTip>
+            المتعهد <span className="font-semibold">يُعلن</span> ولا يُتمّ: الحجز يبقى
+            «مُسندة» ولا يُكتب قيدٌ في الدفتر ولا تُسكّ نقطةٌ للعميل حتى تعتمد أنت — أو
+            تمضي المهلة المضبوطة في شاشة «أسباب فشل الرحلة» فيُعتمد تلقائياً ويُسجَّل الفاعل
+            «النظام». فاعتمادك هو اللحظة التي يتحرك فيها المال، لا ضغطة المتعهد.
+          </HelpTip>
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          {completion.status === "pending"
+            ? "بانتظار قرارك — أو الاعتماد التلقائي عند انقضاء المهلة."
+            : completion.status === "approved"
+              ? completion.decidedActor === "auto"
+                ? "اعتُمد تلقائياً (النظام) بعد انقضاء المهلة بلا قرار."
+                : "اعتُمد من الإدارة."
+              : "رُفض الإعلان، والرحلة ما زالت مُسندة."}
+        </p>
+      </div>
+
+      <dl className="grid gap-3 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="text-muted-foreground">وصل الإعلان</dt>
+          <dd>{completion.requestedAt ? dateTimeLabel(completion.requestedAt) : "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">الاعتماد التلقائي</dt>
+          <dd>{completion.autoApproveAt ? dateTimeLabel(completion.autoApproveAt) : "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">المهلة المجمَّدة</dt>
+          <dd>
+            {completion.approveHours === null
+              ? "—"
+              : `${toArabicDigits(completion.approveHours)} ساعة`}
+          </dd>
+        </div>
+      </dl>
+
+      {completion.decisionNote ? (
+        <p className="rounded-lg bg-muted/60 p-3 text-sm leading-relaxed">
+          <span className="font-semibold">ملاحظة القرار:</span> {completion.decisionNote}
+        </p>
+      ) : null}
+
+      {pending ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <form
+            action={decideTripCompletion.bind(null, bookingId, completion.id, true)}
+            className="space-y-2"
+          >
+            <Label htmlFor="cmp_approve_note" className="flex items-center gap-1.5">
+              اعتماد الإتمام
+              <HelpTip>
+                بالضغط يصير الحجز «منفذة»، ويُقيَّد مستحق المتعهد في الدفتر، وتُسكّ نقاط
+                العميل. الملاحظة اختيارية هنا.
+              </HelpTip>
+            </Label>
+            <Input id="cmp_approve_note" name="completion_note" placeholder="ملاحظة (اختيارية)" />
+            <SaveButton label="اعتمد الإتمام" savedLabel="اعتُمد" pendingLabel="جارٍ الاعتماد…" />
+          </form>
+
+          <form
+            action={decideTripCompletion.bind(null, bookingId, completion.id, false)}
+            className="space-y-2"
+          >
+            <Label htmlFor="cmp_reject_note" className="flex items-center gap-1.5">
+              رفض الإعلان
+              <HelpTip>
+                الرفض يُبقي الرحلة «مُسندة» ولا يحرّك ديناراً. والسبب المكتوب{" "}
+                <span className="font-semibold">إلزامي في قاعدة البيانات</span> لأن المتعهد
+                يقرؤه وينتظر مستحقه — و«رُفض» بلا سبب شكوى غداً.
+              </HelpTip>
+            </Label>
+            <Input
+              id="cmp_reject_note"
+              name="completion_note"
+              required
+              placeholder="لماذا لم يُعتمد؟ (إلزامي)"
+            />
+            <SaveButton
+              label="ارفض الإعلان"
+              variant="destructive"
+              savedLabel="رُفض"
+              pendingLabel="جارٍ الرفض…"
+            />
+          </form>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * سجلّ الاعتذارات — لقطةٌ مجمَّدة لما قاله الشريك يومها ووجهةُ الرحلة بعده.
+ *
+ * 🔴 **والمبلغ هنا «مقترح» لا «مخصوم»**، والفرق يُكتب في الشاشة ولا يُترك للفهم:
+ * الخصم على الاعتذار **مطفأٌ بقرار** حتى يثبّت المالك أساسه التعاقدي، فالرقم
+ * محسوبٌ ومسقوفٌ بمستحق الرحلة ولم يُكتب له قيدٌ واحد في الدفتر.
+ */
+function WithdrawalsCard({
+  withdrawals,
+  currency,
+}: {
+  withdrawals: WithdrawalView[];
+  currency: string;
+}) {
+  return (
+    <Card className="space-y-4 p-5">
+      <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+        اعتذارات عن هذه الرحلة
+        <HelpTip>
+          متعهدٌ قَبِل الرحلة ثم اعتذر عنها. والرحلة بعده إمّا بُثَّت من جديد (الوقت
+          متّسع) أو ذهبت إلى الإسناد اليدوي (الموعد قريب) — والعتبة إعدادٌ في شاشة «أسباب
+          فشل الرحلة». والمعتذر <span className="font-semibold">لا تُعرض عليه</span> الرحلة
+          في الموجة التالية.
+        </HelpTip>
+      </h3>
+
+      <ul className="space-y-3">
+        {withdrawals.map((row, index) => (
+          <li key={row.withdrawnAt ?? String(index)} className="rounded-lg bg-muted/50 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold">{row.reasonLabel}</span>
+              <Badge variant="outline">
+                {row.routed === "manual" ? "إسناد يدوي" : "بثٌّ جديد"}
+              </Badge>
+              <span className="ms-auto text-xs text-muted-foreground">
+                {row.withdrawnAt ? dateTimeLabel(row.withdrawnAt) : "—"}
+              </span>
+            </div>
+            {row.note ? <p className="mt-1 leading-relaxed">{row.note}</p> : null}
+            <p className="mt-1 text-xs text-muted-foreground">
+              المتبقي على الانطلاق وقتها:{" "}
+              {row.hoursToPickup === null
+                ? "غير معروف"
+                : `${toArabicDigits(Math.round(row.hoursToPickup))} ساعة`}
+              {row.deductAmount !== null && row.deductAmount > 0 ? (
+                <>
+                  {" · "}
+                  <span className="font-semibold">
+                    خصمٌ مقترح {formatMoney(row.deductAmount, currency)}
+                  </span>{" "}
+                  — {row.deductApplied ? "نُفِّذ في الدفتر" : "لم يُنفَّذ (الخصم مطفأ بقرار المالك)"}
+                </>
+              ) : null}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default async function OrderDetailPage({
   params,
   searchParams,
@@ -1559,6 +1820,8 @@ export default async function OrderDetailPage({
     completedAt,
     reclassDeadline,
     reclassClosed,
+    completion,
+    withdrawals,
   } = await loadOrder(id);
   if (ready && !booking) notFound();
 
@@ -1652,6 +1915,23 @@ export default async function OrderDetailPage({
       "رفض الدفتر قيداً بلا ملاحظة — وهذا انحرافُ واجهةٍ عن عقد القاعدة لا خطأ منك. لم يتغيّر شيء؛ أبلغ عن الحالة قبل إعادة المحاولة.",
     failledgermissing:
       "لم يجد الدفتر الطرف الذي يُقيَّد عليه هذا الإجراء (المتعهد أو القيد المقابل). لم يُقيَّد شيء ولم تتغيّر حالة الحجز — راجع لوحة الإسناد أعلاه ثم أعد المحاولة.",
+    /* ── سقف الخصم وبوابة الاكتمال (0119/0121) ─────────────────────────── */
+    faildeductcap:
+      "المبلغ الذي كتبته يتجاوز مستحق هذه الرحلة، وقاعدة البيانات ترفضه — والسقف قرار مالك لا حدٌّ فني: لا يصير المتعهد مديناً بمالٍ لم يقبضه، ولا تُلاحَق عنده ديون. اكتب مبلغاً لا يتجاوز المستحق المعروض في لوحة الإسناد أعلاه. ولم يتغيّر شيء: لا حالة الحجز ولا الدفتر.",
+    faildeductnocap:
+      "لا مستحق مسجَّل لهذه الرحلة، فلا سقف يُقاس عليه الخصم أصلاً. راجع لوحة الإسناد أعلاه — وإن كان الاتفاق على مبلغ فسجّله تسويةً من شاشة مقاصة المتعهدين بقرار مالي صريح.",
+    failscope:
+      "هذا السبب مخصَّص للاعتذار عن رحلة مُسنَدة لا لتعليمها فاشلة — الكتالوج واحدٌ بنطاق. اختر سبباً نطاقه «فشل» أو «كلاهما»، أو عدّل نطاقه من شاشة «أسباب فشل الرحلة».",
+    cmpgone:
+      "لم نعد نجد إعلان الإتمام هذا — أعد تحميل الصفحة لترى حالته الحقيقية.",
+    cmpdecided:
+      "هذا الإعلان مقرَّرٌ سلفاً (اعتُمد أو رُفض)، وقد يكون الاعتماد التلقائي سبقك إليه. أعد تحميل الصفحة لترى القرار المسجَّل وفاعله.",
+    cmpstatus:
+      "حالة الحجز تغيّرت بعد فتحك الصفحة، فلم يعد إعلان الإتمام قابلاً للاعتماد. أعد تحميل الصفحة لترى وضعها الآن — ولم يتغيّر شيء في الدفتر.",
+    cmpnote:
+      "رفض إعلان الإتمام يستلزم سبباً مكتوباً — القيد في قاعدة البيانات نفسها لا في هذه الشاشة: المتعهد يقرؤه وينتظر مستحقه، و«رُفض» بلا سبب شكوى غداً.",
+    cmpnotready:
+      "بوابة اعتماد الاكتمال تحتاج هجرة 0119 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب ولا في الدفتر.",
     failnotready:
       "تعليم الرحلات فاشلة يحتاج هجرة 0051 — نفِّذها من supabase/migrations ثم أعد المحاولة. لم يتغيّر شيء في هذا الطلب ولا في الدفتر.",
   };
@@ -1843,6 +2123,18 @@ export default async function OrderDetailPage({
         لا على الحالة وحدها: صفٌّ بلا حالة يعني قاعدةً في وضع لا يجوز، وحالةٌ بلا
         صفٍّ مستحيلةٌ بحارس القاعدة — فعرضُ ما وُجد أصدق من افتراض تطابقهما.
       */}
+      {completion && (
+        <CompletionCard
+          bookingId={booking.id}
+          completion={completion}
+          bookingStatus={booking.status}
+        />
+      )}
+
+      {withdrawals.length > 0 && (
+        <WithdrawalsCard withdrawals={withdrawals} currency={booking.currency} />
+      )}
+
       {failure && <FailureCard failure={failure} currency={booking.currency} />}
 
       <div className="grid gap-4 lg:grid-cols-2">

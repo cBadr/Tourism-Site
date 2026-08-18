@@ -269,3 +269,140 @@ export async function setTripCrew(bookingId: string, formData: FormData) {
   revalidatePath("/", "layout");
   redirect(tripsUrl("crew=1"));
 }
+
+/* ------------------------------------------------------------------ */
+/* إغلاق الرحلة: طلبُ الإتمام · الاعتذار · التظلّم (هجرتا 0119 و0121)   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * لماذا لا مسار بديل هنا كذلك — نفس مبدأ `acceptOffer` في رأس الملف:
+ *
+ * هذه الثلاثة تلمس **بوابة المال**. طلبُ الإتمام يفتح عدّاداً ينتهي باعتمادٍ
+ * يحرّك الدفتر، والاعتذار يُخلي إسناداً ويُعيد بثّاً، والتظلّم سطرٌ في سجلٍّ
+ * يُبنى عليه قرارٌ مالي. فمحاكاةُ أيٍّ منها بكتابةٍ مباشرة عبر PostgREST تعني
+ * أن نصف العملية قد يقع دون نصفها — والقاعدة تضمن الذرّية بمعاملةٍ واحدة
+ * (‏**D-48**). فإن غابت الدالة قلنا ذلك صراحةً ولم نكتب شيئاً.
+ *
+ * 🔒 **ولا هوية تُمرَّر في أي نداء**: الثلاثة تشتقّ المتعهد من
+ * `current_subcontractor_id()` داخلها كما تفعل `accept_offer`. فمن زوّر معرّف
+ * حجزٍ في النموذج يصطدم بشرط الإسناد في القاعدة لا بفحصٍ هنا.
+ */
+
+/** سقف نصّ الاعتذار والتظلّم — الحقل الحر لا يُترك بلا حد */
+const MAX_NOTE = 500;
+const MAX_GRIEVANCE = 2000;
+
+/**
+ * رموز `hint` التي ترفعها دوال الإغلاق → رموز أخطاء الرابط.
+ *
+ * ⚠ **ورمزٌ بلا جملة صمتٌ لا خطأ**: `Banners` يقع على الجملة الجامعة، فيقرأ
+ * الشريك رفضاً مفهوماً في القاعدة كعطلٍ مجهول عندنا. فكل رمز هنا له مفتاح في
+ * `ERROR_MESSAGES` بصفحة «رحلاتي»، ولا يُضاف رمزٌ إلا ومعه جملته.
+ */
+const CLOSURE_HINTS: Record<string, string> = {
+  forbidden: "closure_forbidden",
+  "invalid-status": "closure_status",
+  "too-early": "closure_early",
+  "already-requested": "closure_duplicate",
+  "completion-pending": "closure_pending",
+  "reason-not-found": "closure_reason",
+  "reason-inactive": "closure_reason",
+  "reason-out-of-scope": "closure_reason",
+  "booking-not-found": "closure_gone",
+  "already-filed": "grievance_duplicate",
+  "body-too-short": "grievance_short",
+};
+
+const closureCode = (res: RpcResult): string => {
+  const hint = typeof res.error?.hint === "string" ? res.error.hint.trim() : "";
+  return CLOSURE_HINTS[hint] ?? "closure_save";
+};
+
+/**
+ * إعلانُ إتمام الرحلة — **طلبٌ لا إتمام**، والفرق هو كل الفكرة.
+ *
+ * ولذلك لا يُسمّى الزرّ «تمّت الرحلة»: الحجز يبقى «مُسندة»، ولا قيد دفترٍ
+ * يُكتب، ولا نقطةَ تُسكّ للعميل — حتى تعتمد الإدارة أو تمضي مهلة اللوحة.
+ * وشاشةُ البطاقة تقول ذلك بنصّها كي لا ينتظر الشريك مستحقاً ظنّه استحقّ.
+ */
+export async function requestTripCompletion(bookingId: string) {
+  const access = await portalAccess();
+  if (!access.ok) redirect(tripsUrl(`error=${access.code}`));
+  if (!UUID.test(bookingId)) redirect(tripsUrl("error=closure_gone"));
+
+  const res = (await access.supabase.rpc("request_trip_completion", {
+    p_booking_id: bookingId,
+    p_note: null,
+  })) as RpcResult;
+
+  if (isMissingFunction(res)) redirect(tripsUrl("error=schema"));
+  if (res.error) redirect(tripsUrl(`error=${closureCode(res)}`));
+
+  revalidatePath("/", "layout");
+  redirect(tripsUrl("completion=1"));
+}
+
+/**
+ * الاعتذار عن رحلةٍ قَبِلها — المخرج الذي لم يكن موجوداً.
+ *
+ * `reject_offer` تعمل على **عرضٍ** لا على رحلةٍ مُسنَدة، فبعد القبول كان الشريك
+ * بلا باب: من تعطّلت سيارته يختفي، والرحلة تبقى باسمه حتى تفشل. وهذا يبني بابه.
+ *
+ * والوجهةُ بعده تتفرّع في القاعدة بالوقت المتبقي (‏`apology_route`)، فلا تُعاد
+ * كتابةُ الشرط هنا: الرابط يحمل ما وقع فعلاً كي تقوله الشاشة بلا تخمين.
+ */
+export async function withdrawFromTrip(bookingId: string, formData: FormData) {
+  const access = await portalAccess();
+  if (!access.ok) redirect(tripsUrl(`error=${access.code}`));
+  if (!UUID.test(bookingId)) redirect(tripsUrl("error=closure_gone"));
+
+  const reason = text(formData, "reason");
+  if (!reason) redirect(tripsUrl("error=closure_reason"));
+
+  const res = (await access.supabase.rpc("withdraw_from_trip", {
+    p_booking_id: bookingId,
+    p_reason_slug: reason,
+    p_note: clamp(text(formData, "note"), MAX_NOTE),
+  })) as RpcResult;
+
+  if (isMissingFunction(res)) redirect(tripsUrl("error=schema"));
+  if (res.error) redirect(tripsUrl(`error=${closureCode(res)}`));
+
+  // الوجهة كما قرّرتها القاعدة — تُقرأ ولا تُحسب هنا ثانيةً
+  const row = Array.isArray(res.data) ? res.data[0] : res.data;
+  const routed =
+    row && typeof row === "object" && (row as Record<string, unknown>).routed === "manual"
+      ? "manual"
+      : "rebroadcast";
+
+  revalidatePath("/", "layout");
+  redirect(tripsUrl(`withdrawn=${routed}`));
+}
+
+/**
+ * تظلّمٌ على قرارٍ مالي — «خصمٌ ومعه بابٌ يُطرَق» (قرار المالك).
+ *
+ * ولا يبتّ فيه صاحبه: `resolve_grievance` للمشرف وحده. وقبولُ التظلّم **لا يردّ
+ * مالاً من تلقائه** — ردُّ الخصم حركةٌ مسمّاة في الدفتر يجريها المشرف بيده، فلا
+ * أثرَ ماليٌّ صامت.
+ */
+export async function fileTripGrievance(bookingId: string, formData: FormData) {
+  const access = await portalAccess();
+  if (!access.ok) redirect(tripsUrl(`error=${access.code}`));
+  if (!UUID.test(bookingId)) redirect(tripsUrl("error=closure_gone"));
+
+  const body = clamp(text(formData, "body"), MAX_GRIEVANCE);
+  if (!body || body.length < 10) redirect(tripsUrl("error=grievance_short"));
+
+  const res = (await access.supabase.rpc("file_grievance", {
+    p_booking_id: bookingId,
+    p_kind: text(formData, "kind") === "failure" ? "failure" : "apology",
+    p_body: body,
+  })) as RpcResult;
+
+  if (isMissingFunction(res)) redirect(tripsUrl("error=schema"));
+  if (res.error) redirect(tripsUrl(`error=${closureCode(res)}`));
+
+  revalidatePath("/", "layout");
+  redirect(tripsUrl("grievance=1"));
+}

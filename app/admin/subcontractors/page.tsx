@@ -1,5 +1,13 @@
 import Link from "next/link";
-import { ArrowLeft, ClipboardCheck, Handshake, Layers, Search, UserPlus } from "lucide-react";
+import {
+  ArrowLeft,
+  ClipboardCheck,
+  Handshake,
+  Layers,
+  MapPin,
+  Search,
+  UserPlus,
+} from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -20,6 +28,12 @@ import {
   relativeTime,
   toLatinDigits,
 } from "../orders/_components/booking-ui";
+import {
+  loadPartnerPresence,
+  PresenceBadge,
+  ReachBadge,
+  type PartnerPresence,
+} from "./_components/presence-ui";
 import {
   readSubcontractor,
   SUB_STATUS_HINTS,
@@ -93,6 +107,12 @@ type Loaded = {
   kpis: Kpis;
   /** نبض الشاشة — يُقرأ بنفس عميل الجلسة، و`null` تعني «لا شريط» */
   pulse: PagePulseData | null;
+  /**
+   * الظهور وقابلية الوصول لكل متعهد — نداءٌ واحد (`admin_partner_presence`).
+   * و`presenceReady = false` تعني «تعذّرت القراءة» لا «لا أحد متصل».
+   */
+  presence: Map<string, PartnerPresence>;
+  presenceReady: boolean;
   ready: boolean;
 };
 
@@ -205,6 +225,8 @@ async function loadSubcontractors(
     listsReady: false,
     kpis: { total: null, pendingLists: null, coveredClasses: null, totalClasses: null },
     pulse: null,
+    presence: new Map(),
+    presenceReady: false,
     ready: false,
   };
 
@@ -230,14 +252,20 @@ async function loadSubcontractors(
   if (status) listQuery = listQuery.eq("status", status);
   if (query) listQuery = listQuery.or(searchFilter(query));
 
-  const [listRes, countsRes, totalRes, pendingListsRes, coverage, pulse] = await Promise.all([
-    listQuery,
-    Promise.all(TABS.map((tab) => countOf(tab.status))),
-    supabase.from("subcontractors").select("id", { count: "exact", head: true }),
-    supabase.from("price_lists").select("id", { count: "exact", head: true }).eq("status", "pending"),
-    loadCoverage(supabase),
-    readPagePulse(supabase, "/admin/subcontractors"),
-  ]);
+  const [listRes, countsRes, totalRes, pendingListsRes, coverage, pulse, presence] =
+    await Promise.all([
+      listQuery,
+      Promise.all(TABS.map((tab) => countOf(tab.status))),
+      supabase.from("subcontractors").select("id", { count: "exact", head: true }),
+      supabase
+        .from("price_lists")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending"),
+      loadCoverage(supabase),
+      readPagePulse(supabase, "/admin/subcontractors"),
+      // نداءٌ واحد لكل المتعهدين — لا نداء لكل صف
+      loadPartnerPresence(supabase),
+    ]);
 
   // خطأ الاستعلام الرئيسي = جداول المرحلة ٥ غير منفَّذة بعد
   if (listRes.error) return { ...empty, pulse };
@@ -265,6 +293,8 @@ async function loadSubcontractors(
       totalClasses: coverage.totalClasses,
     },
     pulse,
+    presence: presence.byId,
+    presenceReady: presence.ready,
     ready: true,
   };
 }
@@ -292,14 +322,27 @@ function ListsCell({ counts, ready }: { counts: Counts | undefined; ready: boole
   );
 }
 
+/**
+ * صفُّ متعهدٍ في الجدول.
+ *
+ * ⚠ **وعمودُ «حساب الدخول» حُذف ولم يُنقَل كما هو**: كان يطبع «مرتبط» لكل شريك
+ * عامل — أي عموداً كاملاً قيمتُه صفر في الحالة الغالبة. والنصفُ المفيد وحده
+ * («بانتظار قبول الدعوة») انتقل تحت اسم الشركة حيث يُقرأ في سياقه. وهذا هو
+ * المكان الذي أفسحه عمودا الظهور وقابلية الوصول، فلم يزدد عرضُ الجدول بعمودين
+ * بل بواحد.
+ */
 function SubRow({
   sub,
   counts,
   listsReady,
+  presence,
+  presenceReady,
 }: {
   sub: SubcontractorView;
   counts: Counts | undefined;
   listsReady: boolean;
+  presence: PartnerPresence | undefined;
+  presenceReady: boolean;
 }) {
   return (
     <tr className="border-b border-border last:border-0 hover:bg-muted/40">
@@ -310,9 +353,21 @@ function SubRow({
         >
           {sub.companyName}
         </Link>
-        <span className="mt-0.5 block text-xs text-muted-foreground">
-          أُضيف {relativeTime(sub.createdAt)}
-        </span>
+        {sub.profileId ? (
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            أُضيف {relativeTime(sub.createdAt)}
+          </span>
+        ) : (
+          <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-300">
+            بانتظار قبول الدعوة
+          </span>
+        )}
+      </td>
+      <td className="p-2 align-top">
+        <PresenceBadge presence={presence} ready={presenceReady} compact />
+      </td>
+      <td className="p-2 align-top">
+        <ReachBadge presence={presence} ready={presenceReady} compact />
       </td>
       <td className="p-2 align-top">
         <span dir="ltr" className="block">
@@ -327,13 +382,6 @@ function SubRow({
       </td>
       <td className="p-2 align-top text-xs">
         <ListsCell counts={counts} ready={listsReady} />
-      </td>
-      <td className="p-2 align-top text-xs">
-        {sub.profileId ? (
-          <span className="text-muted-foreground">مرتبط</span>
-        ) : (
-          <span className="text-amber-700 dark:text-amber-300">بانتظار قبول الدعوة</span>
-        )}
       </td>
       <td className="p-2 align-top">
         <Link
@@ -352,10 +400,14 @@ function SubCard({
   sub,
   counts,
   listsReady,
+  presence,
+  presenceReady,
 }: {
   sub: SubcontractorView;
   counts: Counts | undefined;
   listsReady: boolean;
+  presence: PartnerPresence | undefined;
+  presenceReady: boolean;
 }) {
   return (
     <Card className="gap-2 p-4">
@@ -370,6 +422,10 @@ function SubCard({
         <span className="ms-auto text-xs text-muted-foreground">
           {relativeTime(sub.createdAt)}
         </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <PresenceBadge presence={presence} ready={presenceReady} compact />
+        <ReachBadge presence={presence} ready={presenceReady} compact />
       </div>
       <div className="text-sm" dir="ltr">
         {sub.phone ?? "—"}
@@ -401,10 +457,8 @@ export default async function SubcontractorsPage({
   const tab = TABS.find((t) => t.key === rawTab) ?? TABS[0];
   const query = cleanQuery(params.q);
 
-  const { rows, counts, lists, listsReady, kpis, pulse, ready } = await loadSubcontractors(
-    tab.status,
-    query
-  );
+  const { rows, counts, lists, listsReady, kpis, pulse, presence, presenceReady, ready } =
+    await loadSubcontractors(tab.status, query);
   const saved = params.saved === "1";
   const error = typeof params.error === "string" ? params.error : null;
 
@@ -425,9 +479,21 @@ export default async function SubcontractorsPage({
           وأسعاره <span className="font-semibold">لا تدخل التسعير إلا وهو معتمد وقائمته معتمدة</span>
           . ابدأ من تبويب «بانتظار الاعتماد» ومن طابور مراجعة الأسعار.
         </HelpTip>
+        {/*
+          بابان لا باب: «بحث المسارات» يجيب «مَن يغطّي هذا الطريق؟» بصفٍّ لكل
+          مسار، و«مراجعة الأسعار» طابورُ قرارٍ بدفعاتٍ كاملة. وخلطُهما في شاشةٍ
+          واحدة هو ما شكا منه المالك أصلاً.
+        */}
+        <Link
+          href="/admin/subcontractors/routes"
+          className="ms-auto inline-flex items-center gap-1.5 text-sm text-primary transition-colors hover:underline"
+        >
+          <MapPin className="size-4" />
+          بحث المسارات
+        </Link>
         <Link
           href="/admin/subcontractors/reviews"
-          className="ms-auto inline-flex items-center gap-1.5 text-sm text-primary transition-colors hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm text-primary transition-colors hover:underline"
         >
           <ClipboardCheck className="size-4" />
           مراجعة الأسعار
@@ -576,14 +642,37 @@ export default async function SubcontractorsPage({
         <>
           <Card className="hidden p-0 md:block">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[48rem] text-sm">
+              <table className="w-full min-w-[54rem] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
                     <th className="p-2 text-start font-medium">الشركة</th>
+                    <th className="p-2 text-start font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        الظهور
+                        <HelpTip>
+                          هل هو داخل بوابته الآن؟ 🟢 متصل = نبضةٌ خلال آخر ٥ دقائق ·
+                          🟡 آخر ظهور منذ كذا · ⚪ لم يدخل بوابته قط.{" "}
+                          <span className="font-semibold">
+                            وغيرُ المتصل ليس بعيداً بالضرورة
+                          </span>{" "}
+                          — انظر عمود «قابل للوصول» بجواره.
+                        </HelpTip>
+                      </span>
+                    </th>
+                    <th className="p-2 text-start font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        قابل للوصول
+                        <HelpTip>
+                          هل يصله بلاغُ الرحلة وهل يقبل العروض؟ هذا هو الشرط نفسه الذي
+                          تعمل عليه موجات البثّ — فمتعهدٌ غير متصل لكنه قابلٌ للوصول
+                          يردّ على تليجرام خلال ثوانٍ، ومتعهدٌ متصلٌ أطفأ العروض لا
+                          يُسنَد إليه شيء.
+                        </HelpTip>
+                      </span>
+                    </th>
                     <th className="p-2 text-start font-medium">التواصل</th>
                     <th className="p-2 text-start font-medium">الحالة</th>
                     <th className="p-2 text-start font-medium">قوائم الأسعار</th>
-                    <th className="p-2 text-start font-medium">حساب الدخول</th>
                     <th className="p-2 text-start font-medium" />
                   </tr>
                 </thead>
@@ -594,6 +683,8 @@ export default async function SubcontractorsPage({
                       sub={sub}
                       counts={lists.get(sub.id)}
                       listsReady={listsReady}
+                      presence={presence.get(sub.id)}
+                      presenceReady={presenceReady}
                     />
                   ))}
                 </tbody>
@@ -608,6 +699,8 @@ export default async function SubcontractorsPage({
                 sub={sub}
                 counts={lists.get(sub.id)}
                 listsReady={listsReady}
+                presence={presence.get(sub.id)}
+                presenceReady={presenceReady}
               />
             ))}
           </div>
@@ -620,7 +713,10 @@ export default async function SubcontractorsPage({
             .{" "}
             {listsReady
               ? "«قوائم الأسعار» تعرض المعتمدة والمنتظرة لكل شريك."
-              : "تعذّر عدّ قوائم الأسعار — الأعمدة تظهر «—» حتى تكتمل هجرة المرحلة ٥."}
+              : "تعذّر عدّ قوائم الأسعار — الأعمدة تظهر «—» حتى تكتمل هجرة المرحلة ٥."}{" "}
+            {presenceReady
+              ? "و«الظهور» نبضةٌ تُسجَّل مرةً كل دقيقة على الأكثر، فقد يتأخر ظهور من دخل للتوّ دقيقةً واحدة."
+              : "وتعذّرت قراءة الظهور — العمودان يظهران «—» حتى تُنفَّذ هجرة 0118، و«لا نعرف» ليست «غير متصل»."}
           </p>
         </>
       )}

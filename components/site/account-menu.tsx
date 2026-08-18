@@ -6,7 +6,7 @@ import { ChevronDown, LogOut, TicketCheck, UserRound } from "lucide-react";
 import { signOutAccount } from "@/app/(site)/account/actions";
 import { cn } from "@/lib/utils";
 import { useT } from "./i18n";
-import { localeHref } from "./links";
+import { localeHref, TAP_TARGET_ROW } from "./links";
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -143,8 +143,11 @@ export function AccountMenu({ variant = "bar", locale, className, theme }: Accou
   const signOutLabel = t("signOut", "خروج");
 
   /** صفٌّ كامل العرض — واحدٌ للدرج ولقائمة الشريط، فلا يفترق إيقاعُ الصفوف */
+  /* `py-3` ⇒ ١٢+١٢+٢٠ = **٤٤ حقيقية** بدل ٤٠ المقيسة. والصفوف رأسيةٌ في
+     لوحٍ وفي درج، فالحشو الحقيقي هو الصواب لا الهالة (`links.ts`: «هالةٌ حيث
+     الضيق، وحشوٌ حيث السعة»). */
   const rowClass =
-    "flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted";
+    "flex items-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-colors hover:bg-muted";
 
   /* ───────────────────────── درج الجوال ───────────────────────── */
   if (variant === "drawer") {
@@ -178,8 +181,12 @@ export function AccountMenu({ variant = "bar", locale, className, theme }: Accou
   /* `border-input` لا `border-border`: هذا حدُّ **عنصر تحكّم** يُنقر، و
      `WCAG 1.4.11` يطلب له ٣:١. و`--border` رمزُ هويةٍ قياسه ١.٢٩/١.٤٣ — راسبٌ
      لهذا الغرض، ناجحٌ لخطّ البطاقة الذي وُجد له (‏`globals.css` §(ز)). */
-  const barClass =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-input px-3 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+  /* ١١٢٫٥×٣٨ مقيسة ⇒ الهالة تبلغ بها ٤٤ لمساً والصندوق لا يتحرّك، فتبقى
+     أرقام كتلة اليمين في `header.tsx` (٢٩٥ · ٣١٥) صحيحةً بعد التغيير. */
+  const barClass = cn(
+    "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-input px-3 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+    TAP_TARGET_ROW
+  );
 
   /* بلا لوح مظهرٍ مُمرَّر تبقى الحالة القديمة حرفاً: رابطٌ مباشر بنقرة واحدة.
      ومع اللوح تصير قائمةً في الحالتين — وإلا لم يبلغ اللوحَ زائرٌ مجهول عند

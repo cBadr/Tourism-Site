@@ -2,11 +2,14 @@ import Link from "next/link";
 import {
   CalendarClock,
   ExternalLink,
+  Globe,
   Luggage,
   MapPin,
+  Megaphone,
   MessageCircle,
   MessageSquareQuote,
   Phone,
+  Route as RouteIcon,
   Ticket,
   Users,
 } from "lucide-react";
@@ -76,6 +79,26 @@ import { convertQuoteRequest, rescheduleQuoteRequest, setQuoteStatus } from "./a
  * الخيار المستحيل بنفسها ثم تلوم المستخدم عليه. والقاعدة تبقى الحارس على أي حال.
  *
  * الترشيح والعدّ داخل Postgres (شرط + COUNT) لا في الواجهة.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  0127 — **ومن أين جاء الطلب**: الشاشة تجيب سؤالاً لم تكن تجيبه
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * كان الصفّ يقول ماذا يريد العميل ولا يقول **من أين جاء**، فالمالك ينفق على
+ * حملةٍ ولا يعرف أيّها أتى بطلب، ويكتب صفحةً ولا يعرف أتبيع أم لا.
+ *
+ * وتُعرض في موضعين لأن السؤالين مختلفان:
+ *   · **لوحةٌ مجمَّعة** أعلى الشاشة تجيب «أين أنفق؟» — والتجميع والعدّ في
+ *     `quote_request_sources()` أي **داخل Postgres**، لا عدَّ مصفوفاتٍ هنا.
+ *   · **سطرٌ في كل بطاقة** يجيب «من أين جاء **هذا**؟» عند الاتصال بالعميل.
+ *
+ * 🔴 **والعرض يفصل الضفّتين بلونٍ وأيقونة، لا يخلطهما:** الصفحة الداخلية
+ * بياناتُنا (تُطابَق في القاعدة بقائمةٍ مغلقة من `pages`)، والمُحيلُ والحملة
+ * **يكتبهما الزائر في الرابط**. وخلطُهما في عمودٍ واحد كان سيجعل المالك يقرأ
+ * نصّاً كتبه غريبٌ كأنه قياسٌ من عندنا.
+ *
+ * 🔒 و«غير معروف» **تُعرض ولا تُطوى**: صفٌّ بلا مصدر واقعةٌ يجب أن تُرى، وطيُّها
+ * يجعل النسب المعروضة كاذبة.
  */
 
 export const metadata = { title: "طلبات الأسعار" };
@@ -139,7 +162,17 @@ type QuoteRow = {
   adminNote: string | null;
   /** ب‑٣ — الحجز الذي نشأ من الطلب (‏`quote_requests.booking_id`، هجرة 0088) */
   bookingId: string | null;
+  /** 0127 — المسار الداخلي الذي أرسل الطلب (‏بياناتنا: مُطابَقٌ بقائمة الصفحات) */
+  sourcePage: string | null;
+  /** 0127 — مضيف المُحيل الخارجي (‏مدخلُ زائر مُطبَّع) */
+  sourceReferrer: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
 };
+
+/** 0127 — سطرٌ من تجميع المصادر كما تُرجعه `quote_request_sources()` */
+type SourceBucket = { kind: "page" | "referrer" | "campaign"; bucket: string; n: number };
 
 /** فئة سيارة كما تصل النموذج — السعتان تُعرضان لأن القاعدة ترفض ما لا يتسع */
 type ClassOption = {
@@ -178,6 +211,7 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
   classes: ClassOption[];
   partners: PartnerOption[];
   bookings: Map<string, BookingLink>;
+  sources: SourceBucket[];
 }> {
   const blank = {
     requests: [] as QuoteRow[],
@@ -187,6 +221,7 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
     classes: [] as ClassOption[],
     partners: [] as PartnerOption[],
     bookings: new Map<string, BookingLink>(),
+    sources: [] as SourceBucket[],
   };
 
   const supabase = await createServerSupabase();
@@ -205,7 +240,7 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
     // ⚠ سلسلة نصّية **واحدة** لا مجموعة مقاطع: `supabase-js` يُعرب هذا النص على
     //   مستوى الأنواع، ووصلُ مقطعين بـ`+` يُفقده الحرفية فيسقط الاستدلال كله.
     .select(
-      "id, reference, service_slug, customer_name, customer_phone, details, status, created_at, origin_label, dest_label, pickup_at, passengers, luggage, quoted_amount, admin_note, booking_id"
+      "id, reference, service_slug, customer_name, customer_phone, details, status, created_at, origin_label, dest_label, pickup_at, passengers, luggage, quoted_amount, admin_note, booking_id, source_page, source_referrer, utm_source, utm_medium, utm_campaign"
     )
     .order("created_at", { ascending: false })
     .limit(MAX_ROWS);
@@ -216,7 +251,7 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
   // ⚠ والفئات تُقرأ من القاعدة لا من ثابتٍ في الكود: هي مصدر السعة التي ترفض
   //   بها `convert_quote_request`، فقائمةٌ ثانية في الواجهة تعني خياراً يُعرض
   //   ثم يُرفض عند الحفظ.
-  const [listRes, countsRes, pulse, classesRes, partnersRes] = await Promise.all([
+  const [listRes, countsRes, pulse, classesRes, partnersRes, sourcesRes] = await Promise.all([
     listQuery,
     Promise.all(TABS.map((tab) => countOf(tab.status))),
     readPagePulse(supabase, "/admin/quote-requests"),
@@ -230,6 +265,15 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
       .select("id, company_name")
       .eq("status", "approved")
       .order("company_name", { ascending: true }),
+    /**
+     * 0127 — التجميع بالمصدر: **`group by` داخل Postgres** لا عدٌّ لمصفوفاتٍ
+     * هنا. والدالة محروسةٌ بـ`is_admin()` في جسمها لا بالدور، لأن
+     * `authenticated` تشمل كل متعهّد من الباطن (D-20).
+     *
+     * ⚠ وهي تقيس **كل** الطلبات لا المعروض في التبويب: سؤال «أين أنفق؟» لا
+     *   يُجاب من شريحةٍ مُرشَّحة بالحالة.
+     */
+    supabase.rpc("quote_request_sources"),
   ]);
 
   if (listRes.error) return blank;
@@ -256,7 +300,22 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
     quotedAmount: asNumber(row.quoted_amount),
     adminNote: asText(row.admin_note),
     bookingId: asText(row.booking_id),
+    sourcePage: asText(row.source_page),
+    sourceReferrer: asText(row.source_referrer),
+    utmSource: asText(row.utm_source),
+    utmMedium: asText(row.utm_medium),
+    utmCampaign: asText(row.utm_campaign),
   }));
+
+  // سقوطٌ صامت مقصود: هجرةٌ غير مطبَّقة أو دورٌ بلا صلاحية ⇒ الشاشة تعمل بلا
+  // لوحة المصادر، ولا تنهار شاشةُ طلباتٍ كاملة لأجل ملخّصٍ إضافي.
+  const sources: SourceBucket[] = ((sourcesRes.data ?? []) as Record<string, unknown>[])
+    .map((row) => ({
+      kind: String(row.kind) as SourceBucket["kind"],
+      bucket: asText(row.bucket) ?? "—",
+      n: asNumber(row.n) ?? 0,
+    }))
+    .filter((row) => row.n > 0 && (row.kind === "page" || row.kind === "referrer" || row.kind === "campaign"));
 
   const classes: ClassOption[] = ((classesRes.data ?? []) as Record<string, unknown>[]).map(
     (row) => ({
@@ -291,7 +350,7 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
     }
   }
 
-  return { requests, counts, ready: true, pulse, classes, partners, bookings };
+  return { requests, counts, ready: true, pulse, classes, partners, bookings, sources };
 }
 
 /**
@@ -388,6 +447,161 @@ function ContactLinks({ phone }: { phone: string | null }) {
         </a>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * 0127 — **من أين جاء هذا الطلب** — سطرٌ في البطاقة.
+ *
+ * 🔴 والضفّتان مفصولتان بلونٍ وأيقونة لا بترتيبٍ فقط:
+ *   · **الصفحة الداخلية** رماديةٌ محايدة — بياناتُنا، تُطابقها القاعدة بقائمةٍ
+ *     مغلقة من `pages`، فأسوأ ما يفعله كاذبٌ أن ينسب طلبه إلى صفحةٍ من صفحاتنا.
+ *   · **المُحيل والحملة** بإطارٍ كهرماني — **يكتبهما الزائر في الرابط**. وهما
+ *     مُطبَّعان في القاعدة (قائمة سماحٍ محرفية وسقفُ ٦٤)، لكن **مصدرَهما زائرٌ
+ *     لا نحن**، وذلك ما يقوله اللون قبل أن يُقرأ النصّ.
+ *
+ * 🔒 و`dir="ltr"` على القيم اللاتينية: مسارٌ أو مضيفٌ داخل فقرة RTL يُعرض
+ *    بترتيبٍ مقلوب فيُقرأ خطأً — وهو ما يجعل المالك يبحث عن صفحةٍ لا وجود لها.
+ */
+function SourceLine({ request }: { request: QuoteRow }) {
+  const campaign = [request.utmCampaign, request.utmSource, request.utmMedium]
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+
+  const nothing = !request.sourcePage && !request.sourceReferrer && !campaign;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-muted-foreground">المصدر:</span>
+
+      {request.sourcePage && (
+        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/60 px-2 py-1">
+          <RouteIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span dir="ltr">{request.sourcePage}</span>
+        </span>
+      )}
+
+      {request.sourceReferrer && (
+        <span className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          <Globe className="size-3.5 shrink-0" aria-hidden="true" />
+          <span dir="ltr">{request.sourceReferrer}</span>
+        </span>
+      )}
+
+      {campaign && (
+        <span className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          <Megaphone className="size-3.5 shrink-0" aria-hidden="true" />
+          <span dir="ltr">{campaign}</span>
+        </span>
+      )}
+
+      {nothing && <span className="text-muted-foreground">غير معروف</span>}
+
+      <HelpTip>
+        الرمادي <span className="font-semibold">صفحةٌ من موقعنا</span> — يقرؤها النظام من
+        متصفح الزائر ويطابقها بقائمة صفحاتنا، فلا يدخلها عنوانٌ غريب. والكهرماني{" "}
+        <span className="font-semibold">يكتبه الزائر في الرابط</span> (موقع أحاله أو وسم
+        حملة): يُنظَّف ويُقصَّر قبل الحفظ، لكنه يبقى نصّاً من الخارج فاقرأه على هذا
+        الأساس. و«غير معروف» تعني أن المتصفح لم يرسل مصدراً — لا أنه دخل مباشرةً.
+      </HelpTip>
+    </div>
+  );
+}
+
+/**
+ * 0127 — لوحةُ «من أين تأتي الطلبات» — تجيب «أين أنفق؟» لا «من هذا العميل؟».
+ *
+ * ⚠ **والأرقام كلها من `quote_request_sources()`**: `group by` و`count` داخل
+ *    Postgres. ولا يُحسب هنا شيء — ولا حتى النسبة المئوية، فهي مشتقّةٌ من عدّين
+ *    جاءا معاً من نفس الاستعلام لا من مصدرين.
+ */
+function SourceSummary({ sources }: { sources: SourceBucket[] }) {
+  if (sources.length === 0) return null;
+
+  const groups: { kind: SourceBucket["kind"]; title: string; icon: typeof RouteIcon; hint: string }[] =
+    [
+      {
+        kind: "page",
+        title: "الصفحة التي أرسلت الطلب",
+        icon: RouteIcon,
+        hint: "بياناتنا — يطابقها النظام بقائمة صفحات الموقع.",
+      },
+      {
+        kind: "campaign",
+        title: "الحملة",
+        icon: Megaphone,
+        hint: "وسم يكتبه الزائر في الرابط — نصٌّ من الخارج.",
+      },
+      {
+        kind: "referrer",
+        title: "موقع أحال إلينا",
+        icon: Globe,
+        hint: "اسم الموقع الذي جاء منه الزائر — نصٌّ من الخارج.",
+      },
+    ];
+
+  const MAX_PER_GROUP = 6;
+
+  return (
+    <Card className="space-y-4 p-5">
+      <p className="flex items-center gap-1.5 text-sm font-semibold">
+        من أين تأتي الطلبات
+        <HelpTip>
+          يقيس <span className="font-semibold">كل</span> الطلبات لا المعروض في التبويب —
+          السؤال هنا «أيّ صفحة وأيّ حملة تأتي بطلبات» لا «ما حالة هذا الطلب». والعدّ داخل
+          قاعدة البيانات، فما تراه هنا هو ما فيها بالضبط.
+        </HelpTip>
+      </p>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {groups.map((group) => {
+          const rows = sources.filter((row) => row.kind === group.kind);
+          const Icon = group.icon;
+          const shown = rows.slice(0, MAX_PER_GROUP);
+          const restCount = rows.length - shown.length;
+          const untrusted = group.kind !== "page";
+
+          return (
+            <div key={group.kind} className="space-y-2">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+                {group.title}
+                <HelpTip>{group.hint}</HelpTip>
+              </p>
+
+              {rows.length === 0 ? (
+                <p className="text-xs text-muted-foreground">لا شيء بعد.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {shown.map((row) => (
+                    <li
+                      key={`${row.kind}:${row.bucket}`}
+                      className={cn(
+                        "flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-xs",
+                        untrusted
+                          ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+                          : "border-border bg-muted/60"
+                      )}
+                    >
+                      <span dir="ltr" className="truncate">
+                        {row.bucket === "—" ? "غير معروف" : row.bucket}
+                      </span>
+                      <span className="shrink-0 font-semibold">{toArabicDigits(row.n)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {restCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  و{toArabicDigits(restCount)} غيرها.
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -826,6 +1040,10 @@ function RequestCard({
         ) : null}
       </div>
 
+      {/* 0127 — من أين جاء الطلب. بعد الرحلة وقبل النصّ الحر: يُقرأ قبل رفع
+          السماعة، ولا يزاحم ما يُسعَّر منه. */}
+      <SourceLine request={request} />
+
       {request.details && (
         <p className="rounded-lg border border-border/60 p-3 text-sm leading-relaxed whitespace-pre-line">
           {request.details}
@@ -957,9 +1175,8 @@ export default async function QuoteRequestsPage({
   const rawTab = typeof params.status === "string" ? params.status : "all";
   const tab = TABS.find((t) => t.key === rawTab) ?? TABS[0];
 
-  const { requests, counts, ready, pulse, classes, partners, bookings } = await loadRequests(
-    tab.status
-  );
+  const { requests, counts, ready, pulse, classes, partners, bookings, sources } =
+    await loadRequests(tab.status);
 
   const wired = hasSupabaseEnv();
   const converted = params.converted === "1";
@@ -1020,6 +1237,9 @@ export default async function QuoteRequestsPage({
       />
 
       <PagePulse data={pulse} />
+
+      {/* 0127 — «أين أنفق؟» فوق التبويبات: التبويبات تُرشّح بالحالة، وهذه تقيس الكل */}
+      <SourceSummary sources={sources} />
 
       <nav
         aria-label="ترشيح طلبات الأسعار بالحالة"

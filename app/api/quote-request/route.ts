@@ -1,4 +1,5 @@
 import { trackFunnel } from "@/lib/analytics/emit";
+import { normalizeRequestSource } from "@/lib/request-source-types";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { SERVICES } from "@/lib/site-config";
 import { isWithinServiceArea } from "@/lib/place-search-types";
@@ -39,6 +40,19 @@ import { getSiteTimeZone } from "@/lib/site-timezone.server";
  * كان هنا سقوط إلى إدراج مباشر عند غياب الدالة؛ حُذف: صلاحية INSERT على
  * `public.quote_requests` سُحبت من anon وسياستها المتساهلة أُسقطت، فلم يكن
  * المسار البديل ليعمل أصلاً — كان يحوّل «الهجرة غير مطبَّقة» إلى فشل صامت.
+ *
+ * ── وما تغيّر في 0127: الطلب يحمل **مصدره** ───────────────────────────────
+ * `source` في الجسم: مسارٌ داخليّ (من `document.referrer` حين يكون من أصلنا)،
+ * ومضيفُ المُحيل الخارجي، ووسومُ الحملة الثلاثة. والتطبيع هنا **قصٌّ مبكر**
+ * (`lib/request-source-types.ts`) لا حارس: الحاجز ثلاث طبقاتٍ في القاعدة —
+ * مُطبِّعاتٌ ومُشغّلٌ على الجدول وقيودُ شكل — فحتى نداءُ PostgREST المباشر لا
+ * يُدخل محرفاً لم تُطهّره.
+ *
+ * 🔒 **ولا يفشل الطلب لأجل مصدرٍ فاسد**: المصدر بيانُ تسويقٍ لا شرطُ صحة. زائرٌ
+ *    لصق رابطاً بوسمٍ قذر لا يُمنع من طلب سيارة — الوسم يُقصّ والطلب يمرّ.
+ *
+ * ⚠ **والخصوصية**: هذه بياناتٌ عن الزائر، فلا تدخل حمولة `trackFunnel` أدناه
+ *    (الرقم المرجعي وحده كما كان)، ولا حمولةَ الإشعار الذي يكتبه مُشغّل القاعدة.
  *
  * الخانق: خمسة طلبات لكل عنوان IP في عشر دقائق. **بأفضل جهد وبذاكرة النسخة
  * الواحدة فقط** — خريطة في الذاكرة تُصفَّر مع كل نشر أو تجميد، ولا تُشارك بين
@@ -348,6 +362,13 @@ export async function POST(request: Request) {
     return errorJson("invalid-input", VALIDATION_MESSAGES["invalid-luggage"]!, 400);
   }
 
+  /**
+   * 0127 — مصدر الطلب. **لا رفضَ هنا**: `normalizeRequestSource` تُخرج `null`
+   * لكل حقلٍ لا يبقى منه شيء، والقاعدة تُطبّع ثانيةً وتحرس. ومفتاحٌ غائب من
+   * الجسم يعني «غير معروف» ويصل عموداً فارغاً — لا قيمةً مخترَعة.
+   */
+  const source = normalizeRequestSource(raw.source);
+
   const supabase = await createServerSupabase();
   if (!supabase) {
     return errorJson(
@@ -371,6 +392,11 @@ export async function POST(request: Request) {
     p_pickup_at: new Date(pickupMs).toISOString(),
     p_passengers: passengers,
     p_luggage: luggage ?? null,
+    p_source_page: source.page,
+    p_source_referrer: source.referrer,
+    p_utm_source: source.utmSource,
+    p_utm_medium: source.utmMedium,
+    p_utm_campaign: source.utmCampaign,
   });
 
   if (!error) {

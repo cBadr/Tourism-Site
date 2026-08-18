@@ -9,6 +9,7 @@ import { SiteFooter } from "@/components/site/footer";
 import { WhatsAppFab } from "@/components/site/whatsapp-fab";
 import { localeHref } from "@/components/site/links";
 import { readTripPrefill } from "./_lib/prefill";
+import { readCampaignTags } from "./_lib/source";
 import { QuoteRequestForm } from "./_components/quote-form";
 
 /**
@@ -24,6 +25,17 @@ import { QuoteRequestForm } from "./_components/quote-form";
  * تعجز الحاسبة عن الرحلة. كانت الصفحة تقرأ `service` وحده وتُسقط الأربعة —
  * فتقول البطاقة «ننقل معك تفاصيل رحلتك» ولا يصل شيء، والعميل يعيد الكتابة.
  * القراءة والتنقية في `_lib/prefill.ts`، وتركيب السطر في جزيرة العميل.
+ *
+ * ── 0127: وتقرأ **وسوم الحملة** كذلك (`utm_source` · `utm_medium` ·
+ *    `utm_campaign`) ───────────────────────────────────────────────────────
+ * بدر يريد أن يعرف من أيّ حملةٍ جاء كل طلب. والوسوم تُقرأ هنا على الخادم
+ * وتُنقّى في `_lib/source.ts`، ثم تسافر مع جسم الطلب إلى `create_quote_request`.
+ *
+ * 🔒 وهي **مدخلُ مستخدم** لا واقعة: يكتبها الزائر في شريط العنوان. فالتنقية هنا
+ *    قصٌّ مبكر، والحاجز ثلاث طبقاتٍ في القاعدة (‏هجرة 0127 §٢ و§٣).
+ * ⚠ **ولا يُقرأ المُحيل هنا**: `document.referrer` لا يعرفه الخادم إلا من ترويسة
+ *    قد تُحذف أو تُزوَّر، وقراءتها كانت ستجعل الصفحة ديناميكية على الترويسة.
+ *    فالمُحيل يُقرأ في جزيرة العميل عند التركيب.
  */
 
 type QuoteRequestPageProps = {
@@ -91,6 +103,9 @@ export default async function QuoteRequestPage({ searchParams }: QuoteRequestPag
   // 🔒 اقتراح تعبئة يحرّره العميل، لا واقعة تُخزَّن — والتنقية تحرس الحقل والتخطيط
   const tripPrefill = readTripPrefill(params);
 
+  // 0127 — وسوم الحملة من الرابط: مدخلُ مستخدمٍ يُقصّ هنا ويُحرَس في القاعدة
+  const campaign = readCampaignTags(params);
+
   return (
     <>
       <SiteHeader settings={settings} locale={locale} />
@@ -129,6 +144,7 @@ export default async function QuoteRequestPage({ searchParams }: QuoteRequestPag
             <QuoteRequestForm
               defaultService={defaultService}
               tripPrefill={tripPrefill}
+              campaign={campaign}
               services={services}
               placeSearch={placeSearch}
               locale={locale}

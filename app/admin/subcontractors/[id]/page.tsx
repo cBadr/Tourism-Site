@@ -13,6 +13,7 @@ import {
   MapPin,
   MessageCircle,
   Phone,
+  Radio,
   Scale,
   Send,
   UserCog,
@@ -42,10 +43,27 @@ import {
 import { PriceListCard } from "../_components/price-list-card";
 import { PriceSheetCard, type SheetHeader } from "../_components/price-sheet-card";
 import {
+  loadPartnerPresence,
+  PresenceBadge,
+  ReachBadge,
+  ReachDetail,
+  type PartnerPresence,
+} from "../_components/presence-ui";
+import {
   EMPTY_PRICING_CONTEXT,
   loadPricingContext,
   type PricingContext,
 } from "../_components/pricing-context";
+import {
+  loadRouteItems,
+  ROUTES_PAGE_SIZE,
+  RouteDetailCard,
+  RoutesCount,
+  RouteSearchForm,
+  RoutesTable,
+  searchRoutes,
+  type RouteHit,
+} from "../_components/routes-search";
 import {
   classPricesText,
   inviteCommand,
@@ -66,6 +84,7 @@ import {
   type VehicleView,
 } from "../_components/subcontractor-ui";
 import { resendInvite, setSubcontractorStatus, unlinkPartnerTelegram } from "../actions";
+import { DriverDocsCard } from "./_components/driver-docs-card";
 
 /**
  * ملف المتعهد — كل ما يخص شريكاً واحداً في شاشة عمل واحدة:
@@ -85,7 +104,14 @@ export const metadata = { title: "ملف المتعهد" };
  */
 const MAX_DETAIL_ROUTES = 500;
 
-/** بطاقاتٌ مفصّلة لمسارٍ واحد — سقفُ عرضٍ لا سقفَ قرار (كل بطاقة قرارها وحدها) */
+/**
+ * بطاقاتٌ مفصّلة لمسارٍ واحد — سقفُ عرضٍ لا سقفَ قرار (كل بطاقة قرارها وحدها).
+ *
+ * ⚠ **ولم يعد يقع إلا على ما ينتظر قراراً.** كان يقع على المسارات كلها — بما
+ *   فيها المعتمدة — فيولّد جداراً من جداول الأسعار على شاشةٍ لا يُطلب فيها
+ *   قرارٌ أصلاً. المعتمدة والمرفوضة والمسودّات صارت كلها في جدولٍ مضغوطٍ
+ *   قابلٍ للبحث أدناه، وتفصيلُ أيٍّ منها بطاقةٌ **واحدة** عند الطلب.
+ */
 const MAX_DETAIL_CARDS = 24;
 
 const hasSupabaseEnv = () =>
@@ -140,6 +166,15 @@ type Loaded = {
    * اقتطاعٌ صامت بلا حتى تحذير «الأقدم أولاً». الآن السقف صريح والفارق مُعلَن.
    */
   listsTotal: number;
+  /**
+   * أسعارُ الفئات — **للمسارات المنتظرة قراراً وحدها**.
+   *
+   * 🔴 كانت تُقرأ لكل مسارات المتعهد (`in(price_list_id, كل المسارات)`) لأن كل
+   * مسارٍ كان يُرسم ببطاقةٍ فيها جدولُ أسعاره. ومئةُ مسارٍ بأربع فئات = **٤٠٠
+   * صف** تعبر الشبكة في كل فتحةٍ للصفحة، ثم تُرسم أربعمئة صفِّ جدول. الآن تُقرأ
+   * لما يُرسم فقط، وخلاصةُ الباقي (عدد الفئات ومداها) محسوبةٌ في Postgres داخل
+   * `admin_search_routes`.
+   */
   itemsByList: Map<string, PriceItemView[]>;
   /** معرّف الكشف لكل مسار — `null` = مسار مستقل (النموذج القديم قبل 0102) */
   sheetOf: Map<string, string | null>;
@@ -169,6 +204,18 @@ type Loaded = {
    * فلا يُعرض عندها سطرٌ يدّعي معرفةً (القاعدة ١٥).
    */
   telegram: { linked: boolean; conflict: string | null } | null;
+  /** الظهور وقابلية الوصول — `null` = تعذّرت القراءة، وهي ليست «غير متصل» */
+  presence: PartnerPresence | null;
+  presenceReady: boolean;
+  /**
+   * عددُ أسعار الفئات داخل المسارات المعتمدة — `count: exact` بلا صفوف.
+   * كان يُجمَع في TypeScript من صفوفٍ حُمِّلت كلها لهذا الغرض.
+   */
+  approvedPrices: number | null;
+  /** نتيجةُ بحث مسارات هذا المتعهد — نفس دالة الشاشة الشاملة بمعرّفه */
+  routes: { rows: RouteHit[]; total: number; ready: boolean };
+  /** تفصيلُ مسارٍ واحد اختاره المشرف — لا مئةُ تفصيلٍ سلفاً */
+  routeDetail: { hit: RouteHit; items: PriceItemView[] } | null;
 };
 
 /** قراءة مقاصة شريك واحد — كل رقم محسوب في Postgres، ولا جمع هنا */
@@ -203,7 +250,12 @@ async function loadSettlement(
   };
 }
 
-async function loadSubcontractor(id: string): Promise<Loaded> {
+async function loadSubcontractor(
+  id: string,
+  routeQuery: string,
+  routeOffset: number,
+  routeId: string | null
+): Promise<Loaded> {
   const blank: Loaded = {
     ready: false,
     sub: null,
@@ -223,6 +275,11 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     blockDispatch: null,
     currency: "EGP",
     telegram: null,
+    presence: null,
+    presenceReady: false,
+    approvedPrices: null,
+    routes: { rows: [], total: 0, ready: false },
+    routeDetail: null,
   };
 
   const supabase = await createServerSupabase();
@@ -244,6 +301,8 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     currencyRes,
     telegramRes,
     statsRes,
+    presenceRes,
+    routesRes,
   ] = await Promise.all([
       supabase.from("subcontractor_vehicles").select("*").eq("subcontractor_id", id),
       // 🔴 سقفٌ صريح + `count: exact`: بلا الاثنين كان الاقتطاع يقع عند سقف
@@ -277,6 +336,21 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
        * مصدرَي حقيقة، وأولُ افتراقٍ بينهما يظهر باعتمادٍ أوسع من الشاشة لا بخطأ.
        */
       supabase.rpc("price_sheet_stats", { p_subcontractor_id: id }),
+      /**
+       * الظهور وقابلية الوصول — نداءٌ واحد يحمل الاثنين، وقابليةُ الوصول فيه
+       * تصل من `admin_partner_availability` كما هي بلا تعريفٍ ثانٍ (0118).
+       */
+      loadPartnerPresence(supabase),
+      /**
+       * بحثُ مسارات هذا المتعهد — **نفس دالة الشاشة الشاملة** بمعرّفه، فلا
+       * تنحرف نتيجةٌ عن نتيجة، والتطبيع العربي والاقتطاع والعدّ كلها في Postgres.
+       */
+      searchRoutes(supabase, {
+        query: routeQuery,
+        subcontractorId: id,
+        limit: ROUTES_PAGE_SIZE,
+        offset: routeOffset,
+      }),
     ]);
 
   const vehicles = vehiclesRes.error
@@ -321,23 +395,52 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     }
   }
 
+  /*
+    🔴 أسعارُ الفئات تُقرأ **لما يُرسم بطاقةً** وحده: المسارات المنتظرة قراراً.
+    وكانت تُقرأ لكل مسارات المتعهد — وهو ما يجعل مئةَ مسارٍ أربعمئةَ صفٍّ تعبر
+    الشبكة في كل فتحة صفحة، ثم أربعمئةَ صفِّ جدولٍ في المتصفّح.
+  */
+  const pendingIds = lists.filter((l) => l.status === "pending").map((l) => l.id);
+  const approvedIds = lists.filter((l) => l.status === "approved").map((l) => l.id);
+
+  const [itemsRes, approvedPricesRes] = await Promise.all([
+    pendingIds.length > 0
+      ? supabase.from("price_list_items").select("*").in("price_list_id", pendingIds)
+      : null,
+    // عددٌ واحد بلا صفوف — كان يُجمَع في TypeScript من صفوفٍ حُمِّلت لهذا الغرض
+    approvedIds.length > 0
+      ? supabase
+          .from("price_list_items")
+          .select("class_slug", { count: "exact", head: true })
+          .in("price_list_id", approvedIds)
+      : null,
+  ]);
+
   const itemsByList = new Map<string, PriceItemView[]>();
-  if (lists.length > 0) {
-    const itemsRes = await supabase
-      .from("price_list_items")
-      .select("*")
-      .in(
-        "price_list_id",
-        lists.map((l) => l.id)
-      );
-    if (!itemsRes.error) {
-      for (const row of (itemsRes.data ?? []) as Record<string, unknown>[]) {
-        const item = readPriceItem(row);
-        if (!item) continue;
-        const bucket = itemsByList.get(item.priceListId);
-        if (bucket) bucket.push(item);
-        else itemsByList.set(item.priceListId, [item]);
-      }
+  if (itemsRes && !itemsRes.error) {
+    for (const row of (itemsRes.data ?? []) as Record<string, unknown>[]) {
+      const item = readPriceItem(row);
+      if (!item) continue;
+      const bucket = itemsByList.get(item.priceListId);
+      if (bucket) bucket.push(item);
+      else itemsByList.set(item.priceListId, [item]);
+    }
+  }
+
+  const approvedPrices =
+    approvedIds.length === 0
+      ? 0
+      : approvedPricesRes && !approvedPricesRes.error
+        ? (approvedPricesRes.count ?? 0)
+        : null;
+
+  // تفصيلُ مسارٍ واحد — ولا يُقرأ إلا بعد أن يطلبه المشرف صراحةً
+  let routeDetail: Loaded["routeDetail"] = null;
+  if (routeId) {
+    const hit = routesRes.rows.find((r) => r.id === routeId) ?? null;
+    if (hit) {
+      const { items } = await loadRouteItems(supabase, routeId);
+      routeDetail = { hit, items };
     }
   }
 
@@ -364,6 +467,11 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     blockDispatch: creditRes.loaded ? creditRes.settings.blockDispatch : null,
     currency: (!currencyRes.error && asText(currencyRes.data?.currency)) || blank.currency,
     telegram: readTelegramState(telegramRes),
+    presence: presenceRes.byId.get(id) ?? null,
+    presenceReady: presenceRes.ready,
+    approvedPrices,
+    routes: routesRes,
+    routeDetail,
   };
 }
 
@@ -693,6 +801,13 @@ export default async function SubcontractorProfilePage({
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   if (!UUID.test(id)) notFound();
 
+  // بحثُ المسارات داخل هذا المتعهد — يُمرَّر إلى Postgres كما هو
+  const routeQuery =
+    typeof sp.q === "string" ? sp.q.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+  const rawOffset = Number(typeof sp.offset === "string" ? sp.offset : 0);
+  const routeOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.trunc(rawOffset) : 0;
+  const openRoute = typeof sp.route === "string" && UUID.test(sp.route) ? sp.route : null;
+
   const {
     ready,
     sub,
@@ -712,7 +827,12 @@ export default async function SubcontractorProfilePage({
     blockDispatch,
     currency,
     telegram,
-  } = await loadSubcontractor(id);
+    presence,
+    presenceReady,
+    approvedPrices,
+    routes,
+    routeDetail,
+  } = await loadSubcontractor(id, routeQuery, routeOffset, openRoute);
   if (ready && !sub) notFound();
 
   const wired = hasSupabaseEnv();
@@ -767,12 +887,24 @@ export default async function SubcontractorProfilePage({
 
   // ملخص التغطية — يُحسب من القوائم المعتمدة وحدها لأنها وحدها تدخل التسعير
   const approvedLists = lists.filter((l) => l.status === "approved");
-  const approvedPrices = approvedLists.reduce(
-    (sum, list) => sum + (itemsByList.get(list.id)?.length ?? 0),
-    0
-  );
   const pendingLists = lists.filter((l) => l.status === "pending");
   const activeVehicles = vehicles.filter((v) => v.active);
+
+  /** رابطُ قسم المسارات مع حفظ ما لا يجوز أن يضيع (بحثٌ وصفحةٌ ومسارٌ مفتوح) */
+  const routesHref = (patch: Record<string, string | null>) => {
+    const qs = new URLSearchParams();
+    const merged: Record<string, string | null> = {
+      q: routeQuery || null,
+      offset: routeOffset > 0 ? String(routeOffset) : null,
+      route: openRoute,
+      ...patch,
+    };
+    for (const [key, value] of Object.entries(merged)) if (value) qs.set(key, value);
+    const s = qs.toString();
+    return s
+      ? `/admin/subcontractors/${id}?${s}#routes`
+      : `/admin/subcontractors/${id}#routes`;
+  };
 
   /**
    * التجميع بالكشف: ما ينتظر قراراً ويقع داخل كشف يُعرض بطاقةً واحدة بقرارٍ واحد
@@ -781,9 +913,9 @@ export default async function SubcontractorProfilePage({
    */
   const pendingSheets = new Map<string, PriceListView[]>();
   const singles: PriceListView[] = [];
-  for (const list of [...pendingLists, ...lists.filter((l) => l.status !== "pending")]) {
+  for (const list of pendingLists) {
     const sheetId = sheetOf.get(list.id) ?? null;
-    if (list.status === "pending" && sheetId && sheets.has(sheetId)) {
+    if (sheetId && sheets.has(sheetId)) {
       const bucket = pendingSheets.get(sheetId);
       if (bucket) bucket.push(list);
       else pendingSheets.set(sheetId, [list]);
@@ -849,10 +981,11 @@ export default async function SubcontractorProfilePage({
           </HelpTip>
         </h3>
         <p className="text-lg font-bold">
-          يغطي {routesText(approvedLists.length)} · {classPricesText(approvedPrices)}
+          يغطي {routesText(approvedLists.length)} ·{" "}
+          {approvedPrices === null ? "أسعار الفئات —" : classPricesText(approvedPrices)}
         </p>
         <p className="text-sm text-muted-foreground">
-          {listsText(lists.length)} إجمالاً
+          {listsText(listsTotal)} إجمالاً
           {pendingLists.length > 0
             ? ` · ${toArabicDigits(pendingLists.length)} بانتظار مراجعتك`
             : ""}{" "}
@@ -861,6 +994,40 @@ export default async function SubcontractorProfilePage({
         {!isApproved && (
           <p className="text-sm text-amber-700 dark:text-amber-300">
             حساب هذا المتعهد ليس معتمداً — لا تشارك أسعاره في التسعير مهما اعتُمدت قوائمه.
+          </p>
+        )}
+      </Card>
+
+      {/*
+        ── الظهور وقابلية الوصول ────────────────────────────────────────────
+        موضعُها هنا لأنها أول ما يُسأل عنه قبل الاتصال: «هل هو موجود الآن، وإن
+        لم يكن — هل يصله البلاغ أصلاً؟». وهما سؤالان لا سؤال: التفصيل في ترويسة
+        `_components/presence-ui.tsx`.
+      */}
+      <Card className="gap-2 p-5">
+        <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
+          <Radio className="size-4 text-primary" />
+          الظهور وقابلية الوصول
+          <HelpTip>
+            <span className="font-semibold">الظهور</span> يقول «هل هو داخل بوابته
+            الآن؟» — نبضةٌ تُسجَّل مع كل طلبٍ من بوابته، مرةً كل دقيقة على الأكثر.
+            و<span className="font-semibold">قابلية الوصول</span> تقول «هل يصله بلاغُ
+            الرحلة وهل يقبله؟» وهي الشرط نفسه الذي تعمل عليه موجات البثّ. والاثنان
+            معاً لأن <span className="font-semibold">غير المتصل قد يردّ على تليجرام
+            خلال ثوانٍ</span>، والمتصلُ قد يكون أطفأ العروض.
+          </HelpTip>
+        </h3>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <PresenceBadge presence={presence ?? undefined} ready={presenceReady} />
+          <ReachBadge presence={presence ?? undefined} ready={presenceReady} />
+        </div>
+        {presence ? (
+          <ReachDetail presence={presence} />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {presenceReady
+              ? "لا صفَّ ظهورٍ لهذا الشريك بعد."
+              : "تعذّرت قراءة الظهور — نفِّذ هجرة 0118. و«لا نعرف» ليست «غير متصل»."}
           </p>
         )}
       </Card>
@@ -1102,14 +1269,31 @@ export default async function SubcontractorProfilePage({
         )}
       </Card>
 
-      {/* قوائم الأسعار — المنتظرة أولاً لأنها تنتظر قراراً */}
+      {/*
+        ══════════════════════════════════════════════════════════════════════
+         قوائم الأسعار — **قسمان لا قسم**، وهذا هو جوهر علاج شكوى المالك (١)
+        ══════════════════════════════════════════════════════════════════════
+
+        كان القسم واحداً: بطاقةٌ كاملة لكل مسار — معتمداً كان أو منتظراً — وفيها
+        جدولُ أسعارٍ بسطرٍ لكل فئة. مقبولٌ على أربعة مسارات، و«كبيرٌ جداً يربك
+        مدير الموقع» على مئة، وهي الحال التي يستعدّ لها المالك.
+
+        فصار:
+          (١) **ما ينتظر قرارك** — بطاقاتٌ كاملة، **غير مرشَّحة بالبحث أبداً**.
+              و«غير مرشَّحة» شرطٌ لا ذوق: `review_price_sheet` تكتب على الدفعة
+              كلها وتقارنها بـ`p_expected` (‏0109)، فترشيحُ ما يُعرض يجعل الزرّ
+              يعد بغير ما يفعل — أو يُلغى في كل مرة.
+          (٢) **كل المسارات** — جدولٌ مضغوطٌ قابلٌ للبحث، خلاصتُه محسوبةٌ في
+              Postgres، وتفصيلُ **واحدٍ** منه عند الطلب.
+      */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="font-heading text-base font-bold">قوائم الأسعار</h3>
+          <h3 className="font-heading text-base font-bold">ما ينتظر قرارك</h3>
           <HelpTip>
-            كل قائمة ترسو على نقطتين ونطاق حول كل نقطة، وتحمل تكلفة المتعهد لكل فئة. بجوار
-            كل تكلفة يظهر سعر العميل الناتج عنها بالهامش الحالي. المعتمدة وحدها تدخل
-            التسعير، وأي تعديل يجريه المتعهد يعيد القائمة إلى المراجعة.
+            المسارات التي أرسلها المتعهد ولم تُبتّ بعد. تُعرض{" "}
+            <span className="font-semibold">دفعةً كاملة كما أرسلها</span> ولا يمسّها بحثُ
+            المسارات أدناه: الاعتماد يقع على الدفعة كلها، فلا يجوز أن يكون المعروض
+            جزءاً منها. وبجوار كل تكلفة سعرُ العميل الناتج عنها بالهامش الحالي.
           </HelpTip>
           {pendingLists.length > 0 && (
             <Link
@@ -1126,10 +1310,11 @@ export default async function SubcontractorProfilePage({
             تعذر قراءة قوائم الأسعار — تأكد أن جدول <code dir="ltr">price_lists</code> منفَّذ
             في قاعدة البيانات (هجرة المرحلة ٥).
           </Card>
-        ) : lists.length === 0 ? (
+        ) : pendingLists.length === 0 ? (
           <Card className="p-5 text-sm text-muted-foreground">
-            لا توجد قوائم أسعار لهذا المتعهد بعد — يضيفها من بوابته ثم ترسل إليك للمراجعة.
-            حتى ذلك الحين تُسعَّر رحلاته بتعريفة الكيلومتر.
+            {listsTotal === 0
+              ? "لا توجد مسارات أسعار لهذا المتعهد بعد — يضيفها من بوابته ثم ترسل إليك للمراجعة. حتى ذلك الحين تُسعَّر رحلاته بتعريفة الكيلومتر."
+              : "لا شيء ينتظر قرارك من هذا المتعهد الآن. ومساراته كلها في الجدول أدناه."}
           </Card>
         ) : (
           <>
@@ -1184,13 +1369,111 @@ export default async function SubcontractorProfilePage({
 
             {hiddenCards > 0 && (
               <Card className="p-5 text-sm text-muted-foreground">
-                و{toArabicDigits(hiddenCards)} مساراً آخر في كشوف هذا المتعهد لا تنتظر قراراً
-                منك الآن — تُعرض كاملةً في بوابته، وما يُرسَل للمراجعة يظهر أعلاه دفعةً واحدة.
+                و{toArabicDigits(hiddenCards)} مساراً مستقلاً آخر ينتظر قراراً كذلك — بُتّ في
+                المعروض أعلاه ثم أعد تحميل الصفحة ليظهر التالي، أو افتح{" "}
+                <Link href="/admin/subcontractors/reviews" className="underline">
+                  طابور المراجعة
+                </Link>
+                .
               </Card>
             )}
           </>
         )}
       </div>
+
+      {/*
+        ── كل المسارات: جدولٌ مضغوطٌ قابلٌ للبحث ─────────────────────────────
+        البحثُ يقع في Postgres (`admin_search_routes`, 0118) بتطبيع 0117 العربي،
+        والاقتطاعُ و`total_count` معه. ولا شيء يُرشَّح هنا في TypeScript.
+      */}
+      <div className="space-y-3" id="routes">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-heading text-base font-bold">كل مسارات هذا المتعهد</h3>
+          <HelpTip>
+            كل مسار على صفٍّ واحد بخلاصة أسعاره (عدد الفئات ومدى التكلفة) — والخلاصة
+            محسوبةٌ في قاعدة البيانات، فصفوفُ الأسعار لا تصل هذه الصفحة أصلاً. اضغط
+            «تفصيل» لترى أسعار فئات مسارٍ واحد وسعرَ العميل المقابل لكل منها.
+          </HelpTip>
+          <Link
+            href="/admin/subcontractors/routes"
+            className="ms-auto text-sm text-primary hover:underline"
+          >
+            بحث في مسارات كل المتعهدين
+          </Link>
+        </div>
+
+        <RouteSearchForm
+          action={`/admin/subcontractors/${sub.id}`}
+          query={routeQuery}
+          clearHref={`/admin/subcontractors/${sub.id}#routes`}
+          disabled={!routes.ready}
+          label={`بحث في مسارات «${sub.companyName}»`}
+        />
+
+        {!routes.ready ? (
+          <Card className="p-5 text-sm text-muted-foreground">
+            بحثُ المسارات غير جاهز — الدالة <code dir="ltr">admin_search_routes</code> غير
+            موجودة. نفِّذ هجرة <code dir="ltr">0118</code> ثم أعد تحميل الصفحة؛ وبقية
+            الملف يعمل طبيعياً.
+          </Card>
+        ) : routes.rows.length === 0 ? (
+          <Card className="p-5 text-sm text-muted-foreground">
+            {routeQuery
+              ? `لا مسار لهذا المتعهد يطابق «${routeQuery}» — جرّب جزءاً من اسم المدينة.`
+              : "لا مسارات لهذا المتعهد بعد."}
+          </Card>
+        ) : (
+          <>
+            <RoutesTable
+              rows={routes.rows}
+              currency={currency}
+              detailHref={(hit) => routesHref({ route: hit.id })}
+              activeId={openRoute}
+            />
+            <RoutesCount shown={routes.rows.length} total={routes.total} query={routeQuery} />
+
+            {(routeOffset > 0 || routes.total > routeOffset + routes.rows.length) && (
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                {routeOffset > 0 && (
+                  <Link
+                    href={routesHref({
+                      offset: String(Math.max(0, routeOffset - ROUTES_PAGE_SIZE)),
+                      route: null,
+                    })}
+                    className="text-primary hover:underline"
+                  >
+                    الصفحة السابقة
+                  </Link>
+                )}
+                {routes.total > routeOffset + routes.rows.length && (
+                  <Link
+                    href={routesHref({
+                      offset: String(routeOffset + ROUTES_PAGE_SIZE),
+                      route: null,
+                    })}
+                    className="text-primary hover:underline"
+                  >
+                    الصفحة التالية
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {routeDetail && (
+              <RouteDetailCard
+                hit={routeDetail.hit}
+                items={routeDetail.items}
+                pricing={pricing}
+                reviewHref="/admin/subcontractors/reviews"
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* مستندات السائقين (0120) — قراءةٌ وشهادةٌ لا إدارة سائقين، والصور
+          بروابط موقَّعة تُولَّد بجلسة المشرف فالسياسة هي الحارس */}
+      <DriverDocsCard subcontractorId={sub.id} />
 
       {/* الإجراءات — الاعتماد والإيقاف، كلاهما بخطوة تأكيد */}
       <Card className="space-y-4 p-5" id="actions">

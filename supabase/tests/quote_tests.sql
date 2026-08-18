@@ -27,23 +27,40 @@ begin
     raise exception 'شرط مسبق: الدالة public.quote_price غير موجودة — نفّذ 0005_pricing.sql أولاً';
   end if;
 
+  /*
+   * 🔴 الشرط بنيويّ لا قيميّ: وجودُ الفئة ونشاطُها وتعريفتُها — **لا سعتُها**.
+   *
+   * كان يثبّت `capacity = (3, 6, 14, 50)` كما بُذرت. و**السعة إعدادٌ يملكه
+   * المالك** ويحرّره من `/admin/fleet` ويسجّله التدقيق. ففي 2026-08-18 رفع
+   * سعة `suv` من ٦ إلى ٧ (جيتور إكس ٧٠ تسع سبعة) و`sedan` من ٣ إلى ٤،
+   * فسقط الشرطُ المسبق و**ماتت المجموعة كلُّها** — لا لعيبٍ في محرّك التسعير
+   * بل لأن المالك مارس قراراً من حقّه. وهو نفسُ ما ينصّ عليه قسم (و) أدناه
+   * حرفياً: «قرارُ تسعيرٍ من حقّه لا يُحمِّر اختباراً» — فيُطبَّق هنا أيضاً.
+   *
+   * وما يعتمد على السعة من توكيداتٍ يقرؤها **حيّةً** من `vehicle_classes`
+   * لا من رقمٍ محفور، فيبقى الاختبار صادقاً أياً كان ما يضبطه المالك.
+   */
   select string_agg(x.slug, '، ')
     into v_missing
-  from (values ('sedan', 3), ('suv', 6), ('minibus', 14), ('bus', 50)) as x(slug, cap)
+  from (values ('sedan'), ('suv'), ('minibus'), ('bus')) as x(slug)
   where not exists (
     select 1
     from public.vehicle_classes vc
     join public.tariffs t on t.class_id = vc.id
     where vc.slug = x.slug
       and vc.active
-      and vc.capacity = x.cap
   );
 
   if v_missing is not null then
     raise exception
-      'شرط مسبق: الفئات التالية غير موجودة/غير نشطة/سعتها أو تعريفتها غير مطابقة للبذرة: %',
+      'شرط مسبق: الفئات التالية غير موجودة أو غير نشطة أو بلا تعريفة: %',
       v_missing;
   end if;
+
+  -- سعاتُ المالك تُطبع لتُقرأ في سجلّ الجولة، فيُفهم أيُّ عالمٍ قِيس فيه
+  raise notice '     ↳ (٠) سعات المالك الآن: %',
+    (select string_agg(vc.slug || '=' || vc.capacity || '/' || vc.luggage_capacity, ' · ' order by vc.sort)
+       from public.vehicle_classes vc where vc.active);
 
   select count(*) into v_rows from public.pricing_settings;
   if v_rows <> 1 then
@@ -535,69 +552,126 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
--- (و) 🔴 أرقام المالك المعتمدة — تُقارَن بالقيمة لا بعدد الصفوف
+-- (و) 🔴 معادلة «تكلفة متعهد + هامش» — بفيكسترةٍ من صنعها لا ببيانات القاعدة
 --
--- قائمتان معتمدتان في القاعدة، والحاجز الجديد يجب ألا يُزحزح جنيهاً واحداً.
--- والشرط يُفحص أولاً: إن عاير المالك تكلفةً أو هامشاً أو أشعل الذروة تُخطَّى
--- المجموعة بإشعار — قرارُ تسعيرٍ من حقّه لا يُحمِّر اختباراً.
+-- 🔴 لماذا فيكسترة: كان القسم يقيس على صفَّي أسعارٍ حقيقيَّين في حساب المتعهد
+-- («مطار القاهرة - داخلي» و«القاهرة - الأسكندرية»). وفي 2026-08-18 حذفهما
+-- المتعهد من بوابته (‏`audit_log` ⇒ `actor_kind='partner'` · `action='delete'`
+-- عند 12:20Z)، فصار القسم **يُخطَّى إلى الأبد** — أي أن أهمّ توكيدٍ ماليّ في
+-- الملف مات صامتاً بينما المجموعة تطبع `ALL PASSED`.
+--
+-- وقبلها بساعة كان يقيس **أرخصَ** تكلفةٍ في القاعدة كلِّها: فلمّا دخلت مئةُ
+-- قائمةٍ حقيقية أعطى 700 بدل 720 و**المعادلة لم تتغيّر بحرف**.
+--
+-- فالمقصود هنا **المعادلة** لا محتوى القاعدة: تكلفةٌ يعرفها الاختبار، في ممرٍّ
+-- يملكه، مقيسٌ صفرَ تغطيةٍ قبل الإنشاء. والأرقام هي أرقام المالك نفسها التي
+-- قِيست يوم 2026-08-18: ٧٢٠/١٥٠٠ · ١٨٠٠/٢٦٤٠ · ٣٢٥٠/٤٩٥٢.
 -- ----------------------------------------------------------------------------
 do $$
 declare
-  v_ready boolean;
-  v_suv   numeric;
-  v_bus   numeric;
+  v_sub    constant uuid := 'e0000000-0000-4000-8000-00000000000f';
+  v_list_a constant uuid := 'e1000000-0000-4000-8000-00000000000a';
+  v_list_b constant uuid := 'e1000000-0000-4000-8000-00000000000b';
+  v_pax    integer;
+  v_ready  boolean;
+  v_pre    integer;
+  v_suv    numeric;
+  v_bus    numeric;
 begin
+  /*
+   * الشرط الأول: التعريفتان اللتان تدخلان الحساب فعلاً — الأرضية ومعامل
+   * العودة وسعر ساعة الانتظار. و`per_km` و`base_fee` **لا تدخلان** لأن
+   * التسعير هنا من تكلفة متعهد لا من مسافة، فتغييرُهما من اللوحة لا يعني شيئاً.
+   */
   select
-    exists (select 1 from public.price_lists pl
-             join public.price_list_items i on i.price_list_id = pl.id
-            where pl.status = 'approved' and pl.title = 'مطار القاهرة - داخلي'
-              and ((i.class_slug = 'suv' and i.cost = 600)
-                or (i.class_slug = 'minibus' and i.cost = 900))
-            group by pl.id having count(*) = 2)
-    and exists (select 1 from public.price_lists pl
-             join public.price_list_items i on i.price_list_id = pl.id
-            where pl.status = 'approved' and pl.title = 'القاهرة - الأسكندرية'
-              and ((i.class_slug = 'suv' and i.cost = 1500)
-                or (i.class_slug = 'minibus' and i.cost = 2200))
-            group by pl.id having count(*) = 2)
+    exists (select 1 from public.tariffs t join public.vehicle_classes vc on vc.id = t.class_id
+             where vc.slug = 'suv' and t.min_price = 700 and t.round_trip_factor = 1.75
+               and t.waiting_hour_price = 50)
+    and exists (select 1 from public.tariffs t join public.vehicle_classes vc on vc.id = t.class_id
+             where vc.slug = 'minibus' and t.min_price = 1500 and t.round_trip_factor = 1.80
+               and t.waiting_hour_price = 100)
     and exists (select 1 from public.pricing_settings ps
-            where ps.margin_type = 'percent' and ps.margin_value = 20
-              and ps.margin_min_amount = 100 and not ps.peak_enabled)
+             where ps.margin_type = 'percent' and ps.margin_value = 20
+               and ps.margin_min_amount = 100 and not ps.peak_enabled)
     into v_ready;
 
   if not v_ready then
-    raise notice '⏭ (و) تُخطّى: تكلفة إحدى القائمتين أو الهامش أو الذروة تغيّرت عمّا قِيس في 2026-08-18';
+    raise notice '⏭ (و) تُخطّى: المالك عاير الأرضية أو معامل العودة أو ساعة الانتظار أو الهامش أو الذروة';
     return;
   end if;
 
-  -- المطار: تكلفة ٦٠٠ + هامش ٢٠٪ = ٧٢٠ · وميني‑باص ٩٠٠+١٨٠=١٠٨٠ تحت أرضية ١٥٠٠
-  select max(q.total) filter (where q.class_slug = 'suv'),
-         max(q.total) filter (where q.class_slug = 'minibus')
-    into v_suv, v_bus
-  from public.quote_public(10, 4, false, 0, 30.114826, 31.350388, 30.100599, 31.332914) q;
-  if v_suv <> 720 or v_bus <> 1500 then
-    raise exception '(و-١) قائمة المطار: توقعنا ٧٢٠/١٥٠٠ وحصلنا %/%', v_suv, v_bus;
+  /*
+   * عددُ الركاب يُشتقّ حيّاً: أكبرُ من سعة السيدان بواحد، فتسقط السيدان من
+   * الأهلية وتبقى SUV ثم ميني‑باص — وهما الفئتان المقصودتان. ورقمٌ محفور كان
+   * ينكسر يوم رفع المالك سعة السيدان من ٣ إلى ٤ (2026-08-18 12:29Z).
+   */
+  select vc.capacity + 1 into v_pax from public.vehicle_classes vc where vc.slug = 'sedan';
+  if not exists (select 1 from public.vehicle_classes vc
+                  where vc.slug = 'suv' and vc.capacity >= v_pax and vc.luggage_capacity >= 0)
+     or not exists (select 1 from public.vehicle_classes vc
+                  where vc.slug = 'minibus' and vc.capacity >= v_pax) then
+    raise notice '⏭ (و) تُخطّى: سعات المالك لم تعد تُبقي SUV وميني‑باص فئتَي الأهلية عند % راكباً', v_pax;
+    return;
   end if;
 
-  -- الإسكندرية ذهاباً: ١٥٠٠+٣٠٠=١٨٠٠ · ٢٢٠٠+٤٤٠=٢٦٤٠
-  select max(q.total) filter (where q.class_slug = 'suv'),
-         max(q.total) filter (where q.class_slug = 'minibus')
-    into v_suv, v_bus
-  from public.quote_public(220, 4, false, 0, 30.044388, 31.235726, 31.199181, 29.895172) q;
-  if v_suv <> 1800 or v_bus <> 2640 then
-    raise exception '(و-٢) قائمة الإسكندرية: توقعنا ١٨٠٠/٢٦٤٠ وحصلنا %/%', v_suv, v_bus;
+  -- 🔴 الممرّان مقيسان صفرَ تغطية قبل الإنشاء — وإلا خالطت قائمةٌ حقيقيةٌ الحساب
+  select count(*) into v_pre from public.coverage_matches(27.000000, 27.000000, 26.900000, 27.100000);
+  if v_pre <> 0 then
+    raise exception '(و-٠أ) ممرّ الفيكسترة الأول ليس خالياً (% مطابقة) — اختر إحداثيات أخرى', v_pre;
+  end if;
+  select count(*) into v_pre from public.coverage_matches(25.500000, 29.500000, 24.800000, 30.500000);
+  if v_pre <> 0 then
+    raise exception '(و-٠ب) ممرّ الفيكسترة الثاني ليس خالياً (% مطابقة)', v_pre;
   end if;
 
-  -- ذهاباً وعودةً بساعتَي انتظار: ١٨٠٠×١٫٧٥+١٠٠=٣٢٥٠ · ٢٦٤٠×١٫٨+٢٠٠=٤٩٥٢
+  insert into public.subcontractors (id, company_name, phone, status)
+  values (v_sub, 'QUOTE_TESTS متعهد الفيكسترة', '01000000091', 'approved');
+
+  insert into public.price_lists (
+    id, subcontractor_id, title,
+    origin_label, origin_lat, origin_lng, origin_radius_km,
+    dest_label,   dest_lat,   dest_lng,   dest_radius_km,
+    bidirectional, status
+  ) values
+    (v_list_a, v_sub, 'QUOTE_TESTS ممرّ قصير',
+     'واحة الفيكسترة أ', 27.000000, 27.000000, 20,
+     'واحة الفيكسترة ب', 26.900000, 27.100000, 20, false, 'approved'),
+    (v_list_b, v_sub, 'QUOTE_TESTS ممرّ طويل',
+     'واحة الفيكسترة ج', 25.500000, 29.500000, 20,
+     'واحة الفيكسترة د', 24.800000, 30.500000, 20, false, 'approved');
+
+  insert into public.price_list_items (price_list_id, class_slug, cost) values
+    (v_list_a, 'suv', 600), (v_list_a, 'minibus', 900),
+    (v_list_b, 'suv', 1500), (v_list_b, 'minibus', 2200);
+
+  -- الممرّ القصير: ٦٠٠ + ٢٠٪ = ٧٢٠ · وميني‑باص ٩٠٠+١٨٠ = ١٠٨٠ تحت أرضية ١٥٠٠
   select max(q.total) filter (where q.class_slug = 'suv'),
          max(q.total) filter (where q.class_slug = 'minibus')
     into v_suv, v_bus
-  from public.quote_public(220, 4, true, 2, 30.044388, 31.235726, 31.199181, 29.895172) q;
-  if v_suv <> 3250 or v_bus <> 4952 then
+  from public.quote_public(10, v_pax, false, 0, 27.000000, 27.000000, 26.900000, 27.100000) q;
+  if v_suv is distinct from 720 or v_bus is distinct from 1500 then
+    raise exception '(و-١) الممرّ القصير: توقعنا ٧٢٠/١٥٠٠ وحصلنا %/%', v_suv, v_bus;
+  end if;
+
+  -- الممرّ الطويل ذهاباً: ١٥٠٠+٣٠٠ = ١٨٠٠ · ٢٢٠٠+٤٤٠ = ٢٦٤٠
+  select max(q.total) filter (where q.class_slug = 'suv'),
+         max(q.total) filter (where q.class_slug = 'minibus')
+    into v_suv, v_bus
+  from public.quote_public(220, v_pax, false, 0, 25.500000, 29.500000, 24.800000, 30.500000) q;
+  if v_suv is distinct from 1800 or v_bus is distinct from 2640 then
+    raise exception '(و-٢) الممرّ الطويل: توقعنا ١٨٠٠/٢٦٤٠ وحصلنا %/%', v_suv, v_bus;
+  end if;
+
+  -- ذهاباً وعودةً بساعتَي انتظار: ١٨٠٠×١٫٧٥+١٠٠ = ٣٢٥٠ · ٢٦٤٠×١٫٨+٢٠٠ = ٤٩٥٢
+  select max(q.total) filter (where q.class_slug = 'suv'),
+         max(q.total) filter (where q.class_slug = 'minibus')
+    into v_suv, v_bus
+  from public.quote_public(220, v_pax, true, 2, 25.500000, 29.500000, 24.800000, 30.500000) q;
+  if v_suv is distinct from 3250 or v_bus is distinct from 4952 then
     raise exception '(و-٣) الذهاب والعودة: توقعنا ٣٢٥٠/٤٩٥٢ وحصلنا %/%', v_suv, v_bus;
   end if;
 
-  raise notice '✔ (و) أرقام المالك كما هي: ٧٢٠/١٥٠٠ · ١٨٠٠/٢٦٤٠ · ٣٢٥٠/٤٩٥٢';
+  raise notice '✔ (و) المعادلة كما هي على فيكسترةٍ معزولة (% راكباً): ٧٢٠/١٥٠٠ · ١٨٠٠/٢٦٤٠ · ٣٢٥٠/٤٩٥٢', v_pax;
 end;
 $$;
 

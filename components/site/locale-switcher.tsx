@@ -4,6 +4,7 @@ import { getEnabledLocales } from "@/i18n/locales";
 import { getActiveLocale, getActivePath, hrefForLocale } from "@/i18n/server";
 import type { LocaleDef } from "@/i18n/config";
 import { getT } from "@/lib/i18n/content";
+import { TAP_TARGET_ROW } from "./links";
 
 /**
  * مبدّل لغة الموقع — مكوّن خادمي بلا أي JavaScript على العميل.
@@ -49,8 +50,22 @@ type LocaleSwitcherProps = {
   variant?: "menu" | "inline";
 };
 
-const linkClass =
-  "rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+const linkBase =
+  "rounded-lg px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+
+/**
+ * حبّة الشريط: ارتفاعٌ بصريّ ٣٨ (`py-2`) ومساحةُ لمسٍ ٤٤ بالهالة.
+ * ولا يُرفع الصندوق نفسه إلى ٤٤: يصير أطول من «احجز الآن» (٣٦) — أي يصير
+ * المبدّلُ الثانويّ أبرزَ من نداء المنتج الأول، وهو نقضُ «الفصل بالوظيفة».
+ */
+const linkClass = linkBase + " py-2";
+
+/**
+ * صفّ التذييل: **٤٤ حقيقية** (`py-3` ⇒ ١٢+١٢+٢٠). هناك سعةٌ ولا ضيق فالهالة
+ * بلا مبرّر — بل هي **ضارّة** هنا: الصفّ `flex-wrap`، فمع ثلاث لغات فأكثر
+ * ينكسر سطرين وتتداخل هالتا السطرين فتسرق إحداهما نقرة الأخرى.
+ */
+const inlineLinkClass = linkBase + " py-3";
 
 /** الاسم كما يكتبه أهل اللغة — بلغته واتجاهه حتى لا ينقلب داخل صفحة معاكسة */
 function NativeName({ locale }: { locale: LocaleDef }) {
@@ -125,7 +140,7 @@ export async function LocaleSwitcher({
                   : t("switchTo", "عرض الموقع بلغة {language}", { language: locale.nativeName })
               }
               className={cn(
-                linkClass,
+                inlineLinkClass,
                 isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -155,6 +170,9 @@ export async function LocaleSwitcher({
              §(ز)). ولا يُعدَّل `globals.css` من هنا — الرمز موجود، والصواب
              استعماله. */
           "inline-flex items-center gap-1.5 border border-input text-muted-foreground hover:text-foreground",
+          /* ٦٧٫٥×٣٨ مقيسة ⇒ الهالة تبلغ بها ٤٤ رأسياً بلا أن تزيح بكسلاً،
+             فتبقى أرقام كتلة اليمين (٢٩٥ عربية · ٣١٥ إنجليزية) صحيحةً بعدها. */
+          TAP_TARGET_ROW,
           className
         )}
       >
@@ -171,7 +189,12 @@ export async function LocaleSwitcher({
     <details className={cn("group relative", className)}>
       <summary
         aria-label={t("menuLabel", "اختيار لغة الموقع")}
-        className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-input px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden"
+        className={cn(
+          "inline-flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-input px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden",
+          /* الهالة ٤٤ رأسياً وقاعُها عند ٤١ من أعلى `details`، واللوح يبدأ
+             عند `top-11` = ٤٤ ⇒ لا تغطّي الهالةُ أولَ صفٍّ في لوحها. */
+          TAP_TARGET_ROW
+        )}
       >
         <Globe className="size-4 shrink-0" aria-hidden="true" />
         {/* رمزُ اللغة **الحالية** هنا لا الوجهة: القائمة تعرض الحالة وتفتح على
@@ -198,7 +221,8 @@ export async function LocaleSwitcher({
                   : t("switchTo", "عرض الموقع بلغة {language}", { language: locale.nativeName })
               }
               className={cn(
-                "flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                /* `py-3` ⇒ ٤٤ حقيقية — لوحٌ رأسيّ فيه سعة، فلا هالة */
+                "flex items-center justify-between gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                 isActive ? "text-foreground" : "text-muted-foreground"
               )}
             >

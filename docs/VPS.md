@@ -196,6 +196,27 @@ echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
 بالجذر، أنشئ `/etc/systemd/system/tours.service`:
 
+
+> ### 🔴 `-H 0.0.0.0` وليس `127.0.0.1` — ولا تُعِدها
+>
+> بقيت هذه الراية `-H 127.0.0.1` حتى 2026-08-18، **وكانت تجعل `/en/*` تُصيَّر
+> بالعربية على الإنتاج** بينما تُصيَّر بالإنجليزية على بناءٍ طازج. أُعيد إنتاج
+> العطل محلياً في الاتجاهين قبل لمس الخادم:
+>
+> | الرابطة | `/` | `/en` | أيستمع على `127.0.0.1`؟ |
+> |---|---|---|---|
+> | `-H 127.0.0.1` | `ar` | 🔴 **`ar`** | نعم |
+> | `-H localhost` | `ar` | `en` | 🔴 **لا — يربط `::1` وحده** |
+> | **`-H 0.0.0.0`** | `ar` | **`en`** | **نعم** |
+>
+> ⚠ **و`-H localhost` كان سيُسقط الموقع**: Nginx يمرّر إلى `127.0.0.1:3000`.
+> **والمنفذ لا يُكشف للإنترنت** — الجدار يسمح بـSSH و٨٠ و٤٤٣ فقط (القسم ٢).
+> ونسخةُ الوحدة قبل التعديل محفوظةٌ على الخادم `tours.service.bak.<طابع>`.
+>
+> **والسببُ الجذريّ في الكود لم يُبحث بعد** — عُرف الشرطُ الذي يُظهره ويُخفيه
+> مقيساً، **ورايةُ رابطةٍ يجب ألّا تُغيّر لغةَ صفحة**.
+
+
 ```ini
 [Unit]
 Description=Tours — Next.js
@@ -213,7 +234,7 @@ Environment=PORT=3000
 Environment=HOSTNAME=127.0.0.1
 Environment=NODE_OPTIONS=--max-http-header-size=65536
 Environment=CI=true
-ExecStart=/usr/bin/node /srv/tours/app/node_modules/next/dist/bin/next start -H 127.0.0.1
+ExecStart=/usr/bin/node /srv/tours/app/node_modules/next/dist/bin/next start -H 0.0.0.0
 Restart=always
 RestartSec=3
 

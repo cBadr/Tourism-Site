@@ -50,6 +50,15 @@ const MAX_SORT = 999;
 /** `check (default_action = any (array['none','pay','deduct']))` */
 const ACTIONS = ["none", "pay", "deduct"];
 
+/** `failure_reasons_scope_chk` — قائمةٌ واحدة بنطاق لا قائمتان (قرار المالك) */
+const SCOPES = ["failure", "apology", "both"];
+
+/** `failure_reasons_initiator_chk` — ومن بادر */
+const INITIATORS = ["platform", "partner", "any"];
+
+/** سقفٌ عاقل للمبلغ المقترح — والقيد في القاعدة `< 1e9` */
+const MAX_DEDUCT = 1_000_000;
+
 /** الأرقام العربية الهندية تُقبل في الحقول الرقمية وتُحوَّل قبل التحقق */
 const toLatinDigits = (s: string) =>
   s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
@@ -96,6 +105,9 @@ type ReasonFields = {
   default_action: string;
   active: boolean;
   sort: number;
+  applies_to: string;
+  initiator: string;
+  default_deduct_amount: number | null;
 };
 
 /**
@@ -115,12 +127,86 @@ function readReason(formData: FormData, prefix = ""): ReasonFields | string {
   const sort = num(formData, p("sort")) ?? 0;
   if (!Number.isInteger(sort) || sort < 0 || sort > MAX_SORT) return "sort";
 
+  const scope = text(formData, p("applies_to")) ?? "failure";
+  if (!SCOPES.includes(scope)) return "scope";
+
+  const initiator = text(formData, p("initiator")) ?? "any";
+  if (!INITIATORS.includes(initiator)) return "initiator";
+
+  // 🔒 «ادفع كاملاً» لمن بادر بالانسحاب تناقضٌ لا خيار — والقاعدة تمنعه بقيد
+  //    جدول (`failure_reasons_pay_initiator_chk`). والفحص هنا **ليس حارساً
+  //    ثانياً** بل ترجمةٌ مبكرة: بدونه يصل المالك رمزَ خرقِ قيدٍ عاماً لا جملةً
+  //    تقول أي حقلين تناقضا.
+  if (action === "pay" && initiator === "partner") return "payinitiator";
+
+  // المبلغ حكرٌ على الخصم — وفارغه `null` لا صفر: الصفر رقمٌ يُقرأ اقتراحاً
+  const rawAmount = num(formData, p("default_deduct_amount"));
+  if (action !== "deduct") {
+    if (rawAmount !== null && rawAmount !== 0) return "deductunused";
+  } else if (rawAmount !== null && (rawAmount <= 0 || rawAmount > MAX_DEDUCT)) {
+    return "deductrange";
+  }
+
   return {
     label,
     default_action: action,
     active: checked(formData, p("active")),
     sort,
+    applies_to: scope,
+    initiator,
+    default_deduct_amount: action === "deduct" && rawAmount ? rawAmount : null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* مقابض الإغلاق — مهلةُ الاعتماد وعتبةُ الاعتذار ومفتاحُ الخصم (0119)   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * لماذا هذه المقابض **هنا** ولا في «إعدادات الرحلات»؟
+ *
+ * لأن قارئها واحد: من يضبط أسباب الاعتذار هو من يقرّر متى تُعتمد الرحلة تلقائياً
+ * ومتى يذهب الاعتذارُ إلى الإسناد اليدوي. وثلاثة أرقامٍ في شاشةٍ أخرى تعني أن
+ * يقرأ المالك نصفَ السياسة هنا ونصفَها هناك.
+ *
+ * 🔴 **ومفتاح الخصم مطفأٌ بقرار** (المالك لم يثبّت الأساس التعاقدي بعد): الاعتذار
+ * يحسب المبلغ ويسجّله ولا يكتب قيداً واحداً، والمنفِّذ `apply_withdrawal_deduction`
+ * يرفض ما دام المفتاح مطفأ. فالنص أدناه يقول ذلك، ولا يَعِد بما لا يقع.
+ */
+const MIN_APPROVE_HOURS = 1;
+/** `trip_closure_approve_hours_chk` — أسبوعان سقفاً */
+const MAX_APPROVE_HOURS = 336;
+/** `trip_closure_manual_hours_chk` — والصفر يعني «ابثَّ دائماً» */
+const MAX_MANUAL_HOURS = 168;
+
+export async function saveClosureSettings(formData: FormData) {
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url("error=env"));
+
+  const approve = num(formData, "completion_approve_hours");
+  if (approve === null || !Number.isInteger(approve)
+      || approve < MIN_APPROVE_HOURS || approve > MAX_APPROVE_HOURS)
+    redirect(url("error=approvehours"));
+
+  const manual = num(formData, "apology_manual_hours");
+  if (manual === null || !Number.isInteger(manual) || manual < 0 || manual > MAX_MANUAL_HOURS)
+    redirect(url("error=manualhours"));
+
+  const { data, error } = await supabase
+    .from("trip_closure_settings")
+    .update({
+      completion_approve_hours: approve,
+      apology_manual_hours: manual,
+      apology_deduction_enabled: checked(formData, "apology_deduction_enabled"),
+    })
+    .eq("id", true)
+    .select("id");
+
+  if (error || !data || data.length === 0)
+    redirect(url(`error=${isMissingTable(error?.code) ? "notready" : "save"}`));
+
+  revalidatePath("/", "layout");
+  redirect(url("saved=closure"));
 }
 
 /**

@@ -33,7 +33,13 @@ import {
 } from "@/components/booking/checkout/datetime";
 import { previewLeadTime } from "@/components/booking/checkout/lead-time-action";
 import type { LeadTime } from "@/components/booking/checkout/lead-time";
+import {
+  hasRequestSource,
+  splitReferrer,
+  type RequestSource,
+} from "@/lib/request-source-types";
 import type { QuoteTripPrefill } from "../_lib/prefill";
+import { EMPTY_CAMPAIGN_TAGS, type CampaignTags } from "../_lib/source";
 
 /**
  * نموذج «اطلب عرض سعر» — لما هو خارج الحاسبة الفورية: الجولات والمناسبات
@@ -119,6 +125,7 @@ type FieldErrors = Partial<
 export function QuoteRequestForm({
   defaultService,
   tripPrefill,
+  campaign = EMPTY_CAMPAIGN_TAGS,
   services,
   placeSearch,
   locale = DEFAULT_LOCALE,
@@ -126,6 +133,8 @@ export function QuoteRequestForm({
   defaultService?: string;
   /** ما حملته بطاقة الإنقاذ في الرابط — **منقّى** في `_lib/prefill.ts` */
   tripPrefill?: QuoteTripPrefill;
+  /** وسوم الحملة من الرابط — **منقّاة** في `_lib/source.ts`، وتصل من الخادم */
+  campaign?: CampaignTags;
   /** الخدمات بلغة الزائر — تصل من الصفحة الخادمية */
   services: ServiceDef[];
   /** إعدادات بحث الأماكن من اللوحة — ضابط تكلفة يملكه المالك (هجرة 0076) */
@@ -186,6 +195,37 @@ export function QuoteRequestForm({
   const [reference, setReference] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
   const [lead, setLead] = React.useState<LeadTime | null>(null);
+
+  /**
+   * 🔴 **مصدر الطلب** (0127) — يُقرأ **عند الإرسال** لا عند التركيب.
+   *
+   * ولماذا لا `useEffect` ولا حالة: `document.referrer` **ثابتٌ طوال عمر
+   * المستند**، فقراءتُه لحظةَ الإرسال تُعطي عين ما كانت ستُعطيه لحظةَ التركيب —
+   * بلا تصييرٍ إضافي، وبلا `setState` داخل أثرٍ (وهي قاعدة eslint في هذا
+   * المستودع: `react-hooks/set-state-in-effect`). والدالة تُنادى مرةً واحدة في
+   * المتصفح بعد ضغطة العميل، فلا وجود لمسألة الترطيب أصلاً.
+   *
+   * وضفّتاه تُقسمان **بالأصل لا بالنصّ** (`splitReferrer`): مُحيلٌ من موقعنا
+   * يُسجَّل **مساراً** تُطابقه القاعدة بقائمة صفحاتها، ومن أي أصلٍ آخر يُسجَّل
+   * **مضيفاً وحده** — لا عنواناً كاملاً، لأن سلسلة استعلامه قد تحمل بريد زائرٍ
+   * أو معرّف جلسته وليس لنا أن نخزّنها.
+   *
+   * ⚠ **وحدٌّ مُعلَن**: `document.referrer` مرجعُ المستند المُحمَّل لا آخرُ مسارٍ
+   *   في تنقّلٍ ليّن. وكل روابط `/quote-request` اليوم `<a href>` (شبكة الخدمات
+   *   وبطاقة الإنقاذ وحقلا البحث) فتصل صحيحة؛ ورابطٌ يُضاف غداً بـ`<Link>`
+   *   يُسجَّل بمرجع الصفحة التي حُمِّلت أصلاً. **والغياب يعني «لا أعرف» لا
+   *   «مباشر»** — ولذلك يُخزَّن `null` ولا يُخترع له اسم.
+   */
+  function readSource(): RequestSource {
+    const split = splitReferrer(document.referrer, window.location.origin);
+    return {
+      page: split.page,
+      referrer: split.referrer,
+      utmSource: campaign.utmSource,
+      utmMedium: campaign.utmMedium,
+      utmCampaign: campaign.utmCampaign,
+    };
+  }
 
   const fieldHeight = "h-12";
   const fieldClass =
@@ -342,6 +382,8 @@ export function QuoteRequestForm({
 
     const luggageNumber = luggage.trim() === "" ? null : Number(luggage);
 
+    const requestSource = readSource();
+
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -366,6 +408,9 @@ export function QuoteRequestForm({
             luggageNumber !== null && Number.isInteger(luggageNumber) && luggageNumber >= 0
               ? luggageNumber
               : null,
+          // 0127 — المصدر: يُرسَل حين يكون فيه ما يُقال، ويغيب حين لا شيء
+          // يُعرف. و`null` في القاعدة تعني «غير معروف» لا «مباشر».
+          ...(hasRequestSource(requestSource) ? { source: requestSource } : {}),
         }),
       });
       const json = (await res.json()) as QuoteRequestResponse;
