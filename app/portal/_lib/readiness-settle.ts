@@ -28,13 +28,14 @@
  * وزن البند — **متى** يعضّ تركُه؟ والشرح الكامل لكل درجة، بموضعها في القاعدة،
  * في ترويسة `onboarding.ts` حيث تُبنى البنود.
  */
-export type StepWeight = "blocking" | "reach" | "contact" | "later" | "optional";
+export type StepWeight = "blocking" | "deadline" | "reach" | "contact" | "later" | "optional";
 
 /** حالة البند — `done` · `todo` (عليه) · `waiting` (على الإدارة) · `unknown` (لا نعرف) */
 export type StepState = "done" | "todo" | "waiting" | "unknown";
 
 /** وجهات المعالج — اتحادٌ حرفيّ كي يقبله `Link` في Next 16 بلا `as` */
 export type StepHref =
+  | "/portal/agreement"
   | "/portal/profile"
   | "/portal/fleet"
   | "/portal/drivers"
@@ -57,16 +58,23 @@ export type OnboardingStep = {
 /* ------------------------------------------------------------------ */
 
 /**
- * الوزنان اللذان يقفان بين الشريك وعملٍ يصله **قبل** أن يقبل شيئاً:
+ * الأوزان الثلاثة التي تقف بين الشريك وعملٍ يصله **قبل** أن يقبل شيئاً:
  * `blocking` يمنع العرض من أن يُنشأ له، و`reach` يُنشئه ولا يبلغه فيقدّم التوزيع
- * غيره عليه. وهذان وحدهما يُعدّان في «ما ينقصك» ويأخذان مثلث الإنذار.
+ * غيره عليه، و`deadline` **يمنعه بعد تاريخٍ معلوم** (اتفاقية المتعهد في مهلتها).
+ * وهذه وحدها تُعدّ في «ما ينقصك» وتأخذ مثلث الإنذار.
+ *
+ * ⚠ و`deadline` وزنٌ مستقلٌّ عن `blocking` بقصد، ولو أن مآلهما واحد: وسمُ بندٍ
+ * **لا يمنع شيئاً اليوم** بـ«يمنع وصول العروض» كذبةٌ قابلة للقياس — الشريك يقرأ
+ * أن عمله متوقف وهو يستقبل عروضاً الآن، فيفقد الثقة في كل وسمٍ آخر على الشاشة.
+ * والصادق أن يُقال متى يعضّ، بتاريخه. وحين ينقضي التاريخ يصير البند `blocking`
+ * حقيقةً لا وسماً (‏`_lib/agreement.ts` تقرأ الحسم من القاعدة، ولا يُشتقّ هنا).
  *
  * أما `contact` (تبلغك الإدارة بعد الإسناد) و`later` (يوقفك بعد القبول) و
  * `optional` (دخلٌ متروك) فكلها بعد العرض أو حوله — وإنذارٌ يعلو على كل بندٍ ناقص
  * لا يعود إنذاراً.
  */
 export function isPromptWeight(weight: StepWeight): boolean {
-  return weight === "blocking" || weight === "reach";
+  return weight === "blocking" || weight === "deadline" || weight === "reach";
 }
 
 export type SettleInput = {

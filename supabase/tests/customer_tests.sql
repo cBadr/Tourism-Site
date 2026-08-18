@@ -96,12 +96,10 @@ begin
   delete from auth.users where email like 'customer_tests_%@example.invalid';
   delete from public.booking_lookup_attempts
    where client_key like 'acct:00000000-0000-4000-8000-0000000c%';
-  delete from public.audit_log
-   where (entity = 'customer_bookings' and booking_id = any (coalesce(v_ids, '{}'::uuid[])))
-      or (entity = 'bookings' and entity_label like 'TR-CT%')
-      or (entity = 'profiles'
-          and entity_id in ('00000000-0000-4000-8000-0000000c0001'::uuid,
-                            '00000000-0000-4000-8000-0000000c0002'::uuid));
+  -- ⚠ ولا حذفَ من `audit_log` بعد 0110: صار مُلحَقاً فقط فعلاً — مُشغّلٌ يرفض
+  --   التعديل والحذف حتى بدور مالك الجدول، ولا يمرّ إلا ما تجاوز سنةً. ولا
+  --   حاجةَ إليه: `scripts/db-test.mjs` يفتح معاملةً لكل ملف ويُرجعها، فلا
+  --   صفَّ فيكسترةٍ يُكمّ أصلاً — لا في السجلّ ولا في طابور الإشعارات.
 
   raise notice '✔ (٠) الشروط المسبقة سليمة — جدول الربط والدوال الثلاث والمفوَّض إليها';
 end;
@@ -874,12 +872,10 @@ begin
   delete from public.booking_lookup_attempts
    where client_key like 'acct:00000000-0000-4000-8000-0000000c%';
 
-  delete from public.audit_log
-   where (entity = 'customer_bookings' and booking_id = any (coalesce(v_ids, '{}'::uuid[])))
-      or (entity = 'bookings' and entity_label like 'TR-CT%')
-      or (entity = 'profiles'
-          and entity_id in ('00000000-0000-4000-8000-0000000c0001'::uuid,
-                            '00000000-0000-4000-8000-0000000c0002'::uuid));
+  -- ⚠ ولا حذفَ من `audit_log` بعد 0110: صار مُلحَقاً فقط فعلاً — مُشغّلٌ يرفض
+  --   التعديل والحذف حتى بدور مالك الجدول، ولا يمرّ إلا ما تجاوز سنةً. ولا
+  --   حاجةَ إليه: `scripts/db-test.mjs` يفتح معاملةً لكل ملف ويُرجعها، فلا
+  --   صفَّ فيكسترةٍ يُكمّ أصلاً — لا في السجلّ ولا في طابور الإشعارات.
 
   select count(*) into v_n from public.customer_bookings cb
    where cb.profile_id in ('00000000-0000-4000-8000-0000000c0001'::uuid,

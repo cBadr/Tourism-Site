@@ -24,6 +24,7 @@ import {
   MessageSquareQuote,
   Plug,
   Radio,
+  FileSignature,
   ScrollText,
   Search,
   Settings,
@@ -92,6 +93,7 @@ type NavItem = {
     | "/admin/loyalty"
     | "/admin/maintenance"
     | "/admin/notifications"
+    | "/admin/partner-agreement"
     | "/admin/orders"
     | "/admin/payment-accounts"
     | "/admin/payments"
@@ -163,6 +165,11 @@ const NAV_GROUPS: NavGroup[] = [
       // أُسندت ثم لم تُنفَّذ — **وأثره مالي على المتعهد** (لا شيء · دفع كامل ·
       // خصم). وهو شاشة إعدادٍ تُفتح مرات معدودة في العمر، فذيل المجموعة موضعه.
       { label: "أسباب فشل الرحلة", icon: AlertTriangle, href: "/admin/failure-reasons" },
+      // «اتفاقية المتعهد» في ذيل المجموعة نفسها: وثيقةٌ تُحرَّر مرات معدودة في
+      // العمر، **وهي شرطُ الأهلية نفسه** — من لم يقبل نسختها السارية بعد انقضاء
+      // مهلته يسقط من حوض البثّ (0113). وموضعها بجوار «أسباب فشل الرحلة» مقصود:
+      // هذه تُعرِّف الخصم وتلك تُنفّذه، ولا يُدافَع عن خصمٍ بلا قبولٍ مسجَّل.
+      { label: "اتفاقية المتعهد", icon: FileSignature, href: "/admin/partner-agreement" },
     ],
   },
   {
@@ -357,6 +364,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/loyalty": "الولاء",
   "/admin/maintenance": "وضع الصيانة",
   "/admin/notifications": "الإشعارات",
+  // بنفس نصّ `export const metadata` في الشاشة
+  "/admin/partner-agreement": "اتفاقية المتعهد",
   "/admin/orders": "الطلبات",
   "/admin/payment-accounts": "حسابات الدفع",
   "/admin/payments": "بوابات الدفع",

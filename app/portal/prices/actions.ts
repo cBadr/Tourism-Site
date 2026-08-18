@@ -17,6 +17,7 @@ import {
   text,
 } from "../_lib/form";
 import { portalSetupAccess } from "../_lib/session";
+import { loadCoveredClasses } from "./_lib/sheets";
 
 /**
  * إجراءات قوائم أسعار المتعهد — قلب المرحلة ٥ من جهة البورتال.
@@ -108,7 +109,7 @@ function readFields(formData: FormData): ListFields | string {
 /**
  * أسعار الفئات: الفارغ يعني «لا أغطي هذه الفئة» ولا يُكتب صفاً، والصفر مرفوض
  * (رحلة بتكلفة صفر ليست تغطية بل خطأ إدخال). الفئات التي يملك فيها المتعهد
- * مركبات إلزامية — قائمة تُغفل فئة يعمل عليها تُخرجه من عروض تخصه.
+ * مركبات إلزامية — مسارٌ يُغفل فئة يعمل عليها يُخرجه من عروض تخصه.
  */
 function readItems(
   formData: FormData,
@@ -131,36 +132,25 @@ function readItems(
   return items;
 }
 
-/** فئات السيارات النشطة على المنصة — مرجع الخادم لا قائمة النموذج */
-async function activeClassSlugs(supabase: SupabaseClient): Promise<string[]> {
-  const res = await supabase
-    .from("vehicle_classes")
-    .select("slug, sort")
-    .eq("active", true)
-    .order("sort", { ascending: true });
-  if (res.error) return [];
-  return (res.data ?? [])
-    .map((row) => (row as Record<string, unknown>).slug)
-    .filter((slug): slug is string => typeof slug === "string");
-}
-
-/** الفئات التي يملك المتعهد فيها مركبات في الخدمة */
-async function ownedClassSlugs(
+/**
+ * الفئات المعروضة لهذا المسار — من `price_sheet_classes` في Postgres وحدها
+ * (‏0102): فئات أسطول المتعهد في الخدمة، **زائد** أي فئة مُسعَّرة سلفاً في هذا
+ * المسار بعينه ولو لم يعد يملك فيها مركبة.
+ *
+ * 🔴 لماذا لا يُعاد الحساب هنا: التصفية كانت مكتوبة مرتين (هنا وفي الشاشة)،
+ * والاستيراد كان سيكتبها ثالثة. تعريفٌ واحد في القاعدة يمنع أن ترفض إحدى
+ * الطرق ما تقبله الأخرى. والفئة `covered = false` **ليست إلزامية** — تركها
+ * فارغةً هو كيف يزيل المتعهد تغطيةً لم يعد ينفّذها.
+ */
+async function classesForRoute(
   supabase: SupabaseClient,
-  subcontractorId: string
-): Promise<Set<string>> {
-  const res = await supabase
-    .from("subcontractor_vehicles")
-    .select("class_slug")
-    .eq("subcontractor_id", subcontractorId)
-    .eq("active", true);
-  const slugs = new Set<string>();
-  if (res.error) return slugs;
-  for (const row of res.data ?? []) {
-    const slug = (row as Record<string, unknown>).class_slug;
-    if (typeof slug === "string") slugs.add(slug);
-  }
-  return slugs;
+  listId: string | null
+): Promise<{ slugs: string[]; required: Set<string> }> {
+  const { classes } = await loadCoveredClasses(supabase, undefined, listId ?? undefined);
+  return {
+    slugs: classes.map((c) => c.slug),
+    required: new Set(classes.filter((c) => c.covered).map((c) => c.slug)),
+  };
 }
 
 /** معرّف القائمة كما قد تُرجعه الدالة: نصاً، أو صفاً/مصفوفة صفوف تحمل `id` */
@@ -273,13 +263,9 @@ export async function savePriceList(listId: string | null, formData: FormData) {
   const fields = readFields(formData);
   if (typeof fields === "string") redirect(back(`error=${fields}`));
 
-  const [classSlugs, owned] = await Promise.all([
-    activeClassSlugs(supabase),
-    ownedClassSlugs(supabase, sub.id),
-  ]);
+  const { slugs: classSlugs, required } = await classesForRoute(supabase, listId);
   if (classSlugs.length === 0) redirect(back("error=classes"));
 
-  const required = new Set([...owned].filter((slug) => classSlugs.includes(slug)));
   const items = readItems(formData, classSlugs, required);
   if (typeof items === "string") redirect(back(`error=${items}`));
 
@@ -322,6 +308,22 @@ export async function savePriceList(listId: string | null, formData: FormData) {
 
   if (!savedId) redirect(back("error=save"));
   const targetId = savedId;
+
+  // ضمّ المسار الجديد إلى كشفه — بعد الإنشاء لأن `upsert_price_list` لا تعرف
+  // الكشوف (0010 أقدم من 0102). وحارس `price_lists_guard_sheet` في القاعدة هو
+  // من يرفض كشفاً ليس لصاحب المسار، فلا نكرّر الشرط هنا.
+  const sheetId = clamp(text(formData, "sheet_id"), 64);
+  if (!listId && sheetId) {
+    const attached = await supabase
+      .from("price_lists")
+      .update({ sheet_id: sheetId })
+      .eq("id", targetId)
+      .eq("subcontractor_id", sub.id)
+      .select("id");
+    if (attached.error || !attached.data || attached.data.length === 0) {
+      redirect(editorUrl(targetId, "error=sheet"));
+    }
+  }
 
   if (submit) {
     const done = await submitList(supabase, sub.id, targetId);

@@ -57,6 +57,9 @@ import { isPromptWeight, type OnboardingStep, type StepWeight } from "../_lib/re
  */
 const WEIGHT_LABEL: Record<StepWeight, string> = {
   blocking: "يمنع وصول العروض",
+  // ⚠ ولا تقول «يمنع» أيضاً: البند في مهلته، والعروض تصل الآن فعلاً. والتاريخُ
+  // نفسه في نصّ البند لا في الوسم — وسمٌ بتاريخٍ فيه يُقرأ في سطرٍ واحد بصعوبة.
+  deadline: "يوقف العروض بعد المهلة",
   // ولا تقول «يمنع»: `dispatch_pool` تُقدّم البالغين وتعود إليه إن لم يكن فيهم
   // أحد (الاحتياطي المقروء في ترويسة `_lib/onboarding.ts`)
   reach: "يتخطّاك التوزيع إلى غيرك",
@@ -72,6 +75,9 @@ const WEIGHT_LABEL: Record<StepWeight, string> = {
  */
 const WEIGHT_TONE: Record<StepWeight, string> = {
   blocking:
+    "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
+  // نفس الكهرماني: هو أيضاً يقف بين الشريك وعملٍ يصله، والفارق في اللفظ لا اللون
+  deadline:
     "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
   reach:
     "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",

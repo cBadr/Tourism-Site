@@ -27,9 +27,15 @@
 -- الأصل **قبل الحكم**. (النمط ٩ في LESSONS.md · القاعدة ١٩ · نظير (ح) في
 -- `quote_request_tests.sql`.)
 --
+-- ولذلك أيضاً القسمان (ك) و(ل): `NaN` تعبر أرضية الهامش نفسها لأن كل فحوصها
+-- من طرفٍ واحد (`>= 0` · `> 0`)، و`NaN` تُرتَّب فوق كل قيمة في `numeric`. و(ل)
+-- يُعيد الجسم إلى ما قبل 0108 **ويُسقط القيدين معاً** ليُثبت أن (ك) يحرس فعلاً.
+-- ⚠ و(ي) التنظيف يبقى **آخر الملف** مهما جاء ترتيب حرفه.
+--
 -- المرجع: supabase/migrations/0088_quote_request_conversion.sql
 --         supabase/migrations/0084_quote_request_structured.sql
 --         supabase/migrations/0046_discount_floor_room.sql (‏`discount_floor_room`)
+--         supabase/migrations/0108_no_nan_money.sql (‏حارسا «رقمٌ حقيقي» + قيود الأعمدة)
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -921,6 +927,275 @@ begin
   end if;
 
   raise notice '✔ (ط) الجسم يحمل حارسيه ونداء الأرضية، وسقف البثّ لم ينحدر';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ك) 🔴🔴 `NaN` — القيمة التي تعبر **كل** فحصٍ من طرفٍ واحد (0108)
+--
+-- ══════════════════════════════════════════════════════════════════════════
+--  ماذا يثبت هذا القسم فعلاً — والسؤال مطروحٌ على كل تأكيدٍ فيه
+-- ══════════════════════════════════════════════════════════════════════════
+--
+-- قِيس في 2026-08-18: نداءٌ واحد لـ`convert_quote_request` بـ`p_partner_cost`
+-- = `'NaN'` **كتب حجزاً** (‏`total = 8500` · `subcontractor_cost = NaN` ·
+-- `margin_amount = NaN`). ولم يُنقَض حاجزٌ ولا سقط فحص — بل صدَقت كلُّها:
+--
+--   `NaN > 0` ⇒ true · `NaN < 0` ⇒ false · `greatest(NaN,0)` ⇒ NaN ·
+--   `round(NaN,2)` ⇒ NaN · وقيدا الجدول `>= 0` ⇒ true
+--
+-- ⇒ أرضية الهامش (D-16) — الحاجز الوحيد أمام السعر اليدوي — قاست NaN بنفسها
+--   ووجدتها كافية. **فالفحص من طرفٍ واحد ليس حاجزاً أمام NaN إطلاقاً.**
+--
+-- والقسم يفحص أربعة ادّعاءات مستقلة:
+--   (ك-١) الدالة ترفض التكلفة غير المنتهية برمزٍ تترجمه الشاشة، **ولا تكتب صفّاً**
+--   (ك-٢) والتحويل المشروع ما زال يمرّ بأرقامٍ صحيحة — الحاجز ليس جداراً على العمل
+--   (ك-٣) والقاعدة ترفضها **من كل بابٍ آخر** حتى بلا مرور بالدالة (0108 §٢)
+--   (ك-٤) و**كل** عمود `numeric` في `public` يحمل قيده — فعمودٌ يُضاف غداً بلا
+--         حارس يُسقط هذه المجموعة، لا يُكتشف بعد أن يقع
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_name  constant text := 'عميل QC_TESTS_FIXTURE ك';
+  v_when  constant timestamptz := now() + interval '15 days';
+  v_class constant text := current_setting('tours.qc_class');
+  v_price constant numeric := 9000;
+  v_cost  constant numeric := 5000;
+  v_id    uuid;
+  v_res   record;
+  v_hint  text;
+  v_ok    boolean;
+  v_n0    integer;
+  v_n1    integer;
+  v_val   text;
+  v_miss  text;
+  v_cnt   integer;
+begin
+  select count(*) into v_n0 from public.bookings b where b.customer_name = v_name;
+
+  select * into v_res from public.create_quote_request(
+    null, v_name, '01000000111', 'رحلة قياس ك',
+    'ميدان التحرير', 30.0444, 31.2357, null, null, null, v_when, 4, 2);
+  v_id := v_res.id;
+  perform 1 from public.set_quote_request_status(v_id, 'quoted', v_price, null);
+
+  -- ── (ك-١) التكلفة غير المنتهية تُرفض — والثلاث قيمٍ برمزٍ واحدٍ مفهوم ──────
+  --
+  -- ⚠ ولماذا تُفحص `Infinity` و`-Infinity` مع `NaN` وقد كانتا مرفوضتين سلفاً:
+  --   لأنهما كانتا تُرفضان **بالمصادفة** لا بالقصد — `Infinity` عبر `below-floor`
+  --   و`-Infinity` عبر `cost-negative`. والاعتماد على مصادفةٍ في مسارٍ مالي هو
+  --   بعينه ما ترك `NaN` مفتوحاً بينهما.
+  foreach v_val in array array['NaN', 'Infinity', '-Infinity']
+  loop
+    v_ok := false; v_hint := null;
+    begin
+      perform 1 from public.convert_quote_request(v_id, v_class, v_val::numeric, 'الإسكندرية');
+    exception when others then
+      v_ok := true; get stacked diagnostics v_hint = pg_exception_hint;
+    end;
+    if not v_ok then
+      raise exception
+        '(ك-١) 🔴 تكلفة «%» مرّت وكتبت حجزاً — أرضية الهامش (D-16) تُقاس بقيمةٍ ليست رقماً', v_val;
+    end if;
+    if v_hint is distinct from 'cost-not-finite' then
+      raise exception
+        '(ك-١) تكلفة «%» رُفضت برمز «%» لا «cost-not-finite» — الشاشة لن تعرف ماذا تقول',
+        v_val, coalesce(v_hint, 'بلا');
+    end if;
+  end loop;
+
+  -- ولا صفَّ خُلق من المحاولات الثلاث: الرفض قبل الإدراج لا بعده
+  select count(*) into v_n1 from public.bookings b where b.customer_name = v_name;
+  if v_n1 <> v_n0 then
+    raise exception '(ك-١) 🔴 خُلق % حجزاً من محاولاتٍ مرفوضة', v_n1 - v_n0;
+  end if;
+
+  -- ── (ك-٢) والتحويل المشروع يمرّ — والأرقام مُشتقّة لا محفورة ──────────────
+  select * into v_res
+  from public.convert_quote_request(v_id, v_class, v_cost, 'الإسكندرية');
+
+  if v_res.booking_id is null then
+    raise exception '(ك-٢) 🔴 حارس «رقمٌ حقيقي» منع تحويلاً مشروعاً — حاجزٌ صار جداراً';
+  end if;
+  if v_res.total <> v_price or v_res.margin_amount <> (v_price - v_cost) then
+    raise exception '(ك-٢) إجمالي/هامش الحجز % و% ≠ % و%',
+      v_res.total, v_res.margin_amount, v_price, v_price - v_cost;
+  end if;
+
+  -- والقيم على القرص أرقامٌ حقيقية — لا NaN تسلّلت من طريقٍ آخر
+  select count(*) into v_cnt
+    from public.bookings b
+   where b.id = v_res.booking_id
+     and b.total              > '-Infinity'::numeric and b.total              < 'Infinity'::numeric
+     and b.subcontractor_cost > '-Infinity'::numeric and b.subcontractor_cost < 'Infinity'::numeric
+     and b.margin_amount      > '-Infinity'::numeric and b.margin_amount      < 'Infinity'::numeric;
+  if v_cnt <> 1 then
+    raise exception '(ك-٢) 🔴 صفُّ الحجز يحمل قيمةً غير منتهية بعد تحويلٍ مشروع';
+  end if;
+
+  -- ── (ك-٣) والباب مغلقٌ حتى بلا الدالة — القيد على العمود (0108 §٢) ────────
+  --
+  -- 🔒 وهذا هو الفرق بين «أُصلحت الدالة» و«أُغلق الصنف»: محرِّرُ SQL وحاملُ
+  --    مفتاح الخدمة وأيُّ دالةٍ تُكتب غداً كلُّهم يمرّون من هنا.
+  v_ok := false;
+  begin
+    update public.bookings b set subcontractor_cost = 'NaN'::numeric where b.id = v_res.booking_id;
+  exception when check_violation then v_ok := true; when others then v_ok := false;
+  end;
+  if not v_ok then
+    raise exception '(ك-٣) 🔴 كتابةٌ مباشرة بـNaN في bookings.subcontractor_cost نجحت';
+  end if;
+
+  v_ok := false;
+  begin
+    update public.quote_requests q set quoted_amount = 'NaN'::numeric where q.id = v_id;
+  exception when check_violation then v_ok := true; when others then v_ok := false;
+  end;
+  if not v_ok then
+    raise exception '(ك-٣) 🔴 كتابةٌ مباشرة بـNaN في quote_requests.quoted_amount نجحت';
+  end if;
+
+  -- والدفتر — قيدٌ واحدٌ بـNaN يجعل رصيد الخزينة NaN إلى الأبد وهو append-only
+  v_ok := false;
+  begin
+    insert into public.ledger_entries (account_id, direction, amount, source_type, occurred_at)
+    values (null, 'in', 'NaN'::numeric, 'adjustment', now());
+  exception when check_violation then v_ok := true; when others then v_ok := false;
+  end;
+  if not v_ok then
+    raise exception '(ك-٣) 🔴 قيدٌ بـNaN دخل ledger_entries — الرصيد كلُّه NaN ولا يُحذف';
+  end if;
+
+  -- ── (ك-٤) التغطية: عمودٌ رقميّ جديد بلا حارس **يُسقط هذه المجموعة** ───────
+  select string_agg(t.tbl || '.' || t.col, ' · '), count(*) into v_miss, v_cnt
+  from (
+    select c.relname as tbl, a.attname as col
+      from pg_attribute a
+      join pg_class c on c.oid = a.attrelid
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and c.relkind = 'r'
+       and a.attnum > 0 and not a.attisdropped
+       and a.atttypid = 'numeric'::regtype
+       and not exists (
+         select 1 from pg_constraint k
+          where k.conrelid = c.oid
+            and k.conname = c.relname || '_' || a.attname || '_finite_chk')
+  ) t;
+  if coalesce(v_cnt, 0) > 0 then
+    raise exception
+      '(ك-٤) 🔴 % عموداً رقمياً بلا قيد «رقمٌ حقيقي» — أضِف القيد في هجرةٍ جديدة: %',
+      v_cnt, v_miss;
+  end if;
+
+  -- وحارسا الجسم قائمان (D-58): لا يكفي أن يعمل اليوم، بل ألّا يُحذف غداً
+  if position('cost-not-finite' in pg_get_functiondef(
+       to_regprocedure('public.convert_quote_request(uuid,text,numeric,text,uuid,text)')::oid)) = 0 then
+    raise exception '(ك-٤) 🔴 حارس «التكلفة رقمٌ حقيقي» اختفى من جسم التحويل';
+  end if;
+  if position('amount-not-finite' in pg_get_functiondef(
+       to_regprocedure('public.convert_quote_request(uuid,text,numeric,text,uuid,text)')::oid)) = 0 then
+    raise exception '(ك-٤) 🔴 حارس «التسعيرة رقمٌ حقيقي» اختفى من جسم التحويل';
+  end if;
+
+  raise notice '✔ (ك) NaN و±Infinity مرفوضةٌ برمزٍ مفهوم، والمشروع يمرّ، والقيد يغلق كل باب';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ل) 🧬 **طفرةٌ ثالثة** — يُعاد الجسم إلى ما كان عليه قبل 0108، ويجب أن يفشل
+--
+-- والسبب مكتوبٌ في LESSONS.md النمط ٩: تأكيدٌ لا يحمرّ حين يُنزع حارسه ليس
+-- تأكيداً. و(ك) كلُّه يقف على ادّعاءٍ واحد — «NaN لا تعبر» — فإن كان يمرّ
+-- أخضرَ على الجسم **القديم** أيضاً، فهو زينة.
+--
+-- ⚠ والطفرة تُنزع الطبقتين معاً: الحارس في الجسم **والقيد على العمود**. نزعُ
+--   إحداهما وحدها يترك الأخرى تمسك، فلا نتعلّم أيَّهما يحرس فعلاً.
+--
+-- 🔒 والاستعادة **قبل الحكم** لا بعده — على سابقة (ح): `raise` بعد الاستعادة
+--   يُرجع كل شيء بحكم المعاملة، أمّا `raise` قبلها فيترك القاعدة على الطفرة لو
+--   شُغّل الملف خارج معاملة يوماً.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_name  constant text := 'عميل QC_TESTS_FIXTURE ل';
+  v_when  constant timestamptz := now() + interval '16 days';
+  v_class constant text := current_setting('tours.qc_class');
+  v_id    uuid;
+  v_res   record;
+  v_def   text;
+  v_mut   text;
+  v_cost  numeric;
+  v_marg  numeric;
+  v_leak  boolean := false;
+begin
+  v_def := pg_get_functiondef(
+    to_regprocedure('public.convert_quote_request(uuid,text,numeric,text,uuid,text)')::oid);
+
+  -- الطفرة: يُخرَّس شرط الحارس بلا لمس أي سطرٍ آخر — مرساةٌ قصيرة لا تعتمد
+  -- على المسافات، فتبقى صالحةً لو أُعيد تنسيق الجسم.
+  v_mut := replace(v_def, 'if not (p_partner_cost >', 'if false and not (p_partner_cost >');
+  if v_mut = v_def then
+    raise exception '(ل-٠) لم أجد الحارس في الجسم لأطفّره — راجع نص 0108 §٣';
+  end if;
+  execute v_mut;
+
+  alter table public.bookings drop constraint bookings_subcontractor_cost_finite_chk;
+  alter table public.bookings drop constraint bookings_margin_amount_finite_chk;
+
+  select * into v_res from public.create_quote_request(
+    null, v_name, '01000000112', 'رحلة قياس ل',
+    'ميدان التحرير', 30.0444, 31.2357, null, null, null, v_when, 4, 2);
+  v_id := v_res.id;
+  perform 1 from public.set_quote_request_status(v_id, 'quoted', 9000, null);
+
+  begin
+    select * into v_res from public.convert_quote_request(v_id, v_class, 'NaN'::numeric, 'الإسكندرية');
+    -- 🔴 هذا هو العيب الأصلي وقد عاد: حجزٌ بتكلفةٍ وهامشٍ ليسا رقمين
+    select b.subcontractor_cost, b.margin_amount into v_cost, v_marg
+      from public.bookings b where b.id = v_res.booking_id;
+    v_leak := (v_cost is not null and not (v_cost > '-Infinity'::numeric and v_cost < 'Infinity'::numeric))
+           or (v_marg is not null and not (v_marg > '-Infinity'::numeric and v_marg < 'Infinity'::numeric));
+    -- ⚠ يُحذف الصفّان: «محوَّل ← مسعَّر» يرفضه مُشغّل 0084، والحذف ليس انتقالاً
+    delete from public.quote_requests q where q.id = v_id;
+    delete from public.bookings      b where b.id = v_res.booking_id;
+  exception when others then
+    v_leak := false;
+    delete from public.quote_requests q where q.id = v_id;
+  end;
+
+  -- ── الاستعادة **قبل الحكم** ─────────────────────────────────────────────
+  execute v_def;
+  alter table public.bookings
+    add constraint bookings_subcontractor_cost_finite_chk
+    check (subcontractor_cost is null
+           or (subcontractor_cost > '-Infinity'::numeric and subcontractor_cost < 'Infinity'::numeric));
+  alter table public.bookings
+    add constraint bookings_margin_amount_finite_chk
+    check (margin_amount is null
+           or (margin_amount > '-Infinity'::numeric and margin_amount < 'Infinity'::numeric));
+
+  if not v_leak then
+    raise exception
+      '(ل) 🔴 نُزع حارس 0108 والقيدان معاً وبقي (ك) أخضر — أي أن (ك) لا يحرس شيئاً';
+  end if;
+
+  -- وبعد الاستعادة يعود الباب مغلقاً — وإلّا فالاستعادة نفسها كاذبة
+  select * into v_res from public.create_quote_request(
+    null, v_name, '01000000113', 'رحلة قياس ل-٢',
+    'ميدان التحرير', 30.0444, 31.2357, null, null, null, v_when, 4, 2);
+  v_id := v_res.id;
+  perform 1 from public.set_quote_request_status(v_id, 'quoted', 9000, null);
+  v_leak := false;
+  begin
+    perform 1 from public.convert_quote_request(v_id, v_class, 'NaN'::numeric, 'الإسكندرية');
+    v_leak := true;
+  exception when others then v_leak := false;
+  end;
+  if v_leak then
+    raise exception '(ل) 🔴 لم يُستعَد الحارس — القاعدة باقية على الطفرة';
+  end if;
+
+  raise notice '✔ (ل) الطفرة أُمسكت: بلا حارس 0108 يعود NaN إلى الحجز — ثم استُعيدت الطبقتان';
 end;
 $$;
 

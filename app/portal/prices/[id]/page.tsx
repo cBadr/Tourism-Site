@@ -22,20 +22,18 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import {
-  loadCurrency,
-  loadPriceListItems,
-  loadVehicleClasses,
-  loadVehicles,
-  PRICE_LIST_COLUMNS,
-  toPriceList,
-  type PortalPriceList,
-} from "../../_lib/data";
+import { loadCurrency, loadPriceListItems } from "../../_lib/data";
 import { isSchemaMissing, portalSetupAccess } from "../../_lib/session";
+import { loadCoveredClasses, ROUTE_COLUMNS, toRoute, type PortalRoute } from "../_lib/sheets";
 import { savePriceList } from "../actions";
 
 /**
- * محرر قائمة الأسعار — الشاشة الوحيدة في البورتال التي تُدخل بيانات تدخل محرك التسعير.
+ * محرر **المسار** الواحد — الشاشة الوحيدة في البورتال التي تُدخل بيانات تدخل
+ * محرك التسعير نقطةً نقطة. والمسار قد يكون داخل كشف (‏`?sheet=`) أو مستقلاً.
+ *
+ * 🔴 الفئات المعروضة هنا = فئات أسطول المتعهد وحدها، ومصدرها `price_sheet_classes`
+ *    في Postgres — **التعريف الوحيد**. وفئةٌ مُسعَّرة في هذا المسار تبقى ظاهرة ولو
+ *    لم يعد يملك فيها مركبة، لأن إخفاءها يعني محوَ سعرها بصمت في أول حفظ.
  *
  * ثلاث حقائق يجب أن تصل للمتعهد من الشاشة نفسها لا من دليل استخدام:
  * (١) النقطتان مرساتان لا وجهتان: النطاق حولهما هو ما يجعل «مصر الجديدة ← المعمورة»
@@ -59,7 +57,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   cost_required:
     "اكتب تكلفتك في كل فئة تملك فيها مركبات في الخدمة — تركها فارغة يخرجك من عروض تخصك.",
   no_items: "لم تُسعّر أي فئة — القائمة بلا سعر واحد لا تفيد شيئاً.",
-  classes: "لا توجد فئات سيارات مفعّلة على المنصة الآن — راجع الإدارة.",
+  classes: "لا فئة يمكنك تسعيرها — سجّل مركبةً واحدة على الأقل من شاشة «أسطولي» أولاً.",
+  sheet: "تعذّر ضمّ المسار إلى الكشف — تأكد أن الكشف لحسابك ثم أعد المحاولة.",
 };
 
 /** بطاقة نقطة: مكان بإكمال تلقائي + نطاق كيلومترات حوله */
@@ -121,13 +120,13 @@ export default async function PortalPriceListPage({
   const { supabase, sub } = access;
   const isNew = id === "new";
 
-  let list: PortalPriceList | null = null;
+  let list: PortalRoute | null = null;
   let items = new Map<string, number>();
 
   if (!isNew) {
     const res = await supabase
       .from("price_lists")
-      .select(PRICE_LIST_COLUMNS)
+      .select(ROUTE_COLUMNS)
       .eq("id", id)
       .eq("subcontractor_id", sub.id)
       .maybeSingle();
@@ -142,19 +141,20 @@ export default async function PortalPriceListPage({
     }
     if (res.error || !res.data) notFound();
 
-    list = toPriceList(res.data as Record<string, unknown>);
+    list = toRoute(res.data as Record<string, unknown>);
     items = await loadPriceListItems(supabase, list.id);
   }
 
-  const [{ classes }, { vehicles }, currency] = await Promise.all([
-    loadVehicleClasses(supabase),
-    loadVehicles(supabase, sub.id),
+  const [{ classes }, currency] = await Promise.all([
+    loadCoveredClasses(supabase, undefined, isNew ? undefined : id),
     loadCurrency(supabase),
   ]);
 
-  const ownedSlugs = new Set(
-    vehicles.filter((vehicle) => vehicle.active).map((vehicle) => vehicle.classSlug)
-  );
+  // الكشف الذي ينتمي إليه المسار: من الصف نفسه، أو من الرابط عند الإنشاء
+  const sheetId =
+    list?.sheetId ?? (typeof query.sheet === "string" && query.sheet.trim() !== ""
+      ? query.sheet.trim()
+      : null);
 
   const saved = query.saved === "1";
   const submitted = query.submitted === "1";
@@ -164,19 +164,23 @@ export default async function PortalPriceListPage({
   return (
     <div className="space-y-6">
       <Link
-        href="/portal/prices"
+        href={sheetId ? `/portal/prices/sheets/${sheetId}` : "/portal/prices"}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-primary"
       >
         <ArrowRight className="size-4" aria-hidden="true" />
-        كل قوائم الأسعار
+        {sheetId ? "العودة إلى الكشف" : "كل قوائم الأسعار"}
       </Link>
 
       <PageHeading
-        title={isNew ? "قائمة أسعار جديدة" : list?.title || "قائمة أسعار"}
-        help="القائمة تصف مساراً كاملاً: نقطتان ونطاق حول كل منهما، وتكلفتك في كل فئة تغطيها."
+        title={isNew ? "مسار جديد" : list?.title || "مسار"}
+        help="المسار نقطتان ونطاق حول كل منهما، وتكلفتك في كل فئة تغطيها. النطاق هو ما يجعل «مصر الجديدة ← المعمورة» تُطابق «القاهرة ← الإسكندرية»."
         action={list ? <PriceListStatusBadge status={list.status} /> : null}
       >
-        {list ? LIST_STATUS_HINTS[list.status] : "احفظها مسودة أولاً، وأرسلها للاعتماد متى اكتملت."}
+        {list
+          ? LIST_STATUS_HINTS[list.status]
+          : sheetId
+            ? "احفظه مسودة، ثم أرسل الكشف كله للاعتماد من صفحته بطلبٍ واحد."
+            : "احفظه مسودة أولاً، وأرسله للاعتماد متى اكتمل."}
       </PageHeading>
 
       <Banners
@@ -207,13 +211,18 @@ export default async function PortalPriceListPage({
         </Notice>
       ) : null}
 
-      {classes.length === 0 ? <Notice tone="warning"><p>{ERROR_MESSAGES.classes}</p></Notice> : null}
+      {classes.length === 0 ? (
+        <Notice tone="warning">
+          <p>{ERROR_MESSAGES.classes}</p>
+        </Notice>
+      ) : null}
 
       <form action={savePriceList.bind(null, isNew ? null : id)} className="space-y-6">
+        {isNew && sheetId ? <input type="hidden" name="sheet_id" value={sheetId} /> : null}
         <Card className="gap-4 p-5">
           <TextField
             id="title"
-            label="عنوان القائمة"
+            label="عنوان المسار"
             name="title"
             defaultValue={list?.title}
             placeholder="القاهرة ← الإسكندرية"
@@ -270,13 +279,13 @@ export default async function PortalPriceListPage({
             ) : null}
           </div>
           <p className="pb-3 text-sm leading-relaxed text-muted-foreground">
-            الفئات التي تملك فيها مركبات في الخدمة إلزامية. اترك أي فئة أخرى فارغة — الفراغ
-            يعني «لا أغطي هذه الفئة» ولا يعني صفراً.
+            المعروض هنا فئات مركباتك في الخدمة وحدها، وكلها إلزامية. الفراغ يعني «لا أغطي
+            هذه الفئة» ولا يعني صفراً.
           </p>
 
           <div>
             {classes.map((cls) => {
-              const owned = ownedSlugs.has(cls.slug);
+              const owned = cls.covered;
               const fieldId = `cost-${cls.slug}`;
               return (
                 <div
@@ -300,7 +309,7 @@ export default async function PortalPriceListPage({
                     <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
                       {owned
                         ? "إلزامية لأن لديك مركبة في الخدمة من هذه الفئة."
-                        : "اختيارية — اتركها فارغة إن كنت لا تغطي هذه الفئة."}
+                        : "لم يعد لديك مركبة في الخدمة من هذه الفئة — امسح الرقم لإزالة تغطيتها، أو سجّل المركبة من «أسطولي»."}
                     </p>
                   </div>
                   <input
@@ -321,10 +330,10 @@ export default async function PortalPriceListPage({
             })}
           </div>
 
-          {ownedSlugs.size === 0 ? (
+          {classes.length === 0 ? (
             <p className="border-t border-border pt-3 text-xs leading-5 text-muted-foreground">
-              لا مركبات في الخدمة على حسابك بعد، فلا فئة إلزامية الآن — لكن سعّر على الأقل فئة
-              واحدة تستطيع تنفيذها، وسجّل مركباتك من شاشة «أسطولي».
+              لا مركبات في الخدمة على حسابك بعد، فلا فئة تُعرض للتسعير. سجّل مركباتك من شاشة
+              «أسطولي» ثم عُد إلى هنا — لا نسألك عن سعر فئةٍ لا تنفّذها.
             </p>
           ) : null}
         </Card>

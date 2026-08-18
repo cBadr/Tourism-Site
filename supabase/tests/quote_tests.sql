@@ -361,6 +361,247 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (هـ) 🔴 القيم غير المنتهية — سعرٌ ليس رقماً يصل الزائر بلا حساب (هجرة 0112)
+--
+-- لماذا هذه المجموعة موجودة: 0108 أغلقت `NaN` عند **عمود المال**، فأمسكت كل
+-- كاتب. و`quote_price` **لا تكتب شيئاً** — تحسب وتُرجع — فلا تلقى عموداً قط.
+-- وكل بابٍ أغلقته 0108 كان خلف تسجيل دخول، **وهذا يُفتح من الشارع**:
+-- `quote_public` ممنوحةٌ لـ`anon` منذ 0012 لأن الموقع يسعّر قبل الدخول.
+--
+-- والمقيس قبل الإصلاح (بدور anon الحقيقي، 2026-08-18):
+--   quote_public(10, 4, false, 'NaN', <المطار>)   ⇒ total = "NaN" للفئتين
+--   quote_public(10, 4, false, 'Infinity', …)     ⇒ total = "Infinity"
+--   quote_public('NaN', 4, false, 0, بلا إحداثيات) ⇒ total = "NaN"
+--   quote_public(10, 4, false, 1e1000, …)         ⇒ إجمالي بـ١٠٠١ خانة،
+--                                                    و`JSON.parse` يحوّله Infinity
+--
+-- ⚠ ومصيدةُ من يكتب اختباراً هنا: **المسار المغطّى يُخفي نصف العيب**. حين تفوز
+--   قائمة أسعارٍ معتمدة يصير `distance_cost` صفراً، فمسافةُ `NaN` تُعيد سعراً
+--   سليماً. فالاختبار يجب أن يمرّ على **المسارين**: بلا إحداثيات وبإحداثياتٍ
+--   مغطّاة — وإلا مرّ أخضرَ على عيبٍ قائم.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_ok    boolean;
+  v_bad   text;
+  v_hint  text;
+  v_total numeric;
+  v_count integer;
+  v_min   numeric;
+  -- مسار مغطّى بقائمة أسعارٍ معتمدة (مطار القاهرة ← مصر الجديدة)
+  c_olat  constant numeric := 30.114826;
+  c_olng  constant numeric := 31.350388;
+  c_dlat  constant numeric := 30.100599;
+  c_dlng  constant numeric := 31.332914;
+begin
+  if to_regprocedure('public.quote_public(numeric, integer, boolean, numeric,'
+                     || ' numeric, numeric, numeric, numeric, text, integer, jsonb)') is null then
+    raise exception 'شرط مسبق: public.quote_public غير موجودة — نفّذ 0031 وما قبلها';
+  end if;
+  if to_regprocedure('public.quote_arg_finite(numeric, text, numeric)') is null then
+    raise exception 'شرط مسبق: public.quote_arg_finite غير موجودة — نفّذ 0112_public_quote_refuses_non_numbers.sql';
+  end if;
+
+  -- (هـ-١) الباب المفتوح من الشارع: كل قيمةٍ غير منتهية تُرفض على **المسارين**
+  foreach v_bad in array array['NaN', 'Infinity', '-Infinity', '1e1000', '-1e1000'] loop
+    -- ساعات الانتظار — وهي التي سرّبت `NaN` على المسارين معاً
+    v_ok := false;
+    begin
+      perform q.total from public.quote_public(10, 4, false, v_bad::numeric,
+                                               c_olat, c_olng, c_dlat, c_dlng) q;
+    exception when others then v_ok := true;
+    end;
+    if not v_ok then
+      raise exception '(هـ-١أ) ساعات انتظار «%» عبرت quote_public على المسار المغطّى', v_bad;
+    end if;
+
+    -- المسافة على مسار التعريفة — تُعيد NaN لكل نقطةٍ خارج القائمتين
+    v_ok := false;
+    begin
+      perform q.total from public.quote_public(v_bad::numeric, 4, false, 0,
+                                               null, null, null, null) q;
+    exception when others then v_ok := true;
+    end;
+    if not v_ok then
+      raise exception '(هـ-١ب) مسافة «%» عبرت quote_public على مسار التعريفة', v_bad;
+    end if;
+
+    -- والمسافة على المسار المغطّى كذلك — لا يكفي أن يُغلق أحدهما
+    v_ok := false;
+    begin
+      perform q.total from public.quote_public(v_bad::numeric, 4, false, 0,
+                                               c_olat, c_olng, c_dlat, c_dlng) q;
+    exception when others then v_ok := true;
+    end;
+    if not v_ok then
+      raise exception '(هـ-١ج) مسافة «%» عبرت quote_public على المسار المغطّى', v_bad;
+    end if;
+  end loop;
+
+  -- (هـ-٢) والإحداثيات: `NaN` كانت تُسقط التغطية صامتةً فتعطي سعر تعريفةٍ
+  --        **أقلّ** من سعر القائمة المعتمدة — أي تخفيضٌ بإفساد مُدخَل.
+  foreach v_bad in array array['NaN', 'Infinity', '1e1000'] loop
+    v_ok := false;
+    begin
+      perform q.total from public.quote_public(10, 4, false, 0,
+                                               v_bad::numeric, c_olng, c_dlat, c_dlng) q;
+    exception when others then v_ok := true;
+    end;
+    if not v_ok then
+      raise exception '(هـ-٢) خط عرض «%» عبر — والتغطية تسقط بلا كلمة', v_bad;
+    end if;
+  end loop;
+
+  -- (هـ-٣) الجذر نفسه مغلق، لا بابُه وحده: `quote_price` بتوقيعاتها الثلاثة
+  v_ok := false;
+  begin
+    perform q.total from public.quote_price(10, 4, false, 'NaN'::numeric) q;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(هـ-٣أ) التوقيع الرباعي ما زال يُخرج NaN';
+  end if;
+
+  v_ok := false;
+  begin
+    perform q.total from public.quote_price(10, 4, false, 'NaN'::numeric, 0) q;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(هـ-٣ب) التوقيع الخماسي ما زال يُخرج NaN';
+  end if;
+
+  v_ok := false;
+  begin
+    perform q.total from public.quote_price('NaN'::numeric, 4, false, 0,
+                                            c_olat, c_olng, c_dlat, c_dlng, 0) q;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception '(هـ-٣ج) التوقيع التساعي ما زال يُخرج NaN على المسار المغطّى';
+  end if;
+
+  -- (هـ-٤) والرسالة تصل بتلميحٍ مفهوم — لا برقم قيدٍ أعمى ولا بخطأٍ داخليّ
+  v_hint := null;
+  begin
+    perform q.total from public.quote_public(10, 4, false, 'NaN'::numeric,
+                                             c_olat, c_olng, c_dlat, c_dlng) q;
+  exception when others then
+    get stacked diagnostics v_hint = pg_exception_hint;
+  end;
+  if v_hint is distinct from 'invalid-input' then
+    raise exception '(هـ-٤) التلميح «%» لا «invalid-input»', coalesce(v_hint, 'لا شيء');
+  end if;
+
+  -- (هـ-٥) 🔴 والعرضُ المشروع لم يتغيّر — وهذا نصف الاختبار لا زينته.
+  --        حاجزٌ يرفض `NaN` ويرفض معه رحلةً حقيقية أسوأ من العيب نفسه.
+  select count(*), min(q.total) into v_count, v_min
+  from public.quote_public(220, 4, false, 0, null, null, null, null) q;
+  if v_count <> 2 or v_min is null or not (v_min > 0 and v_min < 'Infinity'::numeric) then
+    raise exception '(هـ-٥أ) عرض التعريفة المشروع انكسر: عروض % وأدنى إجمالي %',
+      v_count, coalesce(v_min::text, 'لا شيء');
+  end if;
+
+  select count(*), min(q.total) into v_count, v_min
+  from public.quote_public(10, 4, false, 0, c_olat, c_olng, c_dlat, c_dlng) q;
+  if v_count <> 2 or v_min is null or not (v_min > 0 and v_min < 'Infinity'::numeric) then
+    raise exception '(هـ-٥ب) عرض المسار المغطّى المشروع انكسر: عروض % وأدنى إجمالي %',
+      v_count, coalesce(v_min::text, 'لا شيء');
+  end if;
+
+  -- (هـ-٦) والقصّ كما كان: السالب والفارغ و`-0` تمرّ ولا تُرفض (نظير د-٢/د-٣)
+  select count(*), min(q.total) into v_count, v_min
+  from public.quote_public(-10, 2, true, -5, null, null, null, null) q;
+  if v_count <> 2 or v_min < 0 then
+    raise exception '(هـ-٦أ) المدخلات السالبة صارت تُرفض بدل أن تُقصّ: عروض % وأدنى %',
+      v_count, v_min;
+  end if;
+
+  select q.total into v_total
+  from public.quote_public('-0'::numeric, 4, false, '-0'::numeric, null, null, null, null) q
+  where q.class_slug = 'suv';
+  if v_total is null or v_total <= 0 then
+    raise exception '(هـ-٦ب) «-0» صارت تُرفض: %', coalesce(v_total::text, 'لا شيء');
+  end if;
+
+  select count(*) into v_count
+  from public.quote_public(null, null, null, null, null, null, null, null) q;
+  if v_count <> 2 then
+    raise exception '(هـ-٦ج) المدخلات الفارغة لم تعد تعمل: عروض %', v_count;
+  end if;
+
+  raise notice '✔ (هـ) المسار العام يرفض ما ليس رقماً على مساريه، والعرض المشروع والقصّ كما كانا';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (و) 🔴 أرقام المالك المعتمدة — تُقارَن بالقيمة لا بعدد الصفوف
+--
+-- قائمتان معتمدتان في القاعدة، والحاجز الجديد يجب ألا يُزحزح جنيهاً واحداً.
+-- والشرط يُفحص أولاً: إن عاير المالك تكلفةً أو هامشاً أو أشعل الذروة تُخطَّى
+-- المجموعة بإشعار — قرارُ تسعيرٍ من حقّه لا يُحمِّر اختباراً.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_ready boolean;
+  v_suv   numeric;
+  v_bus   numeric;
+begin
+  select
+    exists (select 1 from public.price_lists pl
+             join public.price_list_items i on i.price_list_id = pl.id
+            where pl.status = 'approved' and pl.title = 'مطار القاهرة - داخلي'
+              and ((i.class_slug = 'suv' and i.cost = 600)
+                or (i.class_slug = 'minibus' and i.cost = 900))
+            group by pl.id having count(*) = 2)
+    and exists (select 1 from public.price_lists pl
+             join public.price_list_items i on i.price_list_id = pl.id
+            where pl.status = 'approved' and pl.title = 'القاهرة - الأسكندرية'
+              and ((i.class_slug = 'suv' and i.cost = 1500)
+                or (i.class_slug = 'minibus' and i.cost = 2200))
+            group by pl.id having count(*) = 2)
+    and exists (select 1 from public.pricing_settings ps
+            where ps.margin_type = 'percent' and ps.margin_value = 20
+              and ps.margin_min_amount = 100 and not ps.peak_enabled)
+    into v_ready;
+
+  if not v_ready then
+    raise notice '⏭ (و) تُخطّى: تكلفة إحدى القائمتين أو الهامش أو الذروة تغيّرت عمّا قِيس في 2026-08-18';
+    return;
+  end if;
+
+  -- المطار: تكلفة ٦٠٠ + هامش ٢٠٪ = ٧٢٠ · وميني‑باص ٩٠٠+١٨٠=١٠٨٠ تحت أرضية ١٥٠٠
+  select max(q.total) filter (where q.class_slug = 'suv'),
+         max(q.total) filter (where q.class_slug = 'minibus')
+    into v_suv, v_bus
+  from public.quote_public(10, 4, false, 0, 30.114826, 31.350388, 30.100599, 31.332914) q;
+  if v_suv <> 720 or v_bus <> 1500 then
+    raise exception '(و-١) قائمة المطار: توقعنا ٧٢٠/١٥٠٠ وحصلنا %/%', v_suv, v_bus;
+  end if;
+
+  -- الإسكندرية ذهاباً: ١٥٠٠+٣٠٠=١٨٠٠ · ٢٢٠٠+٤٤٠=٢٦٤٠
+  select max(q.total) filter (where q.class_slug = 'suv'),
+         max(q.total) filter (where q.class_slug = 'minibus')
+    into v_suv, v_bus
+  from public.quote_public(220, 4, false, 0, 30.044388, 31.235726, 31.199181, 29.895172) q;
+  if v_suv <> 1800 or v_bus <> 2640 then
+    raise exception '(و-٢) قائمة الإسكندرية: توقعنا ١٨٠٠/٢٦٤٠ وحصلنا %/%', v_suv, v_bus;
+  end if;
+
+  -- ذهاباً وعودةً بساعتَي انتظار: ١٨٠٠×١٫٧٥+١٠٠=٣٢٥٠ · ٢٦٤٠×١٫٨+٢٠٠=٤٩٥٢
+  select max(q.total) filter (where q.class_slug = 'suv'),
+         max(q.total) filter (where q.class_slug = 'minibus')
+    into v_suv, v_bus
+  from public.quote_public(220, 4, true, 2, 30.044388, 31.235726, 31.199181, 29.895172) q;
+  if v_suv <> 3250 or v_bus <> 4952 then
+    raise exception '(و-٣) الذهاب والعودة: توقعنا ٣٢٥٠/٤٩٥٢ وحصلنا %/%', v_suv, v_bus;
+  end if;
+
+  raise notice '✔ (و) أرقام المالك كما هي: ٧٢٠/١٥٠٠ · ١٨٠٠/٢٦٤٠ · ٣٢٥٠/٤٩٥٢';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- الخلاصة
 -- ----------------------------------------------------------------------------
 do $$

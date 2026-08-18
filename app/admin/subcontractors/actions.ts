@@ -67,6 +67,8 @@ const HINT_CODES: Record<string, string> = {
   "not-found": "notfound",
   "subcontractor-not-found": "notfound",
   "note-required": "note",
+  // 0109: عدد مسارات الكشف تغيّر بين رسم الصفحة والضغط ⇒ لم تُكتب حالةٌ واحدة
+  "count-changed": "sheetcount",
 };
 
 function hintCode(error: { hint?: string | null } | null, fallback: string): string {
@@ -321,4 +323,51 @@ export async function reviewPriceList(
   // رمزان مستقلان عن رمزي حالة المتعهد نفسه (`saved=approved` هناك يعني اعتماد
   // الشريك لا اعتماد قائمته) — نفس الصفحة تستقبل الاثنين فلا يجوز خلطهما
   redirect(url(approve ? "saved=approvedlist" : "saved=rejectedlist"));
+}
+
+/**
+ * اعتماد **كشف أسعار كامل** أو رفضه — قرارٌ واحد لكل مساراته المنتظرة (0102).
+ *
+ * هذا هو ما طلبه المالك: متعهد يُدخل ~١٠٠ مسار لا ينتج ~١٠٠ طلب اعتماد.
+ * و`review_price_sheet` هي من يكتب، وهي ترفض غير المشرف صراحةً — وفوقها يبقى
+ * المُشغّل `price_lists_guard_review` مانعاً المتعهد من كتابة `approved` بأي طريق.
+ * الملاحظة إلزامية عند الرفض وتُكتب على كل مسارات الدفعة فيقرؤها المتعهد.
+ *
+ * 🔴 `expected` هو **العدد المطبوع على الزرّ نفسه**، ويصل مربوطاً من الخادم.
+ * وهجرة 0109 تجعله إلزامياً في القاعدة: أي اختلافٍ بينه وبين ما تُمسكه الدالة
+ * `for update` يوقف الكتابة كلها ويعيد `hint = count-changed`. فالرقم المعروض
+ * والرقم المكتوب شيءٌ واحد بنيوياً — لا شيئان يتصادف تطابقهما.
+ * (‏والعبث بالقيمة لا يفتح باباً: من يبلغ هنا مشرفٌ سلفاً، وأقصى ما يناله رقمٌ
+ * يطابق الواقع — أي بالضبط ما كان سيحدث لو أعاد التحميل.)
+ */
+export async function reviewPriceSheet(
+  sheetId: string,
+  approve: boolean,
+  returnTo: string,
+  expected: number,
+  formData: FormData
+) {
+  const back = safeReturn(returnTo);
+  const url = (qs: string) => `${back}?${qs}`;
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url("error=env"));
+
+  const note = trimNote(text(formData, approve ? "approve_note" : "reject_note"));
+  if (!approve && !note) redirect(url("error=note"));
+
+  // عددٌ غير صحيحٍ لا يُرسَل إلى القاعدة أصلاً: `null` هناك رسالتها عامة، وهنا
+  // نعرف السبب بدقة — الشاشة لم تُحصِ ما ستعتمده.
+  if (!Number.isSafeInteger(expected) || expected < 1) redirect(url("error=sheetcount"));
+
+  const { error } = await supabase.rpc("review_price_sheet", {
+    p_id: sheetId,
+    p_approve: approve,
+    p_note: note,
+    p_expected: expected,
+  });
+  if (error) redirect(url(`error=${hintCode(error, "save")}`));
+
+  revalidatePath("/", "layout");
+  redirect(url(approve ? "saved=approvedsheet" : "saved=rejectedsheet"));
 }

@@ -410,7 +410,7 @@ export async function readCorpus(
 }
 
 /** مفتاح الهوية داخل لغة واحدة: المساحة ثم المفتاح */
-export const rowIdentity = (namespace: string, key: string): string => `${namespace} ${key}`;
+export const rowIdentity = (namespace: string, key: string): string => `${namespace}\u0000${key}`;
 
 /** صف «ناقص» مصنوع من الفهرس: لا معرّف له لأنه لم يُكتب في الجدول بعد */
 export function missingRowFrom(locale: string, row: CorpusRow): QueueRow {

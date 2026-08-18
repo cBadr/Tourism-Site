@@ -85,7 +85,10 @@ begin
   end if;
 
   delete from public.extra_services where slug like 'zz-audit-%';
-  delete from public.audit_log      where entity_label like 'zz-audit-%';
+  -- ⚠ ولا حذفَ من `audit_log` بعد 0110: صار مُلحَقاً فقط **فعلاً** — مُشغّلٌ
+  --   يرفض التعديل والحذف حتى بدور مالك الجدول، ولا يمرّ إلا ما تجاوز أرضيةَ
+  --   الاحتفاظ (سنة). وأثرُ الفيكسترة يمحوه `ROLLBACK` الذي يُنهي به
+  --   `scripts/db-test.mjs` كلَّ ملف — فالتنظيفُ صار زائداً، لا مفقوداً.
   delete from public.audit_attempts where operation like 'AUDIT_TESTS%';
   delete from public.subcontractors where company_name like 'AUDIT_TESTS%';
 
@@ -135,9 +138,15 @@ begin
   end if;
 
   -- ولا سجل أحداث مرصود — حلقةٌ تضاعف الحجم بلا معلومة
+  --
+  -- ⚠ والمرشِّح **الدالةُ الموصولة** لا بادئةُ الاسم: `tgname like 'audit\_%'`
+  --   كانت تلتقط أيَّ مُشغّلٍ اسمُه يبدأ بـ`audit_` مهما فعل — ومنها
+  --   `audit_log_append_only` (0110) وهو مُشغّلٌ **يرفض الكتابة** لا يكتب صفاً.
+  --   والمرشِّحُ بالدالة أدقُّ في الاتجاهين: يُسقط الحارسَ من الحساب، ويمسك
+  --   مُشغّلَ تدقيقٍ حقيقياً لو سُمّي بغير البادئة.
   select string_agg(c.relname, '، ') into v_bad
     from pg_trigger t join pg_class c on c.oid = t.tgrelid
-   where not t.tgisinternal and t.tgname like 'audit\_%'
+   where not t.tgisinternal and t.tgfoid = 'public.log_audit'::regproc
      and c.relname in ('funnel_events', 'notifications', 'payment_events',
                        'booking_lookup_attempts', 'distance_cache',
                        'geocode_cache', 'booking_events', 'audit_log',
@@ -445,7 +454,8 @@ begin
     raise exception '(ج) الدورة أنتجت % صفاً لا ثلاثة', v_n;
   end if;
 
-  delete from public.audit_log where id > v_base and entity_label = 'zz-audit-cycle';
+  -- (‏لا حذفَ للصفوف الثلاثة: `audit_log` مُلحَقٌ فقط بعد 0110، ويمحوها
+  --   `ROLLBACK` المُشغّل. والكتلةُ التالية تقرأ `max(id)` من جديد فلا تتأثر.)
   raise notice '✔ (ج) الدورة الثلاثية تُسجَّل بالشكل الصحيح، والحذف وحده يحفظ لقطته';
 end;
 $$;
@@ -481,7 +491,7 @@ begin
   end if;
 
   delete from public.extra_services where id = v_id;
-  delete from public.audit_log where entity_label = 'zz-audit-noise';
+  -- (‏`audit_log` مُلحَقٌ فقط بعد 0110 — و`ROLLBACK` المُشغّل يمحو الأثر)
   raise notice '✔ (د) لمسة updated_at وحدها لا تُسجَّل، والتغيير الحقيقي يُسجَّل';
 end;
 $$;
@@ -649,7 +659,8 @@ begin
     raise exception '(و) record_audit_attempt لم تكتب صفاً (% صفاً)', v_n;
   end if;
 
-  delete from public.audit_log      where id in (v_log_floor, v_log_edge);
+  -- (‏شاهدُ الأرضية عمره ٢٠٠ يوماً — و0110 يرفض حذفَ ما هو أحدث من سنة، وهو
+  --   بعينه ما يجعل شهادته صحيحة. ويمحوه `ROLLBACK` المُشغّل.)
   delete from public.audit_attempts where operation like 'AUDIT_TESTS%';
   raise notice '✔ (و) شاهدٌ عمره ٢٠٠ يوماً نجا وآخرُ ٤٠٠ مُحي في الجدولين — الأرضية تحرس سنةً كاملة والتقليم يقلّم، وتسجيل المحاولة المرفوضة يعمل';
 end;
@@ -857,12 +868,10 @@ begin
   delete from public.profiles        where id = 'a0000000-0000-4000-8000-0000000000d1';
   delete from auth.users             where id = 'a0000000-0000-4000-8000-0000000000d1';
 
-  -- وأثر الفيكسترة من السجل نفسه — الاستثناء الوحيد المصرَّح به: يمحو تاريخاً لم يقع
-  delete from public.audit_log
-   where entity_label like 'zz-audit-%'
-      or entity_label like 'AUDIT_TESTS%'
-      or (entity = 'profiles' and entity_id = 'a0000000-0000-4000-8000-0000000000d1')
-      or (entity = 'subcontractors' and snapshot ->> 'company_name' like 'AUDIT_TESTS%');
+  -- ⚠ وأثرُ الفيكسترة في السجلّ نفسه **لم يعد يُحذف من هنا**: كان هذا
+  --   «الاستثناء الوحيد المصرَّح به» — وهو بالضبط الاستثناءُ الذي أبطل الادّعاء.
+  --   بعد 0110 لا يُعدَّل `audit_log` ولا يُحذف منه إلا ما تجاوز سنةً، ولا
+  --   حاجةَ أصلاً: `scripts/db-test.mjs` يُرجع كلَّ ملف فلا يُكمّ صفٌّ واحد.
   delete from public.audit_attempts where operation like 'AUDIT_TESTS%';
 
   raise notice '✔ (ي) التنظيف تم — لا فيكسترة ولا أثر لها في السجل';

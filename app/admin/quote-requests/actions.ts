@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import {
+  splitLocalDateTime,
+  toIsoFromCairoInputs,
+} from "@/components/booking/checkout/datetime";
 import type { QuoteRequestStatus } from "@/lib/booking-types";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -74,10 +78,51 @@ const CONVERT_HINT_TO_CODE: Record<string, string> = {
   "cost-required": "costrequired",
   "cost-negative": "costnegative",
   "below-floor": "floor",
+  /**
+   * 0108 — 🔴 التكلفة أو التسعيرة **ليست رقماً حقيقياً** (`NaN` أو `±Infinity`).
+   *
+   * ورمزان لا رمزٌ واحد لأن الفعل الذي يُطلب من المالك مختلف: الأول يصحّح ما
+   * كتبه هو في هذه الشاشة، والثاني يعني أن **الصفّ نفسه** في القاعدة معطوب —
+   * ولا يُصلحه إدخالٌ جديد. والاثنان لا يخرجان من الواجهة أصلاً (الفحص أدناه
+   * يسبقهما)، لكنهما يخرجان من أي نداءٍ مباشر لـPostgREST — وهو مسارٌ حقيقي:
+   * الدالة ممنوحةٌ لـ`authenticated`، وحارسها `is_admin()` لا المنحة (D-20).
+   */
+  "cost-not-finite": "costnotfinite",
+  "amount-not-finite": "amountnotfinite",
   "partner-not-found": "nopartner",
   "destination-required": "nodest",
   "db-unavailable": "save",
+  // 0107 — موعد الطلب زحف داخل نافذة المهلة بين التسعير والتحويل
+  "lead-time": "leadtime",
 };
+
+/**
+ * رموز رفض `reschedule_quote_request` (هجرة 0107) ← رموز الرابط.
+ */
+const RESCHEDULE_HINT_TO_CODE: Record<string, string> = {
+  forbidden: "forbidden",
+  "invalid-input": "save",
+  "not-found": "missing",
+  "pickup-required": "nopickup",
+  "pickup-past": "pastpickup",
+  "lead-time": "leadtime",
+  "already-converted": "already",
+  "not-reschedulable": "notreschedulable",
+};
+
+/**
+ * `detail` يصل بصيغة `min_pickup=2026-08-18T01:23:45Z` — ويُقرأ **تاريخاً صالحاً
+ * أو يُهمَل**، ولا يُطبع نصّه الخام أبداً.
+ *
+ * ⚠ والتحقق من الصلاحية ليس تزيّداً: القيمة تُعاد في الرابط وتُعرض، فقيمةٌ
+ * مشوَّهة كانت ستُطبع كما هي في صفحةٍ للمالك.
+ */
+function readMinPickup(details: string | null | undefined): string | null {
+  const match = /(^|[^a-z_])min_pickup=(\S+)/i.exec(details ?? "");
+  if (!match) return null;
+  const parsed = new Date(match[2]);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
 
 /** سقف أساس التكلفة — حارس إدخالٍ لا سياسة: رقمٌ فوقه خطأُ لوحة مفاتيح */
 const MAX_PARTNER_COST = 100_000_000;
@@ -168,11 +213,19 @@ export async function convertQuoteRequest(requestId: string, formData: FormData)
   const classSlug = text("classSlug");
   if (classSlug.length === 0) redirect(back("error=classunknown"));
 
-  // أساس التكلفة: **مطلوب**. والفحص هنا للرسالة لا للحماية — القاعدة ترفض
-  // الفراغ بنفسها، لأن التكلفة المشتقة من السعر تجعل الأرضية تقيس الرقم بنفسه.
+  /**
+   * أساس التكلفة: **مطلوب**. والفحص هنا للرسالة لا للحماية — القاعدة ترفض
+   * الفراغ بنفسها، لأن التكلفة المشتقة من السعر تجعل الأرضية تقيس الرقم بنفسه.
+   *
+   * 🔴 و«فارغ» و«ليس رقماً» فُصلا (0108): كانا يُترجمان إلى «أساس التكلفة مطلوب»
+   * معاً، فمن أرسل نصّاً غير رقميّ يقرأ رسالةً تطلب منه ما كتبه بالفعل. والحالة
+   * الثانية تصل من نداءٍ مصنوع لا من الحقل (‏`type="number"`)، وهي بعينها
+   * الحالة التي كتبت `NaN` في حجزٍ حقيقي قبل 0108.
+   */
   const costRaw = text("partnerCost");
-  const cost = costRaw.length === 0 ? Number.NaN : Number(costRaw);
-  if (!Number.isFinite(cost)) redirect(back("error=costrequired"));
+  if (costRaw.length === 0) redirect(back("error=costrequired"));
+  const cost = Number(costRaw);
+  if (!Number.isFinite(cost)) redirect(back("error=costnotfinite"));
   if (cost < 0) redirect(back("error=costnegative"));
   if (cost > MAX_PARTNER_COST) redirect(back("error=costrange"));
 
@@ -198,9 +251,80 @@ export async function convertQuoteRequest(requestId: string, formData: FormData)
       const min = readFloorMin(error.details);
       redirect(back(min ? `error=floor&min=${min}` : "error=floor"));
     }
+    if (code === "leadtime") {
+      const until = readMinPickup(error.details);
+      redirect(back(until ? `error=leadtime&until=${encodeURIComponent(until)}` : "error=leadtime"));
+    }
     redirect(back(`error=${code}`));
   }
 
   revalidatePath("/", "layout");
   redirect(back("converted=1"));
+}
+
+/**
+ * 0107 — موعدٌ جديد لطلبٍ لم يُحوَّل بعد.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  لماذا وُجدت هذه الدالة أصلاً
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `convert_quote_request` صارت تفرض أدنى مهلة الانطلاق على موعد الطلب **لحظةَ
+ * التحويل** لا لحظةَ إنشائه — لأن الحدّ يزحف مع `now()`، وطلبٌ عبَره يوم وصوله
+ * قد يصير دونه بعد يومين من التفاوض، فيُنشأ حجزٌ لا يستطيع البثّ تنفيذه.
+ *
+ * ولولا هذا الباب لكان ذلك الحارس **طريقاً مسدوداً**: الطلب عالقٌ في «مسعَّر»
+ * ولا سبيل إلى تحريكه إلا بإطفاء `min_lead_minutes` عالمياً — أي إسقاط الحارس
+ * كلّه لأجل صفٍّ واحد.
+ *
+ * ⚠ ولا فحصَ مهلةٍ هنا: القاعدة تفرض **نفس** `booking_min_pickup_at()` التي
+ *   تفرضها على العميل. وفحصٌ ثانٍ في TypeScript كان يصير مصدراً ثانياً لرقمٍ
+ *   واحد — وهو ما ينهى عنه النمط ٨ صراحةً. وهذا الملف يقرأ ويترجم رمزاً، لا أكثر.
+ */
+export async function rescheduleQuoteRequest(requestId: string, formData: FormData) {
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url("error=env"));
+
+  const tabRaw = formData.get("tab");
+  const tab = typeof tabRaw === "string" && isStatus(tabRaw) ? tabRaw : null;
+  const back = (qs: string) => url(tab ? `status=${tab}&${qs}` : qs);
+
+  const raw = formData.get("pickupAt");
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (text.length === 0) redirect(back("error=nopickup"));
+
+  /**
+   * 🔴 **ولا `new Date(text)` هنا أبداً.**
+   *
+   * `datetime-local` يُخرج "YYYY-MM-DDTHH:mm" بلا منطقة زمنية، و`new Date` على
+   * هذه الصيغة يفسّرها **بمنطقة الخادم** — والخادم بتوقيت UTC والموقع بتوقيت
+   * القاهرة (‏`+02:00` شتاءً و`+03:00` صيفاً منذ عودة التوقيت الصيفي 2023).
+   * فموعدٌ يكتبه المالك «٨:٠٠ م» كان سيُخزَّن لحظةً تُقرأ في القاهرة ‏١١:٠٠ م،
+   * ويصل السائق بساعتين خطأ.
+   *
+   * والمسار الواحد المسموح هو `splitLocalDateTime` ← `toIsoFromCairoInputs`،
+   * وهو بعينه الذي يمرّ به نموذج العميل ومسار الحجز. ومسارا تحويلٍ لقيمةٍ
+   * واحدة هو صنف العيب الذي يتكرر في هذا المشروع، فلا يُفتح ثالث.
+   */
+  const [datePart, timePart] = splitLocalDateTime(text);
+  const iso = toIsoFromCairoInputs(datePart, timePart);
+  if (iso === null) redirect(back("error=badpickup"));
+
+  const { error } = await supabase.rpc("reschedule_quote_request", {
+    p_id: requestId,
+    p_pickup_at: iso,
+  });
+
+  if (error) {
+    const hint = (error.hint ?? "").trim();
+    const code = RESCHEDULE_HINT_TO_CODE[hint] ?? "save";
+    if (code === "leadtime") {
+      const until = readMinPickup(error.details);
+      redirect(back(until ? `error=leadtime&until=${encodeURIComponent(until)}` : "error=leadtime"));
+    }
+    redirect(back(`error=${code}`));
+  }
+
+  revalidatePath("/", "layout");
+  redirect(back("rescheduled=1"));
 }

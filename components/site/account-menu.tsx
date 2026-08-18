@@ -57,6 +57,29 @@ import { localeHref } from "./links";
  */
 
 /**
+ * ── 🔴 ولوحُ المظهر يسكن هنا منذ ٢٠٢٦‑٠٨‑١٨ (قرار بدر: الفصل بالوظيفة) ─────
+ *
+ * كتلة اليمين كانت **ستة أهداف** بعرض ٤٤٧ بكسل عند ‏١٢٨٠ لأن مبدّل المظهر ليس
+ * زرّاً بل **ثلاث خانات**. وقراره: اللغة تبقى ظاهرة في الشريط (قرارُ محتوى
+ * يُتّخذ في أول ثوانٍ)، والمظهر ينتقل إلى هذه القائمة (تفضيلٌ شخصي يُضبط مرة).
+ *
+ * والتمرير **عبر `prop` من الترويسة** لا باستيرادٍ هنا، ولا خيار في ذلك:
+ * `ThemeToggle` مكوّنٌ خادميّ `async` يقرأ الكوكي، وهذا الملف `"use client"` —
+ * فاستيراده هنا يحوّله إلى مكوّن عميل ويكسر «بلا جافاسكربت». أما تمريره
+ * مُصيَّراً من مكوّنٍ خادميّ فيمرّ في حمولة RSC سليماً، وهو النمط الوحيد الصحيح.
+ *
+ * ── وثمنُ القرار، مذكوراً لا مخفياً ─────────────────────────────────────────
+ *
+ * ⚠ **مدخل الشريط كان رابطاً مباشراً لمن لا جلسة له، وصار قائمةً.** والسبب أن
+ * الحالة المجهولة هي حالُ الأغلبية الساحقة من الزوار: لو بقيت رابطاً لَما وجد
+ * أيُّ زائرٍ مجهول لوحَ المظهر عند `xl` فصاعداً إطلاقاً — الشريط لا يحمله،
+ * والدرج مخفيٌّ فوق `xl`. أي أن الميزة تختفي عمّن يمثّل ٩٩٪ من الزيارات.
+ *
+ * والثمن: «دخول العملاء» صار نقرتين عند `xl` فصاعداً. وهو محتمَل لأنه **ليس
+ * نداء المنتج الأول** (‏«احجز الآن» هو، وهو باقٍ نقرةً واحدة)، ولأن الرابط يبقى
+ * **نقرةً واحدة** في درج الجوال وفي التذييل — أي أن الطريق القصير لم يُغلق، بل
+ * انتقل إلى العروض التي يكثر فيها.
+ *
  * أين تُركَّب الجزيرة:
  * - `bar`   شريط الإجراءات في الترويسة (زرّ مضغوط بجوار «احجز الآن»)
  * - `drawer` درج الجوال (صفوف كاملة العرض مثل بقية روابط الدرج)
@@ -67,12 +90,18 @@ type AccountMenuProps = {
   variant?: AccountMenuVariant;
   locale?: string;
   className?: string;
+  /**
+   * لوحُ المظهر مُصيَّراً من الترويسة (مكوّن خادميّ) — يُعرض أسفل القائمة في
+   * صيغة `bar` وحدها. وحضورُه هو ما يحوّل الحالة المجهولة من رابطٍ إلى قائمة،
+   * فبقاؤها رابطاً مع وجوده يعني لوحاً لا يبلغه أحد.
+   */
+  theme?: React.ReactNode;
 };
 
 /** حالة الجلسة كما تراها الجزيرة — ولا حرف زيادة (لا بريد ولا معرّف) */
 type SessionState = "anonymous" | "signed-in";
 
-export function AccountMenu({ variant = "bar", locale, className }: AccountMenuProps) {
+export function AccountMenu({ variant = "bar", locale, className, theme }: AccountMenuProps) {
   const t = useT("site.header");
   const [state, setState] = React.useState<SessionState>("anonymous");
 
@@ -113,11 +142,12 @@ export function AccountMenu({ variant = "bar", locale, className }: AccountMenuP
   const bookingsLabel = t("myBookings", "حجوزاتي");
   const signOutLabel = t("signOut", "خروج");
 
+  /** صفٌّ كامل العرض — واحدٌ للدرج ولقائمة الشريط، فلا يفترق إيقاعُ الصفوف */
+  const rowClass =
+    "flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted";
+
   /* ───────────────────────── درج الجوال ───────────────────────── */
   if (variant === "drawer") {
-    const rowClass =
-      "flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted";
-
     if (state === "anonymous") {
       return (
         <a href={loginHref} className={cn(rowClass, "text-foreground", className)}>
@@ -145,10 +175,16 @@ export function AccountMenu({ variant = "bar", locale, className }: AccountMenuP
 
   /* ─────────────────── شريط الإجراءات في الترويسة ─────────────────── */
 
+  /* `border-input` لا `border-border`: هذا حدُّ **عنصر تحكّم** يُنقر، و
+     `WCAG 1.4.11` يطلب له ٣:١. و`--border` رمزُ هويةٍ قياسه ١.٢٩/١.٤٣ — راسبٌ
+     لهذا الغرض، ناجحٌ لخطّ البطاقة الذي وُجد له (‏`globals.css` §(ز)). */
   const barClass =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-input px-3 py-2 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
 
-  if (state === "anonymous") {
+  /* بلا لوح مظهرٍ مُمرَّر تبقى الحالة القديمة حرفاً: رابطٌ مباشر بنقرة واحدة.
+     ومع اللوح تصير قائمةً في الحالتين — وإلا لم يبلغ اللوحَ زائرٌ مجهول عند
+     `xl` فصاعداً أبداً (الشريط لا يحمله، والدرج مخفيّ فوق `xl`). */
+  if (state === "anonymous" && !theme) {
     return (
       <a href={loginHref} className={cn(barClass, className)}>
         <UserRound className="size-4 shrink-0" aria-hidden="true" />
@@ -159,15 +195,21 @@ export function AccountMenu({ variant = "bar", locale, className }: AccountMenuP
 
   /*
    * قائمة `details/summary` الأصلية — نفس نمط قائمة الجوال ومبدّل اللغة: تفتح
-   * بالكيبورد وبقارئ الشاشة بلا سطر JavaScript إضافي، ولا تحتاج مكتبة.
+   * بالكيبورد وبقارئ الشاشة بلا سطر JavaScript إضافي، ولا تحتاج مكتبة. ونموذج
+   * المظهر يعمل داخلها كما يعمل نموذج الخروج — `details` لا يمنع `form`.
    */
+  const menuLabel = t("accountMenu", "قائمة الحساب");
+
   return (
     <details className={cn("group relative", className)}>
       <summary
-        aria-label={t("accountMenu", "قائمة الحساب")}
+        aria-label={menuLabel}
         className={cn(barClass, "cursor-pointer list-none [&::-webkit-details-marker]:hidden")}
       >
         <UserRound className="size-4 shrink-0" aria-hidden="true" />
+        {/* «حسابي» في الحالتين لا «دخول العملاء»: هذا فاتحُ قائمةٍ لا فعلُ دخول،
+            وتسميتُه باسم الفعل تَعِد بما لا تفي به الضغطة. والفعل نفسه أول صفٍّ
+            في الداخل بنصّه الصريح. ولا مفتاح رسائل جديداً: `account` قائم. */}
         {accountLabel}
         <ChevronDown
           className="size-3.5 shrink-0 transition-transform group-open:rotate-180"
@@ -175,39 +217,54 @@ export function AccountMenu({ variant = "bar", locale, className }: AccountMenuP
         />
       </summary>
 
-      <nav
-        aria-label={t("accountMenu", "قائمة الحساب")}
-        /* `end-0` و`top-11` مطابقتان لقائمة الجوال ومبدّل اللغة حرفاً — ثلاث
-           قوائم في شريط واحد يجب أن تنسدل من الموضع نفسه، و`end` منطقية فتنقلب
-           وحدها في LTR بعد تفعيل الإنجليزية (اتفاقيات §١). */
-        className="absolute end-0 top-11 z-50 flex w-48 flex-col gap-1 rounded-2xl border border-border bg-background p-2 shadow-xl"
-      >
-        {/* «حجوزاتي» (الفجوة ١٣) — موضعها الطبيعي تحت زرّ الحساب لا في شريط
-            الروابط، فمن لا حساب له لا يعنيه مدخلٌ إلى قائمةٍ فارغة. */}
-        <a
-          href={bookingsHref}
-          className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-        >
-          <TicketCheck className="size-4 shrink-0" aria-hidden="true" />
-          {bookingsLabel}
-        </a>
+      {/* `end-0` و`top-11` مطابقتان لقائمة الجوال ومبدّل اللغة حرفاً — ثلاث
+          قوائم في شريط واحد يجب أن تنسدل من الموضع نفسه، و`end` منطقية فتنقلب
+          وحدها في LTR بعد تفعيل الإنجليزية (اتفاقيات §١).
+          و`div` تغلّف `nav`: لوحُ المظهر **ليس تنقّلاً**، فوضعُه داخل معْلَمِ
+          تنقّلٍ يكذب على قارئ الشاشة. */}
+      <div className="absolute end-0 top-11 z-50 flex w-48 flex-col gap-1 rounded-2xl border border-border bg-background p-2 shadow-xl">
+        <nav aria-label={menuLabel} className="flex flex-col gap-1">
+          {state === "anonymous" ? (
+            <a href={loginHref} className={cn(rowClass, "text-foreground")}>
+              <UserRound className="size-4 shrink-0" aria-hidden="true" />
+              {signInLabel}
+            </a>
+          ) : (
+            <>
+              {/* «حجوزاتي» (الفجوة ١٣) — موضعها الطبيعي تحت زرّ الحساب لا في
+                  شريط الروابط، فمن لا حساب له لا يعنيه مدخلٌ إلى قائمةٍ فارغة. */}
+              <a href={bookingsHref} className={cn(rowClass, "text-foreground")}>
+                <TicketCheck className="size-4 shrink-0" aria-hidden="true" />
+                {bookingsLabel}
+              </a>
 
-        {/*
-          نموذج `POST` لا رابط — نفس قرار شريط `/account`: الخروج يغيّر حالة
-          الخادم، ورابطُ GET يستهلكه سابقُ الجلب في المتصفح فيَخرج المستخدم بلا
-          أن يضغط شيئاً. وهو هنا لأن زرّ الخروج كان محبوساً في صفحات `/account`
-          وحدها: من دخل ثم تصفّح الموقع لم يكن يجد طريقاً للخروج.
-        */}
-        <form action={signOutAccount}>
-          <button
-            type="submit"
-            className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <LogOut className="size-4 shrink-0" aria-hidden="true" />
-            {signOutLabel}
-          </button>
-        </form>
-      </nav>
+              {/*
+                نموذج `POST` لا رابط — نفس قرار شريط `/account`: الخروج يغيّر
+                حالة الخادم، ورابطُ GET يستهلكه سابقُ الجلب في المتصفح فيَخرج
+                المستخدم بلا أن يضغط شيئاً. وهو هنا لأن زرّ الخروج كان محبوساً في
+                صفحات `/account` وحدها: من دخل ثم تصفّح الموقع لم يجد طريقاً
+                للخروج.
+              */}
+              <form action={signOutAccount}>
+                <button
+                  type="submit"
+                  className={cn(rowClass, "w-full text-muted-foreground hover:text-foreground")}
+                >
+                  <LogOut className="size-4 shrink-0" aria-hidden="true" />
+                  {signOutLabel}
+                </button>
+              </form>
+            </>
+          )}
+        </nav>
+
+        {theme ? (
+          <>
+            <span aria-hidden="true" className="my-1 h-px bg-border" />
+            {theme}
+          </>
+        ) : null}
+      </div>
     </details>
   );
 }

@@ -131,3 +131,67 @@ export type CoverageMatch = {
   reversed: boolean;
   cost: number | null;
 };
+
+/* ------------------------------------------------------------------ */
+/* كشوف الأسعار — هجرة 0102                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * **كشف أسعار**: ما يسمّيه المالك «قائمة الأسعار» — يضم مساراتٍ كثيرة
+ * (صفوف `PriceListRow`) ويُعتمد **مرّة واحدة**.
+ *
+ * 🔑 الكشف **لا يحمل حالة**: الحالة تبقى في `PriceListRow.status` وحدها، وهي
+ * نفس العمود الذي تقرؤه `coverage_matches`. فما تراه هنا عدّاداتٌ مشتقّة من
+ * مسارات الكشف لا حالةٌ ثانية تنحرف عنها.
+ */
+export type PriceSheetRow = {
+  id: string;
+  subcontractorId: string;
+  companyName: string;
+  title: string;
+  note: string | null;
+  routes: number;
+  draftCount: number;
+  pendingCount: number;
+  approvedCount: number;
+  rejectedCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+/**
+ * فئة معروضة للتسعير. `covered = false` تعني «مُسعَّرة في هذا المسار لكن لم يعد
+ * للمتعهد مركبة فيها» — تُعرض ليصحّحها هو، ولا تُحذف بصمت.
+ */
+export type PriceSheetClass = {
+  slug: string;
+  title: string;
+  capacity: number | null;
+  sort: number;
+  covered: boolean;
+};
+
+/** سطرٌ في تقرير الاستيراد — صفٌّ من الملف وما جرى له ولماذا */
+export type PriceImportRow = {
+  rowNo: number;
+  accepted: boolean;
+  /** created · updated · created-preview · updated-preview · rejected */
+  action: string;
+  routeTitle: string | null;
+  classesSaved: number;
+  reason: string | null;
+};
+
+/** أعمدة قالب CSV الثابتة — وما بعدها أعمدة أسعار بأسماء الفئات (slug) */
+export const PRICE_IMPORT_COLUMNS = [
+  "title",
+  "originLabel",
+  "originLat",
+  "originLng",
+  "originRadiusKm",
+  "destLabel",
+  "destLat",
+  "destLng",
+  "destRadiusKm",
+  "bidirectional",
+] as const;

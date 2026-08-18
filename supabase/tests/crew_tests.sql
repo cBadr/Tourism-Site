@@ -426,9 +426,8 @@ begin
 
   delete from public.subcontractor_drivers where name like 'CREW_TESTS%';
   update public.subcontractor_vehicles set color = null where color like 'CREW_TESTS%';
-  delete from public.audit_log where entity = 'subcontractor_drivers'
-     and (entity_label like 'CREW_TESTS%'
-          or snapshot ->> 'name' like 'CREW_TESTS%');
+  -- ⚠ ولا حذفَ من `audit_log` بعد 0110: صار مُلحَقاً فقط فعلاً (مُشغّلٌ يرفض
+  --   حتى بدور مالك الجدول). و`scripts/db-test.mjs` يُرجع كلَّ ملف فلا يبقى أثر.
 
   raise notice '✔ (ط) التنظيف تم — لا فيكسترة ولا أثر لها في السجل';
 end;

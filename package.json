@@ -11,6 +11,7 @@
     "check:rsc-leaks:self-test": "node scripts/check-client-value-leaks.mjs --self-test",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:test": "node scripts/db-test.mjs",
+    "facts": "node scripts/facts.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
     "demo:seed": "node scripts/demo-seed.mjs",

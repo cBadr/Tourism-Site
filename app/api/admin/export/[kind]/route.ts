@@ -870,7 +870,45 @@ const BOOKING_COLUMNS = [
   "margin_amount",
 ] as const;
 
-/** مرآة `STATUS_LABELS` في `app/admin/orders/_components/booking-ui.tsx` */
+/**
+ * مرآة `STATUS_LABELS` في `app/admin/orders/_components/booking-ui.tsx`،
+ * **وشرطُها أن تكون تامّةً على مجال `bookings_status_check` لا أقلّ منه**.
+ *
+ * ── 🔴 غيابُ `failed` كان عيبين لا واحداً ────────────────────────────────────
+ * هجرة `0051` وسّعت القيد إلى سبع حالات ولم تصل السابعة إلى هنا، فوقع معاً:
+ *
+ *   • **٤٠٠ «حالة غير معروفة»** على تبويب «لم يتم التنفيذ» في `/admin/orders`:
+ *     الزرّ يمرّر `?status=failed` (‏`components/admin/export-link.tsx`) والقاموس
+ *     يرفضه — فالتبويب الوحيد الذي يقيس **جودة التشغيل** هو الوحيد الذي لا
+ *     يُصدَّر، وهو أحوجها إلى ملفٍّ يُراجَع.
+ *   • **`failed` لاتينيةً عاريةً في خانة عربية** عند التصدير تحت «كل الحالات»
+ *     (السطر `BOOKING_STATUS_LABELS[state] ?? state`) — نفس عيب `settlement`
+ *     الذي وقع في القسم (٤) بالحرف.
+ *
+ * ── 🔒 والقاموس يؤدّي وظيفتين، وقد بقيتا **مندمجتين بقرارٍ** لا بإهمال ───────
+ * (١) التسمية العربية لكل حالة، و(٢) قائمةُ ما يقبله وسيط `?status=`.
+ *
+ * والفصلُ إلى ثابتين **يزيد الانحراف ولا يمنعه**، لأن المجموعتين واحدةٌ بالبناء
+ * لا بالمصادفة: التسمية يجب أن تعمّ مجال القيد كلَّه وإلّا خرج معرّف لاتيني،
+ * وقائمةُ القبول يجب أن تعمّه كذلك وإلّا انكسر تبويبٌ قائم، وقبولُ ما ليس في
+ * المجال بلا معنى أصلاً لأنه يُخرج ملفاً فارغاً. فنسختان تعنيان أن تُضاف حالةٌ
+ * إلى إحداهما وحدها ⇒ **تُقبَل في الترشيح وتُطبَع لاتينيةً في الخانة**: انحرافٌ
+ * صامت أسوأ من الـ٤٠٠ الصاخب الذي أوقعنا هنا، لأن الصاخب يجده أوّل من يضغط
+ * الزرّ والصامت لا يجده أحد.
+ *
+ * ولذلك: **قاموسٌ واحد**، والوظيفة الثانية **تُسمّى** في `isKnownBookingStatus`
+ * أدناه بدل أن تختبئ في `hasOwnProperty` وسط شرطٍ في جسم البانية، **والتمامُ على
+ * القيد يُفحَص آلياً لا يُوعَد به في تعليق**:
+ *
+ *     node scripts/check-export-status-parity.mjs
+ *
+ * يقرأ `bookings_status_check` من القاعدة الحيّة ويقارنه بمفاتيح هذا القاموس في
+ * الاتجاهين — وهو **يسقط أحمر على النسخة التي سبقت هذا السطر**.
+ *
+ * ⚠ وما **لا** يفعله هذا الإصلاح: لا يوسّع عمود بيانات ولا حارساً. `?status=`
+ * ترشيحٌ يضيّق مجموعةً يُخرجها التصدير بلا وسيط أصلاً — نفس الأعمدة ونفس السقف
+ * ونفس جلسة المدير — فقبولُ `failed` **لا يُخرج صفّاً ولا خانةً لم تكن تخرج**.
+ */
 const BOOKING_STATUS_LABELS: Record<string, string> = {
   pending_payment: "بانتظار الدفع",
   under_review: "قيد المراجعة",
@@ -878,7 +916,21 @@ const BOOKING_STATUS_LABELS: Record<string, string> = {
   assigned: "تم الإسناد",
   completed: "تم التنفيذ",
   cancelled: "تم الإلغاء",
+  failed: "لم يتم التنفيذ",
 };
+
+/**
+ * الوظيفة الثانية للقاموس، مسمّاةً: **«هل لهذه الحالة تسميةٌ عربية؟»**
+ *
+ * ⚠ وهي **ليست حارس صلاحية ولا حارس حقن**، ولا يجوز أن تُقرأ كذلك: حارسُ هذا
+ * المسار جلسةٌ ودورٌ في القسم (٢) وحدهما، وقيمةُ الوسيط تصل الاستعلام **مُعامِلاً
+ * في `.eq()`** لا نصّاً مُلصقاً في SQL. وما تحرسه هذه الدالة شيءٌ ثالث:
+ * **الملفُّ الفارغ الكاذب**. فـ`?status=faild` بلا فحصٍ تُخرج CSV سليم الشكل
+ * ذيلُه «٠ صفاً» يقرؤه المالك «لا حجوزات في هذه الحالة» — وهو حرفياً العيب الذي
+ * بُني له تبديلُ التاريخين المقلوبين في `readPeriod`.
+ */
+const isKnownBookingStatus = (value: string): boolean =>
+  Object.prototype.hasOwnProperty.call(BOOKING_STATUS_LABELS, value);
 
 /** مرآة `PLAN_LABELS` — خطة الدفع المجمَّدة في الحجز */
 const BOOKING_PLAN_LABELS: Record<string, string> = {
@@ -911,7 +963,7 @@ async function buildBookings(input: BuilderInput): Promise<Response> {
    * واحد**، والحجز الواحد يُفتح ولا يُصدَّر.
    */
   const status = (url.searchParams.get("status") ?? "").trim();
-  if (status !== "" && !Object.prototype.hasOwnProperty.call(BOOKING_STATUS_LABELS, status)) {
+  if (status !== "" && !isKnownBookingStatus(status)) {
     return errorJson(
       "invalid-input",
       `حالة غير معروفة. المتاح: ${Object.keys(BOOKING_STATUS_LABELS).join(" · ")}.`,
@@ -992,7 +1044,11 @@ async function buildBookings(input: BuilderInput): Promise<Response> {
     ];
   });
 
-  const statusLabel = status === "" ? "كل الحالات" : BOOKING_STATUS_LABELS[status];
+  // ‏`?? status` احتياطٌ لا يُبلَغ اليوم — `isKnownBookingStatus` تضمن المفتاح —
+  // لكنه يوجد لأن البديل عند أي انفصالٍ مستقبليّ بين القائمتين ليس معرّفاً
+  // لاتينياً بل **`undefined` حرفياً** في اسم الملف وفي ذيله: «الحجوزات —
+  // undefined — كامل السجل». ومعرّفٌ خام أسوأ من تسمية، وأحسن من كلمةٍ لا معنى لها.
+  const statusLabel = status === "" ? "كل الحالات" : (BOOKING_STATUS_LABELS[status] ?? status);
   const periodLabel = periodText(period.from, period.to);
 
   return csvFileResponse({

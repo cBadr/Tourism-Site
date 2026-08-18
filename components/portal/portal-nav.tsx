@@ -8,6 +8,7 @@ import {
   IdCard,
   LayoutDashboard,
   ReceiptText,
+  ScrollText,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -30,6 +31,7 @@ import { cn } from "@/lib/utils";
 type PortalNavItem = {
   href:
     | "/portal"
+    | "/portal/agreement"
     | "/portal/profile"
     | "/portal/notifications"
     | "/portal/fleet"
@@ -41,6 +43,14 @@ type PortalNavItem = {
 
 const ITEMS: PortalNavItem[] = [
   { href: "/portal", label: "لوحة المتعهد", icon: LayoutDashboard },
+  /*
+    «الاتفاقية» أولُ بندٍ بعد اللوحة، وقبل «ملفي»: هي **شرط الأهلية نفسه** لا
+    خطوةَ تجهيز — من لم يقبلها بعد انقضاء مهلته يسقط من حوض البثّ (هجرة 0113).
+    وبقاؤها بلا بندٍ في التنقل كان يعني أنها لا وجود لها عند من لا يعرف رابطها
+    (القاعدة الذهبية ١٧: ابحث عن المنادي قبل الإعلان) — ومعالج التجهيز وحده لا
+    يكفي: هو يزول بزوال سببه، والشريك يحتاج أن يعود إلى نصّها بعد قبولها.
+  */
+  { href: "/portal/agreement", label: "الاتفاقية", icon: ScrollText },
   { href: "/portal/profile", label: "ملفي", icon: UserRound },
   { href: "/portal/notifications", label: "قنوات التنبيه", icon: BellRing },
   { href: "/portal/fleet", label: "أسطولي", icon: CarFront },

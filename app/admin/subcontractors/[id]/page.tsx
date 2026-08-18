@@ -40,6 +40,7 @@ import {
   relativeTime,
 } from "../../orders/_components/booking-ui";
 import { PriceListCard } from "../_components/price-list-card";
+import { PriceSheetCard, type SheetHeader } from "../_components/price-sheet-card";
 import {
   EMPTY_PRICING_CONTEXT,
   loadPricingContext,
@@ -76,6 +77,16 @@ import { resendInvite, setSubcontractorStatus, unlinkPartnerTelegram } from "../
  */
 
 export const metadata = { title: "ملف المتعهد" };
+
+/**
+ * سقف **قراءة** مسارات المتعهد. كان الاستعلام بلا سقفٍ إطلاقاً فيقع الاقتطاع
+ * عند حدّ PostgREST الضمني — صامتاً وبلا رقم. صريحٌ الآن، و`count: exact` يجعل
+ * الفارق مرئياً في الصفحة بدل أن يُخمَّن.
+ */
+const MAX_DETAIL_ROUTES = 500;
+
+/** بطاقاتٌ مفصّلة لمسارٍ واحد — سقفُ عرضٍ لا سقفَ قرار (كل بطاقة قرارها وحدها) */
+const MAX_DETAIL_CARDS = 24;
 
 const hasSupabaseEnv = () =>
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
@@ -123,7 +134,22 @@ type Loaded = {
   vehiclesFailed: boolean;
   lists: PriceListView[];
   listsFailed: boolean;
+  /**
+   * 🔴 عدد مسارات هذا المتعهد **كلها** كما في القاعدة، لا كما وصل.
+   * كان الاستعلام بلا `.limit()` إطلاقاً فيعتمد على سقف PostgREST الضمني —
+   * اقتطاعٌ صامت بلا حتى تحذير «الأقدم أولاً». الآن السقف صريح والفارق مُعلَن.
+   */
+  listsTotal: number;
   itemsByList: Map<string, PriceItemView[]>;
+  /** معرّف الكشف لكل مسار — `null` = مسار مستقل (النموذج القديم قبل 0102) */
+  sheetOf: Map<string, string | null>;
+  sheets: Map<string, { title: string; note: string | null }>;
+  /**
+   * عدد المسارات المنتظرة لكل كشف من `price_sheet_stats` — **مصدر مستقل** عن
+   * صفوف هذه الصفحة، وهو نفسه الذي تعمل عليه `review_price_sheet`. اختلافه عمّا
+   * رُسم يُلغي زرّ الاعتماد في البطاقة (0109).
+   */
+  pendingBySheet: Map<string, number>;
   pricing: PricingContext;
   /** دور حساب الدخول المرتبط كما هو في `profiles` — null إن لم يُقرأ */
   linkedRole: string | null;
@@ -185,7 +211,11 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     vehiclesFailed: false,
     lists: [],
     listsFailed: false,
+    listsTotal: 0,
     itemsByList: new Map(),
+    sheetOf: new Map(),
+    sheets: new Map(),
+    pendingBySheet: new Map(),
     pricing: EMPTY_PRICING_CONTEXT,
     linkedRole: null,
     settlementReady: false,
@@ -213,13 +243,17 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     creditRes,
     currencyRes,
     telegramRes,
+    statsRes,
   ] = await Promise.all([
       supabase.from("subcontractor_vehicles").select("*").eq("subcontractor_id", id),
+      // 🔴 سقفٌ صريح + `count: exact`: بلا الاثنين كان الاقتطاع يقع عند سقف
+      // PostgREST الضمني بلا أثرٍ يُرى — لا رقمَ ولا تحذير. الآن يُقاس ويُقال.
       supabase
         .from("price_lists")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("subcontractor_id", id)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(MAX_DETAIL_ROUTES),
       loadPricingContext(supabase),
       sub.profileId
         ? supabase.from("profiles").select("id, role").eq("id", sub.profileId).maybeSingle()
@@ -237,15 +271,55 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
        * 🔒 ولا يخرج منها المعرّف نفسه: بوليان ورمزٌ فقط.
        */
       supabase.rpc("admin_partner_telegram", { p_subcontractor: id }),
+      /**
+       * عدّادات الكشوف — **التعريف الوحيد** لعدد المنتظر في كل كشف، وهو نفسه
+       * الذي تقرؤه `review_price_sheet`. عدُّه هنا من صفوف الصفحة كان يصنع
+       * مصدرَي حقيقة، وأولُ افتراقٍ بينهما يظهر باعتمادٍ أوسع من الشاشة لا بخطأ.
+       */
+      supabase.rpc("price_sheet_stats", { p_subcontractor_id: id }),
     ]);
 
   const vehicles = vehiclesRes.error
     ? []
     : ((vehiclesRes.data ?? []) as Record<string, unknown>[]).map(readVehicle);
 
-  const lists = listsRes.error
-    ? []
-    : ((listsRes.data ?? []) as Record<string, unknown>[]).map(readPriceList);
+  const rawLists = listsRes.error ? [] : ((listsRes.data ?? []) as Record<string, unknown>[]);
+  const lists = rawLists.map(readPriceList);
+  const listsTotal = typeof listsRes.count === "number" ? listsRes.count : lists.length;
+
+  // عدّاد المنتظر لكل كشف — من الدالة لا من الصفوف
+  const pendingBySheet = new Map<string, number>();
+  if (!statsRes.error) {
+    for (const row of (statsRes.data ?? []) as Record<string, unknown>[]) {
+      const sheetId = asText(row.id);
+      if (!sheetId) continue;
+      const n = Number(row.pending_count);
+      pendingBySheet.set(sheetId, Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    }
+  }
+
+  // الكشوف (0102) — تُقرأ دفاعياً فتبقى الشاشة عاملة على قاعدة قبل الهجرة
+  const sheetOf = new Map<string, string | null>();
+  for (const row of rawLists) {
+    const sheetId = row.sheet_id;
+    sheetOf.set(String(row.id), typeof sheetId === "string" && sheetId !== "" ? sheetId : null);
+  }
+  const sheets = new Map<string, { title: string; note: string | null }>();
+  const sheetIds = [...new Set([...sheetOf.values()].filter((v): v is string => v !== null))];
+  if (sheetIds.length > 0) {
+    const sheetsRes = await supabase
+      .from("price_sheets")
+      .select("id, title, note")
+      .in("id", sheetIds);
+    if (!sheetsRes.error) {
+      for (const row of (sheetsRes.data ?? []) as Record<string, unknown>[]) {
+        sheets.set(String(row.id), {
+          title: asText(row.title) ?? "كشف بلا اسم",
+          note: asText(row.note),
+        });
+      }
+    }
+  }
 
   const itemsByList = new Map<string, PriceItemView[]>();
   if (lists.length > 0) {
@@ -274,7 +348,11 @@ async function loadSubcontractor(id: string): Promise<Loaded> {
     vehiclesFailed: Boolean(vehiclesRes.error),
     lists,
     listsFailed: Boolean(listsRes.error),
+    listsTotal,
     itemsByList,
+    sheetOf,
+    sheets,
+    pendingBySheet,
     pricing,
     linkedRole:
       profileRes && !profileRes.error
@@ -622,7 +700,11 @@ export default async function SubcontractorProfilePage({
     vehiclesFailed,
     lists,
     listsFailed,
+    listsTotal,
     itemsByList,
+    sheetOf,
+    sheets,
+    pendingBySheet,
     pricing,
     linkedRole,
     settlementReady,
@@ -649,8 +731,11 @@ export default async function SubcontractorProfilePage({
     manual: "حُفظ حساب المتعهد. لم يُرسل الرابط آلياً — أرسله بالأمر أدناه.",
     invitefail: "حُفظ حساب المتعهد وتعذّر إرسال البريد — أرسل الرابط بالأمر أدناه.",
     approvedlist:
-      "اعتُمدت القائمة — أسعارها تدخل التسعير فوراً ما دام حساب المتعهد معتمداً.",
-    rejectedlist: "رُفضت القائمة وعادت إلى المتعهد بملاحظتك.",
+      "اعتُمد المسار — أسعاره تدخل التسعير فوراً ما دام حساب المتعهد معتمداً.",
+    rejectedlist: "رُفض المسار وعاد إلى المتعهد بملاحظتك.",
+    approvedsheet:
+      "اعتُمد الكشف كله — مساراته تدخل التسعير فوراً ما دام حساب المتعهد معتمداً.",
+    rejectedsheet: "رُفض الكشف كله وعادت مساراته إلى المتعهد بملاحظتك.",
     tgunlinked:
       "فُصل ربط تليجرام عن هذا المتعهد — لن تصله عروض عليه حتى يربط حساباً مستقلاً من بوابته.",
   };
@@ -688,6 +773,26 @@ export default async function SubcontractorProfilePage({
   );
   const pendingLists = lists.filter((l) => l.status === "pending");
   const activeVehicles = vehicles.filter((v) => v.active);
+
+  /**
+   * التجميع بالكشف: ما ينتظر قراراً ويقع داخل كشف يُعرض بطاقةً واحدة بقرارٍ واحد
+   * (وهذا نصّ ما طلبه المالك: ١٠٠ مسار ⇒ طلب اعتماد واحد). وما عداه يبقى ببطاقته
+   * المفصّلة، **بسقفٍ** لأن متعهداً بمئة مسار كان سيولّد مئة بطاقة في صفحة واحدة.
+   */
+  const pendingSheets = new Map<string, PriceListView[]>();
+  const singles: PriceListView[] = [];
+  for (const list of [...pendingLists, ...lists.filter((l) => l.status !== "pending")]) {
+    const sheetId = sheetOf.get(list.id) ?? null;
+    if (list.status === "pending" && sheetId && sheets.has(sheetId)) {
+      const bucket = pendingSheets.get(sheetId);
+      if (bucket) bucket.push(list);
+      else pendingSheets.set(sheetId, [list]);
+    } else {
+      singles.push(list);
+    }
+  }
+  const shownCards = singles.slice(0, MAX_DETAIL_CARDS);
+  const hiddenCards = singles.length - shownCards.length;
 
   const isApproved = sub.status === "approved";
   const isSuspended = sub.status === "suspended";
@@ -1027,16 +1132,63 @@ export default async function SubcontractorProfilePage({
             حتى ذلك الحين تُسعَّر رحلاته بتعريفة الكيلومتر.
           </Card>
         ) : (
-          [...pendingLists, ...lists.filter((l) => l.status !== "pending")].map((list) => (
-            <PriceListCard
-              key={list.id}
-              list={list}
-              items={itemsByList.get(list.id) ?? []}
-              pricing={pricing}
-              returnTo={`/admin/subcontractors/${sub.id}`}
-              readOnly={!ready}
-            />
-          ))
+          <>
+            {listsTotal > lists.length && (
+              <p className="rounded-lg border border-amber-400/60 bg-amber-50/60 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/20 dark:text-amber-200">
+                لهذا المتعهد {toArabicDigits(listsTotal)} مساراً، والمقروء في هذه الصفحة{" "}
+                {toArabicDigits(lists.length)} (الأحدث أولاً). الطابور الكامل في{" "}
+                <Link href="/admin/subcontractors/reviews" className="underline">
+                  مراجعة الأسعار
+                </Link>
+                ، وهو يعرض كل كشفٍ كاملاً.
+              </p>
+            )}
+
+            {/* الكشوف المنتظرة أولاً: قرارٌ واحد للدفعة كلها (0102) */}
+            {[...pendingSheets.entries()].map(([sheetId, sheetLists]) => {
+              const header = sheets.get(sheetId);
+              const sheet: SheetHeader = {
+                id: sheetId,
+                title: header?.title ?? "كشف بلا اسم",
+                note: header?.note ?? null,
+                companyName: sub.companyName,
+                companyId: null,
+                companyApproved: sub.status === "approved",
+                // العدّاد المستقل حين يُقرأ؛ وإن تعذّر فما رُسم — والحاجز الأخير
+                // يبقى في القاعدة (0109) لا في هذا السطر
+                pendingCount: pendingBySheet.get(sheetId) ?? sheetLists.length,
+              };
+              return (
+                <PriceSheetCard
+                  key={sheetId}
+                  sheet={sheet}
+                  lists={sheetLists}
+                  itemsByList={itemsByList}
+                  pricing={pricing}
+                  returnTo={`/admin/subcontractors/${sub.id}`}
+                  readOnly={!ready}
+                />
+              );
+            })}
+
+            {shownCards.map((list) => (
+              <PriceListCard
+                key={list.id}
+                list={list}
+                items={itemsByList.get(list.id) ?? []}
+                pricing={pricing}
+                returnTo={`/admin/subcontractors/${sub.id}`}
+                readOnly={!ready}
+              />
+            ))}
+
+            {hiddenCards > 0 && (
+              <Card className="p-5 text-sm text-muted-foreground">
+                و{toArabicDigits(hiddenCards)} مساراً آخر في كشوف هذا المتعهد لا تنتظر قراراً
+                منك الآن — تُعرض كاملةً في بوابته، وما يُرسَل للمراجعة يظهر أعلاه دفعةً واحدة.
+              </Card>
+            )}
+          </>
         )}
       </div>
 

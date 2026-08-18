@@ -1,16 +1,7 @@
 import Link from "next/link";
-import {
-  ArrowLeft,
-  MapPin,
-  MessageSquareWarning,
-  Plus,
-  ReceiptText,
-  Repeat,
-  Send,
-  Trash2,
-} from "lucide-react";
+import { FolderPlus, MapPin, Plus, ReceiptText, Repeat, Send, Trash2 } from "lucide-react";
 
-import { formatDistance, toArabicDigits } from "@/components/booking/format";
+import { toArabicDigits } from "@/components/booking/format";
 import {
   Banners,
   countLabel,
@@ -21,164 +12,78 @@ import {
   Notice,
   PageHeading,
   PriceListStatusBadge,
+  TextField,
 } from "@/components/portal/portal-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { countItemsByList, loadPriceLists, type PortalPriceList } from "../_lib/data";
 import { portalSetupAccess } from "../_lib/session";
+import { routesText, SheetCounts } from "./_components/sheet-bits";
+import { countItemsByRoute, loadRoutes, loadSheets } from "./_lib/sheets";
 import { deletePriceList, submitPriceList } from "./actions";
+import { saveSheet } from "./sheets/actions";
 
 /**
- * قوائم أسعار المتعهد — الشاشة التي يعيش فيها عمله الحقيقي.
+ * أسعار المتعهد — الشاشة التي يعيش فيها عمله الحقيقي.
  *
- * كل قائمة = مسار بنقطتين ونطاقيهما وأسعار فئاته. الحالة هي البطل هنا: المتعهد
- * يحتاج أن يعرف بنظرة واحدة أي قوائمه تعمل فعلاً (المعتمدة) وأيها ينتظره هو
- * (المسودة والمرفوضة) وأيها ينتظر الإدارة (قيد الاعتماد) — ولذلك تتصدر الشارةُ
- * البطاقةَ وتُعرض ملاحظة المراجعة كاملة بلا طيّ.
+ * 🔑 بعد 0102 صار المستوى الأعلى هو **الكشف**: قائمة أسعار واحدة تضم مسارات
+ * كثيرة وتُرسَل للاعتماد مرّة واحدة. وقبل ذلك كانت كل «قائمة» مساراً واحداً
+ * بطلب اعتماد مستقل — ومئة مسار كانت تعني مئة طلب، وهو ما شكا منه المالك.
+ *
+ * والمسارات القديمة المستقلة (‏`sheet_id = null`) تبقى تعمل كما هي في قسمها
+ * الخاص بلا أي مساس ببياناتها: تحويلها إلى كشف قرارُ صاحبها لا قرارُ ترحيل.
  */
 
 export const metadata = { title: "قوائم أسعاري" };
 
 const ERROR_MESSAGES: Record<string, string> = {
-  already_pending: "هذه القائمة مُرسَلة بالفعل وتنتظر مراجعة الإدارة.",
+  already_pending: "هذا المسار مُرسَل بالفعل وينتظر مراجعة الإدارة.",
   delete_locked:
-    "لا يمكن حذف قائمة معتمدة أو قيد الاعتماد — راسل الإدارة لسحبها حتى لا تختفي تغطية من تحت عروض قائمة.",
+    "لا يمكن حذف مسار معتمد أو قيد الاعتماد — راسل الإدارة لسحبه حتى لا تختفي تغطية من تحت عروض قائمة.",
+  sheet_title: "اسم الكشف حقل إلزامي — سمِّه باسم يميّزه مثل «أسعار ٢٠٢٦».",
+  sheet_locked: "لا يمكن حذف كشف فيه مسار معتمد يعمل الآن.",
+  notfound: "العنصر غير موجود أو ليس لحسابك.",
 };
 
-function ListCard({ list, itemCount }: { list: PortalPriceList; itemCount: number }) {
-  // المسودة والمرفوضة وحدهما بانتظار خطوة من المتعهد؛ المعتمدة تعمل والمُرسَلة عند الإدارة
-  const removable = list.status === "draft" || list.status === "rejected";
-  const sendable = removable;
-
-  return (
-    <Card className="gap-4 p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <ReceiptText className="size-4 shrink-0 text-primary" aria-hidden="true" />
-        <h3 className="min-w-0 font-heading text-base font-bold">
-          {list.title || "قائمة بلا عنوان"}
-        </h3>
-        <PriceListStatusBadge status={list.status} />
-        {list.bidirectional ? (
-          <Badge variant="outline" className="gap-1">
-            <Repeat aria-hidden="true" />
-            الاتجاهان
-          </Badge>
-        ) : null}
-        <span className="ms-auto text-xs text-muted-foreground">
-          أُنشئت في {dateLabel(list.createdAt)}
-        </span>
-      </div>
-
-      <p className="text-xs leading-5 text-muted-foreground">{LIST_STATUS_HINTS[list.status]}</p>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {[
-          { label: "من", place: list.originLabel, radius: list.originRadiusKm },
-          { label: "إلى", place: list.destLabel, radius: list.destRadiusKm },
-        ].map((point) => (
-          <div key={point.label} className="rounded-xl bg-muted/60 p-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <MapPin className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="text-muted-foreground">{point.label}</span>
-              <span className="min-w-0 truncate">{point.place || "—"}</span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              نطاق التغطية: {formatDistance(point.radius)} حول هذه النقطة
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <p className="text-sm text-muted-foreground">
-        {itemCount > 0
-          ? `مُسعَّرة لـ ${countLabel(itemCount)} من الفئات.`
-          : "لا فئات مُسعَّرة في هذه القائمة بعد."}
-      </p>
-
-      {list.reviewNote ? (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-          <MessageSquareWarning className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          <span>
-            <span className="font-semibold">ملاحظة الإدارة: </span>
-            {list.reviewNote}
-          </span>
-        </div>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Link
-          href={`/portal/prices/${list.id}`}
-          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-        >
-          فتح القائمة وتعديلها
-          <ArrowLeft aria-hidden="true" />
-        </Link>
-
-        {sendable ? (
-          <form action={submitPriceList.bind(null, list.id)}>
-            <Button type="submit" size="sm" variant="secondary">
-              <Send aria-hidden="true" />
-              إرسال للاعتماد
-            </Button>
-          </form>
-        ) : null}
-
-        {removable ? (
-          <details className="ms-auto">
-            <summary className="w-fit cursor-pointer list-none text-xs text-muted-foreground transition-colors hover:text-destructive">
-              حذف القائمة
-            </summary>
-            <form
-              action={deletePriceList.bind(null, list.id)}
-              className="mt-2 flex flex-wrap items-center gap-3 rounded-xl bg-muted/60 p-3"
-            >
-              <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
-                يحذف القائمة وأسعار فئاتها نهائياً.
-              </p>
-              <Button type="submit" variant="destructive" size="sm">
-                <Trash2 aria-hidden="true" />
-                تأكيد الحذف
-              </Button>
-            </form>
-          </details>
-        ) : null}
-      </div>
-    </Card>
-  );
-}
-
-export default async function PortalPricesPage({ searchParams }: PageProps<"/portal/prices">) {
-  const [params, access] = await Promise.all([searchParams, portalSetupAccess()]);
+export default async function PortalPricesPage({
+  searchParams,
+}: PageProps<"/portal/prices">) {
+  const [query, access] = await Promise.all([searchParams, portalSetupAccess()]);
   if (!access.ok) return null;
 
   const { supabase, sub } = access;
-  const { lists, ready } = await loadPriceLists(supabase, sub.id);
-  const itemCounts = await countItemsByList(
-    supabase,
-    lists.map((list) => list.id)
-  );
 
-  const saved = params.saved === "1";
-  const submitted = params.submitted === "1";
-  const deleted = params.deleted === "1";
-  const error = typeof params.error === "string" ? params.error : null;
+  const [{ sheets, ready: sheetsReady }, { routes, ready }] = await Promise.all([
+    loadSheets(supabase, sub.id),
+    loadRoutes(supabase, sub.id),
+  ]);
+
+  if (!ready) {
+    return (
+      <div className="space-y-6">
+        <PageHeading title="قوائم أسعاري" />
+        <NotReadyNotice what="قوائم الأسعار" />
+      </div>
+    );
+  }
+
+  const loose = routes.filter((r) => r.sheetId === null);
+  const counts = await countItemsByRoute(supabase, loose.map((r) => r.id));
+
+  const saved = query.saved === "1";
+  const submitted = query.submitted === "1";
+  const deleted = query.deleted === "1";
+  const error = typeof query.error === "string" ? query.error : null;
 
   return (
     <div className="space-y-6">
       <PageHeading
         title="قوائم أسعاري"
-        help="القائمة تغطي مساراً لا نقطتين بعينهما: أي رحلة تقع بدايتها ونهايتها داخل النطاقين تُسعَّر منها."
-        action={
-          <Link href="/portal/prices/new" className={cn(buttonVariants())}>
-            <Plus aria-hidden="true" />
-            قائمة جديدة
-          </Link>
-        }
+        help="القائمة (الكشف) تضم مسارات كثيرة وتُرسَل للاعتماد مرة واحدة. لا مسار يدخل التسعير قبل أن تعتمده الإدارة."
       >
-        لكل مسار تعمل عليه قائمة واحدة تحمل تكلفتك في كل فئة. المعتمدة وحدها تدخل تسعير
-        الرحلات، والتعديل عليها يعيدها للمراجعة.
+        سجّل تكلفتك في كل مسار تغطّيه. الأرقام تكلفتك للاتجاه الواحد، والمنصة تضيف هامشها
+        فوقها قبل عرض السعر على العميل.
       </PageHeading>
 
       <Banners
@@ -186,45 +91,189 @@ export default async function PortalPricesPage({ searchParams }: PageProps<"/por
         error={error}
         errorMessages={ERROR_MESSAGES}
         savedMessage={
-          submitted
-            ? "أُرسلت القائمة للاعتماد — ستصلك نتيجة المراجعة من الإدارة."
-            : deleted
-              ? "حُذفت القائمة."
-              : "حُفظت القائمة."
+          deleted ? "حُذف." : submitted ? "أُرسل للاعتماد." : "حُفظ."
         }
       />
 
-      {!ready ? <NotReadyNotice what="قوائم الأسعار" /> : null}
-
-      {ready && lists.length === 0 ? (
-        <EmptyState
-          icon={<ReceiptText className="size-5" aria-hidden="true" />}
-          title="لا توجد قوائم أسعار بعد"
-          action={
-            <Link href="/portal/prices/new" className={cn(buttonVariants())}>
-              <Plus aria-hidden="true" />
-              أنشئ أول قائمة
-            </Link>
-          }
-        >
-          قائمة الأسعار هي الطريقة الوحيدة التي يعرف بها النظام أنك تغطي مساراً وبكم. ابدأ
-          بالمسار الذي تنفّذه أكثر من غيره: حدّد نقطتيه ونطاق كل نقطة، ثم اكتب تكلفتك في
-          الفئات التي تملك فيها مركبات.
-        </EmptyState>
-      ) : null}
-
-      {lists.map((list) => (
-        <ListCard key={list.id} list={list} itemCount={itemCounts.get(list.id) ?? 0} />
-      ))}
-
-      {ready && lists.length > 0 ? (
-        <Notice tone="info">
+      {!sheetsReady && (
+        <Notice tone="warning">
+          <p className="font-semibold">كشوف الأسعار غير متاحة على الخادم بعد</p>
           <p>
-            عندك {toArabicDigits(lists.length)} من القوائم. كلما ضاق النطاق كانت تكلفتك أدق،
-            وكلما اتسع غطّيت رحلات أكثر بسعر واحد — والاختيار بينهما قرارك أنت.
+            المسارات أدناه تعمل كما هي. تجميعها في كشف واحد يحتاج هجرة{" "}
+            <code dir="ltr">0102</code> — تواصل مع الإدارة.
           </p>
         </Notice>
-      ) : null}
+      )}
+
+      {/* ------------------------------------------------------------ */}
+      {/* الكشوف — المستوى الأعلى                                       */}
+      {/* ------------------------------------------------------------ */}
+      {sheetsReady && (
+        <Card className="gap-4 p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <FolderPlus className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <h3 className="font-heading text-base font-bold">كشف أسعار جديد</h3>
+          </div>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            الكشف وعاء لمسارات كثيرة. أنشئه ثم ارفع ملف CSV بمساراتك كلها، وأرسله للاعتماد
+            بطلبٍ واحد بدل طلب لكل مسار.
+          </p>
+          <form action={saveSheet.bind(null, null)} className="flex flex-wrap items-end gap-3">
+            <div className="min-w-56 flex-1">
+              <TextField
+                id="new-sheet-title"
+                label="اسم الكشف"
+                name="title"
+                placeholder="أسعار ٢٠٢٦"
+                required
+                maxLength={160}
+              />
+            </div>
+            <Button type="submit">
+              <Plus aria-hidden="true" />
+              إنشاء
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {sheetsReady && sheets.length > 0 && (
+        <div className="space-y-3">
+          {sheets.map((sheet) => (
+            <Card key={sheet.id} className="gap-3 p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <ReceiptText className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <Link
+                  href={`/portal/prices/sheets/${sheet.id}`}
+                  className="min-w-0 font-heading text-base font-bold transition-colors hover:text-primary hover:underline"
+                >
+                  {sheet.title}
+                </Link>
+                <span className="ms-auto text-xs text-muted-foreground">
+                  أُنشئ في {dateLabel(sheet.createdAt)}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">{routesText(sheet.routes)}</Badge>
+                <SheetCounts sheet={sheet} />
+              </div>
+              {sheet.note ? (
+                <p className="text-xs leading-5 text-muted-foreground">{sheet.note}</p>
+              ) : null}
+              <Link
+                href={`/portal/prices/sheets/${sheet.id}`}
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "self-start")}
+              >
+                فتح الكشف
+              </Link>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {sheetsReady && sheets.length === 0 && loose.length === 0 && (
+        <EmptyState
+          icon={<ReceiptText className="size-5" aria-hidden="true" />}
+          title="لا أسعار بعد"
+          action={null}
+        >
+          أنشئ كشفاً من النموذج أعلاه، ثم ارفع مساراتك دفعةً واحدة. بلا سعرٍ معتمدٍ واحد لا
+          تصلك رحلات عبر التغطية.
+        </EmptyState>
+      )}
+
+      {/* ------------------------------------------------------------ */}
+      {/* المسارات المستقلة — النموذج القديم، تبقى تعمل كما هي           */}
+      {/* ------------------------------------------------------------ */}
+      {loose.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <MapPin className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            <h3 className="font-heading text-base font-bold">مسارات مستقلة</h3>
+            <span className="text-xs text-muted-foreground">
+              أُنشئت قبل الكشوف — تعمل كما هي، ولكلٍّ منها اعتمادها الخاص
+            </span>
+            <Link
+              href="/portal/prices/new"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "ms-auto")}
+            >
+              <Plus aria-hidden="true" />
+              مسار مستقل
+            </Link>
+          </div>
+
+          {loose.map((route) => {
+            const removable = route.status === "draft" || route.status === "rejected";
+            return (
+              <Card key={route.id} className="gap-3 p-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/portal/prices/${route.id}`}
+                    className="min-w-0 font-heading text-base font-bold transition-colors hover:text-primary hover:underline"
+                  >
+                    {route.title || "مسار بلا عنوان"}
+                  </Link>
+                  <PriceListStatusBadge status={route.status} />
+                  {route.bidirectional ? (
+                    <Badge variant="outline" className="gap-1">
+                      <Repeat aria-hidden="true" />
+                      الاتجاهان
+                    </Badge>
+                  ) : null}
+                  <span className="ms-auto text-xs text-muted-foreground">
+                    أُنشئ في {dateLabel(route.createdAt)}
+                  </span>
+                </div>
+
+                <p className="text-sm text-muted-foreground">
+                  {route.originLabel} ← {route.destLabel} ·{" "}
+                  {toArabicDigits(counts.get(route.id) ?? 0)} فئة مُسعَّرة
+                </p>
+
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {LIST_STATUS_HINTS[route.status]}
+                </p>
+
+                {route.reviewNote ? (
+                  <p className="rounded-lg border border-border bg-muted/40 p-3 text-sm leading-relaxed">
+                    <span className="font-medium">ملاحظة الإدارة:</span> {route.reviewNote}
+                  </p>
+                ) : null}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/portal/prices/${route.id}`}
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                  >
+                    تحرير
+                  </Link>
+                  {removable && (
+                    <>
+                      <form action={submitPriceList.bind(null, route.id)}>
+                        <Button type="submit" size="sm">
+                          <Send aria-hidden="true" />
+                          إرسال للاعتماد
+                        </Button>
+                      </form>
+                      <form action={deletePriceList.bind(null, route.id)}>
+                        <Button type="submit" size="sm" variant="ghost" className="text-destructive">
+                          <Trash2 aria-hidden="true" />
+                          حذف
+                        </Button>
+                      </form>
+                    </>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="text-xs leading-5 text-muted-foreground">
+        عدد المسارات كلها: {countLabel(routes.length)}. لا شيء منها يدخل التسعير قبل اعتماد
+        الإدارة، والمعتمد الذي تعدّله يعود إلى المراجعة تلقائياً.
+      </p>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { toArabicDigits } from "@/components/booking/format";
+import { dateLabel } from "@/components/portal/portal-ui";
 import type { PriceListStatus } from "@/lib/subcontractor-types";
 /**
  * 🔒 **الإتاحة تُقرأ ولا تُشتقّ من جديد.** `loadPartnerAlerts` هي القارئ الوحيد
@@ -14,6 +15,13 @@ import type { PriceListStatus } from "@/lib/subcontractor-types";
  * والملف مُذاكَر بـ`cache()`، فقراءته من هنا ومن شاشة القنوات نداءٌ واحد للطلب.
  */
 import { loadPartnerAlerts } from "../notifications/data";
+/**
+ * 🔒 حالةُ الاتفاقية تصل **محسوبةً** من `partner_agreement_status()` عبر
+ * `portal_agreement()` — وهي نفسُ الدالة التي تقرؤها `dispatch_pool` و
+ * `portal_offers` و`accept_offer`. فلا تُشتقّ هنا مهلةٌ ولا «هل قَبِل»: تعريفان
+ * يفترقان يوماً، فيقرأ الشريك «لا شيء عليك» بينما الحوض يُسقطه.
+ */
+import { loadPortalAgreement } from "./agreement";
 import { isPriceListStatus } from "./data";
 import { portalSetupAccess, type PortalStage, type PortalSub } from "./session";
 
@@ -95,7 +103,7 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
  */
 export type { OnboardingStep, StepHref, StepState, StepWeight } from "./readiness-settle";
 // وسطران لا سطر: الأعلى للمستوردين من خارج الملف، وهذا لما يُستعمل داخله وحده
-import type { OnboardingStep, StepState } from "./readiness-settle";
+import type { OnboardingStep, StepState, StepWeight } from "./readiness-settle";
 import { settleReadiness } from "./readiness-settle";
 
 /**
@@ -207,7 +215,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
   if (!access.ok) return null;
   const { supabase, sub, stage } = access;
 
-  const [vehiclesRes, driversRes, listsRes, classTitles, alerts] = await Promise.all([
+  const [vehiclesRes, driversRes, listsRes, classTitles, alerts, agreement] = await Promise.all([
     supabase
       .from("subcontractor_vehicles")
       .select("class_slug, active")
@@ -217,6 +225,8 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     loadClassTitles(supabase),
     // الإتاحة من قارئها الوحيد — انظر تعليق الاستيراد أعلى الملف
     loadPartnerAlerts(),
+    // والاتفاقية كذلك: قارئٌ واحد مُذاكَر يخدم هذا الملف وصفحة الاتفاقية معاً
+    loadPortalAgreement(),
   ]);
 
   // «لا نعرف» ≠ «صفر»: أي فشل قراءة يُعلَّم ويُقال، ولا يُترجَم إلى بندٍ ناقص
@@ -290,13 +300,65 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
       ? [...activeVehicleClasses].filter((slug) => !pricedClasses.has(slug)).map(label).sort()
       : [];
 
-  const degraded = !vehiclesKnown || !driversKnown || !listsKnown || !itemsKnown || !reachKnown;
+  /**
+   * `hidden` هنا ليست عطلاً: هي «لا إصدارَ منشور» أو «قاعدةٌ قبل 0113» ⇒ لا بندَ
+   * أصلاً ولا نقصَ يُعدّ. و`failed` وحدها «لا نعرف» — فتدخل `degraded` ولا
+   * تُترجَم إلى «لم يقبل».
+   */
+  const agreementKnown = agreement.state !== "failed";
+
+  const degraded =
+    !vehiclesKnown || !driversKnown || !listsKnown || !itemsKnown || !reachKnown || !agreementKnown;
 
   /* -------------------------------------------------------------- */
   /* البنود                                                          */
   /* -------------------------------------------------------------- */
 
   const steps: OnboardingStep[] = [];
+
+  /*
+    (٠) اتفاقية المتعهد — تتصدّر القائمة لأنها **شرطُ الأهلية نفسه** لا خطوةَ
+        تجهيز: `dispatch_pool` تسقط من لم يمرّ منها (هجرة 0113)، فلا معنى لأن
+        يضيف مركبةً ويسعّر مساراً وهو خارج الحوض على أي حال.
+
+    والوزن يتبع اللحظة لا الأهمية (قاعدةُ هذا الملف):
+      • قَبِل، أو الحاجزُ مطفأ من اللوحة        ⇒ `done`، ولا وسم.
+      • لم يقبل وما زال في مهلته                ⇒ `deadline` بتاريخه المكتوب.
+      • لم يقبل وانقضت مهلته                    ⇒ `blocking` — والعروض متوقفة فعلاً.
+      • تعذّرت القراءة                          ⇒ `unknown`، ولا يُقال «لم يقبل».
+
+    ⚠ ولا يُشتقّ شيءٌ من ذلك هنا: `ok` و`accepted` و`inGrace` تصل من
+      `partner_agreement_status()` — نفسِ الدالة التي يقرؤها الحوض.
+  */
+  if (agreement.state !== "hidden") {
+    const doc = agreement.state === "ready" ? agreement.agreement : null;
+    const settled = doc?.accepted === true || (doc !== null && !doc.required);
+    const state: StepState = agreement.state === "failed" ? "unknown" : settled ? "done" : "todo";
+    // في المهلة ⇒ `deadline` (يعضّ بتاريخ)، وبعدها ⇒ `blocking` (يعضّ الآن)
+    const weight: StepWeight = doc?.inGrace ? "deadline" : "blocking";
+    const isUpdate = doc !== null && !doc.accepted && (doc.acceptedVersion ?? 0) > 0;
+
+    steps.push({
+      key: "agreement",
+      title: doc ? `${doc.title} — الإصدار ${n(doc.version)}` : "اتفاقية المتعهد",
+      weight,
+      state,
+      href: "/portal/agreement",
+      cta: state === "done" ? "اقرأ الاتفاقية" : isUpdate ? "اقرأ التعديل واقبله" : "اقرأ واقبل",
+      body:
+        agreement.state === "failed"
+          ? "تعذّرت قراءة حالة اتفاقيتك الآن، فلا نستطيع الحكم على هذا البند — حدّث الصفحة."
+          : !doc
+            ? "لا اتفاقية سارية الآن."
+            : doc.accepted
+              ? `قَبِلت الإصدار ${n(doc.acceptedVersion ?? doc.version)} في ${dateLabel(doc.acceptedAt)}. والنسخة التي قَبِلتها محفوظة بنصّها ويمكنك قراءتها في أي وقت.`
+              : !doc.required
+                ? "الاتفاقية منشورة ولم يُفعَّل اشتراطها بعد — اقرأها الآن، فقبولُها سيصير شرطاً لوصول العروض."
+                : doc.inGrace
+                  ? `${isUpdate ? "نُشرت نسخةٌ جديدة من الاتفاقية، وقبولك السابق لا يسري عليها." : "لم تقبل اتفاقية المتعهد بعد."} عروضك تصلك كالمعتاد حتى ${dateLabel(doc.deadline)}، وبعد هذا التاريخ تتوقف حتى تقبل. اقرأها الآن ولا تتركها لآخر يوم.`
+                  : "انقضت مهلة قبول الاتفاقية، والعروض متوقفة عنك الآن — لا شيء آخر يمنعك، وتعود فور قبولك. ورحلاتك المقبولة سابقاً ومستحقاتك عنها لا يمسّها هذا.",
+    });
+  }
 
   // (١) الملف — `contact` لا `blocking`: لا تذكره `dispatch_pool` بحرف، وأثره
   //     الحقيقي يقع بعد الإسناد حين تحتاج الإدارة بلوغك (ترويسة الملف)

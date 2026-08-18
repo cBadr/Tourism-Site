@@ -31,7 +31,7 @@ import {
   dateTimeLabel,
   relativeTime,
 } from "../orders/_components/booking-ui";
-import { convertQuoteRequest, setQuoteStatus } from "./actions";
+import { convertQuoteRequest, rescheduleQuoteRequest, setQuoteStatus } from "./actions";
 
 /**
  * طلبات الأسعار — نموذج «اطلب عرض سعر» للجولات والمناسبات وما هو خارج التسعير الفوري.
@@ -298,7 +298,8 @@ async function loadRequests(status: QuoteRequestStatus | null): Promise<{
  * رمز الرابط ← جملةٌ عربية. والنصوص تعيش **هنا وحدها**: الخادم يرسل رمزاً لا
  * جملة، ورقمُ الأرضية وحده يسافر بياناً في `min` فتُبنى حوله الجملة.
  */
-function errorMessages(floorMin: string | null): Record<string, string> {
+function errorMessages(floorMin: string | null, leadUntil: string | null): Record<string, string> {
+  const untilLabel = leadUntil ? dateTimeLabel(leadUntil) : null;
   return {
     ...COMMON_BOOKING_ERRORS,
     status: "حالة غير معروفة — اختر واحدة من حالات المتابعة الأربع.",
@@ -323,11 +324,24 @@ function errorMessages(floorMin: string | null): Record<string, string> {
       "أساس التكلفة مطلوب: اكتب ما ستدفعه للمنفِّذ. بدونه لا يوجد هامشٌ يُقاس، ولا تستطيع القاعدة أن تكشف بيعاً بخسارة.",
     costnegative: "أساس التكلفة لا يكون سالباً.",
     costrange: "أساس التكلفة أكبر من أن يكون رقماً حقيقياً — راجع ما كتبته.",
+
+    // 0108 — قيمةٌ ليست رقماً (‏NaN أو ما لا نهاية)
+    costnotfinite:
+      "أساس التكلفة الذي وصل ليس رقماً — اكتب المبلغ بالأرقام وحدها بلا حروف ولا رموز.",
+    amountnotfinite:
+      "🔴 تسعيرة هذا الطلب مخزَّنةٌ بقيمةٍ ليست رقماً، فلا يُبنى عليها حجز. أعِد تسعير الطلب من زرّ «تم التسعير» بمبلغٍ صحيح، ثم حوّله.",
     floor: floorMin
       ? `🔴 السعر المعروض دون أرضية الهامش على التكلفة التي أدخلتها. أدنى إجمالٍ مقبول ${toArabicDigits(floorMin)} ج.م — ارفع السعر أو راجع التكلفة.`
       : "🔴 السعر المعروض دون أرضية الهامش على التكلفة التي أدخلتها — ارفع السعر أو راجع التكلفة.",
     nopartner: "المتعهد المختار لم يعد موجوداً — حدّث الصفحة.",
     nodest: "اكتب وجهة الرحلة كما اتُّفق عليه — صفحة الحجز تطبع «من ← إلى».",
+
+    // 0107 — الموعد زحف داخل نافذة المهلة بين التسعير والتحويل
+    leadtime: untilLabel
+      ? `موعد هذا الطلب صار أقرب من أدنى مهلة تحتاجها لإرسال سيارة، فلا يُنشأ منه حجزٌ يُنفَّذ. أقرب موعد متاح ${untilLabel} — اتفق مع العميل على موعدٍ جديد ثم اكتبه في «أعِد جدولة الموعد».`
+      : "موعد هذا الطلب صار أقرب من أدنى مهلة تحتاجها لإرسال سيارة. اتفق مع العميل على موعدٍ جديد ثم اكتبه في «أعِد جدولة الموعد».",
+    badpickup: "الموعد غير مفهوم — اكتب التاريخ والساعة من المنتقي.",
+    notreschedulable: "إعادة الجدولة تكون قبل التحويل وقبل الرفض فقط.",
   };
 }
 
@@ -642,6 +656,71 @@ function ConvertForm({
   );
 }
 
+/**
+ * 0107 — إعادة جدولة موعد الطلب قبل تحويله.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  لماذا يوجد هذا الحقل أصلاً — وهو ليس رفاهية
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `convert_quote_request` صارت تفرض أدنى مهلة الانطلاق على الموعد **لحظةَ
+ * التحويل**، لأن الحدّ يزحف مع «الآن»: طلبٌ عبَره يوم وصوله قد يصير دونه بعد
+ * يومين من التفاوض، والحجزُ الناتج يصل البثَّ بلا وقتٍ كافٍ لإرسال سيارة.
+ *
+ * ولولا هذا الحقل لكان ذلك الحارس **طريقاً مسدوداً**: الطلب عالقٌ في «تم
+ * التسعير» ولا سبيل إلى تحريكه إلا بإطفاء المهلة عالمياً من الإعدادات — أي
+ * إسقاط الحارس كلّه لأجل طلبٍ واحد.
+ *
+ * ⚠ **ولا أرضية `min` على الحقل هنا بقصد.** المنتقي في نموذج العميل يشدّ أرضيته
+ * من `previewLeadTime()` لأنه يخاطب زائراً لا يعرف السياسة؛ وهذه شاشةُ مالكٍ
+ * يقرأ رسالة الرفض ويعرف رقمه. والأهم أن **القاعدة هي الحاجز في الحالتين**
+ * (‏`reschedule_quote_request` تفرض نفس `booking_min_pickup_at()`)، وأرضيةٌ في
+ * المتصفح تلميحٌ يُتجاوَز بالكتابة اليدوية — فلا تُبنى هنا معادلةُ مهلةٍ ثانية
+ * تنحرف عن الأولى.
+ */
+function RescheduleForm({
+  request,
+  tabKey,
+  readOnly,
+}: {
+  request: QuoteRow;
+  tabKey: string;
+  readOnly: boolean;
+}) {
+  return (
+    <form
+      action={readOnly ? undefined : rescheduleQuoteRequest.bind(null, request.id)}
+      className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-muted/40 p-3"
+    >
+      <input type="hidden" name="tab" value={tabKey === "all" ? "" : tabKey} />
+      <div className="min-w-56 flex-1 space-y-1.5">
+        <label
+          htmlFor={`pickup-${request.id}`}
+          className="flex items-center gap-1.5 text-sm font-medium leading-none"
+        >
+          أعِد جدولة الموعد
+          <HelpTip>
+            بعد أن تتفق مع العميل على موعدٍ جديد. يُستعمل حين يمرّ الوقت فيصير موعد الطلب
+            أقرب من أدنى مهلة تحتاجها لإرسال سيارة — عندها يرفض النظام إنشاء الحجز، لأن
+            حجزاً لا يمكن تنفيذه أسوأ من رفضٍ صريح. والوقت بتوقيت مصر.
+          </HelpTip>
+        </label>
+        <input
+          id={`pickup-${request.id}`}
+          name="pickupAt"
+          type="datetime-local"
+          required
+          disabled={readOnly}
+          className={cn(controlClass, "w-full")}
+        />
+      </div>
+      <Button type="submit" variant="secondary" disabled={readOnly}>
+        احفظ الموعد
+      </Button>
+    </form>
+  );
+}
+
 function RequestCard({
   request,
   tabKey,
@@ -685,6 +764,8 @@ function RequestCard({
       })),
   ];
   const canConvert = current === "quoted";
+  // 0107 — الموعد يُعدَّل قبل التحويل وقبل الرفض فقط (نفس شرط القاعدة)
+  const canReschedule = current === "new" || current === "quoted";
   const terminal = actions.length === 0 && !canConvert;
 
   const route = request.originLabel
@@ -764,6 +845,17 @@ function RequestCard({
         <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
           الطلب محوَّل ولم أستطع قراءة حجزه — حدّث الصفحة، فإن بقي فهو عطلٌ يستحق فحصاً.
         </p>
+      )}
+
+      {/*
+        إعادة الجدولة تسبق التحويل في الترتيب لأنها **شرطُه** حين يمرّ الوقت:
+        القاعدة ترفض تحويل طلبٍ صار موعده داخل نافذة المهلة، ومخرجُه هذا الحقل.
+        وتظهر لـ«جديد» أيضاً — فالموعد قد يتغيّر في المكالمة الأولى قبل التسعير.
+      */}
+      {canReschedule && (
+        <div className="border-t border-border pt-3">
+          <RescheduleForm request={request} tabKey={tabKey} readOnly={readOnly} />
+        </div>
       )}
 
       {canConvert && (
@@ -871,11 +963,24 @@ export default async function QuoteRequestsPage({
 
   const wired = hasSupabaseEnv();
   const converted = params.converted === "1";
-  const saved = params.saved === "1" || converted;
+  const rescheduled = params.rescheduled === "1";
+  const saved = params.saved === "1" || converted || rescheduled;
   const error = typeof params.error === "string" ? params.error : null;
   // رقمُ أرضية الهامش يصل بياناً في الرابط، والشاشة تبني الجملة حوله
   const floorMin =
     typeof params.min === "string" && /^\d{1,12}$/.test(params.min) ? params.min : null;
+  /**
+   * وأقرب موعدٍ متاح يصل بياناً كذلك (‏ISO)، والشاشة تبني الجملة حوله.
+   *
+   * ⚠ ويُتحقَّق أنه طابعٌ زمني حقيقي قبل عرضه: قيمةٌ في الرابط يكتبها من يشاء،
+   *   وطبعُها خامّاً كان يجعل الرابط يكتب في صفحة المالك.
+   */
+  const leadUntil = (() => {
+    const raw = typeof params.until === "string" ? params.until : null;
+    if (!raw) return null;
+    const at = new Date(raw);
+    return Number.isNaN(at.getTime()) ? null : at.toISOString();
+  })();
 
   const tabHref = (key: string) =>
     key === "all" ? "/admin/quote-requests" : `/admin/quote-requests?status=${key}`;
@@ -897,11 +1002,13 @@ export default async function QuoteRequestsPage({
         readOnly={!ready}
         saved={saved}
         error={error}
-        errorMessages={errorMessages(floorMin)}
+        errorMessages={errorMessages(floorMin, leadUntil)}
         savedMessage={
           converted
             ? "أُنشئ الحجز. افتحه من بطاقة الطلب وأرسل رابط الدفع للعميل."
-            : "حُدِّثت حالة الطلب."
+            : rescheduled
+              ? "حُفظ الموعد الجديد. راجعه في بطاقة الطلب ثم حوّله إلى حجز."
+              : "حُدِّثت حالة الطلب."
         }
         readOnlyTitle="طلبات الأسعار غير جاهزة بعد"
         readOnlyBody={
