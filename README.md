@@ -14,8 +14,8 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
 ![Phases](https://img.shields.io/badge/phases-13%2F14-blue)
-![Migrations](https://img.shields.io/badge/migrations-130-informational)
-![Tests](https://img.shields.io/badge/SQL%20suites-50%20green-brightgreen)
+![Migrations](https://img.shields.io/badge/migrations-131-informational)
+![Tests](https://img.shields.io/badge/SQL%20suites-51%20green-brightgreen)
 ![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
 <div dir="rtl">
@@ -229,7 +229,7 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ١٣٠** في `supabase/migrations/` من `0001_core.sql` إلى `0135_partial_review_and_inline_price_edit.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations` (وفجوات `0090` و`0091` و`0116` مقصودة). **ومجموعات الاختبار الخمسون** في `supabase/tests/`.
+**الترحيلات الـ ١٣١** في `supabase/migrations/` من `0001_core.sql` إلى `0136_vehicle_photos.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations` (وفجوات `0090` و`0091` و`0116` مقصودة). **ومجموعات الاختبار الإحدى والخمسون** في `supabase/tests/`.
 
 ⚠ **والعدد لا يساوي أعلى رقم**: في التسلسل فجوتان (`0090` و`0091` غير موجودتين)، **فالرقم الحرّ يُشتقّ بأمرٍ لا من عدّ الملفّات** — `ls supabase/migrations | tail -1`. وفي `schema_migrations` صفٌّ يتيم `0100_logo_strip_list_label.sql` بلا ملفّ، خلّفه تصادمُ رقمٍ بين وكيلين في 2026-08-17: طُبِّق ثم أُعيدت تسميتُه `0101` وطُبِّق ثانيةً. **وجسمُ الهجرة يُعيد الكتابة بقيمةٍ ثابتة فتشغيلُه مرتين بلا أثر** (تحقَّق: `fleetBrands` عشرة عناصر)، والصفّ يُحذف بـ`delete from public.schema_migrations where name = '0100_logo_strip_list_label.sql';`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 

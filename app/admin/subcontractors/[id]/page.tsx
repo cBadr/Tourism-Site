@@ -7,13 +7,9 @@ import {
   Ban,
   Car,
   CheckCircle2,
-  ExternalLink,
-  Globe,
   KeyRound,
   MapPin,
-  MessageCircle,
   Phone,
-  Radio,
   Scale,
   Send,
   UserCog,
@@ -25,7 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { telLink, waLink } from "@/lib/phone";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
   readPartnerCredit,
@@ -36,19 +31,11 @@ import {
   asNumber,
   asText,
   Banners,
-  dateTimeLabel,
   pick,
-  relativeTime,
 } from "../../orders/_components/booking-ui";
 import { PriceListCard } from "../_components/price-list-card";
 import { PriceSheetCard, type SheetHeader } from "../_components/price-sheet-card";
-import {
-  loadPartnerPresence,
-  PresenceBadge,
-  ReachBadge,
-  ReachDetail,
-  type PartnerPresence,
-} from "../_components/presence-ui";
+import { loadPartnerPresence, type PartnerPresence } from "../_components/presence-ui";
 import {
   EMPTY_PRICING_CONTEXT,
   loadPricingContext,
@@ -76,7 +63,6 @@ import {
   routesText,
   SUB_STATUS_HINTS,
   SUBCONTRACTOR_ERRORS,
-  SubStatusBadge,
   vehiclesText,
   type PriceItemView,
   type PriceListView,
@@ -85,6 +71,18 @@ import {
 } from "../_components/subcontractor-ui";
 import { resendInvite, setSubcontractorStatus, unlinkPartnerTelegram } from "../actions";
 import { DriverDocsCard } from "./_components/driver-docs-card";
+import { FleetBreakdownCard } from "./_components/fleet-breakdown";
+import {
+  EMPTY_PARTNER_METRICS,
+  loadPartnerMetrics,
+  type PartnerMetrics,
+} from "./_components/partner-metrics";
+import {
+  PartnerCharts,
+  PartnerHeaderCard,
+  PartnerKpiRow,
+  SocialLinks,
+} from "./_components/partner-overview";
 
 /**
  * ملف المتعهد — كل ما يخص شريكاً واحداً في شاشة عمل واحدة:
@@ -216,6 +214,11 @@ type Loaded = {
   routes: { rows: RouteHit[]; total: number; ready: boolean };
   /** تفصيلُ مسارٍ واحد اختاره المشرف — لا مئةُ تفصيلٍ سلفاً */
   routeDetail: { hit: RouteHit; items: PriceItemView[] } | null;
+  /**
+   * مؤشرات هذا الشريك ورسماه — كلُّ رقم فيها محسوبٌ في Postgres.
+   * التفصيل وقواعدُه في ترويسة `_components/partner-metrics.ts`.
+   */
+  metrics: PartnerMetrics;
 };
 
 /** قراءة تسوية شريك واحد — كل رقم محسوب في Postgres، ولا جمع هنا */
@@ -280,6 +283,7 @@ async function loadSubcontractor(
     approvedPrices: null,
     routes: { rows: [], total: 0, ready: false },
     routeDetail: null,
+    metrics: EMPTY_PARTNER_METRICS,
   };
 
   const supabase = await createServerSupabase();
@@ -403,7 +407,7 @@ async function loadSubcontractor(
   const pendingIds = lists.filter((l) => l.status === "pending").map((l) => l.id);
   const approvedIds = lists.filter((l) => l.status === "approved").map((l) => l.id);
 
-  const [itemsRes, approvedPricesRes] = await Promise.all([
+  const [itemsRes, approvedPricesRes, metrics] = await Promise.all([
     pendingIds.length > 0
       ? supabase.from("price_list_items").select("*").in("price_list_id", pendingIds)
       : null,
@@ -414,6 +418,11 @@ async function loadSubcontractor(
           .select("class_slug", { count: "exact", head: true })
           .in("price_list_id", approvedIds)
       : null,
+    /**
+     * مؤشرات الشريك ورسمه الزمني — موجةٌ ثانية بعد أن يُعرف أن له صفّاً في
+     * `v_stats_partners` أصلاً، فلا تُنفَّذ عدّاتُ الأشهر لمن لا رحلة له.
+     */
+    loadPartnerMetrics(supabase, id),
   ]);
 
   const itemsByList = new Map<string, PriceItemView[]>();
@@ -472,6 +481,7 @@ async function loadSubcontractor(
     approvedPrices,
     routes: routesRes,
     routeDetail,
+    metrics,
   };
 }
 
@@ -498,81 +508,6 @@ function Row({ label, help, children }: { label: string; help?: string; children
       </span>
       <span className="min-w-0 text-sm font-medium">{children}</span>
     </div>
-  );
-}
-
-/**
- * روابط التواصل مع المتعهد — من `lib/phone.ts` وحدها.
- *
- * ⚠ والقاعدة الحية تبيّن لماذا لم يُكتشف العيب هنا بالعين: واتساب المتعهد مخزَّن
- * بالصيغة الدولية سلفاً في **٩ من ١١** صفاً (`201000111222`) لأن البذرة تكتبه
- * كذلك، فالنسخة المحلية كانت تُخرج رابطاً صحيحاً **بالصدفة**. لكن `phone` عنده
- * محليٌّ (١٠ من ١١)، وأول متعهد يُدخِل واتسابه كما يكتبه في هاتفه (`0101…`) كان
- * يقع في الخطأ نفسه. فالصحة هنا كانت خاصيةَ بيانات لا خاصيةَ كود.
- */
-function ContactLinks({ phone, whatsapp }: { phone: string | null; whatsapp: string | null }) {
-  const tel = telLink(phone);
-  const wa = waLink(whatsapp);
-  return (
-    <span className="flex flex-wrap items-center gap-2">
-      {phone &&
-        (tel ? (
-          <a
-            href={tel}
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
-          >
-            <Phone className="size-3.5" />
-            <span dir="ltr">{phone}</span>
-          </a>
-        ) : (
-          <span className="text-xs" dir="ltr">
-            {phone}
-          </span>
-        ))}
-      {wa && (
-        <a
-          href={wa}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-2 py-1 text-xs text-emerald-800 transition-colors hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-950"
-        >
-          <MessageCircle className="size-3.5" />
-          واتساب
-        </a>
-      )}
-      {!phone && !wa && <span className="text-sm text-muted-foreground">—</span>}
-    </span>
-  );
-}
-
-function SocialLinks({ socials }: { socials: SubcontractorView["socials"] }) {
-  const entries: { key: string; href: string; icon: typeof Globe; label: string }[] = [];
-  if (socials.website)
-    entries.push({ key: "web", href: socials.website, icon: Globe, label: "الموقع" });
-  if (socials.facebook)
-    entries.push({ key: "fb", href: socials.facebook, icon: ExternalLink, label: "فيسبوك" });
-  if (socials.instagram)
-    entries.push({ key: "ig", href: socials.instagram, icon: ExternalLink, label: "انستغرام" });
-
-  if (entries.length === 0) return <span className="text-sm text-muted-foreground">—</span>;
-  return (
-    <span className="flex flex-wrap items-center gap-2">
-      {entries.map((entry) => {
-        const Icon = entry.icon;
-        return (
-          <a
-            key={entry.key}
-            href={entry.href}
-            target="_blank"
-            rel="noopener noreferrer nofollow"
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs transition-colors hover:border-primary hover:text-primary"
-          >
-            <Icon className="size-3.5" />
-            {entry.label}
-          </a>
-        );
-      })}
-    </span>
   );
 }
 
@@ -832,6 +767,7 @@ export default async function SubcontractorProfilePage({
     approvedPrices,
     routes,
     routeDetail,
+    metrics,
   } = await loadSubcontractor(id, routeQuery, routeOffset, openRoute);
   if (ready && !sub) notFound();
 
@@ -895,6 +831,29 @@ export default async function SubcontractorProfilePage({
     );
   }
 
+  /**
+   * حالةُ التسوية لبطاقة المؤشر أعلى الشاشة — **ثلاث حالاتٍ لا اثنتان**:
+   * «الدفتر غير مقروء» و«لا حركة له بعد» و«رقمٌ قائم». وأول نسخةٍ خلطت
+   * الأوليين فطبعت «تعذّرت قراءة التسوية» فوق بطاقةٍ تقول أسفلها «لا حركة
+   * مالية لهذا الشريك بعد» — أمسكه التحقّق الحيّ في المتصفح لا البناء.
+   *
+   * والصياغةُ نفسها تبقى من `settlementWording` وحدها، وهي **المصدر الوحيد**
+   * لإشارة الصافي في خمس شاشات؛ ودالةٌ صرفة بمُدخلاتٍ واحدة لا تفترق عن
+   * نداءِ بطاقةِ التسوية أسفل الشاشة.
+   */
+  const settlementSummary: Parameters<typeof PartnerKpiRow>[0]["settlement"] = !settlementReady
+    ? { kind: "notReady" }
+    : settlement === null
+      ? { kind: "empty" }
+      : {
+          kind: "ready",
+          wording: settlementWording(settlement.netDue, settlement.absNetDue, currency, {
+            owedToUs: settlement.owedToUs,
+            overLimit: settlement.overLimit,
+            blockDispatch,
+          }),
+        };
+
   // ملخص التغطية — يُحسب من القوائم المعتمدة وحدها لأنها وحدها تدخل التسعير
   const approvedLists = lists.filter((l) => l.status === "approved");
   const pendingLists = lists.filter((l) => l.status === "pending");
@@ -949,24 +908,18 @@ export default async function SubcontractorProfilePage({
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-heading text-lg font-bold">{sub.companyName}</h2>
-        <SubStatusBadge status={sub.status} />
-        <HelpTip>
-          {isSubStatus(sub.status)
-            ? SUB_STATUS_HINTS[sub.status]
-            : "حالة غير معروفة — راجع قيم العمود في قاعدة البيانات."}
-        </HelpTip>
-        <span className="text-xs text-muted-foreground">
-          أُضيف {relativeTime(sub.createdAt)} · {dateTimeLabel(sub.createdAt)}
-        </span>
-        <Link
-          href="/admin/subcontractors"
-          className="ms-auto text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
-        >
-          العودة إلى المتعهدين
-        </Link>
-      </div>
+      {/*
+        ── بطاقةُ الرأس ─────────────────────────────────────────────────────
+        صورةٌ واسمٌ وحالةٌ وقنواتُ تواصلٍ وظهورٌ وتاريخُ انضمامٍ وحالةُ اتفاقية،
+        في بطاقةٍ واحدة. وحلّت محلّ سطرِ عنوانٍ عارٍ **وبطاقةِ ظهورٍ منفصلة**
+        كانتا تفصلان ما يُقرأ معاً دائماً قبل أي اتصالٍ بالشريك.
+      */}
+      <PartnerHeaderCard
+        sub={sub}
+        presence={presence}
+        presenceReady={presenceReady}
+        agreement={metrics.agreement}
+      />
 
       <Banners
         wired={wired}
@@ -978,6 +931,28 @@ export default async function SubcontractorProfilePage({
         readOnlyTitle=""
         readOnlyBody={null}
       />
+
+      {/*
+        ══════════════════════════════════════════════════════════════════════
+         المؤشرات والرسوم — كلُّ رقمٍ فيها محسوبٌ في Postgres
+        ══════════════════════════════════════════════════════════════════════
+
+        موضعُها فوق تفاصيل الشريك عمداً: المشرف يفتح هذه الشاشة ليقرّر —
+        أيُسنِد إليه؟ أيتصل به؟ أيدفع له؟ — وهذه الستُّ بطاقاتٍ ورسماها هي ما
+        يجيب قبل النزول إلى القوائم والمسارات.
+
+        و**بمنظومة الرسوم القائمة** (`components/stats/**`) لا بثانية: نفس
+        `StatChart` و`StatBars` و`StatsPanel` التي تعمل عليها شاشات
+        `/admin/stats` — SVG خادميّ بلا مكتبةٍ ولا سطر جافاسكربت.
+      */}
+      <PartnerKpiRow
+        metrics={metrics}
+        currency={currency}
+        settlement={settlementSummary}
+        settlementHref={`/admin/subcontractors/${sub.id}#settlement`}
+      />
+
+      <PartnerCharts metrics={metrics} currency={currency} />
 
       {/* ملخص التغطية — الجملة التي تختصر قيمة هذا الشريك في التسعير */}
       <Card className="gap-1 p-5">
@@ -1009,51 +984,19 @@ export default async function SubcontractorProfilePage({
       </Card>
 
       {/*
-        ── الظهور وقابلية الوصول ────────────────────────────────────────────
-        موضعُها هنا لأنها أول ما يُسأل عنه قبل الاتصال: «هل هو موجود الآن، وإن
-        لم يكن — هل يصله البلاغ أصلاً؟». وهما سؤالان لا سؤال: التفصيل في ترويسة
-        `_components/presence-ui.tsx`.
-      */}
-      <Card className="gap-2 p-5">
-        <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
-          <Radio className="size-4 text-primary" />
-          الظهور وقابلية الوصول
-          <HelpTip>
-            <span className="font-semibold">الظهور</span> يقول «هل هو داخل بوابته
-            الآن؟» — نبضةٌ تُسجَّل مع كل طلبٍ من بوابته، مرةً كل دقيقة على الأكثر.
-            و<span className="font-semibold">قابلية الوصول</span> تقول «هل يصله بلاغُ
-            الرحلة وهل يقبله؟» وهي الشرط نفسه الذي تعمل عليه موجات البثّ. والاثنان
-            معاً لأن <span className="font-semibold">غير المتصل قد يردّ على تليجرام
-            خلال ثوانٍ</span>، والمتصلُ قد يكون أطفأ العروض.
-          </HelpTip>
-        </h3>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <PresenceBadge presence={presence ?? undefined} ready={presenceReady} />
-          <ReachBadge presence={presence ?? undefined} ready={presenceReady} />
-        </div>
-        {presence ? (
-          <ReachDetail presence={presence} />
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            {presenceReady
-              ? "لا صفَّ ظهورٍ لهذا الشريك بعد."
-              : "تعذّرت قراءة الظهور — نفِّذ هجرة 0118. و«لا نعرف» ليست «غير متصل»."}
-          </p>
-        )}
-      </Card>
-
-      {/*
         التسوية مباشرة بعد التغطية: التغطية تقول «ماذا يقدّم هذا الشريك»،
         والتسوية تقول «وكم بيننا وبينه الآن» — وهو أول ما يُسأل عنه عند الاتصال به.
       */}
-      <SettlementCard
-        subcontractorId={sub.id}
-        companyName={sub.companyName}
-        settlement={settlement}
-        ready={settlementReady}
-        blockDispatch={blockDispatch}
-        currency={currency}
-      />
+      <div id="settlement" className="scroll-mt-24">
+        <SettlementCard
+          subcontractorId={sub.id}
+          companyName={sub.companyName}
+          settlement={settlement}
+          ready={settlementReady}
+          blockDispatch={blockDispatch}
+          currency={currency}
+        />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* بيانات التواصل */}
@@ -1063,14 +1006,12 @@ export default async function SubcontractorProfilePage({
             بيانات المتعهد
             <HelpTip>
               يحرّرها المتعهد من بوابته؛ هذه الشاشة تعرضها للتشغيل. لا شيء منها يظهر للعميل —
-              الموقع بعلامة واحدة هي علامتك.
+              الموقع بعلامة واحدة هي علامتك. وهاتفه وواتسابه في بطاقة الرأس أعلى الصفحة
+              أزراراً تُضغط، فلا يتكرران هنا.
             </HelpTip>
           </h3>
           <Row label="اسم الشركة">{sub.companyName}</Row>
           <Row label="مسؤول التواصل">{sub.contactName ?? "—"}</Row>
-          <Row label="التواصل">
-            <ContactLinks phone={sub.phone} whatsapp={sub.whatsapp} />
-          </Row>
           <Row label="البريد الإلكتروني">
             <span dir="ltr">{sub.email ?? "—"}</span>
           </Row>
@@ -1278,6 +1219,9 @@ export default async function SubcontractorProfilePage({
           </div>
         )}
       </Card>
+
+      {/* الأسطول مفصَّلاً لكل فئة، بالصور — ملاحظة المالك 2026-08-18 (0136) */}
+      <FleetBreakdownCard subcontractorId={id} feedback={typeof sp.fleetphoto === "string" ? sp.fleetphoto : null} />
 
       {/*
         ══════════════════════════════════════════════════════════════════════

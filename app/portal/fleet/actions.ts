@@ -5,6 +5,13 @@ import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  buildVehiclePhotoPath,
+  readVehiclePhotoFile,
+  removeVehiclePhotos,
+  sweepVehicleFolder,
+  uploadVehiclePhoto,
+} from "@/lib/vehicles/photos";
+import {
   clamp,
   MAX_MODEL_YEAR,
   MAX_SEATS,
@@ -173,6 +180,94 @@ export async function deleteVehicle(vehicleId: string) {
   if (res.error) redirect(url("error=save"));
   if (!res.data || res.data.length === 0) redirect(url("error=notfound"));
 
+  // الصفُّ ذهب ⇒ ملفُّ صورته يتيمٌ لا يشير إليه شيء. ولا عاملَ كنسٍ مجدولاً
+  // لهذا الدلو (‏0136 القسم الأخير: لا مهلةَ حفظٍ في الاتفاقية ⇒ لا دالةَ كنسٍ
+  // بلا منادٍ — القاعدة ١٧)، فالكنسُ يقع هنا وفي كل رفعٍ ناجح.
+  await sweepVehicleFolder(supabase, sub.id, vehicleId, null);
+
   revalidatePath("/", "layout");
   redirect(url("deleted=1"));
+}
+
+// ---------------------------------------------------------------------------
+// صورة المركبة — العقد الملزم `lib/vehicles/types.ts`، والهجرة 0136
+//
+// 🔒 والرفع بجلسة الشريك لا بمفتاح الخدمة: سياسة
+// `vehicle_photos_insert_own_or_admin` ومعها `vehicle_photo_upload_allowed`
+// (شكلُ المسار + ملكيةُ المركبة + سقفُ العدد) هي التي تسمح أو تمنع **داخل
+// القاعدة**. ولو رُفع بمفتاح الخدمة لصار الحارسُ سطرَ
+// `.eq("subcontractor_id", sub.id)` في هذا الملف — وهو ما لا يشهد عليه اختبار.
+//
+// ── وترتيبُ العمليات مقصود في الاتجاهين ────────────────────────────────────
+//
+// **الرفع**: يُرفع الملف ← يُكتب المسار في الصف ← يُكنس المجلّد ممّا عداه. وإن
+// فشلت كتابة الصف حُذف الجديد فوراً. **الإزالة**: يُمحى المسار من الصف ← ثم
+// يُكنس المجلّد. لأن صفّاً يشير إلى ملفٍّ ذهب أسوأ من ملفٍّ لا يشير إليه صف:
+// الأول يعرض عطلاً للمستخدم، والثاني يُكنس في العملية التالية.
+// ---------------------------------------------------------------------------
+
+/** رفع صورة المركبة أو استبدالها */
+export async function uploadVehiclePhotoAction(vehicleId: string, formData: FormData) {
+  const access = await portalSetupAccess();
+  if (!access.ok) redirect(url(`error=${access.code}`));
+  const { supabase, sub } = access;
+
+  const read = readVehiclePhotoFile(formData.get("file"));
+  if (!read.ok) redirect(url(`error=${read.error}`));
+
+  // وجودُ المركبة وملكيتُها يُتحقَّقان قبل الرفع — الرفضُ في القاعدة قائمٌ على
+  // كل حال، لكن الرسالة العربية أولى من رفضٍ خام من التخزين
+  const current = await supabase
+    .from("subcontractor_vehicles")
+    .select("id")
+    .eq("id", vehicleId)
+    .eq("subcontractor_id", sub.id)
+    .maybeSingle();
+
+  if (current.error) redirect(url("error=save"));
+  if (!current.data) redirect(url("error=notfound"));
+
+  const path = buildVehiclePhotoPath(sub.id, vehicleId, read.ext);
+  const uploaded = await uploadVehiclePhoto(supabase, path, read.file);
+  if (!uploaded) redirect(url("error=upload"));
+
+  const res = await supabase
+    .from("subcontractor_vehicles")
+    .update({ photo_path: path })
+    .eq("id", vehicleId)
+    .eq("subcontractor_id", sub.id)
+    .select("id");
+
+  if (res.error || !res.data || res.data.length === 0) {
+    // الصف لم يُكتب ⇒ الملف المرفوع لا يشير إليه شيء: يُحذف فوراً
+    await removeVehiclePhotos(supabase, [path]);
+    redirect(url("error=save"));
+  }
+
+  await sweepVehicleFolder(supabase, sub.id, vehicleId, path);
+
+  revalidatePath("/", "layout");
+  redirect(url("saved=1"));
+}
+
+/** إزالة صورة المركبة — يبقى الصفّ بكل بياناته */
+export async function removeVehiclePhotoAction(vehicleId: string) {
+  const access = await portalSetupAccess();
+  if (!access.ok) redirect(url(`error=${access.code}`));
+  const { supabase, sub } = access;
+
+  const res = await supabase
+    .from("subcontractor_vehicles")
+    .update({ photo_path: null })
+    .eq("id", vehicleId)
+    .eq("subcontractor_id", sub.id)
+    .select("id");
+
+  if (res.error) redirect(url("error=save"));
+  if (!res.data || res.data.length === 0) redirect(url("error=notfound"));
+
+  await sweepVehicleFolder(supabase, sub.id, vehicleId, null);
+
+  revalidatePath("/", "layout");
+  redirect(url("saved=1"));
 }

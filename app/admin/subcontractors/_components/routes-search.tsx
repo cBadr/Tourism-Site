@@ -1,13 +1,11 @@
 import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { ArrowLeftRight, Search } from "lucide-react";
+import { ArrowLeftRight } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { asNumber, asText, pick } from "../../orders/_components/booking-ui";
 import type { PricingContext } from "./pricing-context";
 import {
@@ -73,6 +71,17 @@ export type RouteHit = {
   minCost: number | null;
   maxCost: number | null;
   createdAt: string | null;
+  /**
+   * 🔎 **نصُّ البحث الخام لهذا الصف** — وهو حرفياً ما تبنيه `admin_search_routes`
+   * في `concat_ws(' ', pl.title, pl.origin_label, pl.dest_label, s.company_name,
+   * sh.title)`: نفس الحقول، نفس الترتيب، والفارغُ يُسقَط كما يُسقطه `concat_ws`.
+   *
+   * يُكتب سمةً على الصف (`data-route-hay`) فيرشّح `RouteSearchForm` عليه في
+   * المتصفح مع كل حرف بلا نداء. **ويُبنى من الصف الخام قبل قيم العرض
+   * الافتراضية** («مسار بلا عنوان» · «—») — وإلا لطابق البحثُ كلمةً لا وجود لها
+   * في القاعدة، فاختلفت مسطرةُ الكتابة عن مسطرة الزرّ.
+   */
+  hay: string;
 };
 
 export type RouteSearchResult = {
@@ -84,8 +93,21 @@ export type RouteSearchResult = {
 
 const EMPTY: RouteSearchResult = { rows: [], total: 0, ready: false };
 
-/** سقفُ صفوف الصفحة الواحدة — والدالة تقصّه إلى ٢٠٠ مهما مُرِّر */
-export const ROUTES_PAGE_SIZE = 40;
+/**
+ * سقفُ صفوف الصفحة الواحدة — و`admin_search_routes` تقصّه إلى ٢٠٠ مهما مُرِّر.
+ *
+ * ── لماذا صار ٢٠٠ بعد أن كان ٤٠ (2026-08-18) ──────────────────────────────
+ *
+ * الترشيح الحيّ في `RouteSearchForm` لا يقع محلياً إلا حين تكون **النافذة
+ * المحمَّلة هي المجموعة كلَّها** — وإلا رشّح على نصفٍ فأخفى مسارات موجودة. وعدد
+ * مسارات المالك اليوم **١٠٠** (مقيسٌ على القاعدة الحيّة)، فأربعون تعني ثلاث
+ * صفحاتٍ وترشيحاً يسقط إلى نداءٍ خادميّ في كل واحدة منها.
+ *
+ * و٢٠٠ هو **سقف الدالة نفسها** لا رقمٌ مختار: لا فائدة من طلب أكثر مما تعطي.
+ * والصفُّ هنا مضغوطٌ سلفاً (صفٌّ واحد لا بطاقة، والأسعارُ خلاصةٌ محسوبةٌ في
+ * Postgres) — فمئتا صفٍّ جدولٌ طويل لا جدارٌ من الجداول.
+ */
+export const ROUTES_PAGE_SIZE = 200;
 
 function readHit(row: Record<string, unknown>): RouteHit | null {
   const id = asText(row.id);
@@ -106,6 +128,16 @@ function readHit(row: Record<string, unknown>): RouteHit | null {
     minCost: asNumber(pick(row, ["min_cost", "minCost"])),
     maxCost: asNumber(pick(row, ["max_cost", "maxCost"])),
     createdAt: asText(pick(row, ["created_at", "createdAt"])),
+    // `concat_ws` نفسه: الترتيب ملزم، والقيمة غير النصّية تُسقَط لا تُستبدل
+    hay: [
+      row.title,
+      pick(row, ["origin_label", "originLabel"]),
+      pick(row, ["dest_label", "destLabel"]),
+      pick(row, ["company_name", "companyName"]),
+      pick(row, ["sheet_title", "sheetTitle"]),
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .join(" "),
   };
 }
 
@@ -173,72 +205,21 @@ function PriceSummary({ hit, currency }: { hit: RouteHit; currency: string }) {
 }
 
 /**
- * نموذج البحث — `GET` كي يبقى الرابط قابلاً للمشاركة (نفس اتفاقية بقية اللوحة).
+ * نموذج البحث — **جزيرةُ عميلٍ ترشّح مع كل حرف**، وموضعُها `routes-live-filter.tsx`.
  *
- * `hidden` تحمل ما يجب ألا يضيع عند البحث (التبويب، المتعهد المفتوح)، و«مسح
- * البحث» رابطٌ لا زر: لا حالةَ عميلٍ في هذه الشاشة إطلاقاً.
+ * ولم ينتقل ليصير عميلاً «لأن التفاعل أجمل»: شكوى المالك (2026-08-18) أن البحث
+ * بزرٍّ لا يناسبه. والنموذج ما زال `GET` بحقوله المخفية وزرِّ إرساله كما كان —
+ * فالضغط على «بحث» يثبّت البحث في العنوان (رابطٌ يُشارَك ويُحدَّث)، والكتابة
+ * وحدها ترشّح المحمَّل بلا نداء. ويعمل بلا جافاسكربت كما كان بالضبط.
+ *
+ * 🔴 **وقواعدُ المطابقة هناك ميناءٌ حرفيّ لـ`admin_search_routes`** — مسطرةٌ
+ * واحدة للكتابة وللزرّ. التفصيل والقياس في ترويسة ذلك الملف.
+ *
+ * ⚠ **وما يُصدَّر من وحدة `"use client"` لا يُقرأ في الخادم إلا مكوّناً**
+ * (‏`handover/LESSONS.md` §٥): فلا تُسحب من هناك قيمةٌ ولا دالّة تطبيع إلى هذا
+ * الملف الخادميّ — ولذلك تعبر السمات بينهما نصّاً في الـDOM لا استيراداً.
  */
-export function RouteSearchForm({
-  action,
-  query,
-  hidden = {},
-  clearHref,
-  disabled = false,
-  label = "بحث في المسارات",
-}: {
-  action: string;
-  query: string;
-  hidden?: Record<string, string>;
-  clearHref: string;
-  disabled?: boolean;
-  label?: string;
-}) {
-  return (
-    <form action={action} method="get">
-      <Card className="flex flex-row flex-wrap items-end gap-3 p-4">
-        {Object.entries(hidden).map(([name, value]) => (
-          <input key={name} type="hidden" name={name} value={value} />
-        ))}
-        <div className="min-w-52 flex-1 space-y-1.5">
-          <label
-            htmlFor="routes-q"
-            className="flex items-center gap-1.5 text-sm font-medium leading-none"
-          >
-            {label}
-            <HelpTip>
-              ابحث باسم المسار أو بنقطة البداية أو النهاية أو باسم المتعهد — جزءٌ من
-              الاسم يكفي.{" "}
-              <span className="font-semibold">
-                الهمزات والتاء المربوطة والتشكيل كلها سواء
-              </span>
-              : «الاسكندريه» تجد «الإسكندرية»، و«انستاباي» تجد «انستا باي». والأرقام
-              العربية مقبولة.
-            </HelpTip>
-          </label>
-          <Input
-            id="routes-q"
-            name="q"
-            defaultValue={query}
-            placeholder="مثال: الاسكندريه · مطار · اسم المتعهد"
-            disabled={disabled}
-          />
-        </div>
-        <Button type="submit" disabled={disabled}>
-          <Search />
-          بحث
-        </Button>
-        {query && (
-          <Link
-            href={clearHref}
-            className="pb-1.5 text-sm text-muted-foreground transition-colors hover:text-primary hover:underline"
-          >
-            مسح البحث
-          </Link>
-        )}
-      </Card>
-    </form>
-  );
-}
+export { RouteSearchForm } from "./routes-live-filter";
 
 /**
  * جدولُ المسارات المضغوط — صفٌّ لكل مسار، وبطاقةٌ لكل مسار على الموبايل.
@@ -261,7 +242,13 @@ export function RoutesTable({
 }) {
   return (
     <>
-      <Card className="hidden p-0 md:block">
+      {/*
+        🔎 السمات `data-route-*` و`data-routes-table` **عقدٌ مع جزيرة البحث**
+        (`routes-live-filter.tsx`): هي التي تقرأها لترشّح الصفوف في المتصفح مع
+        كل حرف بلا نداء. وتغييرُ اسمٍ منها هنا يجب أن يتبعه هناك — وإن نُسي
+        فالجزيرة **تسقط إلى النداء الخادميّ المخنوق** ولا تكسر بحثاً.
+      */}
+      <Card className="hidden p-0 md:block" data-routes-table="">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[42rem] text-sm">
             <thead>
@@ -287,6 +274,8 @@ export function RoutesTable({
               {rows.map((hit) => (
                 <tr
                   key={hit.id}
+                  data-route-id={hit.id}
+                  data-route-hay={hit.hay}
                   className={
                     hit.id === activeId
                       ? "border-b border-border bg-primary/10 last:border-0"
@@ -354,9 +343,9 @@ export function RoutesTable({
         </div>
       </Card>
 
-      <div className="space-y-2 md:hidden">
+      <div className="space-y-2 md:hidden" data-routes-table="">
         {rows.map((hit) => (
-          <Card key={hit.id} className="gap-1 p-3">
+          <Card key={hit.id} className="gap-1 p-3" data-route-id={hit.id} data-route-hay={hit.hay}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">{hit.title}</span>
               <ListStatusBadge status={hit.status} />
@@ -570,7 +559,14 @@ export function RouteDetailCard({
   );
 }
 
-/** سطرُ الحصيلة — يقول ما لم يُعرَض بدل أن يتركه يُخمَّن */
+/**
+ * سطرُ الحصيلة — يقول ما لم يُعرَض بدل أن يتركه يُخمَّن.
+ *
+ * 🔎 **وهو أيضاً العتبةُ التي تقرؤها جزيرةُ البحث**: `data-routes-shown` و
+ * `data-routes-total` هما ما يجعل الترشيح المحليّ يقع أو يسقط إلى الدالة —
+ * فالعتبة مقروءةٌ من الصفحة لا رقمٌ مكتوبٌ بالحدس في مكانين. وحين يرشّح البحث
+ * محلياً يُخفي هذا السطر ويكتب حصيلةً حيّةً بدله.
+ */
 export function RoutesCount({
   shown,
   total,
@@ -581,7 +577,12 @@ export function RoutesCount({
   query: string;
 }) {
   return (
-    <p className="text-xs text-muted-foreground">
+    <p
+      className="text-xs text-muted-foreground"
+      data-routes-window=""
+      data-routes-shown={shown}
+      data-routes-total={total}
+    >
       المعروض {toArabicDigits(shown)} من {toArabicDigits(total)} مسار
       {query ? ` مطابق لـ«${query}»` : ""}
       {total > shown ? " — ضيّق البحث أو انتقل إلى الصفحة التالية." : "."}

@@ -1,4 +1,4 @@
-import { CarFront, Plus, Power, PowerOff, Trash2 } from "lucide-react";
+import { CarFront, ImageUp, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -16,9 +16,20 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { FleetClassGrid } from "@/lib/vehicles/fleet-grid";
+import { loadFleetBreakdown, loadFleetPhotos } from "@/lib/vehicles/photos";
 import { loadVehicleClasses, loadVehicles, type PortalVehicle } from "../_lib/data";
 import { portalSetupAccess } from "../_lib/session";
-import { createVehicle, deleteVehicle, saveVehicle, toggleVehicle } from "./actions";
+import {
+  createVehicle,
+  deleteVehicle,
+  removeVehiclePhotoAction,
+  saveVehicle,
+  toggleVehicle,
+  uploadVehiclePhotoAction,
+} from "./actions";
 
 /**
  * أسطول المتعهد — المركبات التي ينفّذ بها الرحلات.
@@ -71,6 +82,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   label: "اسم المركبة حقل إلزامي — اكتب الماركة والموديل ليسهل تمييزها.",
   year: "سنة الموديل يجب أن تكون سنة صحيحة.",
   seats: "عدد المقاعد يجب أن يكون عدداً صحيحاً من ١ فأكثر.",
+  // رموز صورة المركبة (0136) — لكل سببٍ رسالتُه، فرسالةٌ واحدة عامة تُخفي أي
+  // الحقول أخطأ (اتفاقية §٤)
+  doc_empty: "لم تختر ملفاً — اختر صورة ثم اضغط الرفع.",
+  doc_type: "صيغة الصورة غير مقبولة — استعمل JPG أو PNG أو WEBP (ولا يُقبل PDF لصورة مركبة).",
+  doc_size: "حجم الصورة أكبر من الحد المسموح (٥ ميجابايت) — اضغطها أو اختر أخرى.",
+  upload: "تعذّر رفع الصورة إلى التخزين — أعد المحاولة، وإن تكرر فأبلغ الإدارة.",
 };
 
 function VehicleCard({
@@ -209,10 +226,20 @@ export default async function PortalFleetPage({ searchParams }: PageProps<"/port
   if (!access.ok) return null;
 
   const { supabase, sub } = access;
-  const [{ classes, ready: classesReady }, { vehicles, ready }, colors] = await Promise.all([
+  const [
+    { classes, ready: classesReady },
+    { vehicles, ready },
+    colors,
+    breakdown,
+    photos,
+  ] = await Promise.all([
     loadVehicleClasses(supabase),
     loadVehicles(supabase, sub.id),
     loadVehicleColors(supabase, sub.id),
+    // تفصيلُ الفئات مصدرُه دالةُ Postgres وحدها — لا عدٌّ في الواجهة، وإلا لم
+    // تظهر الفئةُ التي لا مركبة له فيها أصلاً (0136 القسم ٧)
+    loadFleetBreakdown(supabase, sub.id),
+    loadFleetPhotos(supabase, sub.id),
   ]);
 
   const saved = params.saved === "1";
@@ -268,6 +295,57 @@ export default async function PortalFleetPage({ searchParams }: PageProps<"/port
         <p className="text-sm text-muted-foreground">
           {countLabel(vehicles.length)} مركبة مسجّلة، منها {countLabel(activeCount)} في الخدمة.
         </p>
+      ) : null}
+
+      {/* أسطولك مفصَّلاً لكل فئة، بالصور — نفس الشبكة التي تراها الإدارة في
+          ملفّك، فما تراه هنا هو ما تراه هي (مكوّنٌ واحد، القاعدة ١٢). */}
+      {breakdown.ready && photos.ready ? (
+        <Card className="p-5">
+          <FleetClassGrid
+            rows={breakdown.rows}
+            vehicles={photos.vehicles}
+            truncated={photos.truncated}
+            intro={
+              <div>
+                <h3 className="font-heading text-base font-bold">أسطولك لكل فئة</h3>
+                <p className="text-sm text-muted-foreground">
+                  الفئة التي لا مركبة لك فيها تظهر هنا بصفرٍ صريح — لأنها فئة لا يُطلب منك
+                  تسعيرها ولا تصلك رحلاتها. والصورة تراها أنت والإدارة فقط: لا يراها عميل
+                  ولا متعهد آخر.
+                </p>
+              </div>
+            }
+            photoForm={(vehicle) => (
+              <div className="space-y-2 rounded-lg bg-muted/30 p-2">
+                <form action={uploadVehiclePhotoAction.bind(null, vehicle.id)} className="space-y-1.5">
+                  <Label htmlFor={`${vehicle.id}-photo`} className="text-[11px] text-muted-foreground">
+                    صورة المركبة (JPG أو PNG أو WEBP، حتى ٥ ميجابايت)
+                  </Label>
+                  <Input
+                    id={`${vehicle.id}-photo`}
+                    name="file"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    required
+                    className="h-auto py-1.5 text-xs file:me-2 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+                  />
+                  <Button type="submit" size="sm" variant="secondary">
+                    <ImageUp aria-hidden="true" />
+                    {vehicle.photo.kind === "url" ? "استبدال الصورة" : "رفع الصورة"}
+                  </Button>
+                </form>
+                {vehicle.photo.kind === "none" ? null : (
+                  <form action={removeVehiclePhotoAction.bind(null, vehicle.id)}>
+                    <Button type="submit" size="sm" variant="ghost">
+                      <Trash2 aria-hidden="true" />
+                      إزالة الصورة
+                    </Button>
+                  </form>
+                )}
+              </div>
+            )}
+          />
+        </Card>
       ) : null}
 
       {ready && vehicles.length === 0 ? (
