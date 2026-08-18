@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { portalSetupAccess } from "../../../_lib/session";
 import { routesText, SheetCounts } from "../../_components/sheet-bits";
 import {
-  countItemsByRoute,
+  loadItemsByRoute,
   loadCoveredClasses,
   loadRoutes,
   loadSheet,
@@ -76,11 +76,16 @@ export default async function PortalPriceSheetPage({
   if (!sheet) notFound();
 
   const mine = routes.filter((r) => r.sheetId === id);
-  const counts = await countItemsByRoute(supabase, mine.map((r) => r.id));
+  const { items: priceItems, truncated: pricesTruncated } = await loadItemsByRoute(
+    supabase,
+    mine.map((r) => r.id)
+  );
 
   const submitted = typeof query.submitted === "string" ? Number(query.submitted) : null;
   const error = typeof query.error === "string" ? query.error : null;
   const covered = classes.filter((c) => c.covered);
+  // أسماءُ الفئات بالعربية من نفس مصدر شاشة التسعير — لا قائمةٌ ثانية تنحرف
+  const classTitles = new Map(classes.map((c) => [c.slug, c.title]));
   const sendable = sheet.draftCount + sheet.rejectedCount > 0;
 
   return (
@@ -165,7 +170,7 @@ export default async function PortalPriceSheetPage({
                 <tr className="border-b border-border text-xs text-muted-foreground">
                   <th className="p-2 text-start font-medium">المسار</th>
                   <th className="p-2 text-start font-medium">من ← إلى</th>
-                  <th className="p-2 text-start font-medium">فئات مُسعَّرة</th>
+                  <th className="p-2 text-start font-medium">الأسعار لكل فئة</th>
                   <th className="p-2 text-start font-medium">الحالة</th>
                 </tr>
               </thead>
@@ -189,7 +194,35 @@ export default async function PortalPriceSheetPage({
                       {route.originLabel} ← {route.destLabel}
                     </td>
                     <td className="p-2 align-top">
-                      {toArabicDigits(counts.get(route.id) ?? 0)}
+                      {(() => {
+                        const rows = priceItems.get(route.id) ?? [];
+                        /*
+                         * 🔴 «لا سعر» تُقال ولا تُترك خانةً فارغة: مسارٌ بلا سعرٍ
+                         * لا يدخل التسعير أصلاً، فسكوتُ الجدول عنه يخفي عن المتعهد
+                         * أهمَّ ما يحتاج أن يراه.
+                         */
+                        if (rows.length === 0) {
+                          return (
+                            <span className="text-xs text-amber-700 dark:text-amber-300">
+                              بلا سعر بعد
+                            </span>
+                          );
+                        }
+                        return (
+                          <ul className="space-y-0.5">
+                            {rows.map((it) => (
+                              <li key={it.classSlug} className="flex gap-1.5 whitespace-nowrap">
+                                <span className="text-muted-foreground">
+                                  {classTitles.get(it.classSlug) ?? it.classSlug}
+                                </span>
+                                <span className="font-medium tabular-nums">
+                                  {toArabicDigits(it.cost)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        );
+                      })()}
                     </td>
                     <td className="p-2 align-top">
                       <PriceListStatusBadge status={route.status} />
@@ -200,6 +233,13 @@ export default async function PortalPriceSheetPage({
             </table>
           </div>
         )}
+
+        {pricesTruncated ? (
+          <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
+            ⚠ الكشف أكبر من أن تُقرأ أسعاره كلها في مرة — بعضُ الأرقام غير معروضة هنا.
+            افتح المسار لترى سعره كاملاً.
+          </p>
+        ) : null}
 
         <p className="text-xs leading-5 text-muted-foreground">
           {LIST_STATUS_HINTS.draft} الأرقام تكلفتك أنت للاتجاه الواحد، والمنصة تضيف هامشها

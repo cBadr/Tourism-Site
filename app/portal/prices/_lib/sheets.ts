@@ -118,22 +118,43 @@ export async function loadRoutes(
 }
 
 /** عدد الفئات المُسعَّرة لكل مسار — استعلام واحد للصفحة كلها */
-export async function countItemsByRoute(
+
+/**
+ * أسعارُ كل مسار مجموعةً بالفئة — لا عدَّها.
+ *
+ * 🔴 كان الجدولُ يعرض **عدد** الفئات المُسعَّرة («٢») فيُجبر المتعهد على فتح كل
+ * مسارٍ ليرى رقماً. وملاحظةُ بدر: «تفتقد إلى عمود السعر بحيث يمكن بالنظر
+ * الاطلاع على سعر الفئات المتاحة في مسارات الكشف».
+ *
+ * ونداءٌ واحد لكل الكشف لا نداءٌ لكل صفّ — فسقفُ الصفوف الضمنيّ في PostgREST
+ * يُقطع صامتاً عند الكشوف الكبيرة، فيُطلب صريحاً ويُبلَّغ عن الاقتطاع.
+ */
+export async function loadItemsByRoute(
   supabase: SupabaseClient,
   routeIds: string[]
-): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  if (routeIds.length === 0) return counts;
+): Promise<{ items: Map<string, { classSlug: string; cost: number }[]>; truncated: boolean }> {
+  const items = new Map<string, { classSlug: string; cost: number }[]>();
+  if (routeIds.length === 0) return { items, truncated: false };
+
+  const MAX = 4000;
   const res = await supabase
     .from("price_list_items")
-    .select("price_list_id")
-    .in("price_list_id", routeIds);
-  if (res.error) return counts;
+    .select("price_list_id, class_slug, cost")
+    .in("price_list_id", routeIds)
+    .order("class_slug", { ascending: true })
+    .limit(MAX);
+  if (res.error) return { items, truncated: false };
+
   for (const row of res.data ?? []) {
-    const id = String((row as Record<string, unknown>).price_list_id);
-    counts.set(id, (counts.get(id) ?? 0) + 1);
+    const r = row as Record<string, unknown>;
+    const id = String(r.price_list_id);
+    const cost = Number(r.cost);
+    if (!Number.isFinite(cost)) continue;
+    const list = items.get(id) ?? [];
+    list.push({ classSlug: String(r.class_slug), cost });
+    items.set(id, list);
   }
-  return counts;
+  return { items, truncated: (res.data ?? []).length >= MAX };
 }
 
 export function toImportRow(row: Record<string, unknown>): PriceImportRow {

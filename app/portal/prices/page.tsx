@@ -20,7 +20,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { portalSetupAccess } from "../_lib/session";
 import { routesText, SheetCounts } from "./_components/sheet-bits";
-import { countItemsByRoute, loadRoutes, loadSheets } from "./_lib/sheets";
+import { loadCoveredClasses, loadItemsByRoute, loadRoutes, loadSheets } from "./_lib/sheets";
 import { deletePriceList, submitPriceList } from "./actions";
 import { saveSheet } from "./sheets/actions";
 
@@ -54,9 +54,10 @@ export default async function PortalPricesPage({
 
   const { supabase, sub } = access;
 
-  const [{ sheets, ready: sheetsReady }, { routes, ready }] = await Promise.all([
+  const [{ sheets, ready: sheetsReady }, { routes, ready }, { classes }] = await Promise.all([
     loadSheets(supabase, sub.id),
     loadRoutes(supabase, sub.id),
+    loadCoveredClasses(supabase),
   ]);
 
   if (!ready) {
@@ -69,7 +70,9 @@ export default async function PortalPricesPage({
   }
 
   const loose = routes.filter((r) => r.sheetId === null);
-  const counts = await countItemsByRoute(supabase, loose.map((r) => r.id));
+  const { items: priceItems } = await loadItemsByRoute(supabase, loose.map((r) => r.id));
+  // أسماءُ الفئات من نفس مصدر شاشة التسعير — لا قائمةٌ ثانية تنحرف
+  const classTitles = new Map(classes.map((c) => [c.slug, c.title]));
 
   const saved = query.saved === "1";
   const submitted = query.submitted === "1";
@@ -226,9 +229,38 @@ export default async function PortalPricesPage({
                 </div>
 
                 <p className="text-sm text-muted-foreground">
-                  {route.originLabel} ← {route.destLabel} ·{" "}
-                  {toArabicDigits(counts.get(route.id) ?? 0)} فئة مُسعَّرة
+                  {route.originLabel} ← {route.destLabel}
                 </p>
+
+                {/*
+                 * 🔴 الأسعارُ تُقرأ بالنظر لا بفتح المسار — وملاحظةُ بدر كانت على
+                 * كشوف الأسعار، والمسارُ المستقلّ يحمل العيبَ نفسه فيُعالَج معه
+                 * وإلا صار في الشاشة الواحدة عرضان لشيءٍ واحد.
+                 */}
+                {(() => {
+                  const rows = priceItems.get(route.id) ?? [];
+                  if (rows.length === 0) {
+                    return (
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        بلا سعر بعد — ولا يدخل التسعير حتى يُسعَّر
+                      </p>
+                    );
+                  }
+                  return (
+                    <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                      {rows.map((it) => (
+                        <li key={it.classSlug} className="flex gap-1.5 whitespace-nowrap">
+                          <span className="text-muted-foreground">
+                            {classTitles.get(it.classSlug) ?? it.classSlug}
+                          </span>
+                          <span className="font-medium tabular-nums">
+                            {toArabicDigits(it.cost)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()}
 
                 <p className="text-xs leading-5 text-muted-foreground">
                   {LIST_STATUS_HINTS[route.status]}
