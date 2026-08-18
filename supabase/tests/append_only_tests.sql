@@ -425,6 +425,340 @@ begin
   end if;
 
   raise notice '✔ (ط) صفّا الفحص باقيان لأن الحارسَ يمنع حذفهما — والمُشغّلُ يُرجع الملفَّ فيمحوهما';
-  raise notice 'ALL PASSED — السجلُّ مُلحَقٌ فقط بالمنح وبالمُشغّل، أمام دور الخدمة وأمام المالك، ولا يُفرَّغ، وسياسةُ الاحتفاظ باقية';
+end;
+$$;
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  الأقسام (ي) … (ص) — أُضيفت مع الهجرة 0114
+--
+--  🔴 لماذا لم يمسك هذا الملفُّ ثقبَي 0114 وهو مكتوبٌ لهما بالضبط:
+--
+--    ١) القسم (أ) يسأل عن `UPDATE` و`DELETE` و`TRUNCATE` على أربعة جداول،
+--       **ولا يسأل عن `TRIGGER` ولا `REFERENCES` ولا `MAINTAIN` قط**. وحاملُ
+--       `TRIGGER` لا يحتاج أياً من الثلاثة الأولى: يعلّق على `audit_log`
+--       مُشغّلاً يُرجع `null` فتُبتلع كلُّ كتابةٍ تدقيقية صامتة، والحارسُ باقٍ.
+--       والقسم (ز) كان يسأل عن `DISABLE TRIGGER` وحده — وهو **الفعلُ الوحيد
+--       من الثلاثة الذي تحرسه الملكية**، فمرَّ الفحصُ على البابِ المُقفَل
+--       وتجاهل المفتوح.
+--    ٢) و`loyalty_settings` كان يُسأل عنه سؤالٌ واحد: `TRUNCATE`. **ولا سطرَ
+--       واحد في هذا الملف كان يسأل عن `DELETE` عليه** — وهو الفعلُ الذي
+--       يعرفه PostgREST، أي الفوهةُ الفعلية. المقيس قبل 0114:
+--       `delete from public.loyalty_settings where true` بدور الخدمة
+--       ⇒ rowCount = 1.
+--
+--  والقاعدةُ المشتقّة، وهي ما تحرسه هذه الأقسام: **الفحصُ يُعدّد الأفعالَ من
+--  الكتالوج لا من الذاكرة.** كلُّ فعلٍ يعرفه `has_table_privilege` × كلُّ دورٍ
+--  يصله المتصفح أو الخادم — وما لا يُسأل عنه يُترك مفتوحاً بلا أن يقول أحدٌ شيئاً.
+--
+--  🔬 وما يجب أن تُسقطه هذه الأقسام:
+--
+--    | الطفرة | التأكيد الذي يجب أن يسقط |
+--    |---|---|
+--    | `grant trigger on audit_log to service_role` | (ي) و(ل-١) |
+--    | `grant delete on loyalty_settings to service_role` | (ي) و(ل-٤) |
+--    | `grant truncate on <أيّ جدول> to service_role` | (ك-١) |
+--    | إعادة `alter default privileges … grant trigger …` | (ك-٢) |
+--    | `drop trigger loyalty_settings_no_delete` | (م-٢) |
+--    | `drop trigger loyalty_settings_no_truncate` | (ص) |
+--    | سحبُ `INSERT` عن دور الخدمة (إفراطٌ في الإغلاق) | (ن-١) |
+--    | سحبُ ملكية المخرج / قفلُ الصيانة بلا مفتاح | (ن-٣) |
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- ----------------------------------------------------------------------------
+-- (ي) 🔴 المصفوفة الكاملة — كلُّ فعلٍ × كلُّ دور، و`DELETE` صراحةً
+--
+-- مصفوفتان لأن العقدَ مختلف: جداولُ السجلّ الأربعة **لا يُكتب فيها إلا إلحاقاً**،
+-- بينما `loyalty_settings` **يُحدَّث بقصد** (شاشةُ الولاء تحفظ فيه) ولا يُحذف
+-- ولا يُفرَّغ. فأيُّ فحصٍ يسوّي بينهما إمّا يفتح ثقباً أو يعطّل شاشة.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  r       record;
+  v_bad   text := '';
+  v_cells integer := 0;
+begin
+  -- (ي-١) جداولُ السجلّ الأربعة: ستةُ أفعالٍ × ثلاثةُ أدوار × أربعةُ جداول = ٧٢
+  for r in
+    select t.tbl, x.role, v.verb
+    from (values ('public.audit_log'), ('public.ledger_entries'),
+                 ('public.loyalty_entries'), ('public.funnel_events')) t(tbl)
+    cross join (values ('service_role'), ('authenticated'), ('anon')) x(role)
+    cross join (values ('UPDATE'), ('DELETE'), ('TRUNCATE'),
+                       ('TRIGGER'), ('REFERENCES'), ('MAINTAIN')) v(verb)
+  loop
+    v_cells := v_cells + 1;
+    if has_table_privilege(r.role, r.tbl, r.verb) then
+      v_bad := v_bad || format('%s/%s/%s · ', r.tbl, r.role, r.verb);
+    end if;
+  end loop;
+
+  -- (ي-٢) و`loyalty_settings`: خمسةُ أفعالٍ ممنوعة × ثلاثةُ أدوار = ١٥
+  --       (‏`UPDATE` مستثنىً عمداً — وله شاهدٌ معاكس أدناه)
+  for r in
+    select 'public.loyalty_settings'::text as tbl, x.role, v.verb
+    from (values ('service_role'), ('authenticated'), ('anon')) x(role)
+    cross join (values ('DELETE'), ('TRUNCATE'),
+                       ('TRIGGER'), ('REFERENCES'), ('MAINTAIN')) v(verb)
+  loop
+    v_cells := v_cells + 1;
+    if has_table_privilege(r.role, r.tbl, r.verb) then
+      v_bad := v_bad || format('%s/%s/%s · ', r.tbl, r.role, r.verb);
+    end if;
+  end loop;
+
+  if v_bad <> '' then
+    raise exception
+      '(ي) منحةٌ باقية تنزع الحارسَ أو تمحو قرارَ المالك — الخانات: %  (و`TRIGGER` وحده كافٍ: مُشغّلٌ يُرجع null على audit_log يبتلع التاريخَ صامتاً والحارسُ في مكانه)',
+      v_bad;
+  end if;
+  if v_cells <> 87 then
+    raise exception '(ي) المصفوفة % خانةً لا ٨٧ — الفحصُ لا يفحص ما يدّعيه', v_cells;
+  end if;
+
+  -- الشاهدُ المعاكس: ما **يجب** أن يبقى، وإلا مرَّ الفحصُ على قاعدةٍ مشلولة
+  if not has_table_privilege('authenticated', 'public.loyalty_settings', 'UPDATE') then
+    raise exception '(ي) سُحب UPDATE عن `authenticated` على loyalty_settings — شاشةُ /admin/loyalty لا تحفظ، وقرارُ المالك صار غيرَ قابلٍ للتغيير لا محميّاً';
+  end if;
+  if not has_table_privilege('authenticated', 'public.loyalty_settings', 'SELECT') then
+    raise exception '(ي) سُحبت القراءة عن `authenticated` على loyalty_settings — شاشةُ الولاء تعمى';
+  end if;
+
+  raise notice '✔ (ي) ٨٧ خانةً بلا منح — و`DELETE` على loyalty_settings منها صراحةً (وهو ما لم يكن يُسأل عنه قط) · والتحديثُ المشروع باقٍ';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ك) 🔴 والصنفُ كلُّه لا الجداولُ الخمسة — ومعه الجذرُ الذي يعيده
+--
+-- الثقبُ لم يكن حادثةً في خمسة جداول: `service_role` كان يملك `TRIGGER` على
+-- ٦٥ من ٦٦ جدولاً و١٣ من ١٣ اطّلاعاً، و`authenticated` على سبعةِ جداول منها
+-- `profiles` و`site_settings` و`pages` و`sections`. وسببُه صلاحيةٌ افتراضية
+-- تمنح `arwdDxtm` لكل جدولٍ جديد — فسحبُها جدولاً جدولاً سعيٌ خلف ذيل.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  r       record;
+  v_bad   text := '';
+  v_cells integer := 0;
+begin
+  for r in
+    select x.role, c.oid::regclass::text as rel, v.verb
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    cross join (values ('anon'), ('authenticated'), ('service_role')) x(role)
+    cross join (values ('TRIGGER'), ('TRUNCATE'), ('REFERENCES'), ('MAINTAIN')) v(verb)
+    where n.nspname = 'public' and c.relkind in ('r', 'v', 'm', 'p', 'f')
+  loop
+    v_cells := v_cells + 1;
+    if has_table_privilege(r.role, r.rel, r.verb) then
+      v_bad := v_bad || format('%s/%s/%s · ', r.rel, r.role, r.verb);
+    end if;
+  end loop;
+
+  if v_bad <> '' then
+    raise exception '(ك-١) منحةُ نزعِ حارسٍ أو تجاوزِ RLS باقية في الصنف — %', v_bad;
+  end if;
+  if v_cells < 300 then
+    raise exception '(ك-١) المصفوفة % خانةً فقط — إمّا أن المخطط فرغ وإمّا أن الفحص لا يمسح ما يدّعيه', v_cells;
+  end if;
+
+  -- (ك-٢) والجذر: الصلاحيةُ الافتراضية لم تعد تلد `t`/`D`/`x`/`m`
+  if exists (
+    select 1 from pg_default_acl d
+    where d.defaclrole = 'postgres'::regrole
+      and d.defaclnamespace = 'public'::regnamespace
+      and d.defaclobjtype = 'r'
+      and d.defaclacl::text ~ '(anon|authenticated|service_role)=[a-zA-Z]*[tDxm]'
+  ) then
+    raise exception
+      '(ك-٢) الصلاحيةُ الافتراضية ما زالت تمنح t/D/x/m لأدوار PostgREST — والجدولُ القادم يولد بالثقب مهما نُظّفت الجداولُ القائمة';
+  end if;
+
+  -- والشاهدُ المعاكس: `arwd` باقيةٌ في الافتراضي، وإلا وُلد الجدولُ القادم ميتاً
+  if not exists (
+    select 1 from pg_default_acl d
+    where d.defaclrole = 'postgres'::regrole
+      and d.defaclnamespace = 'public'::regnamespace
+      and d.defaclobjtype = 'r'
+      and d.defaclacl::text like '%service_role=arwd/%'
+  ) then
+    raise exception '(ك-٢) الصلاحيةُ الافتراضية لم تعد تمنح arwd لدور الخدمة — كلُّ جدولٍ جديد سيولد بلا قراءةٍ ولا كتابة';
+  end if;
+
+  raise notice '✔ (ك) % خانةً في كل جداول واطّلاعات public بلا TRIGGER/TRUNCATE/REFERENCES/MAINTAIN لأدوار PostgREST · والصلاحيةُ الافتراضية لم تعد تلد الثقب', v_cells;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ل) 🔴 والحكمُ بالنداء الحيّ لا بقراءة منحة (القاعدة ١٩)
+--
+-- أربعةُ أفعالٍ × ثلاثةُ أدوار = ١٢ محاولةً حقيقية. و`TRUNCATE` وحده يُقاس
+-- بالمنح لا بالنداء — والسببُ في رأس الملف (قفل `ACCESS EXCLUSIVE`).
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  r     record;
+  v_bad text := '';
+  v_n   integer := 0;
+begin
+  for r in select unnest(array['service_role', 'authenticated', 'anon']) as role
+  loop
+    execute format('set local role %I', r.role);
+
+    -- (ل-١) تركيبُ مُشغّلٍ على سجلّ التدقيق — الثقبُ الأصلي
+    begin
+      execute 'create trigger zz_ao_kill before insert on public.audit_log
+               for each row execute function public.append_only_truncate_guard()';
+      v_bad := v_bad || format('%s/CREATE TRIGGER نجح · ', r.role);
+    exception
+      when insufficient_privilege then v_n := v_n + 1;
+      when others then v_bad := v_bad || format('%s/CREATE TRIGGER ردَّ %s · ', r.role, sqlstate);
+    end;
+
+    -- (ل-٢) تعطيلُ الحارس
+    begin
+      execute 'alter table public.audit_log disable trigger audit_log_append_only';
+      v_bad := v_bad || format('%s/DISABLE TRIGGER نجح · ', r.role);
+    exception
+      when insufficient_privilege then v_n := v_n + 1;
+      when others then v_bad := v_bad || format('%s/DISABLE TRIGGER ردَّ %s · ', r.role, sqlstate);
+    end;
+
+    -- (ل-٣) إسقاطُ الحارس
+    begin
+      execute 'drop trigger audit_log_append_only on public.audit_log';
+      v_bad := v_bad || format('%s/DROP TRIGGER نجح · ', r.role);
+    exception
+      when insufficient_privilege then v_n := v_n + 1;
+      when others then v_bad := v_bad || format('%s/DROP TRIGGER ردَّ %s · ', r.role, sqlstate);
+    end;
+
+    -- (ل-٤) 🔴 ومحوُ قرار المالك بأمرٍ واحد — الفعلُ الذي يعرفه PostgREST
+    begin
+      execute 'delete from public.loyalty_settings where true';
+      v_bad := v_bad || format('%s/DELETE loyalty_settings نجح · ', r.role);
+    exception
+      when insufficient_privilege then v_n := v_n + 1;
+      when others then
+        if position('قرارُ مالكٍ لا يُمحى' in sqlerrm) = 0 then
+          v_bad := v_bad || format('%s/DELETE ردَّ %s · ', r.role, sqlstate);
+        else
+          v_n := v_n + 1;
+        end if;
+    end;
+
+    execute 'reset role';
+  end loop;
+
+  if v_bad <> '' then
+    raise exception '(ل) خاناتٌ لم تُرفض كما يجب: %', v_bad;
+  end if;
+  if v_n <> 12 then
+    raise exception '(ل) رُفضت % محاولةً لا ١٢ — الفحصُ لم يشغّل ما يدّعيه', v_n;
+  end if;
+
+  raise notice '✔ (ل) ١٢ محاولةً حيّة (٣ أدوار × تركيبِ مُشغّل · تعطيلِه · إسقاطِه · محوِ قرارِ المالك) رُفضت كلُّها';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (م) والمُشغّلُ يوقف **المالكَ** كذلك — وهو ما لا يفعله المنح
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_n integer;
+begin
+  -- (م-١) المالكُ يملك المنحة كلَّها…
+  if not has_table_privilege('postgres', 'public.loyalty_settings', 'DELETE') then
+    raise exception '(م-١) مالكُ الجدول بلا DELETE — الفحصُ التالي سيقيس المنحَ لا المُشغّل';
+  end if;
+
+  -- (م-٢) …ومع ذلك يُردّ
+  begin
+    delete from public.loyalty_settings where true;
+    raise exception '(م-٢) مالكُ الجدول حذف صفَّ إعدادات الولاء — المُشغّلُ غائب، وقرارُ المالك يُمحى بسطر';
+  exception
+    when others then
+      if position('قرارُ مالكٍ لا يُمحى' in sqlerrm) = 0 then raise; end if;
+  end;
+
+  -- (م-٣) والصفُّ ما زال هناك — لا نصفُ حذف
+  select count(*)::integer into v_n from public.loyalty_settings;
+  if v_n <> 1 then
+    raise exception '(م-٣) `loyalty_settings` فيه % صفاً لا واحداً بعد رفض الحذف', v_n;
+  end if;
+
+  raise notice '✔ (م) صفُّ قرار المالك لا يُحذف حتى بدور مالك الجدول — لا بالمنح وحده';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ن) 🔴 والمسارات المشروعة لم تنكسر — قفلٌ بلا مفتاح عطلٌ آخر
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_base bigint;
+  v_n    integer;
+  v_pct  numeric;
+begin
+  -- (ن-١) دورُ الخدمة ما زال يكتب صفَّ تدقيقٍ وصفَّ قمع — التطبيق يفعلها دائماً
+  select coalesce(max(id), 0) into v_base from public.audit_log;
+  execute 'set local role service_role';
+  insert into public.audit_log (actor_kind, entity, action, entity_label)
+  values ('system', 'zz-ao-legit', 'insert', 'zz-ao-service-write');
+  execute 'reset role';
+  select count(*)::integer into v_n
+  from public.audit_log where id > v_base and entity = 'zz-ao-legit';
+  if v_n <> 1 then
+    raise exception '(ن-١) دورُ الخدمة لم يعد يكتب في السجلّ — الإصلاحُ أعمى التطبيق بدل أن يحرسه';
+  end if;
+
+  -- (ن-٢) وتعديلُ إعدادٍ مشروع ما زال يُنتج صفَّ تدقيقه
+  --       (‏`log_audit` يتجاهل تعديلاً لا يغيّر شيئاً، فالتغييرُ حقيقيٌّ والملفُّ يُرجَع)
+  select coalesce(max(id), 0) into v_base from public.audit_log;
+  select max_redeem_percent into v_pct from public.loyalty_settings;
+  update public.loyalty_settings
+     set max_redeem_percent = case when v_pct = 11 then 12 else 11 end;
+  select count(*)::integer into v_n
+  from public.audit_log
+  where id > v_base and entity = 'loyalty_settings' and action = 'update';
+  if v_n <> 1 then
+    raise exception '(ن-٢) تعديلُ إعدادٍ مشروع أنتج % صفَّ تدقيق لا واحداً — إمّا أن الحفظ انكسر وإمّا أن أثرَه ضاع', v_n;
+  end if;
+
+  -- (ن-٣) 🔴 والمخرجُ للصيانة يفتح فعلاً: الهجرةُ القادمة ليست محبوسة
+  alter table public.loyalty_settings disable trigger loyalty_settings_no_delete;
+  delete from public.loyalty_settings where true;
+  get diagnostics v_n = row_count;
+  alter table public.loyalty_settings enable trigger loyalty_settings_no_delete;
+  if v_n <> 1 then
+    raise exception '(ن-٣) المخرجُ المُعلَن لا يفتح — DISABLE TRIGGER ثم DELETE أعطى % صفاً، وقفلٌ بلا مفتاحٍ عطلٌ لا حراسة', v_n;
+  end if;
+
+  -- (ن-٤) والمالكُ ما زال يركّب مُشغّلاً ويُسقطه — أي أن الهجرات ممكنة كما كانت
+  create trigger zz_ao_owner_probe before insert on public.audit_log
+    for each row execute function public.append_only_truncate_guard();
+  drop trigger zz_ao_owner_probe on public.audit_log;
+
+  raise notice '✔ (ن) الكتابةُ التدقيقية بدور الخدمة تعمل · وحفظُ الإعدادات يُنتج أثرَه · والمخرجُ (DISABLE TRIGGER) يفتح ويغلق · والمالكُ يركّب مُشغّلاً ويُسقطه ⇒ الهجراتُ ممكنة';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ص) وتفريغُ صفِّ القرار مرفوضٌ بمُشغّل بيان — **آخرُ فحصٍ عمداً**
+--     (‏`TRUNCATE` يأخذ `ACCESS EXCLUSIVE` قبل المُشغّل، والقفلُ يبقى إلى نهاية
+--      المعاملة، و`loyalty_config()` تقرأ هذا الجدول في كل تسعيرة)
+-- ----------------------------------------------------------------------------
+do $$
+begin
+  begin
+    execute 'truncate table public.loyalty_settings';
+    raise exception '(ص) TRUNCATE على loyalty_settings نجح — مُشغّلُ البيان غائب، وRLS لا تغطّي هذا الفعل أصلاً';
+  exception
+    when others then
+      if position('TRUNCATE ممنوع' in sqlerrm) = 0 then raise; end if;
+  end;
+
+  raise notice '✔ (ص) TRUNCATE على loyalty_settings مرفوضٌ بمُشغّل بيانٍ حتى بدور المالك';
+  raise notice 'ALL PASSED — السجلُّ مُلحَقٌ فقط بالمنح وبالمُشغّل · ولا يُنزَع الحارسُ بمنحةِ TRIGGER · ولا يُمحى قرارُ المالك بـDELETE ولا بـTRUNCATE · والصلاحيةُ الافتراضية لم تعد تلد الثقب · والمساراتُ المشروعة والهجراتُ سليمة';
 end;
 $$;

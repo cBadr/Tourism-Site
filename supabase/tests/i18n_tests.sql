@@ -1079,6 +1079,143 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (ح-ر) 🔴 الحقلُ المحجوز لا يُعتمد ولا يُنشر — **البرهان السلوكيّ** (`0115`)
+--
+--     العطبُ الذي وُلد منه هذا القسم وقع فعلاً: ستّةُ صفوف `href` صارت
+--     `published` على `en` الحيّة يوم 2026-08-18 (‏06:23:31 ← 06:23:48)
+--     باعتمادٍ فرديّ من الطابور — **بينما `0104` تحرس الفهرس والتصيير وحدهما،
+--     ولا موضعَ فيها يمنع النشر.** وواحدٌ من الستّة `‎/routes/cairo-lexandria`
+--     مقابل `‎/routes/cairo-alexandria` في `pages` ⇒ ٤٠٤ لو صُيّر يوماً.
+--
+--     و`i18n_href_tests.sql (هـ)` يقيس الكتالوج والنصّ لأنه **لا يكتب بايتاً**.
+--     وهذا القسم يقيس **ما يفعله الحارس**، على فيكسترة `zz` القائمة سلفاً:
+--     يُدرَج صفٌّ محجوز، فتُجرَّب عليه المسالك الأربعة، ثم يُنظَّف في (ل).
+--
+--     ⚠ **ولا رقمَ مطلقاً هنا**: تُقاس حالةُ صفوفٍ بعينها لا عدّادُ اللغة —
+--        فسابقةُ (ز)/(ح) تترك في `zz` صفوفاً بحالاتٍ شتّى.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_s2    constant uuid := 'e1000000-0000-4000-8000-000000000002';
+  v_hkey  constant text := v_s2::text || '.items.1.href';
+  v_nkey  constant text := v_s2::text || '.items.1.name';
+  v_id    uuid;
+  v_pid   uuid;
+  v_st    text;
+  v_val   text;
+  v_hint  text;
+begin
+  -- الأرض: صفٌّ محجوز يدخل **مسودةً** — والإدراج نفسه يجب أن يمرّ، فالمسودة
+  -- سجلٌّ لا نشر (قرار `0104 §(١)`: تبقى مرئيةً للمالك في الطابور).
+  perform public.upsert_translations(jsonb_build_array(
+    jsonb_build_object('locale', 'zz', 'namespace', 'section', 'key', v_hkey,
+                       'sourceText', '/routes/cairo-alexandria',
+                       'value', '/routes/cairo-lexandria', 'provider', 'mymemory'),
+    jsonb_build_object('locale', 'zz', 'namespace', 'section', 'key', v_nkey,
+                       'sourceText', 'القاهرة إلى الإسكندرية',
+                       'value', 'Cairo to Alexandria', 'provider', 'mymemory')));
+
+  select t.id, t.status into v_id, v_st from public.translations t
+   where t.locale = 'zz' and t.key = v_hkey;
+  if v_id is null then
+    raise exception '(ح-ر-٠) 🔴 مسودةُ حقلٍ محجوز رُفضت — الحارس أوسعُ مما يجب';
+  end if;
+  if v_st <> 'draft' then
+    raise exception '(ح-ر-٠) صفُّ المسبار وُلد بحالة % لا draft', v_st;
+  end if;
+  select t.id into v_pid from public.translations t
+   where t.locale = 'zz' and t.key = v_nkey;
+
+  -- (ح-ر-١) 🔴 `review_translation` بالنشر ⇒ ترفض، وبـ`hint = reserved-field`
+  begin
+    perform public.review_translation(v_id, '/routes/cairo-lexandria', true);
+    raise exception '(ح-ر-١) 🔴 review_translation نشرت حقلاً محجوزاً';
+  exception
+    when others then
+      if sqlerrm like '%(ح-ر-١)%' then raise; end if;
+      get stacked diagnostics v_hint = pg_exception_hint;
+      if coalesce(v_hint, '') <> 'reserved-field' then
+        raise exception '(ح-ر-١) الرفض جاء بسببٍ آخر — hint=«%» · %',
+          coalesce(v_hint, 'بلا'), sqlerrm;
+      end if;
+  end;
+
+  -- (ح-ر-٢) وبالاعتماد وحده ⇒ ترفض كذلك: `reviewed` غرفةُ انتظار `publish_locale`
+  begin
+    perform public.review_translation(v_id, '/routes/cairo-lexandria', false);
+    raise exception '(ح-ر-٢) 🔴 review_translation اعتمدت حقلاً محجوزاً';
+  exception
+    when others then
+      if sqlerrm like '%(ح-ر-٢)%' then raise; end if;
+      get stacked diagnostics v_hint = pg_exception_hint;
+      if coalesce(v_hint, '') <> 'reserved-field' then
+        raise exception '(ح-ر-٢) الرفض جاء بسببٍ آخر — hint=«%» · %',
+          coalesce(v_hint, 'بلا'), sqlerrm;
+      end if;
+  end;
+
+  -- (ح-ر-٣) 🔴 وكتابةٌ **مباشرة** على الجدول ⇒ يمسكها المُشغّل. وهذا هو الفرق
+  --         بين حارسٍ في دالةٍ وحارسٍ على الجدول: `upsert_translations` بفرع
+  --         النشر التلقائي، ومفتاحُ الخدمة، واللوحة — كلُّها تمرّ من هنا.
+  begin
+    update public.translations set status = 'published' where id = v_id;
+    raise exception '(ح-ر-٣) 🔴 كتابةٌ مباشرة نشرت حقلاً محجوزاً';
+  exception
+    when others then
+      if sqlerrm like '%(ح-ر-٣)%' then raise; end if;
+      if position('ليس نصّاً يُترجَم' in sqlerrm) = 0 then
+        raise exception '(ح-ر-٣) الرفض جاء من غير المُشغّل — %', sqlerrm;
+      end if;
+  end;
+
+  -- (ح-ر-٤) والصفُّ لم يتحرّك، وتصحيحُ قيمته مسوَّدةً ما زال ممكناً
+  select t.status, t.value into v_st, v_val from public.translations t where t.id = v_id;
+  if v_st <> 'draft' or v_val <> '/routes/cairo-lexandria' then
+    raise exception '(ح-ر-٤) الصفُّ المرفوض تحرّك — status=% value=%', v_st, v_val;
+  end if;
+  update public.translations set value = '/routes/cairo-alexandria' where id = v_id;
+  select t.status, t.value into v_st, v_val from public.translations t where t.id = v_id;
+  if v_st <> 'draft' or v_val <> '/routes/cairo-alexandria' then
+    raise exception '(ح-ر-٤) تعديلُ مسودةٍ محجوزة تعطّل — status=% value=%', v_st, v_val;
+  end if;
+
+  -- (ح-ر-٥) 🔴 القفلُ الثاني في عزلة: يُعطَّل المُشغّل عمداً ويُصنع صفٌّ محجوزٌ
+  --         «مراجَع» — فيجب أن تتخطّاه `publish_locale` وتنشر النثرَ جنبَه.
+  --         **بلا هذا الفحص تمرّ الدالةُ خضراء لأن المُشغّل يحجب عنها الحالة.**
+  --         والتعطيلُ مُصرَّحٌ به كما في (أ)، والعودةُ فوراً وفحصُها بعده.
+  alter table public.translations disable trigger translations_guard_reserved_field;
+  update public.translations set status = 'reviewed' where id in (v_id, v_pid);
+  alter table public.translations enable trigger translations_guard_reserved_field;
+
+  perform public.publish_locale('zz');
+
+  select t.status into v_st from public.translations t where t.id = v_id;
+  if v_st <> 'reviewed' then
+    raise exception '(ح-ر-٥) 🔴 publish_locale نشرت حقلاً محجوزاً — صار %', v_st;
+  end if;
+  select t.status into v_st from public.translations t where t.id = v_pid;
+  if v_st <> 'published' then
+    raise exception '(ح-ر-٥) 🔴 publish_locale لم تعد تنشر النثر جنبَه — %', v_st;
+  end if;
+
+  -- (ح-ر-٦) والمُشغّل عاد مُشتعلاً — تعطيلٌ يُنسى يُسقط الحارس على القاعدة الحيّة
+  if not exists (
+    select 1 from pg_trigger g
+    where g.tgrelid = 'public.translations'::regclass
+      and g.tgname = 'translations_guard_reserved_field' and g.tgenabled = 'O') then
+    raise exception '(ح-ر-٦) 🔴 المُشغّل بقي معطَّلاً';
+  end if;
+
+  -- وتُعاد المسودة إلى حالتها فلا تُربك ما بعدها (والتنظيف في (ل) يحذفها)
+  alter table public.translations disable trigger translations_guard_reserved_field;
+  update public.translations set status = 'draft' where id = v_id;
+  alter table public.translations enable trigger translations_guard_reserved_field;
+
+  raise notice '✔ (ح-ر) الحقل المحجوز: اعتمادٌ ونشرٌ وكتابةٌ مباشرة ⇒ مرفوضة · مسودةٌ وتصحيحُها ⇒ يمرّان · publish_locale تتخطّاه وتنشر النثر';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ط) لغة معطَّلة لا تصل الزائر إطلاقاً
 -- ----------------------------------------------------------------------------
 do $$

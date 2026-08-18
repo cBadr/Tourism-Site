@@ -51,6 +51,15 @@
 -- الحقيقي مؤقتاً كي تنشر إصدارَ فحص. فلا تُشغَّل إلا عبر `pnpm db:test` الذي
 -- يفتح معاملةً ويُرجعها — والعقدُ يُفحص **قبل أول كتابة** في (٠).
 --
+-- ⚠ وحارسُ التسرّب (ط) يقيس **الفرق عن خط أساسٍ يُقرأ في (٠)**، لا عدداً مطلقاً.
+--   السببُ مقيس: الاتفاقية نُشرت 2026-08-18T04:54:15Z وقَبِلها شريكٌ حقيقي من
+--   بورتاله 06:27:31Z (‏`actor_kind='partner'`)، فصار في الجدول صفٌّ حيٌّ اسمُه
+--   اسمُ شركته. والصيغةُ القديمة «صفرُ صفٍّ لا يبدأ بـ`AGREEMENT_TESTS`» قرأت
+--   ذلك القبولَ الحقيقي **تسرّباً** فأحمرّت المجموعةَ على نظامٍ سليم — وهذا نوعُ
+--   الخطأ الذي يُغري بإرخاء الحارس. فشُدَّ بدل أن يُرخى: صفوفُ الأساس تُستثنى
+--   **بمعرّفها**، وكلُّ صفٍّ مُحدَثٍ يجب أن يكون موسوماً **وعلى متعهدِ فيكسترة**،
+--   وصفوفُ الأساس تُفحص عدداً **وبصمةً** فلا تُحذف ولا تُعدَّل تحت الملف.
+--
 -- المرجع: supabase/migrations/0113_partner_agreement.sql
 --         · 0110 (آلة «مُلحَقٌ فقط») · 0027/0028 (سابقة الإسقاط من portal_offers)
 --         · D-20 · D-48 · D-58 · القاعدة الذهبية ١٦
@@ -65,6 +74,7 @@ declare
   v_cov     integer;
   v_who     text;
   v_classes text[];
+  v_acc_pre text;
 begin
   perform set_config('request.jwt.claim.sub', '', false);
   perform set_config('request.jwt.claims', '', false);
@@ -123,7 +133,29 @@ begin
    where id = true;
   update public.partner_agreement_settings set gate_enabled = true, grace_days = 14 where id = true;
 
-  raise notice '✔ (٠) الشروط المسبقة سليمة · العقد قائم · فئة الاختبار «%»', v_classes[1];
+  -- 🔴 خط الأساس لسجلّ القبول — يُقرأ **قبل أول صفِّ فيكسترة**، ويُقارَن به (ط).
+  --    الاتفاقية شُحنت اليوم، وشريكٌ حقيقي **يَقبل من البورتال**، فصار في الجدول
+  --    صفٌّ حيٌّ لا وسمَ فيكسترة عليه. و«لا صفَّ خارج الفيكسترة» — رقماً مطلقاً —
+  --    تقرأ ذلك القبولَ الحقيقي تسرّباً وتحمرّ على نظامٍ سليم. فالمقياس الصحيح
+  --    **الفرقُ عن خط الأساس** لا العددُ المطلق (سابقة loyalty/notification/
+  --    partner_alert). ويُحفظ معه معرّفاتُ الصفوف وبصمتُها، فيُمسك ثلاثةَ أشياء:
+  --    صفٌّ جديد بلا وسم · وصفٌّ حيٌّ اختفى · وصفٌّ حيٌّ تغيّر تحت الملف.
+  select count(*)::text into strict v_acc_pre from public.partner_agreement_acceptances;
+  perform set_config('tours.ag_acc_pre_n', v_acc_pre, false);
+  perform set_config('tours.ag_acc_pre_ids', coalesce(
+    (select string_agg(a.id::text, ',' order by a.id) from public.partner_agreement_acceptances a), ''), false);
+  perform set_config('tours.ag_acc_pre_dig', coalesce(
+    (select md5(string_agg(a.id::text || '§' || a.subcontractor_id::text || '§' ||
+                           coalesce(a.subcontractor_name, '') || '§' || a.agreement_id::text || '§' ||
+                           a.agreement_version::text || '§' || a.doc_hash || '§' ||
+                           coalesce(a.signed_name, '') || '§' || a.actor_kind || '§' ||
+                           coalesce(a.accepted_by::text, '') || '§' ||
+                           to_char(a.accepted_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+                           '¶' order by a.id))
+       from public.partner_agreement_acceptances a), ''), false);
+
+  raise notice '✔ (٠) الشروط المسبقة سليمة · العقد قائم · فئة الاختبار «%» · خط أساس القبول % صفاً حيّاً',
+    v_classes[1], v_acc_pre;
 end;
 $$;
 
@@ -945,17 +977,85 @@ $$;
 --
 -- والمعاملةُ كلُّها تُرجَع بيد المُشغّل، لكن هذا القسم يُثبت أن الملف **لم
 -- يخترع صفاً** خارج فيكسترته: لا متعهدَ بلا وسم، ولا قبولَ لغير فيكسترته.
+--
+-- ⚠ والمقياسُ **فرقٌ عن خط الأساس المأخوذ في (٠)**، لا عددٌ مطلق. فالجدولُ لم
+--   يعد فارغاً على الإنتاج: الاتفاقية نُشرت 2026-08-18 وقَبِلها شريكٌ حقيقي من
+--   بورتاله، فصار فيه صفٌّ حيٌّ اسمُه اسمُ شركته لا وسمُ فيكسترة. و«صفرُ صفٍّ
+--   خارج الوسم» كانت تقرأ ذلك القبولَ الحقيقي **تسرّباً** وتحمرّ على نظامٍ سليم.
+--
+-- 🔴 والحارسُ لم يُرخَ بذلك، بل شُدَّ: كان يفحص **الاسم** وحده، فصار يفحص ثلاثة
+--   على **الصفوف المُحدَثة داخل المعاملة** حصراً — أي صفٍّ لم يكن في خط الأساس:
+--     ١) اسمُه موسومٌ بالفيكسترة، **و**متعهدُه من متعهدي الفيكسترة (فاسمٌ موسوم
+--        على متعهدٍ حقيقي كان يمرّ سابقاً، وصار يُمسَك)؛
+--     ٢) وصفوفُ خط الأساس كلُّها باقية — لا صفَّ حيٍّ اختفى؛
+--     ٣) وبصمتُها لم تتغيّر — لا صفَّ حيٍّ عُدّل تحت الملف.
 -- ----------------------------------------------------------------------------
 do $$
 declare
-  v_n    integer;
-  v_real text := current_setting('tours.ag_real', true);
+  v_n       integer;
+  v_dig     text;
+  v_real    text  := current_setting('tours.ag_real', true);
+  v_pre_n   integer := coalesce(nullif(current_setting('tours.ag_acc_pre_n', true), ''), '0')::integer;
+  v_pre_raw text  := coalesce(current_setting('tours.ag_acc_pre_ids', true), '');
+  v_pre_ids uuid[];
 begin
+  if v_pre_raw = '' then
+    v_pre_ids := '{}'::uuid[];
+  else
+    v_pre_ids := string_to_array(v_pre_raw, ',')::uuid[];
+  end if;
+  if coalesce(array_length(v_pre_ids, 1), 0) <> v_pre_n then
+    raise exception '(ط) 🔴 خط الأساس نفسه مكسور: % معرّفاً مقابل عدّادٍ % — لم يُقرأ في (٠) قبل أول كتابة',
+      coalesce(array_length(v_pre_ids, 1), 0), v_pre_n;
+  end if;
+
+  -- (ط-١) كلُّ صفِّ قبولٍ **أحدثه هذا الملف** موسومٌ بالفيكسترة ومُعلَّقٌ على
+  --       متعهدِ فيكسترة. وصفوفُ خط الأساس مستثناةٌ بمعرّفها لا باسمها.
   select count(*)::integer into v_n
   from public.partner_agreement_acceptances a
-  where a.subcontractor_name not like 'AGREEMENT_TESTS%';
+  where not (a.id = any (v_pre_ids))
+    and (a.subcontractor_name not like 'AGREEMENT_TESTS%'
+         or a.subcontractor_id not in (select s.id from public.subcontractors s
+                                        where s.company_name like 'AGREEMENT_TESTS%'));
   if v_n <> 0 then
-    raise exception '(ط) % صفَّ قبولٍ خارج فيكسترة هذا الملف', v_n;
+    raise exception
+      '(ط-١) % صفَّ قبولٍ أحدثه هذا الملف خارج فيكسترته — أوّلُها [%] لمتعهدٍ [%]. وسجلُّ القبول مُلحَقٌ فقط: ما يُكتب فيه لا يُحذف، فلولا إرجاعُ المعاملة لبقي في حجّة المالك إلى الأبد',
+      v_n,
+      (select a.subcontractor_name from public.partner_agreement_acceptances a
+        where not (a.id = any (v_pre_ids))
+          and (a.subcontractor_name not like 'AGREEMENT_TESTS%'
+               or a.subcontractor_id not in (select s.id from public.subcontractors s
+                                              where s.company_name like 'AGREEMENT_TESTS%'))
+        order by a.accepted_at limit 1),
+      (select a.subcontractor_id::text from public.partner_agreement_acceptances a
+        where not (a.id = any (v_pre_ids))
+          and (a.subcontractor_name not like 'AGREEMENT_TESTS%'
+               or a.subcontractor_id not in (select s.id from public.subcontractors s
+                                              where s.company_name like 'AGREEMENT_TESTS%'))
+        order by a.accepted_at limit 1);
+  end if;
+
+  -- (ط-٢) وصفوفُ خط الأساس الحيّة باقيةٌ بعددها — لا حذفَ تحت الملف
+  select count(*)::integer into v_n
+  from public.partner_agreement_acceptances a where a.id = any (v_pre_ids);
+  if v_n <> v_pre_n then
+    raise exception '(ط-٢) 🔴 قبولٌ حيٌّ اختفى: % من % صفَّ أساسٍ باقٍ — وحجّةُ المالك على شريكه تقوم بهذا الصف',
+      v_n, v_pre_n;
+  end if;
+
+  -- (ط-٣) وبصمتُها كما كانت — لا تعديلَ تحت الملف
+  select coalesce(
+    md5(string_agg(a.id::text || '§' || a.subcontractor_id::text || '§' ||
+                   coalesce(a.subcontractor_name, '') || '§' || a.agreement_id::text || '§' ||
+                   a.agreement_version::text || '§' || a.doc_hash || '§' ||
+                   coalesce(a.signed_name, '') || '§' || a.actor_kind || '§' ||
+                   coalesce(a.accepted_by::text, '') || '§' ||
+                   to_char(a.accepted_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+                   '¶' order by a.id)), '') into v_dig
+  from public.partner_agreement_acceptances a where a.id = any (v_pre_ids);
+  if v_dig is distinct from coalesce(current_setting('tours.ag_acc_pre_dig', true), '') then
+    raise exception '(ط-٣) 🔴 قبولٌ حيٌّ تغيّر تحت الملف: البصمة [%] والأساس [%]',
+      left(v_dig, 12), left(coalesce(current_setting('tours.ag_acc_pre_dig', true), ''), 12);
   end if;
 
   select count(*)::integer into v_n
@@ -974,7 +1074,8 @@ begin
     end if;
   end if;
 
-  raise notice '✔ (ط) لا صفَّ خارج الفيكسترة · والإصدارُ الحقيقي باقٍ (يعود منشوراً بإرجاع المعاملة)';
+  raise notice '✔ (ط) لا صفَّ قبولٍ مُحدَثٍ خارج الفيكسترة · و% صفَّ قبولٍ حيٌّ باقٍ ببصمته · والإصدارُ الحقيقي باقٍ (يعود منشوراً بإرجاع المعاملة)',
+    v_pre_n;
 end;
 $$;
 

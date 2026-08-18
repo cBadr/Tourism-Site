@@ -14,8 +14,8 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
 ![Phases](https://img.shields.io/badge/phases-13%2F14-blue)
-![Migrations](https://img.shields.io/badge/migrations-111-informational)
-![Tests](https://img.shields.io/badge/SQL%20suites-39%20green-brightgreen)
+![Migrations](https://img.shields.io/badge/migrations-114-informational)
+![Tests](https://img.shields.io/badge/SQL%20suites-40%20green-brightgreen)
 ![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
 <div dir="rtl">
@@ -34,7 +34,7 @@
 
 Tours-01 is an asset-light tourist-transport brokerage for Egypt, built as a single Next.js 16 application on top of one Supabase (Postgres) project. A customer picks two points and a passenger count, gets an instant final price per eligible vehicle class, books as a guest and pays in full or by deposit; the confirmed booking is then broadcast in timed waves to approved **subcontractors** who cover that route, and the first to accept wins the trip — atomically, enforced by a partial unique index in Postgres. Every money and pricing calculation lives in Postgres functions and views; TypeScript only formats and renders. The system is white-label by construction: no brand string is hardcoded, and a second brand means a separate Supabase project, host and domain — not a `tenant_id`.
 
-Phases 1–13 of 14 are built — **111 migrations applied and 39 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
+Phases 1–13 of 14 are built — **114 migrations applied and 40 SQL test suites green** — and the platform is **live at [rentlimousine.duckdns.org](https://rentlimousine.duckdns.org)** on a VPS behind Nginx, deployed with a single script. Phase 13 (page builder) shipped on 2026-08-16; phase 14 (white-label factory) is deliberately deferred until the first instance settles, and phase 11 (AI agent) is designed but waits on API credit. The demonstration data was wiped on 2026-08-16 and replaced with 23 real content pages; **the site is currently `noindex` for preview and that must be lifted before launch**.
 
 English went live on 2026-08-17: the owner reviewed the drafts and published **871 rows**, so `/en` now serves real English with `hreflang` alongside the Arabic. An adversarial audit before publication confirmed every legal figure matches its Arabic source (261/261 rows across terms, refunds and privacy) and that **the Arabic text governs any difference in translation** — a clause carried into the English itself. Six machine-translated `href` rows were deliberately withheld, and `href` is now a reserved field so a link can never be translated into a 404.
 
@@ -229,7 +229,7 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ١١١** في `supabase/migrations/` من `0001_core.sql` إلى `0113_partner_agreement.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار التسع والثلاثون** في `supabase/tests/`.
+**الترحيلات الـ ١١٤** في `supabase/migrations/` من `0001_core.sql` إلى `0117_arabic_normalize.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations`. **ومجموعات الاختبار الأربعون** في `supabase/tests/`.
 
 ⚠ **والعدد لا يساوي أعلى رقم**: في التسلسل فجوتان (`0090` و`0091` غير موجودتين)، **فالرقم الحرّ يُشتقّ بأمرٍ لا من عدّ الملفّات** — `ls supabase/migrations | tail -1`. وفي `schema_migrations` صفٌّ يتيم `0100_logo_strip_list_label.sql` بلا ملفّ، خلّفه تصادمُ رقمٍ بين وكيلين في 2026-08-17: طُبِّق ثم أُعيدت تسميتُه `0101` وطُبِّق ثانيةً. **وجسمُ الهجرة يُعيد الكتابة بقيمةٍ ثابتة فتشغيلُه مرتين بلا أثر** (تحقَّق: `fleetBrands` عشرة عناصر)، والصفّ يُحذف بـ`delete from public.schema_migrations where name = '0100_logo_strip_list_label.sql';`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 

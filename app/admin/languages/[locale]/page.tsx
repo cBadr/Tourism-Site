@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Bot, Check, Filter, Send, Upload } from "lucide-react";
+import { ArrowRight, Bot, Filter, MapPin, Search, Upload } from "lucide-react";
 
 import { SaveButton } from "@/components/admin/save-feedback";
 import { toArabicDigits } from "@/components/booking/format";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { SECTION_TYPE_LABELS } from "@/lib/content-types";
 import { isMissingFunction, isMissingTable } from "@/lib/dispatch/settings";
 import type { LocaleProgress } from "@/lib/i18n-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
@@ -15,44 +16,79 @@ import { describeMtProvider } from "@/lib/i18n/mt";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { controlClass } from "../../orders/_components/booking-ui";
+import { haystackOf, matchesTerms, queryTerms } from "../_components/arabic-search";
 import {
   type AdminLocale,
+  DEFAULT_QUEUE_FILTER,
   filterQueue,
   hasSupabaseEnv,
-  isMissingRow,
+  hrefWith,
   isQueueFilter,
   LANGUAGE_ERRORS,
   LanguagesFeedback,
   LanguagesNotReady,
-  MAX_QUEUE_ROWS,
   namespaceLabel,
-  NAMESPACE_HINTS,
   NAMESPACES,
+  needsWork,
+  NO_PLACES,
   numberOf,
   numberText,
+  PAGE_SIZE,
+  pageNumber,
+  pageWindow,
+  type PlacedRow,
+  type PlaceIndex,
   ProgressBar,
   type QueueFilter,
   QUEUE_FILTER_LABELS,
   QUEUE_FILTERS,
   type QueueRow,
   readLocales,
+  readPlaces,
   readProgress,
   readQueue,
-  sortQueue,
-  StaleBadge,
-  StatusBadge,
-  STATUS_HINTS,
+  sortByPlace,
 } from "../_components/languages-ui";
 import { TranslateButton } from "../_components/translate-button";
-import { publishDrafts, publishReviewed, saveTranslation } from "./actions";
+import { publishDrafts, publishReviewed } from "./actions";
 import { PublishDraftsButton } from "./_components/publish-drafts-button";
+import { QueueRowCard } from "./_components/queue-row";
 
 /**
  * طابور مراجعة لغة واحدة — الشاشة التي يصير فيها النص الآلي نصاً منشوراً.
  *
- * الترتيب هو المنتج هنا: **القديمة أولاً** (ترجمة منشورة تغيّر أصلها العربي —
- * أي معلومة خاطئة يقرؤها الزائر الآن)، ثم الناقصة، ثم المسودات. المراجع الذي
- * يفتح الشاشة ويصلح أول عشرة صفوف يكون قد أصلح أخطرها فعلاً لا أولها أبجدياً.
+ * ══════════════════════════════════════════════════════════════════════════
+ *  شكوى المالك 2026-08-18، وما وجده القياس خلفها
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * قال: الصفحة كبيرة جداً، تحمل أكثر مما ينبغي، وثقيلة التحميل — **ولا بحث فيها
+ * عن عبارة**. والمقيس:
+ *
+ *   • الفهرس **٨٩٧ صفاً · ٧٧ كيلوبايت** نصَّ مصدر، منها `section` وحدها
+ *     **٨٠٨ صفوف (٩٠٪)**. والترشيح الافتراضي كان `all` — أي أن الشاشة تفتح على
+ *     الأرشيف لا على العمل.
+ *   • السقف كان **١٥٠ صفاً** مع جملة «أول ١٥٠ — عالِجها لتظهر البقية»: **حصارٌ
+ *     لا ترقيم**، الوصول إلى الصف ٢٠٠ يمرّ بإصلاح ١٥٠ قبله.
+ *   • كل صفٍّ **`<form>` كامل بسبعة حقول مخفية وحقل نص**، والأصل العربي
+ *     **يُرسَل مرتين** فيه (ظاهراً ومخفياً)، وأطول أصلٍ ١٣٦٥ محرفاً.
+ *
+ * ── وما صار ────────────────────────────────────────────────────────────────
+ *
+ *  (١) **ترقيمٌ حقيقي**: ٢٥ صفاً في الصفحة، والتنقّل حرٌّ في الاتجاهين بلا شرط.
+ *  (٢) **الحقل المخفي `source_text` سقط** — `review_translation` تقرأ الأصل
+ *      الحيّ بنفسها، والصفُّ الناقص يقرؤه الخادم من `translation_corpus()`.
+ *      (التفصيل في ترويسة `_components/queue-row.tsx`.)
+ *  (٣) **الافتراضي «يحتاج عملاً»** لا «الكل».
+ *  (٤) **بحثٌ يعمل بالعربية**: تطبيعٌ يجعل «الاسكندرية» تجد «الإسكندرية»
+ *      و«انستاباي» تجد «انستا باي» (‏`_components/arabic-search.ts` وهجرة
+ *      `0117`).
+ *  (٥) **تجميعٌ بموضع النص في الموقع**: صفحة ← قسم، **من البيانات القائمة**
+ *      (`sections.page_id`) لا بتصنيفٍ مخترع.
+ *  (٦) **التعديل والنشر من الصف نفسه** — وهي قدرةٌ **كانت قائمة**:
+ *      `review_translation(p_id, p_value, p_publish)` تأخذ علَم النشر. فلم
+ *      يُبنَ مسارٌ ثانٍ، بل صار الزرُّ يقول ما يفعله.
+ *
+ * ── ما لم يتغيّر ───────────────────────────────────────────────────────────
  *
  * الأصل العربي معروض بجوار كل حقل عمداً: المراجعة بلا مصدر تخمين، والمترجم
  * الآلي يخطئ في المصطلح لا في القواعد غالباً — «رحلة» تصير trip حيناً و
@@ -165,6 +201,8 @@ type Loaded = {
   corpusReady: boolean;
   progress: LocaleProgress | null;
   plan: DraftPlan;
+  /** «أين يظهر هذا النص» — من `pages` و`sections`، أو فارغٌ إن تعذّرت قراءتهما */
+  places: PlaceIndex;
   missing: string | null;
 };
 
@@ -176,18 +214,24 @@ const BLANK: Loaded = {
   corpusReady: false,
   progress: null,
   plan: NO_PLAN,
+  places: NO_PLACES,
   missing: "قاعدة البيانات",
 };
+
+/** تسمية نوع القسم بالعربية — من قاموس شاشة المحتوى نفسه، لا قاموسٍ ثانٍ */
+const sectionTypeLabel = (type: string): string =>
+  SECTION_TYPE_LABELS[type as keyof typeof SECTION_TYPE_LABELS]?.label ?? type ?? "";
 
 async function loadScreen(locale: string, filter: QueueFilter): Promise<Loaded> {
   const supabase = await createServerSupabase();
   if (!supabase) return BLANK;
 
-  const [localesResult, queueResult, progressResult, plan] = await Promise.all([
+  const [localesResult, queueResult, progressResult, plan, places] = await Promise.all([
     readLocales(supabase),
     readQueue(supabase, locale, filter),
     readProgress(supabase),
     readDraftPlan(supabase, locale),
+    readPlaces(supabase, sectionTypeLabel),
   ]);
 
   const missing =
@@ -207,6 +251,7 @@ async function loadScreen(locale: string, filter: QueueFilter): Promise<Loaded> 
     corpusReady: queueResult.corpusReady,
     progress: progressResult.progress.get(locale) ?? null,
     plan,
+    places,
     missing,
   };
 }
@@ -304,14 +349,17 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
     );
   }
 
-  const filter: QueueFilter = isQueueFilter(params.status) ? params.status : "all";
+  const filter: QueueFilter = isQueueFilter(params.status) ? params.status : DEFAULT_QUEUE_FILTER;
   const nsFilter =
     typeof params.ns === "string" && (NAMESPACES as string[]).includes(params.ns)
       ? params.ns
       : null;
+  const groupFilter = typeof params.g === "string" && params.g !== "" ? params.g : null;
+  // سقفٌ للبحث: حقلٌ نصيٌّ يصل من الرابط، ولا معنى لعبارةٍ أطول من سطر
+  const query = typeof params.q === "string" ? params.q.trim().slice(0, 120) : "";
 
   const loaded = await loadScreen(locale, filter);
-  const { localesReady, rows, queueReady, corpusReady, progress, plan, missing } = loaded;
+  const { localesReady, rows, queueReady, corpusReady, progress, plan, places, missing } = loaded;
 
   const wired = hasSupabaseEnv();
   const readOnly = !wired || !queueReady;
@@ -358,10 +406,71 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
    */
   const reviewedCount = plan.ready ? plan.alreadyReviewed : (progress?.reviewed ?? 0);
 
-  const filtered = sortQueue(
-    filterQueue(rows, filter).filter((row) => nsFilter === null || row.namespace === nsFilter)
+  /*
+   * ── خطُّ الترشيح، بالترتيب الذي يجعل كل خطوةٍ أرخص من التي قبلها ────────────
+   *
+   * الحالة ← المساحة ← البحث ← الموضع. والبحث قبل الموضع عمداً: قائمةُ المواضع
+   * المعروضة في القائمة المنسدلة تُبنى من **نتيجة البحث**، فيرى المالك أين وقعت
+   * كلمته في الموقع بعدد صفوفها — لا قائمةً ثابتةً أكثرها أصفار.
+   *
+   * ⚠ والمطابقة تقع على **مفتاح بحثٍ مطبَّع** (`arabic-search.ts`) لا على النص
+   *   الخام: بلا ذلك «الاسكندرية» لا تجد «الإسكندرية» وتُقرأ النتيجة الفارغة
+   *   على أنها «غير موجود».
+   */
+  const terms = queryTerms(query);
+  const matched = filterQueue(rows, filter)
+    .filter((row) => nsFilter === null || row.namespace === nsFilter)
+    .filter(
+      (row) =>
+        terms.length === 0 ||
+        matchesTerms(haystackOf(row.sourceText, row.value, row.key), terms)
+    );
+
+  // مواضع النتيجة الحالية بعددها — لقائمة «أين يظهر»
+  const groupCounts = new Map<string, number>();
+  for (const row of matched) {
+    const id = places.placeOf(row).groupId;
+    groupCounts.set(id, (groupCounts.get(id) ?? 0) + 1);
+  }
+  const groupOptions = places.groups.filter(
+    (group) => (groupCounts.get(group.id) ?? 0) > 0 || group.id === groupFilter
   );
-  const shown = filtered.slice(0, MAX_QUEUE_ROWS);
+
+  const placed: PlacedRow[] = sortByPlace(
+    groupFilter === null
+      ? matched
+      : matched.filter((row) => places.placeOf(row).groupId === groupFilter),
+    places
+  );
+
+  const pageCount = Math.max(1, Math.ceil(placed.length / PAGE_SIZE));
+  const page = pageNumber(params.p, pageCount);
+  const from = (page - 1) * PAGE_SIZE;
+  const shown = placed.slice(from, from + PAGE_SIZE);
+  const workLeft = placed.filter((entry) => needsWork(entry.row)).length;
+
+  /*
+   * حالة الشاشة مضغوطةً في سلسلةٍ واحدة: تُوضع في حقلٍ مخفيٍّ واحد بكل صفٍّ
+   * وبكل زرٍّ جماعي، فيعود المراجع بعد الحفظ إلى **نفس الموضع والترشيح والبحث
+   * والصفحة**. (كانت حقلين مخفيين في كل صف، وكانت ستصير خمسة.)
+   */
+  const backState = new URLSearchParams();
+  if (groupFilter !== null) backState.set("g", groupFilter);
+  if (nsFilter !== null) backState.set("ns", nsFilter);
+  backState.set("status", filter);
+  if (query !== "") backState.set("q", query);
+  if (page > 1) backState.set("p", String(page));
+  const back = backState.toString();
+
+  /** رابطٌ يبقي كل شيء كما هو ويغيّر الصفحة وحدها */
+  const pageHref = (target: number) =>
+    hrefWith(path, {
+      g: groupFilter ?? undefined,
+      ns: nsFilter ?? undefined,
+      status: filter,
+      q: query === "" ? undefined : query,
+      p: target === 1 ? undefined : String(target),
+    });
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -507,8 +616,7 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
 
           <form action={publishReviewed} className="flex items-center gap-2">
             <input type="hidden" name="locale" value={locale} />
-            <input type="hidden" name="return_ns" value={nsFilter ?? ""} />
-            <input type="hidden" name="return_status" value={filter} />
+            <input type="hidden" name="back" value={back} />
             <SaveButton
               label={`انشر كل المراجَع${
                 reviewedCount > 0 ? ` (${numberText(reviewedCount)})` : ""
@@ -531,8 +639,7 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
 
           <form action={publishDrafts} className="flex items-center gap-2">
             <input type="hidden" name="locale" value={locale} />
-            <input type="hidden" name="return_ns" value={nsFilter ?? ""} />
-            <input type="hidden" name="return_status" value={filter} />
+            <input type="hidden" name="back" value={back} />
             <PublishDraftsButton
               label={`انشر كل المسودات${
                 plan.eligible > 0 ? ` (${numberText(plan.eligible)})` : ""
@@ -595,41 +702,65 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
         )}
       </Card>
 
-      {/* الترشيح — نموذج GET حتى يبقى الرابط قابلاً للحفظ والمشاركة */}
+      {/* الترشيح والبحث — نموذج GET حتى يبقى الرابط قابلاً للحفظ والمشاركة */}
       <form action={path} method="get">
         <Card className="gap-3 p-4">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="flex items-center gap-1.5 text-sm font-medium">
               <Filter className="size-4 text-primary" />
-              الترشيح
+              اعثر على العبارة
               <HelpTip>
                 ابدأ بـ «الأصل تغيّر»: ترجمات منشورة لم تعد تطابق النص العربي، أي معلومة
-                خاطئة يقرؤها الزائر الآن. ثم «ناقصة»، ثم «مسودات».
+                خاطئة يقرؤها الزائر الآن. ثم «ناقصة»، ثم «مسودات». وأي تغيير هنا يعيدك إلى
+                الصفحة الأولى من النتيجة.
               </HelpTip>
             </span>
           </div>
 
           <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="ns" className="flex items-center gap-1.5 text-xs">
-                المساحة
+            <div className="min-w-56 flex-1 space-y-1.5">
+              <Label htmlFor="q" className="flex items-center gap-1.5 text-xs">
+                <Search className="size-3.5 text-primary" />
+                بحث في العبارات
                 <HelpTip>
-                  المساحة تقول من أين جاء النص: واجهة ثابتة، أو عنوان صفحة وميتاداتاها، أو
-                  محتوى قسم، أو الهوية، أو خدمة، أو فئة سيارة. راجع مساحةً كاملة في جلسة
-                  واحدة — المصطلح يبقى متسقاً هكذا.
+                  يبحث في النص العربي وفي ترجمته وفي مفتاحه معاً. والبحث يتجاهل الهمزات
+                  والتشكيل والتطويل: «الاسكندرية» تجد «الإسكندرية»، و«انستاباي» تجد «انستا
+                  باي»، و«القاهرة» تجد «بالقاهرة». وكلمتان معاً تضيّقان النتيجة لا توسّعانها.
+                </HelpTip>
+              </Label>
+              <input
+                id="q"
+                name="q"
+                type="search"
+                defaultValue={query}
+                disabled={!wired}
+                placeholder="اكتب كلمةً من النص العربي أو من ترجمته"
+                className={cn(controlClass, "w-full")}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="g" className="flex items-center gap-1.5 text-xs">
+                <MapPin className="size-3.5 text-primary" />
+                أين يظهر
+                <HelpTip>
+                  موضع النص في الموقع: صفحته ثم القسم داخلها — مقروءاً من ربط الأقسام
+                  بصفحاتها في قاعدة البيانات لا من تصنيف يدوي. راجع صفحةً كاملة في جلسة
+                  واحدة ليبقى المصطلح متسقاً فيها. والعدد بجوار كل موضع هو ما يطابق ترشيحك
+                  الحالي.
                 </HelpTip>
               </Label>
               <select
-                id="ns"
-                name="ns"
-                defaultValue={nsFilter ?? "all"}
-                disabled={!wired}
-                className={cn(controlClass, "w-44")}
+                id="g"
+                name="g"
+                defaultValue={groupFilter ?? ""}
+                disabled={!wired || !places.ready}
+                className={cn(controlClass, "w-52")}
               >
-                <option value="all">كل المساحات</option>
-                {NAMESPACES.map((ns) => (
-                  <option key={ns} value={ns}>
-                    {namespaceLabel(ns)}
+                <option value="">كل المواضع</option>
+                {groupOptions.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.label} ({toArabicDigits(groupCounts.get(group.id) ?? 0)})
                   </option>
                 ))}
               </select>
@@ -639,6 +770,7 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
               <Label htmlFor="status" className="flex items-center gap-1.5 text-xs">
                 الحالة
                 <HelpTip>
+                  يحتاج عملاً = ما تغيّر أصله أو ينقص أو لم يقرأه بشر — وهو الافتراضي ·
                   مسودة = آلية لم يقرأها بشر · مراجَعة = اعتُمدت وتنتظر النشر · منشورة =
                   يقرؤها الزائر · ناقصة = بلا ترجمة (يظهر مكانها النص العربي) · الأصل تغيّر =
                   ترجمة قديمة لم تعد تطابق العربية.
@@ -659,141 +791,188 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
               </select>
             </div>
 
+            <div className="space-y-1.5">
+              <Label htmlFor="ns" className="flex items-center gap-1.5 text-xs">
+                المساحة
+                <HelpTip>
+                  المساحة تقول نوع النص لا موضعه: واجهة ثابتة، أو عنوان صفحة وميتاداتاها، أو
+                  محتوى قسم، أو الهوية، أو خدمة، أو فئة سيارة. استعملها حين تريد مراجعة
+                  عناوين السيو وحدها مثلاً.
+                </HelpTip>
+              </Label>
+              <select
+                id="ns"
+                name="ns"
+                defaultValue={nsFilter ?? "all"}
+                disabled={!wired}
+                className={cn(controlClass, "w-36")}
+              >
+                <option value="all">كل المساحات</option>
+                {NAMESPACES.map((ns) => (
+                  <option key={ns} value={ns}>
+                    {namespaceLabel(ns)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <Button type="submit" size="sm" disabled={!wired}>
               تطبيق
             </Button>
           </div>
 
-          <p className="text-xs text-muted-foreground">
-            المعروض {toArabicDigits(shown.length)} صفاً
-            {filtered.length > shown.length
-              ? ` من ${toArabicDigits(filtered.length)} مطابقاً (أول ${toArabicDigits(MAX_QUEUE_ROWS)} — عالِجها لتظهر البقية)`
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {placed.length === 0
+              ? "لا صفَّ مطابق."
+              : `المعروض ${toArabicDigits(from + 1)}–${toArabicDigits(from + shown.length)} من ${toArabicDigits(placed.length)} · صفحة ${toArabicDigits(page)} من ${toArabicDigits(pageCount)}`}
+            {placed.length > 0 && workLeft > 0
+              ? ` · منها ${toArabicDigits(workLeft)} تحتاج عملاً`
               : ""}
-            . الترتيب: القديمة أولاً ثم الناقصة ثم المسودات.
-            {!corpusReady && (filter === "all" || filter === "missing")
+            . الترتيب: الصفحة كما تظهر في الموقع، ثم الأقسام بترتيبها، والأعجل داخل كل قسم.
+            {query !== "" && terms.length > 0
+              ? ` البحث عن «${query}» — امسح الحقل لتعود القائمة كاملة.`
+              : ""}
+            {/* ترقيمٌ أو رموزٌ وحدها لا تُنتج كلمةً — يُقال ذلك بدل نتيجةٍ تبدو كاملة */}
+            {query !== "" && terms.length === 0
+              ? ` «${query}» لا كلمةَ فيه للبحث (رموزٌ أو ترقيمٌ وحده) — فالقائمة كاملة كما هي.`
+              : ""}
+            {!places.ready
+              ? " تعذّرت قراءة صفحات الموقع وأقسامه، فالتجميع بالموضع معطَّل الآن والترشيح الباقي يعمل."
+              : ""}
+            {!corpusReady && (filter === "all" || filter === "missing" || filter === "todo")
               ? " تعذّرت قراءة الفهرس الحي، فالمفاتيح التي لم تُترجَم قط لا تظهر الآن — تظهر المكتوبة وحدها."
               : ""}
           </p>
         </Card>
       </form>
 
-      {/* الصفوف */}
+      {/*
+        الصفوف — مُجمَّعةً بموضعها، وعنوانُ المجموعة يُعاد في أول كل صفحة.
+
+        ⚠ **وسطر «اللغة ظاهرة للزوّار» فوق القائمة ليس حشواً**: كل زرِّ «اعتمد
+        وانشر» في صفٍّ أدناه يجعل ذلك النص مقروءاً على `/{locale}` **فوراً** إن
+        كانت اللغة مفعَّلة. والإنجليزية مفعَّلةٌ اليوم بـ٨٧١ صفاً منشوراً.
+      */}
       {!queueReady ? (
         <Card className="p-5 text-sm text-muted-foreground">
           تعذّرت قراءة الطابور — تأكد أن دالة <code dir="ltr">translation_queue</code> منفَّذة
           في قاعدة البيانات (هجرة المرحلة ٨) وأن حسابك دوره <code dir="ltr">admin</code>.
         </Card>
       ) : shown.length === 0 ? (
-        <Card className="p-5 text-sm text-muted-foreground">
-          لا صفوف مطابقة لهذا الترشيح. إن كان الطابور فارغاً تماماً فاضغط «حدّث قائمة العمل»
-          في مدير اللغات ليُبنى من محتوى الموقع الحالي.
+        <Card className="p-5 text-sm leading-relaxed text-muted-foreground">
+          {query !== ""
+            ? `لا عبارة تطابق «${query}» في هذا الترشيح. جرّب كلمةً واحدة، أو وسّع الحالة إلى «الكل».`
+            : "لا صفوف مطابقة لهذا الترشيح. إن كان الطابور فارغاً تماماً فاضغط «حدّث قائمة العمل» في مدير اللغات ليُبنى من محتوى الموقع الحالي."}
         </Card>
       ) : (
         <div className="space-y-3">
-          {shown.map((row) => {
-            const rowKey = `${row.namespace}:${row.key}`;
-            const fieldId = `value-${rowKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-            const missingValue = isMissingRow(row);
+          <p
+            className={cn(
+              "rounded-lg border px-3 py-2 text-xs leading-relaxed",
+              localeRow?.enabled
+                ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+                : "border-border text-muted-foreground"
+            )}
+          >
+            {localeRow?.enabled ? (
+              <>
+                <span className="font-semibold">هذه اللغة ظاهرة للزوّار الآن.</span> كل ضغطة
+                على «اعتمد وانشر للزوّار» في صفٍّ أدناه تجعل نصَّه مقروءاً على{" "}
+                <code dir="ltr">/{locale}</code> فوراً — بلا مراجعةٍ بعدها. و«اعتمد بلا نشر»
+                يحفظه للمراجعة ولا يراه أحد.
+              </>
+            ) : (
+              <>
+                هذه اللغة <span className="font-semibold">مخفية عن الزوّار</span> — فالنشر من
+                أي صفٍّ يجهّز النص ولا يراه أحد حتى تفعّلها من مدير اللغات.
+              </>
+            )}
+          </p>
+
+          {shown.map((entry, index) => {
+            const previous = index === 0 ? null : shown[index - 1];
+            // عنوانٌ عند تغيّر المجموعة، **وفي أول كل صفحة** — فمن فتح الصفحة
+            // الخامسة يعرف أين هو. ولا عنوان حين يتعذّر معرفة الموضع أصلاً.
+            const newGroup =
+              entry.place.group !== "" &&
+              (previous === null || previous.place.groupId !== entry.place.groupId);
 
             return (
-              <Card key={rowKey} className="gap-3 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="font-normal">
-                    {namespaceLabel(row.namespace)}
-                  </Badge>
-                  <HelpTip>{NAMESPACE_HINTS[row.namespace] ?? "مصدر هذا النص في الموقع."}</HelpTip>
-                  <code dir="ltr" className="truncate text-xs text-muted-foreground">
-                    {row.key}
-                  </code>
-                  <span className="ms-auto flex flex-wrap items-center gap-1.5">
-                    {row.stale && <StaleBadge />}
-                    {missingValue ? (
-                      <Badge variant="outline" className="font-normal text-muted-foreground">
-                        ناقصة
-                      </Badge>
-                    ) : (
-                      <StatusBadge status={row.status} />
-                    )}
-                    <HelpTip>
-                      {missingValue
-                        ? "لا ترجمة لهذا المفتاح بعد — يرى الزائر النص العربي مكانه، وهو تدهور مقبول لا صفحة مكسورة."
-                        : (STATUS_HINTS[row.status] ?? "حالة هذا الصف في خط الترجمة.")}
-                      {row.provider ? ` مصدر المسودة: ${row.provider}.` : ""}
-                    </HelpTip>
-                  </span>
-                </div>
-
-                <form action={readOnly ? undefined : saveTranslation} className="grid gap-3 lg:grid-cols-2">
-                  <input type="hidden" name="locale" value={locale} />
-                  <input type="hidden" name="namespace" value={row.namespace} />
-                  <input type="hidden" name="key" value={row.key} />
-                  <input type="hidden" name="source_text" value={row.sourceText} />
-                  {row.id && <input type="hidden" name="id" value={row.id} />}
-                  <input type="hidden" name="return_ns" value={nsFilter ?? ""} />
-                  <input type="hidden" name="return_status" value={filter} />
-
-                  <div className="space-y-1.5">
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                      الأصل العربي
-                      {row.stale && (
-                        <span className="text-red-700 dark:text-red-300">
-                          — تغيّر بعد آخر ترجمة
-                        </span>
-                      )}
+              <div key={`${entry.row.namespace}:${entry.row.key}`} className="space-y-3">
+                {newGroup && (
+                  <h3 className="flex flex-wrap items-baseline gap-2 pt-2 font-heading text-sm font-bold">
+                    <MapPin className="size-4 shrink-0 text-primary" />
+                    {entry.place.group}
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {toArabicDigits(groupCounts.get(entry.place.groupId) ?? 0)} عبارة في هذا
+                      الترشيح
                     </span>
-                    <div
-                      dir="rtl"
-                      className="min-h-24 rounded-lg bg-muted/50 p-2.5 text-sm leading-relaxed whitespace-pre-wrap"
-                    >
-                      {row.sourceText}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor={fieldId} className="text-xs">
-                      الترجمة ({title})
-                    </Label>
-                    <textarea
-                      id={fieldId}
-                      name="value"
-                      dir={dir}
-                      rows={4}
-                      maxLength={5000}
-                      defaultValue={row.value ?? ""}
-                      disabled={readOnly}
-                      placeholder={
-                        missingValue ? "اكتب الترجمة هنا، أو ولّد مسودة آلية أولاً" : undefined
-                      }
-                      className={cn(controlClass, "min-h-24 resize-y leading-relaxed")}
-                    />
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <Button
-                        type="submit"
-                        name="publish"
-                        value="0"
-                        size="sm"
-                        variant="outline"
-                        disabled={readOnly}
-                      >
-                        <Check />
-                        اعتمد
-                      </Button>
-                      <Button
-                        type="submit"
-                        name="publish"
-                        value="1"
-                        size="sm"
-                        disabled={readOnly}
-                      >
-                        <Send />
-                        اعتمد وانشر
-                      </Button>
-                    </div>
-                  </div>
-                </form>
-              </Card>
+                  </h3>
+                )}
+                <QueueRowCard
+                  row={entry.row}
+                  locale={locale}
+                  localeName={title}
+                  dir={dir}
+                  spot={entry.place.spot}
+                  back={back}
+                  readOnly={readOnly}
+                  localeEnabled={localeRow?.enabled ?? false}
+                />
+              </div>
             );
           })}
+
+          {/*
+            التنقّل — روابط `<a>` لا أزرار: تُفتح في تبويبٍ جديد، وتُحفظ، وتعمل
+            بلا جافاسكربت. وكلٌّ منها يحمل الترشيح والبحث والموضع كما هي.
+          */}
+          {pageCount > 1 && (
+            <nav
+              aria-label="صفحات الطابور"
+              className="flex flex-wrap items-center justify-center gap-1.5 pt-2"
+            >
+              {page > 1 && (
+                <Link
+                  href={pageHref(page - 1)}
+                  className="rounded-lg border border-border px-3 py-1.5 text-sm hover:border-primary hover:text-primary"
+                >
+                  السابقة
+                </Link>
+              )}
+              {pageWindow(page, pageCount).map((target, index) =>
+                target === null ? (
+                  <span key={`gap-${index}`} className="px-1 text-sm text-muted-foreground">
+                    …
+                  </span>
+                ) : target === page ? (
+                  <span
+                    key={target}
+                    aria-current="page"
+                    className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-bold text-primary-foreground"
+                  >
+                    {toArabicDigits(target)}
+                  </span>
+                ) : (
+                  <Link
+                    key={target}
+                    href={pageHref(target)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm hover:border-primary hover:text-primary"
+                  >
+                    {toArabicDigits(target)}
+                  </Link>
+                )
+              )}
+              {page < pageCount && (
+                <Link
+                  href={pageHref(page + 1)}
+                  className="rounded-lg border border-border px-3 py-1.5 text-sm hover:border-primary hover:text-primary"
+                >
+                  التالية
+                </Link>
+              )}
+            </nav>
+          )}
         </div>
       )}
 

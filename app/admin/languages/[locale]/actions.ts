@@ -58,12 +58,34 @@ function clearPublicCaches(): void {
   clearTranslationsCache();
 }
 
-/** رابط العودة مع إبقاء الترشيح كما تركه المراجع */
+/**
+ * مفاتيح حالة الشاشة المسموح بعودتها: الموضع والترشيح والبحث ورقم الصفحة.
+ *
+ * **قائمةُ سماحٍ لا قائمةُ منع**: القيمة تصل من نموذجٍ في المتصفح، وما ليس في
+ * هذه القائمة يسقط صامتاً. والمسار نفسه مبنيٌّ في الخادم من `locale` المتحقَّق
+ * منه، فلا يستطيع حقلٌ من الصفحة أن يحوّل الوجهة إلى موقعٍ آخر.
+ */
+const BACK_KEYS = ["g", "ns", "status", "q", "p"];
+
+/** سقفٌ عاقلٌ لقيمة واحدة في رابط العودة — يمنع رابطاً منتفخاً لا أكثر */
+const MAX_BACK_VALUE = 200;
+
+/**
+ * رابط العودة — الشاشة تعود كما تركها المراجع: نفس الموضع والترشيح والبحث
+ * **ونفس الصفحة**.
+ *
+ * ⚠ وكانت هذه الحالة تُنقل بحقلٍ مخفيٍّ لكل مفتاح (`return_ns` و`return_status`)،
+ *   أي حقلان في **كل صفٍّ من الطابور**. ومع إضافة البحث ورقم الصفحة والموضع
+ *   كانت تصير خمسة × عدد الصفوف. فصارت سلسلةً واحدة في حقلٍ واحد: نفس
+ *   المعلومة، وحقلٌ واحد بدل خمسة.
+ */
 function returnUrl(formData: FormData, locale: string, result: string): string {
   const qs = new URLSearchParams();
-  for (const key of ["ns", "status"]) {
-    const value = field(formData, `return_${key}`);
-    if (value) qs.set(key, value);
+  const back = field(formData, "back");
+  if (back) {
+    for (const [key, value] of new URLSearchParams(back)) {
+      if (BACK_KEYS.includes(key) && value !== "") qs.set(key, value.slice(0, MAX_BACK_VALUE));
+    }
   }
   for (const [key, value] of new URLSearchParams(result)) qs.set(key, value);
   return `/admin/languages/${locale}?${qs.toString()}`;
@@ -116,6 +138,45 @@ async function findRowId(
   return null;
 }
 
+/**
+ * الأصل العربي لمفتاحٍ لم يُترجَم قط — **يُقرأ من الفهرس الحيّ لا من النموذج**.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 لماذا لم يعد يصل من المتصفح
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * كان الطابور يرسل الأصلَ في `<input type="hidden" name="source_text">` مع كل
+ * صف. وثمنه ثقلٌ مقيس (الأصل يُرسَل مرتين في كل صف)، **وخطرُه أكبر**:
+ * `upsert_translations` تكتب ما يصلها في `source_text` **وتشتقّ منه البصمة**
+ * (`i18n_source_hash`) — والبصمة هي ما يقرّر لاحقاً «هل تغيّر الأصل؟». فقيمةٌ
+ * مبدَّلةٌ في المتصفح تُنتج صفاً يبدو مطابقاً لأصلٍ لم يُترجَم عنه قط، فلا يشتعل
+ * وسم «الأصل تغيّر» أبداً — وهو عطبٌ صامتٌ يقرؤه الزائر ولا يراه أحد.
+ *
+ * ⇒ فالمصدر الوحيد للأصل صار `translation_corpus()`: نفس الفهرس الذي بُني منه
+ *   الطابور، ونفس ما تقرؤه `review_translation` بنفسها للصفوف المكتوبة.
+ *
+ * ⚠ **ولا رحلةَ زائدة في المسار الشائع**: هذه الدالة لا تُنادى إلا للصفِّ
+ *   **الناقص** (بلا معرّف) — وهو المسار الذي كان يقرأ الطابور مرتين على أي حال.
+ */
+async function readSourceText(
+  supabase: SupabaseClient,
+  namespace: string,
+  key: string
+): Promise<string | null> {
+  const result = await supabase.rpc("translation_corpus");
+  if (result.error || !Array.isArray(result.data)) return null;
+
+  for (const row of result.data as Record<string, unknown>[]) {
+    const ns = row.namespace ?? row.ns;
+    const k = row.key ?? row.k;
+    if (ns === namespace && k === key) {
+      const src = row.source_text ?? row.sourceText ?? row.src;
+      return typeof src === "string" && src.trim() !== "" ? src : null;
+    }
+  }
+  return null;
+}
+
 export async function saveTranslation(formData: FormData) {
   const supabase = await createServerSupabase();
 
@@ -144,13 +205,18 @@ export async function saveTranslation(formData: FormData) {
     id = await findRowId(supabase, locale, namespace, key);
   }
   if (id === null) {
+    // 🔴 الأصل من الفهرس الحيّ لا من النموذج (الشرح فوق `readSourceText`).
+    // وغيابُه يعني أن المفتاح لم يعد في محتوى الموقع — فلا يُكتب صفٌّ ليتيم.
+    const sourceText = await readSourceText(supabase, namespace, key);
+    if (sourceText === null) redirect(returnUrl(formData, locale, "error=row"));
+
     const draft = await supabase.rpc("upsert_translations", {
       p_rows: [
         {
           locale,
           namespace,
           key,
-          sourceText: field(formData, "source_text") ?? "",
+          sourceText,
           value,
         },
       ],

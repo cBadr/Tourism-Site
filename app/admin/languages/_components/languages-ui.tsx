@@ -31,8 +31,56 @@ export type Supabase = NonNullable<Awaited<ReturnType<typeof createServerSupabas
 export const hasSupabaseEnv = () =>
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
-/** سقف صفوف طابور المراجعة المعروضة — شاشة عمل لا أرشيف */
-export const MAX_QUEUE_ROWS = 150;
+/**
+ * صفوف الصفحة الواحدة في طابور المراجعة.
+ *
+ * ── ما كان قبل هذا السطر، ولماذا سقط ───────────────────────────────────────
+ *
+ * كان `MAX_QUEUE_ROWS = 150` **سقفاً لا صفحة**: تُعرض أول ١٥٠ مطابقاً ويُكتب
+ * تحتها «عالِجها لتظهر البقية». أي أن الوصول إلى الصف ٢٠٠ **يمرّ بإصلاح ١٥٠
+ * صفاً قبله** — وهو حصارٌ لا ترقيم. وشكا المالك (2026-08-18) ثقل الصفحة، وكان
+ * السببان واحداً: ١٥٠ صفاً، كلٌّ منها `<form>` كامل.
+ *
+ * والرقم ٢٥ مقيسٌ لا مذوَّق: أطول أصلٍ في الفهرس **١٣٦٥ محرفاً**، ومتوسط
+ * `section` ‏**٩٠** (٧١٨٨٩ محرفاً على ٧٩٦ صفاً). فصفحةٌ من ٢٥ صفاً تحمل نحو
+ * ٢.٣ كيلوبايت نصَّ مصدرٍ في الحالة المتوسطة، مقابل ١٣.٥ لمئةٍ وخمسين — ومع
+ * إسقاط `source_text` المخفي (كان يُرسَل مرتين) صار النصُّ يُرسَل مرةً واحدة.
+ */
+export const PAGE_SIZE = 25;
+
+/** رقم صفحةٍ من الرابط: عددٌ صحيحٌ موجب، وما عداه الصفحة الأولى */
+export function pageNumber(raw: unknown, pageCount: number): number {
+  const n = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : 1;
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(Math.max(1, n), Math.max(1, pageCount));
+}
+
+/**
+ * نافذة أرقام الصفحات المعروضة — سبعةٌ حول الحالية على الأكثر.
+ *
+ * ستٌّ وثلاثون صفحةً مطبوعةً كلُّها تُعيد المشكلة التي جئنا نحلّها (‏ثقلٌ في
+ * الصفحة)، وزرّا «التالي/السابق» وحدهما يجعلان القفز إلى الصفحة ٣٠ ثلاثين ضغطة.
+ * فالنافذة وسطٌ: الأولى والأخيرة دائماً، وجوارُ الحالية.
+ */
+export function pageWindow(current: number, pageCount: number): (number | null)[] {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i + 1);
+
+  const pages = new Set<number>([1, pageCount, current]);
+  for (const delta of [-2, -1, 1, 2]) {
+    const n = current + delta;
+    if (n >= 1 && n <= pageCount) pages.add(n);
+  }
+
+  const sorted = [...pages].sort((a, b) => a - b);
+  const out: (number | null)[] = [];
+  let previous = 0;
+  for (const n of sorted) {
+    if (previous !== 0 && n - previous > 1) out.push(null); // فجوة «…»
+    out.push(n);
+    previous = n;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // قراءة متسامحة (الجداول والدوال يملكها وكيل SQL: snake_case أو أسماء العقد)
@@ -428,16 +476,35 @@ export function missingRowFrom(locale: string, row: CorpusRow): QueueRow {
   };
 }
 
-export const QUEUE_FILTERS = ["all", "missing", "stale", "draft", "reviewed", "published"] as const;
+/**
+ * `todo` **أولاً وافتراضاً** — طلب المالك 2026-08-18.
+ *
+ * كان الافتراضي `all`، و`section` وحدها **٨٠٨ صفوف من ٨٩٧** (‏٩٠٪ من الفهرس)
+ * وأغلبها منشورٌ سليم. أي أن الشاشة كانت تفتح على أرشيفٍ يغرق فيه العمل، ولا
+ * تفتح على العمل. و`todo` = ما تغيّر أصله + ما ينقص + ما لم يقرأه بشر بعد.
+ */
+export const QUEUE_FILTERS = [
+  "todo",
+  "stale",
+  "missing",
+  "draft",
+  "reviewed",
+  "published",
+  "all",
+] as const;
 export type QueueFilter = (typeof QUEUE_FILTERS)[number];
 
+/** الترشيح الافتراضي حين لا يقول الرابط غير ذلك */
+export const DEFAULT_QUEUE_FILTER: QueueFilter = "todo";
+
 export const QUEUE_FILTER_LABELS: Record<QueueFilter, string> = {
-  all: "الكل",
-  missing: "ناقصة",
+  todo: "يحتاج عملاً",
   stale: "الأصل تغيّر",
+  missing: "ناقصة",
   draft: "مسودات",
   reviewed: "مراجَعة",
   published: "منشورة",
+  all: "الكل",
 };
 
 export const isQueueFilter = (value: unknown): value is QueueFilter =>
@@ -495,7 +562,8 @@ export async function readQueue(
 
   if (written === null) return { rows: [], error: lastError, corpusReady: false };
 
-  const wantsMissing = filter === "all" || filter === "missing";
+  // `todo` يشمل الناقص بحكم تعريفه، فيقرأ الفهرس كما يقرؤه `all` و`missing`
+  const wantsMissing = filter === "all" || filter === "missing" || filter === "todo";
   if (!wantsMissing) return { rows: written, error: null, corpusReady: true };
 
   const corpus = await readCorpus(supabase);
@@ -509,20 +577,24 @@ export async function readQueue(
   return { rows: [...written, ...missing], error: null, corpusReady: true };
 }
 
+/** صفٌّ يحتاج عملاً: تغيّر أصله، أو لا ترجمة له، أو لم يقرأه بشر بعد */
+export const needsWork = (row: QueueRow): boolean =>
+  row.stale || isMissingRow(row) || row.status === "draft";
+
 /** ترشيح الواجهة — شبكة أمان فوق ترشيح القاعدة */
 export function filterQueue(rows: QueueRow[], filter: QueueFilter): QueueRow[] {
   if (filter === "all") return rows;
+  if (filter === "todo") return rows.filter(needsWork);
   if (filter === "missing") return rows.filter(isMissingRow);
   if (filter === "stale") return rows.filter((row) => row.stale);
   return rows.filter((row) => row.status === filter && !isMissingRow(row));
 }
 
 /**
- * ترتيب الطابور: **القديمة أولاً** لأن الزائر يقرأ الآن ترجمة لم تعد تطابق
- * الأصل — خطأ معروض أسوأ من فراغ يسقط للعربية. ثم الناقصة، ثم المسودات،
- * ثم الباقي بالمساحة فالمفتاح ليجد المراجع صفوف الصفحة الواحدة متجاورة.
+ * أولوية الصفّ داخل موضعه: **القديمة أولاً** لأن الزائر يقرأ الآن ترجمةً لم تعد
+ * تطابق الأصل — خطأٌ معروضٌ أسوأ من فراغٍ يسقط للعربية. ثم الناقصة، ثم المسودات.
  */
-const rank = (row: QueueRow): number => {
+export const rowRank = (row: QueueRow): number => {
   if (row.stale) return 0;
   if (isMissingRow(row)) return 1;
   if (row.status === "draft") return 2;
@@ -530,11 +602,225 @@ const rank = (row: QueueRow): number => {
   return 4;
 };
 
-export function sortQueue(rows: QueueRow[]): QueueRow[] {
-  return [...rows].sort((a, b) => {
-    const diff = rank(a) - rank(b);
-    if (diff !== 0) return diff;
-    const ns = a.namespace.localeCompare(b.namespace);
-    return ns !== 0 ? ns : a.key.localeCompare(b.key);
+// ---------------------------------------------------------------------------
+// «أين يظهر هذا النص في الموقع؟» — تجميعٌ من البيانات القائمة لا تصنيفٌ جديد
+// ---------------------------------------------------------------------------
+
+/**
+ * شكا المالك (2026-08-18) أن الطابور قائمةٌ عمياء: تسعمئة عبارة بمفاتيح
+ * `0b610000-…-0003.items.rtalex.name` لا تقول لأحدٍ أين تُقرأ في الموقع.
+ *
+ * **ولا يُخترع تصنيف.** الصلة موجودةٌ في القاعدة سلفاً: مفتاح `section` يبدأ
+ * بمعرّف القسم، و`sections.page_id` يربطه بصفحته، و`pages.sort` يرتّب الصفحات
+ * كما تظهر في الموقع. فالتجميع هنا **قراءةُ ما هو قائم**: صفحة ← قسم.
+ *
+ * والمساحات التي لا صفحة لها تُجمع بما هي: الهوية، وفئات السيارات، وواجهة
+ * الموقع الثابتة.
+ *
+ * ⚠ **والتدهور رشيق**: لو تعذّرت قراءة `pages`/`sections` بقيت الشاشة تعمل
+ *   بمساحاتها كما كانت، ويقول الشريط إن التجميع غير متاح — لا شاشةٌ فارغة.
+ */
+
+/** مجموعةٌ في قائمة «أين يظهر» */
+export type PlaceGroup = { id: string; label: string; order: number };
+
+/** موضع صفٍّ واحد */
+export type Place = {
+  groupId: string;
+  /** الصفحة أو المجموعة العامة */
+  group: string;
+  /** الموضع داخلها — نوع القسم، أو أي حقلٍ من الصفحة */
+  spot: string;
+  /** ترتيب القسم داخل صفحته (‏`sections.sort`) — لترتيبٍ يطابق ترتيب القراءة */
+  spotOrder: number;
+};
+
+const GROUP_BRAND = "settings";
+const GROUP_FLEET = "fleet";
+const GROUP_UI = "ui";
+const GROUP_OTHER = "other";
+
+/** المجموعات التي لا صفحة لها — بعد الصفحات دائماً، وبترتيبٍ ثابت */
+const TAIL_GROUPS: PlaceGroup[] = [
+  { id: GROUP_BRAND, label: "الهوية وإعدادات الموقع", order: 1_000_001 },
+  { id: GROUP_FLEET, label: "فئات السيارات", order: 1_000_002 },
+  { id: GROUP_UI, label: "واجهة الموقع الثابتة", order: 1_000_003 },
+  { id: GROUP_OTHER, label: "بلا موضعٍ معروف", order: 1_000_004 },
+];
+
+/** ما بعد المعرّف في المفتاح: `<id>.title` ⇒ `title` */
+const keyTail = (key: string): string => {
+  const dot = key.indexOf(".");
+  return dot === -1 ? "" : key.slice(dot + 1);
+};
+
+/** حقول الصفحة الأربعة — أثر كلٍّ منها مختلف، فيُسمّى */
+const PAGE_FIELDS: Record<string, string> = {
+  title: "عنوان الصفحة",
+  "meta.title": "عنوان السيو",
+  "meta.description": "وصف السيو",
+  navLabel: "اسم الشريط العلوي",
+};
+
+export type PlaceIndex = {
+  ready: boolean;
+  groups: PlaceGroup[];
+  placeOf: (row: QueueRow) => Place;
+};
+
+/**
+ * فهرسٌ فارغ — حين تتعذّر قراءة `pages`/`sections`.
+ *
+ * **و`group` فارغةٌ عمداً لا باسم المساحة**: عنوانُ مجموعةٍ يقول «قسم» فوق صفوفٍ
+ * من صفحاتٍ شتّى **يكذب**. فحين لا يُعرف الموضع لا يُكتب عنوان، ويبقى وسمُ
+ * المساحة على الصف نفسه.
+ */
+export const NO_PLACES: PlaceIndex = {
+  ready: false,
+  groups: [],
+  placeOf: (row) => ({
+    groupId: GROUP_OTHER,
+    group: "",
+    spot: namespaceLabel(row.namespace),
+    spotOrder: 0,
+  }),
+};
+
+/**
+ * فهرس المواضع: صفحتان صغيرتان من القاعدة (٢٣ صفحة · ١٦٠ قسماً عند القياس)
+ * تُقرآن مرةً واحدة للصفحة كلها، لا صفاً صفاً.
+ */
+export async function readPlaces(
+  supabase: Supabase,
+  sectionTypeLabel: (type: string) => string
+): Promise<PlaceIndex> {
+  const [pagesResult, sectionsResult] = await Promise.all([
+    supabase.from("pages").select("id, slug, title, kind, sort"),
+    supabase.from("sections").select("id, page_id, type, sort"),
+  ]);
+  if (pagesResult.error || sectionsResult.error) return NO_PLACES;
+
+  type PageInfo = { id: string; title: string; order: number };
+  const byId = new Map<string, PageInfo>();
+  const bySlug = new Map<string, PageInfo>();
+  const groups: PlaceGroup[] = [];
+
+  rowsOf(pagesResult.data).forEach((row, index) => {
+    const id = textOf(row, ["id"]);
+    if (id === null) return;
+    const title = textOf(row, ["title", "slug"]) ?? id;
+    const order = numberOf(row, ["sort"]) ?? 1_000_000 + index;
+    const info: PageInfo = { id, title, order };
+    byId.set(id, info);
+    const slug = textOf(row, ["slug"]);
+    if (slug !== null) bySlug.set(slug, info);
+    groups.push({ id, label: title, order });
   });
+
+  const sections = new Map<string, { page: PageInfo | null; type: string; sort: number }>();
+  for (const row of rowsOf(sectionsResult.data)) {
+    const id = textOf(row, ["id"]);
+    if (id === null) continue;
+    const pageId = textOf(row, ["page_id", "pageId"]);
+    sections.set(id, {
+      page: pageId === null ? null : (byId.get(pageId) ?? null),
+      type: textOf(row, ["type"]) ?? "",
+      sort: numberOf(row, ["sort"]) ?? 0,
+    });
+  }
+
+  groups.sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label));
+
+  const fallback = (row: QueueRow): Place => ({
+    groupId: GROUP_OTHER,
+    group: "بلا موضعٍ معروف",
+    spot: namespaceLabel(row.namespace),
+    spotOrder: 0,
+  });
+
+  const placeOf = (row: QueueRow): Place => {
+    const head = row.key.split(".")[0] ?? "";
+
+    if (row.namespace === "section") {
+      const section = sections.get(head);
+      if (!section || !section.page) return fallback(row);
+      return {
+        groupId: section.page.id,
+        group: section.page.title,
+        spot: sectionTypeLabel(section.type),
+        spotOrder: section.sort,
+      };
+    }
+
+    if (row.namespace === "page") {
+      const page = byId.get(head);
+      if (!page) return fallback(row);
+      return {
+        groupId: page.id,
+        group: page.title,
+        // حقول الصفحة نفسها قبل أقسامها في القراءة، فترتيبها سالب
+        spot: PAGE_FIELDS[keyTail(row.key)] ?? "الصفحة",
+        spotOrder: -1,
+      };
+    }
+
+    if (row.namespace === "service") {
+      const page = bySlug.get(head);
+      if (!page) return fallback(row);
+      return { groupId: page.id, group: page.title, spot: "اسم الخدمة", spotOrder: -2 };
+    }
+
+    if (row.namespace === "vehicle") {
+      return {
+        groupId: GROUP_FLEET,
+        group: "فئات السيارات",
+        spot: keyTail(row.key) === "short" ? "وصف مختصر" : "اسم الفئة",
+        spotOrder: 0,
+      };
+    }
+
+    if (row.namespace === "settings") {
+      return {
+        groupId: GROUP_BRAND,
+        group: "الهوية وإعدادات الموقع",
+        spot: row.key.startsWith("nav.") ? "بند في الشريط العلوي" : "الهوية والسيو العام",
+        spotOrder: row.key.startsWith("nav.") ? 1 : 0,
+      };
+    }
+
+    return { groupId: GROUP_UI, group: "واجهة الموقع الثابتة", spot: "نص واجهة", spotOrder: 0 };
+  };
+
+  return { ready: true, groups: [...groups, ...TAIL_GROUPS], placeOf };
+}
+
+/** صفٌّ مقروناً بموضعه — يُحسب الموضع مرةً واحدة ثم يُستعمل في الفرز والعرض */
+export type PlacedRow = { row: QueueRow; place: Place };
+
+/**
+ * الترتيب: **الصفحة كما تظهر في الموقع** ← ترتيب القسم داخلها ← الأولوية داخل
+ * القسم ← المفتاح.
+ *
+ * ⚠ **وهذا يغيّر ما كان**: كان الطابور مرتَّباً بالأولوية عالمياً — القديمُ كلُّه
+ *   أولاً مهما كانت صفحته. وصار الترتيب **بالموضع أولاً** لأن المالك طلب أن يرى
+ *   أين يظهر النص، ومراجعةُ صفحةٍ كوحدةٍ تُبقي المصطلح متسقاً فيها. **والأولوية
+ *   لم تسقط**: الترشيح الافتراضي «يحتاج عملاً»، وترشيح «الأصل تغيّر» يعطيه
+ *   العاجل وحده في ضغطة، والأولوية تحكم الترتيب داخل كل قسم.
+ */
+export function sortByPlace(rows: QueueRow[], places: PlaceIndex): PlacedRow[] {
+  const groupOrder = new Map(places.groups.map((group, index) => [group.id, index]));
+  const at = (id: string) => groupOrder.get(id) ?? Number.MAX_SAFE_INTEGER;
+
+  return rows
+    .map((row) => ({ row, place: places.placeOf(row) }))
+    .sort((a, b) => {
+      const group = at(a.place.groupId) - at(b.place.groupId);
+      if (group !== 0) return group;
+      const spot = a.place.spotOrder - b.place.spotOrder;
+      if (spot !== 0) return spot;
+      const rank = rowRank(a.row) - rowRank(b.row);
+      if (rank !== 0) return rank;
+      const ns = a.row.namespace.localeCompare(b.row.namespace);
+      return ns !== 0 ? ns : a.row.key.localeCompare(b.row.key);
+    });
 }

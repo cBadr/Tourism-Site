@@ -263,6 +263,123 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (هـ) 🔴 الطبقة التي كانت ناقصة (‏`0115`): الحجزُ عند **الكتابة** لا القراءة
+--
+--     `0104` تمنع الرابطَ أن يُفهرَس وأن يُستبدَل. وهي **لا تمنعه أن يُنشر** —
+--     والثمنُ وقع: ستّةُ صفوف `href` نُشرت 2026-08-18 بين 06:23:31 و06:23:48
+--     باعتمادٍ فرديّ من الطابور (‏`review_translation(id, value, true)`)، فصار
+--     التأكيد (د-١) أحمر. **والصفوف كانت خاملةً بنيوياً** — `localized_page`
+--     تضعها في الخريطة و`i18n_apply` تتخطّاها — **لكن الباب كان مفتوحاً**.
+--
+--     ⇒ `0115` تضيف الضلع الرابع على المصدر نفسه:
+--        `i18n_reserved_translation_key(key)` ⇐ مُشغّلُ الجدول +
+--        `review_translation` + `publish_locale`.
+--
+--     ⚠ **وما يُقاس هنا نصٌّ وكتالوج، لأن هذا الملف لا يكتب بايتاً** (القرار في
+--        ترويسته). **والبرهان السلوكيّ الحيّ في `i18n_tests.sql (ح-ر)`** —
+--        هناك فيكسترةٌ قائمة (لغة `zz`) تُدرَج وتُرفَض وتُنظَّف. فمن غيّر
+--        الحارس فليقرأ الملفّين معاً.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_bad text;
+  v_n   integer;
+begin
+  -- (هـ-٠) الدالة موجودة أصلاً
+  if to_regprocedure('public.i18n_reserved_translation_key(text)') is null then
+    raise exception '(هـ-٠) i18n_reserved_translation_key مفقودة — نفّذ 0115';
+  end if;
+
+  -- (هـ-١) تمسك المفتاح الكامل بحقلٍ محجوز — ومنه الصفُّ الحقيقيّ الذي وقع
+  select string_agg(x.k, '، ') into v_bad
+  from (values
+    ('0b610000-0000-4000-8000-000000000003.items.rtalex.href'),
+    ('sec.items.abc123.src'),
+    ('sec.items.abc123.icon'),
+    ('sec.items.abc123.anchor'),
+    ('sec.items.abc123.poster'),
+    ('sec.items.abc123.video'),
+    ('sec.items.abc123._k'),
+    ('sec.style'),
+    ('href')) x(k)
+  where not public.i18n_reserved_translation_key(x.k);
+  if v_bad is not null then
+    raise exception '(هـ-١) 🔴 مفاتيحُ حقولٍ محجوزةٍ أفلتت من حارس الكتابة — %', v_bad;
+  end if;
+
+  -- (هـ-٢) 🔴 والحدُّ المقابل: مفتاحُ نثرٍ لا يُحجَب. حجزٌ زائد هنا يعني نصّاً
+  --        **يستحيل نشرُه** ولا يشتكي منه أحد — أخطرُ من حجزٍ ناقص.
+  select string_agg(x.k, '، ') into v_bad
+  from (values
+    ('0b610000-0000-4000-8000-000000000003.items.rtalex.name'),
+    ('e0000000-0000-4000-8000-000000000001.title'),
+    ('e0000000-0000-4000-8000-000000000001.meta.description'),
+    ('e0000000-0000-4000-8000-000000000001.navLabel'),
+    ('brand.name'), ('brand.tagline'), ('company.legalName'),
+    ('seo.titleTemplate'), ('seo.defaultDescription'),
+    ('nav.11111111-1111-4111-8111-111111111111.label'),
+    ('sedan.title'), ('sedan.short'),
+    ('sec.items.abc123.alt'), ('sec.items.abc123.label'),
+    ('sec.items.abc123.q'), ('sec.items.abc123.a')) x(k)
+  where public.i18n_reserved_translation_key(x.k);
+  if v_bad is not null then
+    raise exception '(هـ-٢) 🔴 مفاتيحُ نثرٍ صارت غيرَ قابلةٍ للنشر أبداً — %', v_bad;
+  end if;
+
+  -- (هـ-٣) و`null` ليست محجوزة
+  if coalesce(public.i18n_reserved_translation_key(null), false) then
+    raise exception '(هـ-٣) null عُدَّت مفتاحاً محجوزاً';
+  end if;
+
+  -- (هـ-٤) 🔴 المُشغّل على الجدول قائمٌ ومُشتعل — لا في دالةٍ واحدة يلتفّ حولها
+  --        `upsert_translations` أو كتابةٌ مباشرة باللوحة أو بمفتاح الخدمة.
+  if not exists (
+    select 1 from pg_trigger g
+    where g.tgrelid = 'public.translations'::regclass
+      and g.tgname  = 'translations_guard_reserved_field'
+      and not g.tgisinternal
+      and g.tgenabled = 'O') then
+    raise exception '(هـ-٤) 🔴 مُشغّل translations_guard_reserved_field غائبٌ أو معطَّل';
+  end if;
+
+  -- (هـ-٥) والدالتان الإداريتان تستشيرانه — حذفُ النداء غداً يفتح البابَ صامتاً
+  if position('i18n_reserved_translation_key'
+       in pg_get_functiondef('public.review_translation(uuid,text,boolean)'::regprocedure)) = 0 then
+    raise exception '(هـ-٥) 🔴 review_translation لم تعد تستشير حارس الكتابة';
+  end if;
+  if position('i18n_reserved_translation_key'
+       in pg_get_functiondef('public.publish_locale(text)'::regprocedure)) = 0 then
+    raise exception '(هـ-٥) 🔴 publish_locale لم تعد تستشير حارس الكتابة';
+  end if;
+
+  -- (هـ-٦) 🔴 والحصيلة على الجدول الحيّ — **الصنف كلُّه لا `href` وحده**:
+  --        صفر صفٍّ محجوزٍ في حالةٍ غير `draft`، بأي لغةٍ وأي مساحة.
+  --        علاقةٌ لا عدد: تصمد مهما نما المحتوى.
+  select string_agg(t.locale || '/' || t.status || '/' || t.key, '، ') into v_bad
+  from public.translations t
+  where t.status <> 'draft' and public.i18n_reserved_translation_key(t.key);
+  if v_bad is not null then
+    raise exception '(هـ-٦) 🔴 حقولٌ محجوزةٌ حيّةٌ في جدول الترجمات — %', v_bad;
+  end if;
+
+  -- (هـ-٧) والستّةُ المسوَّدة **لم تُحذف**: القيمةُ والأصلُ والفاعلُ باقون،
+  --        فيبقى في الجدول ماذا كُتب ومن كتبه (قرار `0104 §(١)`).
+  select count(*) into v_n
+  from public.translations t
+  where t.key like '%.href'
+    and t.value is not null and btrim(t.value) <> ''
+    and t.source_text is not null and btrim(t.source_text) <> '';
+  if v_n <> (select count(*) from public.translations where key like '%.href') then
+    raise exception '(هـ-٧) صفُّ href فقد قيمتَه أو أصلَه — الأثر مُحي';
+  end if;
+
+  raise notice
+    '✔ (هـ) حارسُ الكتابة: المُشغّل مشتعل · الدالتان تستشيرانه · صفر حقلٍ محجوزٍ حيّ · و% صفَّ href مسوَّدةٌ بقيمتها',
+    v_n;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- ⚠ **`raise notice` لا `select`** — `scripts/db-test.mjs` يطبع أحداث `notice`
 --    وحدها (السطر ٤٠: `client.on("notice", …)`)، فمجموعةٌ تنتهي بـ`select`
 --    تمرّ خضراء ولا تطبع «ALL PASSED» إطلاقاً. وقع فعلاً في `i18n_bulk_tests`.
