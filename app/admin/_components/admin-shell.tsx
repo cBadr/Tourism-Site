@@ -176,7 +176,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: "money",
     label: "المال",
     items: [
-      // «المالية» فُعِّلت في المرحلة ٧: الخزينة والمصروفات ومقاصة المتعهدين
+      // «المالية» فُعِّلت في المرحلة ٧: الخزينة والمصروفات وتسويات المتعهدين
       // وكشوف الحساب. تتصدّر المجموعة لأنها حصيلة ما تحتها. والبند يبقى فعالاً
       // على مساراتها الفرعية كلها (isItemActive أدناه).
       { label: "المالية", icon: Wallet, href: "/admin/finance" },
@@ -351,7 +351,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/failure-reasons": "أسباب فشل الرحلة",
   "/admin/finance": "المالية",
   "/admin/finance/expenses": "المصروفات",
-  "/admin/finance/partners": "مقاصة المتعهدين",
+  "/admin/finance/partners": "تسويات المتعهدين",
   "/admin/finance/treasury": "الخزينة",
   "/admin/fleet": "الأسطول والتعريفة",
   "/admin/integrations": "الربط الخارجي",
