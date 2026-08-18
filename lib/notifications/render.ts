@@ -117,6 +117,9 @@ export const EVENT_META: Record<string, EventMeta> = {
   // ── تظلّمات المتعهدين (‏`file_grievance` / `resolve_grievance`) ────────────
   partner_grievance_filed: { title: "تظلُّم جديد من متعهد", emoji: "🙋" },
   partner_grievance_resolved: { title: "صدر قرارٌ في تظلُّم المتعهد", emoji: "⚖️" },
+  // 0135: المشرف يحرّر سعراً معتمَداً بالنقر ⇒ الرقمُ المُعلَن للمتعهد تغيّر،
+  // وهو سندُ البند ٨. فالإشعارُ ليس تحسيناً بل شرطُ ألّا يتغيّر رقمُه بلا علمه.
+  partner_price_edited: { title: "تعديلٌ على سعرٍ معتمَدٍ في قائمتك", emoji: "✏️" },
 
   // ── 🚨 جرسُ الأعطال — لا يشبه غيره بقصد ───────────────────────────────────
   //    مهمةٌ مجدولة سقطت داخل `dispatch_tick`. وهذا الصفُّ هو **الأثر الوحيد**
@@ -124,7 +127,42 @@ export const EVENT_META: Record<string, EventMeta> = {
   //    ⚠ ولا يُكرَّر الرمز داخل العنوان: الأسطح التي تعرضهما تعرضهما معاً
   //      (`{emoji} {title}` في الجرس وفي تليجرام)، فالتكرار يُنتج «🚨 🚨».
   ops_job_failed: { title: "عطل في مهمة مجدولة — تدخُّل فوري", emoji: "🚨" },
+
+  // ── 👤 أحداثُ العميل (‏0131) — أوّلُ أحداثٍ في المنظومة يقرؤها **العميل** ──
+  //
+  // 🔒 ولماذا أسماءٌ مستقلّة لا الأسماءُ نفسها بجمهورٍ مختلف: العنوانُ يُقرأ في
+  //    الجرس وفي تليجرام وفي بطاقة الجهاز، وهو **واحدٌ لكل حدث**. فـ
+  //    `trip_assigned` عنوانُه «تم إسناد الرحلة إلى متعهد» — وكلمةُ «متعهد»
+  //    نفسُها لا تُقال للعميل (**D-19**). ولو تشارك الجمهوران الاسمَ لَاحتاج
+  //    العنوانُ أن يتفرّع بالجمهور، وحينها يصير مصدرين لشيءٍ واحد.
+  //
+  // ⚠ والرموزُ لا تشبه رموزَ التشغيل ولا بعضَها: الحارس
+  //   `check:event-titles` يُحمِّر على أي رمزٍ مكرَّر، ولأن الأربعة تصل
+  //   **شاشةَ قفلِ العميل** فتمييزُها قبل القراءة هو كلُّ فائدتها.
+  customer_booking_confirmed: { title: "تأكّد حجزك", emoji: "🎉" },
+  customer_trip_assigned: { title: "جهّزنا رحلتك", emoji: "🚙" },
+  customer_trip_reminder: { title: "اقترب موعد رحلتك", emoji: "⏰" },
+  customer_trip_completed: { title: "انتهت رحلتك — شكراً لك", emoji: "🧳" },
 };
+
+/**
+ * أحداثُ العميل — **مصدرٌ واحد** يقرؤه الراسمُ وطبقةُ التسليم معاً.
+ *
+ * 🔒 وهي حارسٌ لا قائمةَ تصنيف: `renderNotification` يرفض أن يرسم **أي** حدثٍ
+ * آخر لجمهور العميل (انظر الحارس في رأس الدالة). فحمولةُ `trip_assigned`
+ * — وفيها `payout` و`realMargin` و`companyName` — لا تجد طريقاً إلى رسالةٍ
+ * يقرؤها عميل حتى لو أخطأ مُوجِّهٌ يوماً وأعطاها جمهورَ العميل.
+ */
+export const CUSTOMER_EVENTS: readonly string[] = [
+  "customer_booking_confirmed",
+  "customer_trip_assigned",
+  "customer_trip_reminder",
+  "customer_trip_completed",
+];
+
+export function isCustomerEvent(event: string): boolean {
+  return CUSTOMER_EVENTS.includes(event);
+}
 
 /**
  * عناوين الأحداث كما تظهر في الجرس وفي جدول الإشعارات.
@@ -164,6 +202,11 @@ export const CHANNEL_LABELS: Record<string, string> = {
   // قنوات المتعهد (0054) — بدونها تظهر بأسمائها الإنجليزية في شاشة الإشعارات
   webpush: "إشعار الجهاز",
   inbox: "صندوق البورتال",
+  // قنوات العميل (0131) — أسماؤها مستقلّةٌ **بقصد**: لا يعرفها كودٌ منشورٌ قديم
+  // فلا يسلّمها على وجهةِ مالكٍ أو متعهد. والشرحُ الكامل في ترويسة الهجرة.
+  customer_inbox: "صندوق العميل",
+  customer_push: "إشعار جهاز العميل",
+  customer_whatsapp: "واتساب العميل",
 };
 
 /** أسماء حالات الطابور كما تظهر للمالك */
@@ -481,6 +524,28 @@ export function renderNotification(
    */
   audience: NotificationAudience = "ops"
 ): RenderedMessage {
+  /**
+   * 🔒 **حارسُ الجمهور — بنيويّ لا انضباطيّ** (‏0131 · D-19).
+   *
+   * حمولاتُ التشغيل تحمل `payout` و`realMargin` و`companyName` و`partnerPhone`.
+   * فلو أخطأ مُوجِّهٌ يوماً وأعطى حدثاً تشغيلياً جمهورَ العميل، لَبنى الفرعُ
+   * الافتراضي أدناه رسالةً منها. والحارسُ هنا يقطع ذلك الطريق قبل أن يبدأ:
+   * جمهورُ العميل يرى **أحداثَه هو** أو جملةً عامةً بلا سطرٍ واحد — ولا ثالث.
+   *
+   * ⚠ وهو ليس تحوّطاً زائداً: بطاقةُ الإشعار تظهر على شاشةٍ مقفلة يراها من يقف
+   *   بجوار الهاتف، ومستحقُّ المتعهد + إجمالي العميل = هامشُنا على تلك الرحلة.
+   */
+  if (audience === "customer" && !isCustomerEvent(event)) {
+    return {
+      emoji: "🔔",
+      title: "تحديث على حجزك",
+      lead: `طرأ تحديثٌ على حجزك لدى ${ctx.brandName}. افتح صفحة متابعة الحجز لترى تفاصيله.`,
+      lines: [],
+      link: audienceLink(payload, "customer", ctx.baseUrl),
+      reference: bookingReference(payload),
+    };
+  }
+
   const currency = str(payload, "currency") ?? ctx.currency;
   const reference = bookingReference(payload);
   const lines: MessageLine[] = [];
@@ -588,6 +653,67 @@ export function renderNotification(
       push(lines, "المهمة", job);
       push(lines, "سبب السقوط", firstStr(payload, ["error", "message", "detail"]));
       push(lines, "ما الذي لم يقع", job === null ? null : (OPS_JOB_IMPACT[job] ?? null));
+      break;
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+     *  👤 أحداثُ العميل (‏0131) — يقرؤها **صاحبُ الحجز**، لا التشغيل
+     * ═════════════════════════════════════════════════════════════════════
+     *
+     * وحمولتُها تبنيها `customer_notification_payload` في القاعدة من
+     * `bookings` مباشرةً: بلا تكلفةٍ ولا هامشٍ ولا متعهدٍ ولا هاتف. فما لا
+     * يوجد في الحمولة لا يُطبع هنا حتى لو كُتب سطرُه بالسهو.
+     *
+     * ⚠ ونبرةُ السطور نبرةُ **مَن يُخدَم** لا نبرةُ من يشغّل: «رقم حجزك» لا
+     *   «رقم الحجز»، ولا أمرَ فيها بإجراءٍ تشغيليّ.
+     */
+    case "customer_booking_confirmed": {
+      lead =
+        `تأكّد حجزك لدى ${ctx.brandName} ووصلَنا مبلغُك. ` +
+        `سنُجهّز سيارتك ونوافيك ببياناتها قبل الموعد، وتجد كل التفاصيل في صفحة متابعة حجزك.`;
+      push(lines, "رقم حجزك", reference);
+      push(lines, "المسار", routeLabel(payload));
+      push(lines, "الرحلة", tripLabel(payload));
+      push(lines, "موعد الانطلاق", pickup);
+      push(lines, "إجمالي الرحلة", money(total, currency));
+      push(lines, "يُدفع مع السائق", money(amountRemaining, currency));
+      break;
+    }
+
+    /**
+     * 🔒 ولا اسمَ متعهدٍ ولا هاتفَه ولا مستحقَّه — **ولا كلمةَ «متعهد» أصلاً**.
+     * بيانات السيارة والسائق تظهر للعميل في صفحته وحدها، وبنافذةٍ زمنية
+     * يحكمها `get_booking_by_token` (‏0043) — فالإشعارُ يقوده إليها ولا ينسخها.
+     */
+    case "customer_trip_assigned": {
+      lead =
+        `جهّزنا سيارة رحلتك. تظهر بياناتُها — الطراز واللون واللوحة — في صفحة متابعة حجزك، ` +
+        `ويظهر رقم السائق قبل الموعد بوقتٍ كافٍ.`;
+      push(lines, "رقم حجزك", reference);
+      push(lines, "المسار", routeLabel(payload));
+      push(lines, "الرحلة", tripLabel(payload));
+      push(lines, "موعد الانطلاق", pickup);
+      break;
+    }
+
+    case "customer_trip_reminder": {
+      lead =
+        `اقترب موعد رحلتك. راجع نقطة الانطلاق والوقت، ` +
+        `وتجد بيانات السيارة والسائق في صفحة متابعة حجزك.`;
+      push(lines, "رقم حجزك", reference);
+      push(lines, "المسار", routeLabel(payload));
+      push(lines, "موعد الانطلاق", pickup);
+      push(lines, "يُدفع مع السائق", money(amountRemaining, currency));
+      break;
+    }
+
+    case "customer_trip_completed": {
+      lead =
+        `انتهت رحلتك — شكراً لاختيارك ${ctx.brandName}. ` +
+        `تجد تفاصيلها كاملةً في صفحة متابعة حجزك متى احتجتها.`;
+      push(lines, "رقم حجزك", reference);
+      push(lines, "المسار", routeLabel(payload));
+      push(lines, "موعد الانطلاق", pickup);
       break;
     }
 

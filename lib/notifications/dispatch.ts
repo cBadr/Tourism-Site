@@ -30,6 +30,7 @@ import {
   type RenderedMessage,
 } from "@/lib/notifications/render";
 import { hasTelegramCredentials, sendTelegram } from "@/lib/notifications/telegram";
+import { deliverPushToCustomer } from "@/lib/notifications/customer-push";
 import { deliverPushToPartner } from "@/lib/push/deliver";
 import { buildPushPayload } from "@/lib/push/payload";
 import {
@@ -357,6 +358,140 @@ function pushCardFor(record: NotificationRecord, message: RenderedMessage, baseU
 }
 
 // ---------------------------------------------------------------------------
+// 👤 تسليمُ صفِّ العميل (0131) — قنواتُه هو، ولا وجهةَ مالكٍ في هذا المسار
+// ---------------------------------------------------------------------------
+
+/**
+ * بطاقةُ جهاز العميل.
+ *
+ * 🔒 وتُبنى من **الرسالة المصوغة نفسها** لا من صياغةٍ ثانية (نفس قاعدة
+ * `pushCardFor`)، و`PUSH_CARD_LABELS` تحكمها: المسارُ والرحلةُ والموعد وحدها
+ * تظهر على شاشةٍ مقفلة — لا مبلغَ ولا هاتف.
+ *
+ * ⚠ والوجهةُ الاحتياطية `/` لا `/portal`: تلك بوابةُ المتعهدين، وعميلٌ يهبط
+ *   عليها يرى شاشةَ تسجيلِ دخولٍ لا تخصّه.
+ */
+function customerPushCardFor(
+  record: NotificationRecord,
+  message: RenderedMessage,
+  baseUrl: string
+) {
+  const base = baseUrl.replace(/\/+$/, "");
+  const href = message.link?.href ?? "";
+  const path = base && href.startsWith(base) ? href.slice(base.length) : href;
+
+  const body = message.lines
+    .filter((line) => PUSH_CARD_LABELS.includes(line.label))
+    .slice(0, 3)
+    .map((line) => `${line.label}: ${line.value}`)
+    .join(" · ");
+
+  return buildPushPayload({
+    event: String(record.event),
+    title: message.title,
+    body: body || message.lead,
+    url: path || "/",
+    tag: record.id,
+    ref: message.reference,
+  });
+}
+
+/**
+ * التسليمُ إلى صاحب الحجز.
+ *
+ * ثلاثُ قنواتٍ لا رابع، وكلُّها محسوبةٌ في القاعدة (`customer_channels`):
+ *
+ * | القناة | التسليم | تدخل حساب الحالة؟ |
+ * |---|---|---|
+ * | `customer_inbox` | الصفُّ نفسه (تقرؤه `customer_inbox()` بالتوكن) | ❌ كـ`dashboard` و`inbox` |
+ * | `customer_push` | دفعُ الويب إلى أجهزة الحجز | ✅ |
+ * | `customer_whatsapp` | **لا مزوّد** — تُوسم متجاوَزةً بسببها | ✅ |
+ *
+ * 🔒 ولا تليجرام ولا بريدَ مالكٍ في هذا المسار **بنيوياً**: لا سطرَ هنا يقرأ
+ *    `settings.notifications` أصلاً.
+ */
+async function deliverToCustomer(
+  supabase: SupabaseClient,
+  record: NotificationRecord,
+  ctx: RenderContext,
+  baseUrl: string
+): Promise<{ outcome: NotificationOutcome; errorText: string | null }> {
+  const event = String(record.event);
+  const bookingId = record.recipient_id ? String(record.recipient_id) : null;
+
+  // الجمهورُ `customer` صراحةً — و`renderNotification` يحرس نفسه: حدثٌ ليس
+  // من أحداث العميل يُرسَم جملةً عامةً بلا سطرٍ واحد (D-19).
+  const message = renderNotification(event, record.payload ?? null, ctx, "customer");
+
+  const channels =
+    Array.isArray(record.channels) && record.channels.length > 0
+      ? record.channels.map((c) => String(c))
+      : // 🔒 صفٌّ بلا قنوات لا يسقط على `DEFAULT_CHANNELS` هنا: تلك قنواتُ
+        // المالك. صندوقُ العميل وحده، وهو ما تضمنه القاعدة أصلاً.
+        ["customer_inbox"];
+
+  const outcomes: ChannelOutcome[] = [];
+  const external: ChannelOutcome[] = [];
+
+  if (channels.includes("customer_inbox")) {
+    outcomes.push({ channel: "customer_inbox", result: "sent" });
+  }
+
+  if (channels.includes("customer_push")) {
+    const result = await (async (): Promise<ChannelOutcome> => {
+      if (!isProviderReady("webpush")) {
+        return toOutcome("customer_push", { ok: false, skipped: "no-credentials" });
+      }
+      if (!bookingId) {
+        return toOutcome("customer_push", { ok: false, skipped: "no-recipient" });
+      }
+      const report = await deliverPushToCustomer(
+        supabase,
+        bookingId,
+        customerPushCardFor(record, message, baseUrl),
+        // `normal` لا `high`: لا مهلةَ تنتهي على العميل كما تنتهي مهلةُ عرضِ
+        // رحلةٍ على المتعهد، وإيقاظُ جهازٍ بلا داعٍ يُنفق تصريحاً لا يُستردّ.
+        { urgency: "normal" }
+      );
+      if (report.sent > 0) return toOutcome("customer_push", { ok: true });
+      if (report.targets === 0 || report.pruned >= report.targets) {
+        return toOutcome("customer_push", { ok: false, skipped: "no-recipient" });
+      }
+      return toOutcome("customer_push", {
+        ok: false,
+        error: report.reason ?? "دفع الويب: فشل بلا سبب معروف",
+      });
+    })();
+    external.push(result);
+  }
+
+  if (channels.includes("customer_whatsapp")) {
+    // القاعدةُ لا تُرجع هذه القناة إلا بمزوّدٍ **جاهز**، ولا مزوّدَ اليوم.
+    // فوجودُها هنا يعني أن مزوّداً سُجّل ولم يُوصَل محوّلُه بعد — ويُقال بنصّه.
+    external.push({
+      channel: "customer_whatsapp",
+      result: "skipped",
+      reason: "لا محوّل واتساب موصولاً على الخادم بعد — القناة مسجَّلة ولا مُرسِل لها",
+    });
+  }
+
+  outcomes.push(...external);
+
+  let status: NotificationStatus;
+  if (external.length === 0) status = "sent";
+  else if (external.some((o) => o.result === "failed")) status = "failed";
+  else if (external.some((o) => o.result === "sent")) status = "sent";
+  else status = "skipped";
+
+  const notes = outcomes.filter((o) => o.result !== "sent").map(outcomeText);
+
+  return {
+    outcome: { id: record.id, event, status, channels: outcomes },
+    errorText: notes.length > 0 ? notes.join(" · ") : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // تسليم إشعار واحد
 // ---------------------------------------------------------------------------
 
@@ -374,6 +509,23 @@ async function deliverOne(
   };
 
   const event = String(record.event);
+
+  /**
+   * ── 👤 صفُّ العميل (‏0131) — مسارٌ مستقلٌّ يخرج من هنا ولا يعود ────────────
+   *
+   * 🔒 **ولماذا فرعٌ مبكّرٌ لا معاملٌ ثالث في `dispatchRecipients`:** كلُّ ما
+   * تحتَه — تفضيلاتُ المتعهد، إعداداتُ المالك، الاحتياطيّ، التصعيد،
+   * `DEFAULT_CHANNELS` — مبنيٌّ على أن الجمهور اثنان. وحقنُ ثالثٍ في تلك
+   * الآلة يعني أن كل سطرٍ فيها يصير سؤالاً جديداً، وأنّ سهواً واحداً يسقط
+   * على **قنوات المالك** (وهو العيبُ الذي وُجدت 0131 لإغلاقه).
+   *
+   * فالعميلُ لا يمرّ بها أصلاً: قنواتُه محسوبةٌ في القاعدة
+   * (`customer_channels`)، ووجهتُه صفحتُه، ولا احتياطيَّ له ولا تصعيد —
+   * وسقوطُ إشعارٍ عنه يُقرأ من `channel_outcomes` كما يُقرأ عن غيره.
+   */
+  if (String(record.recipient_kind ?? "ops") === "customer") {
+    return deliverToCustomer(supabase, record, ctx, baseUrl);
+  }
 
   /**
    * ── التوجيه لكل مستقبِل (0054) ──────────────────────────────────────────
@@ -926,6 +1078,23 @@ export async function dispatchNotifications(
      * التشغيل بدل الابتلاع الصامت)، لكن «يفشل في الاتجاه الآمن» ليس «يعمل».
      */
     const providersSynced = await syncProviderReadiness(supabase);
+
+    /**
+     * تذكيراتُ العملاء تُصَفّ **قبل** المطالبة، فتُسلَّم في الدورة نفسها (0131).
+     *
+     * ولماذا هنا لا في `dispatch_tick`: هذه الدورةُ تعمل كل دقيقة و`tick` كل
+     * خمس، ووظيفةُ هذا العامل بالضبط هي «صُفَّ ما استحق ثم سلّمه». وإضافةُ
+     * كتلةٍ إلى `dispatch_tick` كانت `create or replace` على قلب دورة البثّ
+     * لأجل سطرٍ واحد — بلاغُ خطرٍ لا يشتريه المكسب.
+     *
+     * ⚠ ولا يُسقِط فشلُها الدورة: تذكيرٌ لم يُصَفّ أهونُ من طابورٍ لا يُسلَّم.
+     *   وقاعدةٌ بلا 0131 تردّ «الدالة غير موجودة» فيُتخطّى بصمت — نفسُ تراجعِ
+     *   `claimBatch` حرفياً، ولنفس السبب: المنشورُ قد يسبق الهجرة.
+     */
+    const reminders = await supabase.rpc("queue_customer_reminders", { p_limit: 200 });
+    if (reminders.error && !isMissingFunction(reminders.error.code)) {
+      console.warn("[notifications] تعذّر صفُّ تذكيرات العملاء:", reminders.error.message);
+    }
 
     const limit = Math.min(Math.max(options.limit ?? BATCH_LIMIT, 1), BATCH_LIMIT);
 

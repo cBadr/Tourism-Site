@@ -239,7 +239,7 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
             </Link>
             <span className="text-muted-foreground">·</span>
             <Link href="/admin/finance/partners" className="text-primary hover:underline">
-              مقاصة المتعهدين
+              تسويات المتعهدين
             </Link>
           </nav>
         </div>
@@ -373,7 +373,7 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
                 "—"
               )
             }
-            sub="محصّلة المقاصة مع كل الشركاء"
+            sub="محصّلة التسوية مع كل الشركاء"
             icon={Scale}
             /*
               الإشارة تغيّر معنى البطاقة لا حجمها فقط: موجب = علينا دفعة قادمة
@@ -389,7 +389,7 @@ export default async function FinancePage({ searchParams }: PageProps<"/admin/fi
             }
             help={
               <>
-                مجموع صوافي المقاصة: مستحقاتهم عن الرحلات ناقص ما قبضوه نقداً من العملاء
+                مجموع صوافي التسوية: مستحقاتهم عن الرحلات ناقص ما قبضوه نقداً من العملاء
                 ناقص ما دفعناه لهم. <span className="font-semibold">قد يكون سالباً</span>{" "}
                 فيصير الشركاء مدينين لنا — وهو وضع شائع هنا لأن السائق يقبض باقي الأجرة
                 من العميل مباشرة.

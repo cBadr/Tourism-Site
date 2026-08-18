@@ -645,6 +645,232 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- (م) 🔴 **المسار الذي تسلكه اللوحة فعلاً** — صفٌّ مقروء ومفتاحٌ قابلٌ للتوقيع
+--
+-- ── لماذا لم تكفِ (د)، وقد قاست الأدوار الأربعة ──────────────────────────
+--
+-- (د) تقيس `storage.objects` وحده. واللوحة تقرأ **شيئين بهويةٍ واحدة**:
+--   ١) صفَّ السائق من `public.subcontractor_drivers` ← ومنه المسار،
+--   ٢) ثم تطلب توقيع ذلك المسار — وهو `select` على `storage.objects`.
+--
+-- فالعطل الذي أبلغ عنه المالك في 2026-08-18 («لا أرى الصور») شكلُه بالضبط:
+-- **المسار يُقرأ والمفتاح لا يُرى**. وحينها لا يخفق شيء ولا يُرمى استثناء —
+-- تعود خريطةٌ ناقصة، ويُرسم مربّعٌ فارغ. فالتأكيد هنا يقيس **الفارق بين
+-- العددين** لا كلَّ عددٍ وحده، لأن الفارق هو العطل.
+--
+-- ── وفيكسترتُه فيكسترتُه هو ────────────────────────────────────────────────
+-- لا يُقرأ هنا صفُّ مالكٍ ولا رقمُه: شريكان وسائقان ومفتاحان يبنيهم هذا القسم
+-- داخل كتلةٍ راجعةٍ ذاتياً، فلا يسقط التأكيد يوم يحذف شريكٌ صورة.
+--
+-- ── وطفرتان، لأن تأكيداً لا يحمرّ عند العطب زينة (النمط ٩) ───────────────
+--   (م-٥) تُسحب صفةُ الإدارة من مشرف الفيكسترة  ⇒ يجب أن يهبط الشاهد إلى صفر.
+--   (م-٦) يُوجَّه مسارُ السائق إلى مفتاحٍ لا كائنَ له ⇒ يجب أن يظهر الفارق.
+-- وكلتاهما تُقاسان بأنفسهما: إن **لم** يتغيّر الشاهد بعد الكسر، يُرفع استثناء
+-- يقول إن الشاهد لا يشهد.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_uid_m1  uuid := '44444444-4444-4444-8444-444444444444';
+  v_uid_m2  uuid := '55555555-5555-4555-8555-555555555555';
+  v_uid_mad uuid := '66666666-6666-4666-8666-666666666666';
+  v_sub_1   uuid := 'eeeeeeee-0000-4000-8000-00000000000e';
+  v_sub_2   uuid := 'ffffffff-0000-4000-8000-00000000000f';
+  v_drv_1   uuid := '99999999-0000-4000-8000-000000000009';
+  v_photo   text;
+  v_lic     text;
+  v_dangling text;
+  v_paths   integer;   -- كم مساراً غير فارغ يقرؤه هذا القارئ من صفوف السائقين
+  v_signable integer;  -- وكم منها يستطيع أن يوقّعه فعلاً (أي يراه في الدلو)
+  v_before  bigint;
+  v_n       integer;
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated')
+     or not exists (select 1 from pg_roles where rolname = 'anon') then
+    raise notice '  ↳ (م) لا أدوار المتصفح — الفحص متخطّى';
+    return;
+  end if;
+
+  -- ⚠ ستَّ عشرة خانة hex — النمط يفرضها، وحرفٌ خارج `[0-9a-f]` يُسقط الإدراج
+  v_photo    := v_sub_1 || '/' || v_drv_1 || '/photo-00000000000000e1.jpg';
+  v_lic      := v_sub_1 || '/' || v_drv_1 || '/license-00000000000000e2.jpg';
+  v_dangling := v_sub_1 || '/' || v_drv_1 || '/photo-00000000000000ed.jpg';
+
+  select count(*) into v_before from storage.objects where bucket_id = 'driver-docs';
+
+  -- ── بداية الكتلة الراجعة ذاتياً ──────────────────────────────────────────
+  begin
+
+  insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                          created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+  values
+    (v_uid_m1,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+     'ddoc-m1@tests.invalid',  '', now(), now(), '{}'::jsonb, '{}'::jsonb),
+    (v_uid_m2,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+     'ddoc-m2@tests.invalid',  '', now(), now(), '{}'::jsonb, '{}'::jsonb),
+    (v_uid_mad, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+     'ddoc-mad@tests.invalid', '', now(), now(), '{}'::jsonb, '{}'::jsonb);
+
+  insert into public.profiles (id, role) values (v_uid_m1, 'subcontractor')
+    on conflict (id) do update set role = 'subcontractor';
+  insert into public.profiles (id, role) values (v_uid_m2, 'subcontractor')
+    on conflict (id) do update set role = 'subcontractor';
+  insert into public.profiles (id, role) values (v_uid_mad, 'admin')
+    on conflict (id) do update set role = 'admin';
+
+  insert into public.subcontractors (id, profile_id, company_name, phone, status)
+  values (v_sub_1, v_uid_m1, 'DDOC_TESTS مسار اللوحة ١', '01000000011', 'approved'),
+         (v_sub_2, v_uid_m2, 'DDOC_TESTS مسار اللوحة ٢', '01000000012', 'approved');
+
+  insert into public.subcontractor_drivers (id, subcontractor_id, name, phone, license_no)
+  values (v_drv_1, v_sub_1, 'DDOC_TESTS سائق المسار', '01033333333', 'DL-M-1');
+
+  update public.subcontractor_drivers
+     set photo_path = v_photo, license_photo_path = v_lic
+   where id = v_drv_1;
+
+  insert into storage.objects (bucket_id, name) values ('driver-docs', v_photo);
+  insert into storage.objects (bucket_id, name) values ('driver-docs', v_lic);
+
+  -- (م-١) 🔴 اللوحة: مساران يُقرآن، ومفتاحان يُوقَّعان — ولا فارق بينهما
+  perform set_config('request.jwt.claim.sub', v_uid_mad::text, true);
+  set local role authenticated;
+
+  select count(*) into v_paths
+    from public.subcontractor_drivers d,
+         lateral (values (d.photo_path), (d.license_photo_path)) as x(p)
+   where d.subcontractor_id = v_sub_1 and x.p is not null;
+
+  select count(*) into v_signable
+    from public.subcontractor_drivers d
+    join lateral (values (d.photo_path), (d.license_photo_path)) as x(p) on x.p is not null
+    join storage.objects o on o.bucket_id = 'driver-docs' and o.name = x.p
+   where d.subcontractor_id = v_sub_1;
+  reset role;
+
+  if v_paths <> 2 then
+    raise exception
+      '(م-١أ) تهيئةٌ خاطئة: اللوحة تقرأ % مساراً بدل اثنين — التأكيد التالي بلا معنى', v_paths;
+  end if;
+  if v_signable <> v_paths then
+    raise exception
+      '(م-١ب) 🔴 اللوحة تقرأ % مساراً ولا ترى منها إلا % في الدلو — وهذا بعينه المربّع الفارغ الذي أبلغ عنه المالك',
+      v_paths, v_signable;
+  end if;
+
+  -- (م-٢) والشريك المالك يرى مستنداتِ سائقه هو بنفس المسار (بوابة `/portal/drivers`)
+  perform set_config('request.jwt.claim.sub', v_uid_m1::text, true);
+  set local role authenticated;
+  select count(*) into v_signable
+    from public.subcontractor_drivers d
+    join lateral (values (d.photo_path), (d.license_photo_path)) as x(p) on x.p is not null
+    join storage.objects o on o.bucket_id = 'driver-docs' and o.name = x.p
+   where d.subcontractor_id = v_sub_1;
+  reset role;
+  if v_signable <> 2 then
+    raise exception '(م-٢) الشريك المالك يوقّع % من مستنداته بدل اثنين', v_signable;
+  end if;
+
+  -- (م-٣) والشريك الآخر لا يبلغ منها شيئاً — لا صفّاً ولا مفتاحاً
+  perform set_config('request.jwt.claim.sub', v_uid_m2::text, true);
+  set local role authenticated;
+  select count(*) into v_n from public.subcontractor_drivers where subcontractor_id = v_sub_1;
+  select count(*) into v_signable from storage.objects
+   where bucket_id = 'driver-docs' and name in (v_photo, v_lic);
+  reset role;
+  if v_n <> 0 or v_signable <> 0 then
+    raise exception
+      '(م-٣) 🔴 الشريك الثاني بلغ % صفَّ سائقٍ و% مفتاحاً ليسا له — العزل مكسور (D-19 · D-20)',
+      v_n, v_signable;
+  end if;
+
+  -- (م-٤) والزائر المجهول: صفر وصفر
+  --
+  -- ⚠ وجدولُ السائقين محجوبٌ عنه **بالمنحة** لا بالسياسة: `anon` بلا
+  --   `SELECT` أصلاً، فالاستعلام يرمي `insufficient_privilege` بدل أن يعيد
+  --   صفراً. وهذا حجبٌ **أقوى** لا أضعف — فيُقبل، ولا يُقرأ خطؤه فشلاً.
+  --   ولذلك يُلتقط الاستثناء ويُعدّ صفراً صراحةً، ولا يُبتلع غيرُه.
+  perform set_config('request.jwt.claim.sub', '', true);
+  set local role anon;
+  begin
+    select count(*) into v_n from public.subcontractor_drivers where subcontractor_id = v_sub_1;
+  exception
+    when insufficient_privilege then v_n := 0;
+  end;
+  select count(*) into v_signable from storage.objects
+   where bucket_id = 'driver-docs' and name in (v_photo, v_lic);
+  reset role;
+  if v_n <> 0 or v_signable <> 0 then
+    raise exception '(م-٤) 🔴 الزائر بلغ % صفاً و% مفتاحاً من مستندات السائقين', v_n, v_signable;
+  end if;
+
+  -- ── (م-٥) الطفرة الأولى: تُسحب صفةُ الإدارة ⇒ الشاهد يجب أن يحمرّ ────────
+  update public.profiles set role = 'subcontractor' where id = v_uid_mad;
+
+  perform set_config('request.jwt.claim.sub', v_uid_mad::text, true);
+  set local role authenticated;
+  select count(*) into v_signable from storage.objects
+   where bucket_id = 'driver-docs' and name in (v_photo, v_lic);
+  reset role;
+
+  if v_signable <> 0 then
+    raise exception
+      '(م-٥) 🔴 سُحبت صفةُ الإدارة والمفاتيح ما زالت مرئية (%) — أي أن الشاهد (م-١) لا يشهد على `is_admin()` بل يمرّ من بابٍ آخر',
+      v_signable;
+  end if;
+  update public.profiles set role = 'admin' where id = v_uid_mad;
+
+  -- ── (م-٦) الطفرة الثانية: مسارٌ بلا كائن ⇒ يجب أن يظهر الفارق ────────────
+  --
+  -- وهذه هي **صورةُ العطل نفسها** في القاعدة: صفٌّ يحمل مساراً، والدلو لا يحمل
+  -- مفتاحه. فإن لم يهبط `v_signable` تحت `v_paths` هنا، فالتأكيد (م-١ب) زينةٌ
+  -- تمرّ مهما انكسر ما تحتها.
+  update public.subcontractor_drivers set photo_path = v_dangling where id = v_drv_1;
+
+  perform set_config('request.jwt.claim.sub', v_uid_mad::text, true);
+  set local role authenticated;
+  select count(*) into v_paths
+    from public.subcontractor_drivers d,
+         lateral (values (d.photo_path), (d.license_photo_path)) as x(p)
+   where d.subcontractor_id = v_sub_1 and x.p is not null;
+  select count(*) into v_signable
+    from public.subcontractor_drivers d
+    join lateral (values (d.photo_path), (d.license_photo_path)) as x(p) on x.p is not null
+    join storage.objects o on o.bucket_id = 'driver-docs' and o.name = x.p
+   where d.subcontractor_id = v_sub_1;
+  reset role;
+
+  if v_paths <> 2 or v_signable <> 1 then
+    raise exception
+      '(م-٦) 🔴 وُجِّه مسارٌ إلى مفتاحٍ لا وجود له فقرأ الشاهد %/% بدل ١/٢ — أي أن (م-١ب) لا يمسك المربّع الفارغ',
+      v_signable, v_paths;
+  end if;
+
+  raise notice '✔ (م) مسار اللوحة: مساران يُقرآن ويُوقَّعان · الشريك المالك مثلُه · الآخر والزائر صفر · وطفرتان أحمرّ بهما الشاهد';
+
+  raise exception 'ROLLBACK_MARKER';
+exception
+  when others then
+    begin
+      execute 'reset role';
+    exception when others then null;
+    end;
+    if sqlerrm <> 'ROLLBACK_MARKER' then raise; end if;
+  end;
+  -- ── نهاية الكتلة الراجعة ذاتياً ──────────────────────────────────────────
+
+  perform set_config('request.jwt.claim.sub', '', false);
+
+  -- حارس التسريب — نفس حارس (د-ح): الدلو عاد إلى ما كان بالضبط
+  select count(*) into v_n from storage.objects where bucket_id = 'driver-docs';
+  if v_n <> v_before then
+    raise exception
+      '(م) 🔴 تسريب في storage.objects: كان % كائناً وصار % — الكتلة الراجعة لم ترجع',
+      v_before, v_n;
+  end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
 -- (ل) التنظيف — وما بقي يُعلَن
 -- ----------------------------------------------------------------------------
 do $$

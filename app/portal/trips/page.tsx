@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarCheck, History, Inbox, Lock, Ticket } from "lucide-react";
+import { CalendarCheck, History, Inbox, Lock, Scale, Ticket } from "lucide-react";
 
 import {
   CustomerContact,
@@ -10,6 +10,7 @@ import {
   TripNotes,
   TripRoute,
   TripStatusChip,
+  amountLabel,
   dateTimeLabel,
 } from "@/components/portal/offer-parts";
 import {
@@ -38,6 +39,7 @@ import {
   type PortalTrip,
 } from "../requests/data";
 import { TripClosurePanel } from "./closure-panel";
+import { loadDeductions, type DeductionsResult } from "./deductions";
 
 /**
  * رحلاتي — ما بعد القبول.
@@ -106,6 +108,71 @@ const withdrawnMessage = (routed: string) =>
   routed === "manual"
     ? "سجّلنا اعتذارك وأُخرجت الرحلة من يدك. الموعد قريب فانتقلت إلى الإسناد اليدوي، وفريق التشغيل نُبِّه فوراً."
     : "سجّلنا اعتذارك وأُخرجت الرحلة من يدك، وانطلقت موجة عرضٍ جديدة على متعهدين آخرين. ولن تُعرض عليك هذه الرحلة مرة أخرى.";
+
+/**
+ * 🔴 «ويُتاح للمتعهد» — البند ٨ من اتفاقيته، منفَّذاً لا موعوداً (هجرة `0130`).
+ *
+ * البند يقول إن مبرِّر الخصم المكتوب «يُثبَّت في السجل **ويُتاح للمتعهد**»، وإن
+ * له أن يتظلّم عليه خلال أربعة عشر يوماً من قيده. وبلا هذه البطاقة كان الرصيد
+ * ينقص ولا سبيل لصاحبه أن يعرف عن أي رحلة ولا لماذا — أي حقُّ تظلّمٍ بلا ما
+ * يُتظلَّم عليه.
+ *
+ * ولا رقم يُحسب هنا: المبالغ تصل جاهزة من `portal_deductions()` (‏**D-05**).
+ * وسببُ ظهورها في «رحلاتي» لا في شاشةٍ مستقلة: الخصمُ يقع **على رحلة**، وبابُ
+ * الاعتراض عليها في بطاقتها — فلا يُنشأ نموذجُ تظلّمٍ ثانٍ (القاعدة ١٢).
+ */
+function DeductionsCard({ result }: { result: DeductionsResult }) {
+  if (!result.ready || result.rows.length === 0) return null;
+
+  return (
+    <section className="space-y-3">
+      <h3 className="flex items-center gap-2 font-heading text-base font-bold">
+        <Scale className="size-4 text-muted-foreground" aria-hidden="true" />
+        خصومات على حسابك
+      </h3>
+      <Card className="space-y-4 p-4">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          كل خصمٍ قُيِّد على حسابك، ومعه <span className="font-semibold">مبرَّره المكتوب</span>{" "}
+          كما ثُبِّت في السجل. ولك أن تعترض على أيٍّ منها خلال أربعة عشر يوماً من قيده — زرُّ
+          الاعتراض في بطاقة الرحلة نفسها أعلاه.
+        </p>
+        <ul className="space-y-3">
+          {result.rows.map((row, index) => (
+            <li
+              key={`${row.bookingId ?? "x"}-${row.kind}-${index}`}
+              className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-3"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span dir="ltr" className="font-mono text-xs text-muted-foreground">
+                  {row.tripCode ?? "—"}
+                </span>
+                <span className="font-semibold">
+                  {row.amount === null ? "—" : amountLabel(row.amount, row.currency)}
+                </span>
+                <span className="text-muted-foreground">
+                  {row.kind === "apology" ? "خصم على اعتذار بعد القبول" : "خصم على رحلة فاشلة"}
+                </span>
+                {row.reasonLabel ? (
+                  <span className="text-muted-foreground">· {row.reasonLabel}</span>
+                ) : null}
+                <span className="ms-auto text-xs text-muted-foreground">
+                  {dateTimeLabel(row.appliedAt)}
+                </span>
+              </div>
+              {/*
+                والمبرَّر لا يُخفى خلف «اقرأ المزيد» ولا يُختصر: هو محلُّ التظلّم،
+                ونصُّه هو ما التزمت المنصة بإتاحته كاملاً.
+              */}
+              <p className="text-sm leading-relaxed">
+                {row.writtenReason ?? "لم يُسجَّل مبرَّر — راسل الإدارة."}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </section>
+  );
+}
 
 function TripCard({
   trip,
@@ -233,9 +300,11 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
 
   // `now` من القراءة نفسها لا من التصيير — فصل «القادم» عن «السابق» قرار زمني
   // يجب أن يبقى ثابتاً بين تصييرين متطابقين
-  const [{ trips, ready, failed, now }, apology] = await Promise.all([
+  const [{ trips, ready, failed, now }, apology, deductions] = await Promise.all([
     loadTrips(),
     loadApologyOptions(),
+    // بلا وسيط إطلاقاً: نطاق الدالة مثبَّت داخلها على صاحب الجلسة (`deductions.ts`)
+    loadDeductions(),
   ]);
   const { upcoming, past } = splitTrips(trips, now);
 
@@ -342,6 +411,13 @@ export default async function PortalTripsPage({ searchParams }: PageProps<"/port
           ))}
         </section>
       ) : null}
+
+      {/*
+        الخصومات بعد «القادمة» وقبل «السابقة»: ما يحتاج قراراً منك أولاً، ثم ما
+        وقع على حسابك، ثم الأرشيف. وتختفي البطاقة كلها حين لا خصمَ عليك — لا
+        عنوانٌ فارغ يوحي بأن ثمة شيئاً.
+      */}
+      <DeductionsCard result={deductions} />
 
       {past.length > 0 ? (
         <section className="space-y-3">

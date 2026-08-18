@@ -1,4 +1,7 @@
-import { formatDistance, toArabicDigits } from "@/components/booking/format";
+import { Pencil } from "lucide-react";
+
+import { formatDistance, formatMoney, toArabicDigits } from "@/components/booking/format";
+import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import {
   DEFAULT_MARGIN,
@@ -8,6 +11,7 @@ import {
 } from "@/lib/subcontractor-types";
 import { cn } from "@/lib/utils";
 import { asNumber, asText, COMMON_BOOKING_ERRORS, pick } from "../../orders/_components/booking-ui";
+import { setPriceListItemCost } from "../actions";
 
 /**
  * لبنات مشتركة لشاشات المتعهدين الثلاث (القائمة + الملف + طابور المراجعة) —
@@ -135,6 +139,19 @@ export const SUBCONTRACTOR_ERRORS: Record<string, string> = {
   sheetcount:
     "عدد مسارات هذا الكشف تغيّر بعد فتح الصفحة — لم تُكتب حالةٌ واحدة. أعد تحميل الصفحة لترى الدفعة كاملةً كما هي الآن ثم قرّر.",
   notfound: "لم يعد هذا السجل موجوداً — أعد تحميل الصفحة.",
+  forbidden:
+    "هذه العملية للمشرف وحده — تأكد أنك مسجَّل الدخول بحساب دوره admin ثم أعد المحاولة.",
+  input: "مدخلٌ غير مقبول — راجع الحقل ثم أعد المحاولة.",
+  noselection:
+    "لم تُعلّم على أي مسار — علّم على مسارٍ واحد على الأقل ثم اضغط «اعتماد المختار» أو «رفض المختار».",
+  selbig:
+    "اخترتَ مسارات أكثر مما يحتمله نموذج واحد — راجع الكشف كله بزرّ الدفعة، أو علّم على عددٍ أقل.",
+  selcount:
+    "ما وصل من اختيارك لا يطابق ما ستكتبه القاعدة (معرّف مكرَّر أو مسار لم يعد في هذا الكشف) — لم تُكتب حالةٌ واحدة. أعد تحميل الصفحة ثم علّم من جديد.",
+  cost:
+    "التكلفة يجب أن تكون رقماً موجباً — الأرقام العربية الهندية مقبولة، والفاصلة العشرية «٫» أو «.»، وبلا فاصلة آلاف.",
+  pricestale:
+    "عدّل أحدٌ هذه الخانة بينما صفحتك مفتوحة — لم يُكتب شيء حتى لا يضيع تعديله ولا تعديلك. أعد تحميل الصفحة لترى الرقم الحالي ثم قرّر.",
   invite:
     "أُنشئ حساب المتعهد لكن تعذّر إرسال بريد الدعوة — أرسلها يدوياً بالأمر الظاهر في ملفه.",
   nolink: "لا حساب دخول مرتبط بهذا المتعهد بعد — أرسل له الدعوة أولاً.",
@@ -361,3 +378,108 @@ export function customerPrice(
 /** أمر إرسال الدعوة يدوياً — يُعرض حرفياً للمدير لينسخه إلى الطرفية */
 export const inviteCommand = (email: string | null, companyName: string) =>
   `node scripts/invite-subcontractor.mjs ${email ?? "email@example.com"} "${companyName}"`;
+
+
+// ---------------------------------------------------------------------------
+// التعديل بالنقر — خانةُ تكلفةٍ واحدة (0135)
+// ---------------------------------------------------------------------------
+
+/** حقلٌ مضغوط بحدٍّ مرئيّ — الحدُّ الخفيّ عيبٌ سبق إصلاحه في هذه اللوحة */
+const costFieldClass =
+  "w-24 min-w-0 rounded-md border border-input bg-transparent px-2 py-1 text-sm tabular-nums " +
+  "transition-colors outline-none placeholder:text-muted-foreground " +
+  "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 " +
+  "dark:bg-input/30";
+
+/**
+ * خانةُ تكلفةٍ قابلة للتحرير في مكانها — نموذجٌ صغير لكل خانة، بلا حالة عميل
+ * وبلا جافاسكربت: يُكتب الرقم ويُضغط Enter أو زرّ الحفظ فيقع الحفظ فوراً.
+ *
+ * 🔴 **ولماذا نموذجٌ لكل خانة لا نموذجٌ واحد للجدول**: الحفظُ الفوريّ يعني أن
+ * كل خانةٍ قرارٌ مستقل بقيمته المرئية الخاصة (`seen`). ونموذجٌ واحد يجمعها كان
+ * سيجعل حفظَ خانةٍ يمرّر معه قيمَ أخواتها، فيكتب فوق تعديلِ زميلٍ في خانةٍ لم
+ * يفتحها هذا المشرف أصلاً — وهو بالضبط الضياعُ الذي وُجدت `seen` لتمنعه.
+ *
+ * ⚠ وHTML لا تسمح بنموذجٍ داخل نموذج: فحيثما كان الجدول محاطاً بنموذجِ اختيارٍ
+ *   (بطاقةُ الكشف) **لا تُستعمل هذه الخانة** ويبقى العرضُ نصّاً — والتحرير من
+ *   بطاقة المسار أو من تفصيل البحث.
+ *
+ * والصدق مع المشرف: الرقمُ على قائمةٍ **معتمدة** يُسعَّر به عميلٌ الآن، ولذلك
+ * يُقال له ذلك في «؟» بدل أن يكتشفه بعد الحفظ. والقاعدة هي التي تكتب سطر
+ * التدقيق وتُشعر المتعهد — لا هذه الشاشة.
+ */
+export function EditableCost({
+  listId,
+  classSlug,
+  className,
+  cost,
+  currency,
+  status,
+  canEdit,
+  returnTo,
+}: {
+  listId: string;
+  classSlug: string;
+  /** اسم الفئة العربي — يدخل في تسمية الحقل لقارئ الشاشة */
+  className: string;
+  cost: number | null;
+  currency: string;
+  /** حالةُ القائمة — تحدّد نصّ الإرشاد وحده؛ القرارُ والأثرُ في القاعدة */
+  status: string;
+  canEdit: boolean;
+  returnTo: string;
+}) {
+  if (!canEdit) {
+    return (
+      <span dir="ltr">{cost === null ? "—" : formatMoney(cost, currency)}</span>
+    );
+  }
+
+  const raw = cost === null ? "" : String(cost);
+  const live = status === "approved";
+
+  return (
+    <form
+      action={setPriceListItemCost.bind(null, listId, classSlug, returnTo)}
+      className="flex items-center gap-1.5"
+    >
+      {/* القيمة كما عُرضت على هذه الشاشة — بها ترفض القاعدة الكتابة فوق زميل */}
+      <input type="hidden" name="seen" value={raw} />
+      <input
+        name="cost"
+        defaultValue={raw}
+        dir="ltr"
+        inputMode="decimal"
+        autoComplete="off"
+        maxLength={40}
+        aria-label={`تكلفة ${className}`}
+        placeholder="بلا سعر"
+        className={costFieldClass}
+      />
+      <button
+        type="submit"
+        title="حفظ التكلفة"
+        aria-label={`حفظ تكلفة ${className}`}
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+      >
+        <Pencil className="size-3.5" aria-hidden="true" />
+      </button>
+      <HelpTip>
+        {live ? (
+          <>
+            هذه القائمة <span className="font-semibold">معتمدة</span>، فالرقم هنا هو ما
+            يُسعَّر به عميلٌ الآن. الحفظ فوريّ، ومعه يُكتب سطر تدقيق باسمك بقيمتَي قبل
+            وبعد، <span className="font-semibold">ويصل المتعهد إشعارٌ بالتعديل</span> —
+            لأنه رقمُه المُعلَن الذي بُنيت عليه اتفاقيته.
+          </>
+        ) : (
+          <>
+            الحفظ فوريّ بلا قيد: هذه القائمة ليست معتمدة فلا يُسعَّر بها أحد بعد. يُكتب
+            سطر تدقيق باسمك، ولا يُرسَل إشعار.
+          </>
+        )}{" "}
+        الأرقام العربية الهندية مقبولة، والفاصلة العشرية «٫» أو «.»، وبلا فاصلة آلاف.
+      </HelpTip>
+    </form>
+  );
+}

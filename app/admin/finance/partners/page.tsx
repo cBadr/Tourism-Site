@@ -42,7 +42,7 @@ import {
 } from "./_components/settlement-forms";
 
 /**
- * مقاصة المتعهدين — الشاشة التي يعيش فيها التواء هذا النشاط المحاسبي.
+ * تسويات المتعهدين — الشاشة التي يعيش فيها التواء هذا النشاط المحاسبي.
  *
  * العميل يدفع لنا عرباناً ويسلّم الباقي **نقداً للسائق**. فالمتعهد يغادر الرحلة
  * وقد قبض جزءاً من مالنا، ونحن مدينون له بمستحقه كاملاً:
@@ -79,7 +79,7 @@ import {
  * كي تُقال جملة «الإسناد متوقف» حين تكون صحيحة وحدها.
  */
 
-export const metadata = { title: "مقاصة المتعهدين" };
+export const metadata = { title: "تسويات المتعهدين" };
 
 const PATH = "/admin/finance/partners";
 
@@ -120,7 +120,7 @@ async function loadScreen(): Promise<Loaded> {
       ready: false,
       accounts: accountsRes.accounts,
       credit,
-      missing: isMissingTable(res.error.code) ? "v_partner_settlements" : "قراءة المقاصة",
+      missing: isMissingTable(res.error.code) ? "v_partner_settlements" : "قراءة التسوية",
     };
   }
 
@@ -186,7 +186,7 @@ async function readAccountBalance(accountId: string): Promise<number | null> {
 }
 
 const SAVED_MESSAGES: Record<string, string> = {
-  "1": "سُجّلت الدفعة وانعكست على المقاصة ورصيد الحساب فوراً.",
+  "1": "سُجّلت الدفعة وانعكست على التسوية ورصيد الحساب فوراً.",
   settlement:
     "سُجّل التحصيل: دخل المبلغ حساب الخزينة المختار وانخفض ما على المتعهد لنا بنفس المقدار — قيدٌ واحد بدور «سدّده لنا»، ويظهر في كشف حسابه فوراً.",
   advance:
@@ -347,11 +347,11 @@ export default async function PartnersSettlementsPage({
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 font-heading text-lg font-bold">
           <Scale className="size-5 text-primary" />
-          مقاصة المتعهدين
+          تسويات المتعهدين
         </h2>
         <HelpTip>
           لأن العميل يسلّم باقي الأجرة نقداً للسائق، فالحساب مع كل شريك ذو اتجاهين:
-          مستحقاته عندنا، وما قبضه من عملائنا في يده. والمقاصة تجمع الحدود الأربعة —
+          مستحقاته عندنا، وما قبضه من عملائنا في يده. والتسوية تجمع الحدود الأربعة —
           مستحقاته، ناقص ما قبضه نقداً، ناقص ما دفعناه له، زائد ما سدّده لنا — وقد يخرج
           الناتج في صالحه أو في صالحنا.
         </HelpTip>
@@ -365,7 +365,7 @@ export default async function PartnersSettlementsPage({
       </div>
 
       {(!wired || missing !== null) && (
-        <FinanceNotReady wired={wired} missing={missing ?? "عرض المقاصة"} />
+        <FinanceNotReady wired={wired} missing={missing ?? "عرض التسويات"} />
       )}
 
       <FinanceFeedback
@@ -405,7 +405,7 @@ export default async function PartnersSettlementsPage({
 
       {ready && rows.length === 0 && (
         <Card className="p-5 text-sm text-muted-foreground">
-          لا مقاصة مفتوحة مع أي متعهد — لم تُنفَّذ رحلات مُسندة بعد، أو أن كل الحسابات
+          لا تسوية مفتوحة مع أي متعهد — لم تُنفَّذ رحلات مُسندة بعد، أو أن كل الحسابات
           مسوّاة بالكامل.
         </Card>
       )}

@@ -20,7 +20,7 @@ import {
 import { cairoInstantForDate } from "../_components/range";
 
 /**
- * إجراءات المقاصة: التسوية الموحّدة باتجاهيها، والمقدَّم الصريح، وسقف الديون.
+ * إجراءات التسويات: التسوية الموحّدة باتجاهيها، والمقدَّم الصريح، وسقف الديون.
  *
  * ── التسوية الموحّدة (هجرة 0029، و١) ────────────────────────────────────────
  * الشاشة صارت **مدخلاً واحداً** لكل متعهد، والاتجاه يُشتق من `net_due` في
@@ -367,7 +367,7 @@ export async function savePartnerCreditSettings(formData: FormData) {
     if (res.error || !res.data || res.data.length === 0) redirect(url("error=creditsave"));
   }
 
-  // السقف يقرأه البث والقبول والمقاصة معاً — إبطال الشجرة كلها لا هذه الشاشة
+  // السقف يقرأه البث والقبول والتسويات معاً — إبطال الشجرة كلها لا هذه الشاشة
   revalidatePath("/", "layout");
   redirect(url("saved=credit"));
 }

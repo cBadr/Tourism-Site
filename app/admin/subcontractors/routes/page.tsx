@@ -122,6 +122,18 @@ export default async function RoutesSearchPage({
 
   const { rows, total, ready, pricing, detail } = await load(query, tab.status, offset, routeId);
 
+  const savedKey = typeof params.saved === "string" ? params.saved : null;
+  const error = typeof params.error === "string" ? params.error : null;
+
+  /** رسائل حفظ التكلفة — ثلاثةٌ لأن للحالات الثلاث معانيَ مختلفة تماماً */
+  const SAVED_MESSAGES: Record<string, string> = {
+    costlive:
+      "حُفظت التكلفة على مسارٍ معتمد — تدخل التسعير فوراً، وكُتب سطر تدقيق باسمك وأُشعِر المتعهد بالتعديل.",
+    costsaved:
+      "حُفظت التكلفة. المسار ليس معتمداً فلا يُسعَّر به أحد بعد، وكُتب سطر تدقيق باسمك.",
+    costsame: "الرقم كما هو — لم يُكتب شيء ولم يُرسل إشعار.",
+  };
+
   const href = (patch: Record<string, string | null>) => {
     const qs = new URLSearchParams();
     const merged: Record<string, string | null> = {
@@ -166,8 +178,9 @@ export default async function RoutesSearchPage({
       <Banners
         wired={wired}
         readOnly={!ready}
-        saved={false}
-        error={null}
+        saved={savedKey !== null && savedKey in SAVED_MESSAGES}
+        savedMessage={savedKey ? (SAVED_MESSAGES[savedKey] ?? "") : ""}
+        error={error}
         errorMessages={SUBCONTRACTOR_ERRORS}
         readOnlyTitle="بحث المسارات غير جاهز بعد"
         readOnlyBody={
@@ -266,6 +279,10 @@ export default async function RoutesSearchPage({
           items={detail.items}
           pricing={pricing}
           reviewHref="/admin/subcontractors/reviews"
+          canEditCosts={ready}
+          /* الوجهة تحمل البحث والتبويب والصفحة والمسار المفتوح — فلا يضيع
+             شيءٌ منها بعد كل حفظ، وتُنقّى ثانيةً داخل الإجراء */
+          returnTo={href({})}
         />
       )}
     </div>

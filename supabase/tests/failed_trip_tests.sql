@@ -346,7 +346,7 @@ begin
     -- (هـ-٣) assigned + deduct ⇒ `collected` بمبلغ الخصم، على المسار القائم
     v_net0 := coalesce(v_net1, 0);
     select * into v_res from public.mark_booking_failed(
-      v_ids[3], 'driver-no-show', null, 250, null);
+      v_ids[3], 'driver-no-show', null, 250, 'FT مبررٌ مكتوب: مخالفةٌ للقيمة الافتراضية بقرار الإدارة (البند ٨)');
     if v_res.action_taken <> 'deduct' or v_res.ledger_effect <> 'deduct' then
       raise exception '(هـ-٣) «السائق لم يحضر»: «%»/«%» — المتوقع deduct/deduct',
         v_res.action_taken, v_res.ledger_effect;
@@ -421,7 +421,7 @@ begin
     -- (هـ-٦) completed + deduct ⇒ عكسُ `earned` **و** خصمٌ فوقه
     v_net0 := coalesce(v_net1, 0);
     select * into v_res from public.mark_booking_failed(
-      v_ids[6], 'severe-delay', null, 150, null);
+      v_ids[6], 'severe-delay', null, 150, 'FT مبررٌ مكتوب: مخالفةٌ للقيمة الافتراضية بقرار الإدارة (البند ٨)');
     if v_res.ledger_effect <> 'payout-reversed+deduct' then
       raise exception '(هـ-٦) الأثر «%» — المتوقع payout-reversed+deduct', v_res.ledger_effect;
     end if;
@@ -730,7 +730,8 @@ begin
       end if;
     end loop;
 
-    -- تجاوزٌ بلا مبرر
+    -- تجاوزٌ بلا مبرر — 🔴 اختبارٌ سالبٌ عمداً: المبررُ `null` هو المقصود،
+    -- فلا يُملأ. و`0130` تجعل الخصمَ بلا مبررٍ مرفوضاً، وهذا ما يُثبته السطر.
     v_msg := null;
     begin
       perform * from public.mark_booking_failed(v_id, 'vehicle-breakdown', 'deduct', 90, null);
@@ -757,7 +758,7 @@ begin
 
     v_n := null;
     begin
-      perform * from public.mark_booking_failed(v_id, 'vehicle-breakdown', null, 50, null);
+      perform * from public.mark_booking_failed(v_id, 'vehicle-breakdown', null, 50, 'FT مبررٌ مكتوب: مخالفةٌ للقيمة الافتراضية بقرار الإدارة (البند ٨)');
       v_n := 1;
     exception when others then v_n := 0; end;
     if v_n = 1 then
@@ -767,7 +768,7 @@ begin
     -- والشاهد الإيجابي: نفس الحجز يُقبل بمدخلٍ صحيح
     -- (‏«تأخّر فادح» افتراضه deduct ولم تلمسه (د)، فالقياس هنا مستقلٌّ عنها)
     select * into v_res from public.mark_booking_failed(
-      v_id, 'severe-delay', null, 30, null);
+      v_id, 'severe-delay', null, 30, 'FT مبررٌ مكتوب: مخالفةٌ للقيمة الافتراضية بقرار الإدارة (البند ٨)');
     if v_res.action_taken <> 'deduct' then
       raise exception '(ح-٥) المدخل الصحيح رُفض كذلك — الفحوص أعلاه كانت تمسك عطباً عاماً';
     end if;
@@ -816,7 +817,7 @@ begin
 
     v_state := null;
     begin
-      perform * from public.mark_booking_failed(v_ids[1], 'driver-no-show', null, 10, null);
+      perform * from public.mark_booking_failed(v_ids[1], 'driver-no-show', null, 10, 'FT مبررٌ مكتوب: مخالفةٌ للقيمة الافتراضية بقرار الإدارة (البند ٨)');
       v_state := '(نُفِّذت)';
     exception when others then
       get stacked diagnostics v_state = returned_sqlstate;
@@ -860,7 +861,7 @@ begin
 
       v_msg := null;
       begin
-        perform * from public.mark_booking_failed(v_ids[1], 'driver-no-show', null, 10, null);
+        perform * from public.mark_booking_failed(v_ids[1], 'driver-no-show', null, 10, 'FT مبررٌ مكتوب: مخالفةٌ للقيمة الافتراضية بقرار الإدارة (البند ٨)');
         v_msg := '(نُفِّذت)';
       exception when others then
         get stacked diagnostics v_msg = returned_sqlstate;

@@ -13,6 +13,7 @@ import { reviewPriceList } from "../actions";
 import type { PricingContext } from "./pricing-context";
 import {
   customerPrice,
+  EditableCost,
   ListStatusBadge,
   LIST_STATUS_HINTS,
   isListStatus,
@@ -28,6 +29,12 @@ import {
  * جوهر البطاقة: بجوار **تكلفة المتعهد** يظهر **سعر العميل** الناتج عنها بالهامش
  * الحالي. بدون هذا العمود يعتمد المدير رقماً لا يعرف أثره على السعر المعروض.
  * الأرقام معاينة عرض؛ الرقم الملزم يحسبه `quote_price` في Postgres لحظة التسعير.
+ *
+ * 🔴 وخانةُ التكلفة **قابلة للتحرير في مكانها** (0135): المدير يصحّح رقماً بلا أن
+ * يردّ الكشف كله إلى المتعهد ثم ينتظر إعادة إرساله. والفارق الذي لا يُطمس: على
+ * قائمةٍ **معتمدة** يُكتب سطر تدقيقٍ ويصل المتعهد إشعار، لأن الرقم حينها يُسعَّر
+ * به عميلٌ الآن وهو رقمُه المُعلَن في اتفاقيته. والقرارُ والأثر كلاهما في
+ * `set_price_list_item_cost` لا هنا.
  */
 
 function Coordinates({ lat, lng }: { lat: number | null; lng: number | null }) {
@@ -73,6 +80,7 @@ export function PriceListCard({
   readOnly,
   companyName,
   companyHref,
+  canEditCosts = false,
 }: {
   list: PriceListView;
   items: PriceItemView[];
@@ -82,6 +90,8 @@ export function PriceListCard({
   readOnly: boolean;
   companyName?: string;
   companyHref?: string;
+  /** تحرير الخانات في مكانها — تُطفئه الشاشة التي لا تملك بعد جداول المرحلة ٥ */
+  canEditCosts?: boolean;
 }) {
   const priced = items
     .map((item) => ({ item, info: pricing.byClass.get(item.classSlug) ?? null }))
@@ -89,6 +99,24 @@ export function PriceListCard({
 
   const pricedSlugs = new Set(items.map((i) => i.classSlug));
   const missing = pricing.classes.filter((c) => c.active && !pricedSlugs.has(c.slug));
+
+  const editable = canEditCosts && !readOnly;
+
+  /**
+   * حين يكون التحرير مفتوحاً تظهر **الفئات بلا سعر** صفوفاً بخانةٍ فارغة، لا
+   * جملةً في الحاشية: «أضِف سعراً» بنقرةٍ في مكانه أصدق من إخبار المدير أن سعراً
+   * ناقص ثم تركه يبحث عن باب إضافته. والقاعدة تقبل الفراغ بمعنى «لا سعر بعد»
+   * فتُنشئ الصف (`p_seen_cost = ''`).
+   */
+  const rows = editable
+    ? [
+        ...priced,
+        ...missing.map((info) => ({
+          item: { priceListId: list.id, classSlug: info.slug, cost: null } as PriceItemView,
+          info,
+        })),
+      ]
+    : priced;
 
   const reviewable = list.status === "pending";
 
@@ -149,7 +177,7 @@ export function PriceListCard({
       </div>
 
       {/* التكلفة مقابل سعر العميل — عمود السعر هو سبب وجود هذه الشاشة */}
-      {priced.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           لا توجد أسعار فئات في هذه القائمة بعد — لا تغطي أي رحلة حتى يضيف المتعهد سعراً
           واحداً على الأقل.
@@ -160,7 +188,18 @@ export function PriceListCard({
             <thead>
               <tr className="border-b border-border text-xs text-muted-foreground">
                 <th className="p-2 text-start font-medium">الفئة</th>
-                <th className="p-2 text-start font-medium">تكلفة المتعهد</th>
+                <th className="p-2 text-start font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    تكلفة المتعهد
+                    {canEditCosts && !readOnly && (
+                      <HelpTip>
+                        اكتب في الخانة واضغط Enter أو زرّ القلم — يُحفظ فوراً. وعلى
+                        قائمةٍ معتمدة يُكتب سطر تدقيق باسمك ويصل المتعهد إشعارٌ
+                        بالتعديل.
+                      </HelpTip>
+                    )}
+                  </span>
+                </th>
                 <th className="p-2 text-start font-medium">
                   <span className="inline-flex items-center gap-1.5">
                     الهامش
@@ -183,7 +222,7 @@ export function PriceListCard({
               </tr>
             </thead>
             <tbody>
-              {priced.map(({ item, info }) => {
+              {rows.map(({ item, info }) => {
                 const cost = item.cost;
                 const preview =
                   cost === null
@@ -207,8 +246,17 @@ export function PriceListCard({
                         </span>
                       )}
                     </td>
-                    <td className="p-2 align-top" dir="ltr">
-                      {cost === null ? "—" : formatMoney(cost, pricing.currency)}
+                    <td className="p-2 align-top">
+                      <EditableCost
+                        listId={list.id}
+                        classSlug={item.classSlug}
+                        className={info?.title ?? item.classSlug}
+                        cost={cost}
+                        currency={pricing.currency}
+                        status={list.status}
+                        canEdit={canEditCosts && !readOnly}
+                        returnTo={returnTo}
+                      />
                     </td>
                     <td className="p-2 align-top text-muted-foreground" dir="ltr">
                       {preview === null ? "—" : formatMoney(preview.marginAmount, pricing.currency)}
@@ -231,7 +279,7 @@ export function PriceListCard({
         </div>
       )}
 
-      {missing.length > 0 && (
+      {missing.length > 0 && !editable && (
         <p className="text-xs text-muted-foreground">
           بلا سعر في هذه القائمة: {missing.map((c) => c.title).join(" · ")} — الرحلات التي
           تحتاج هذه الفئات تُسعَّر بتعريفة الكيلومتر حتى لو كان المسار مغطى.

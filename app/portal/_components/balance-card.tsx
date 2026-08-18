@@ -72,12 +72,12 @@ function netWording(balance: PortalBalance, currency: string | null): NetWording
 
   return {
     tone: "settled",
-    headline: "الحساب مصفّى",
+    headline: "تمت تصفية الحساب",
     hint: "ما لك وما عليك متساويان — لا مستحق في أي من الاتجاهين الآن.",
   };
 }
 
-/** رقم من أرقام المقاصة الأربعة — «—» حين لا يصل، فلا صفر مخترَع في شاشة مال */
+/** رقم من أرقام التسوية الأربعة — «—» حين لا يصل، فلا صفر مخترَع في شاشة مال */
 function Figure({
   label,
   value,

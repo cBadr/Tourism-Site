@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Layers, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Layers, ListChecks, XCircle } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
 import { HelpTip } from "@/components/shared/HelpTip";
@@ -9,9 +9,14 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { controlClass } from "../../orders/_components/booking-ui";
-import { reviewPriceSheet } from "../actions";
+import { reviewPriceSheet, reviewSelectedPriceLists } from "../actions";
 import type { PricingContext } from "./pricing-context";
-import { customerPrice, radiusText, type PriceItemView, type PriceListView } from "./subcontractor-ui";
+import {
+  customerPrice,
+  radiusText,
+  type PriceItemView,
+  type PriceListView,
+} from "./subcontractor-ui";
 
 /**
  * بطاقة **كشف أسعار** — الدفعة كلها في مكان واحد وقرارٌ واحد لها.
@@ -27,6 +32,27 @@ import { customerPrice, radiusText, type PriceItemView, type PriceListView } fro
  * الاثنين قبل أن ترسم زرّاً: اختلافُهما يعني أن الشاشة لا تعرض كل ما ستكتبه،
  * فلا يُعرض قرارٌ أصلاً. وفوق ذلك ترفض 0109 في القاعدة أي نداءٍ عدده لا يطابق
  * ما تُمسكه `for update` — طبقتان، وواحدةٌ منهما لا تعتمد على هذا الملف.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  والقرارُ الجزئيّ (0135) — قراران في البطاقة نفسها لا قرارٌ واحد
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * الدفعةُ كلها بقرارٍ واحد تحلّ «مئةُ مسار ⇒ مئةُ طلب اعتماد»، ولا تحلّ الحالةَ
+ * الأشيع بعدها: **تسعةٌ وتسعون سليمة وواحدٌ سعرُه خطأ**. وقبل اليوم كان المخرج
+ * الوحيد رفضَ الكشف كله فيعود المتعهد يرسل مئةً من جديد.
+ *
+ * فصارت في البطاقة خانةُ اختيارٍ لكل مسار وقراران:
+ *   • **المختار وحده** ⇒ `review_selected_price_lists` (تفوّض صفّاً صفّاً).
+ *   • **الدفعة كلها** ⇒ `review_price_sheet` كما كانت، بعدّادها المستقل.
+ *
+ * ⚠ والفرقُ الذي يجعل الأول جائزاً حين يمتنع الثاني: قرارُ الدفعة معرَّفٌ
+ *   **بشرطٍ** يمكن أن يتّسع، فلا يُعرض إلا إذا كان المعروض = العدّاد. أما القرارُ
+ *   الجزئيّ فمعرَّفٌ **بقائمة معرّفاتٍ بأعيانها**، فاقتطاعُ العرض لا يوسّعه —
+ *   ولذلك يبقى متاحاً حتى على بطاقةٍ اقتُطعت، وهو أنفعُ ما يكون هناك بالذات.
+ *
+ * 🔴 وجدولُ المسارات هنا **بلا تحرير خانات بقصد**: الجدول محاطٌ بنموذج الاختيار،
+ *   وHTML لا تسمح بنموذجٍ داخل نموذج. والتحرير في مكانه يعيش في بطاقة المسار
+ *   المفردة وفي تفصيل بحث المسارات — حيث لا نموذجَ محيط.
  */
 
 export type SheetHeader = {
@@ -63,6 +89,8 @@ export function PriceSheetCard({
   const shown = lists.length;
   const truncated = shown !== sheet.pendingCount;
   const decidable = !readOnly && !truncated && shown > 0;
+  /** الاختيارُ الجزئيّ لا يعتمد على العدّاد: قائمةُ معرّفاتٍ لا شرطٌ يتّسع */
+  const selectable = !readOnly && shown > 0;
 
   return (
     <Card className="space-y-4 p-5">
@@ -104,9 +132,10 @@ export function PriceSheetCard({
           <span>
             هذا الكشف يحمل <strong>{toArabicDigits(sheet.pendingCount)}</strong> مساراً
             بانتظار المراجعة، والمعروض منها هنا{" "}
-            <strong>{toArabicDigits(shown)}</strong> فقط. القرار على دفعةٍ لا تراها كاملةً
-            ممنوع، فلا زرّ اعتماد ولا رفض على هذه البطاقة — أعد تحميل الصفحة، وإن تكرّر
-            فالكشف أكبر مما تعرضه شاشة واحدة وتُراجَع مساراته من ملف المتعهد.
+            <strong>{toArabicDigits(shown)}</strong> فقط. القرار على{" "}
+            <strong>الدفعة كلها</strong> ممنوع ما دمتَ لا تراها كاملة، فلا زرّ «اعتماد
+            الكشف» ولا «رفضه» على هذه البطاقة. <strong>وقرارُ المُعلَّم يبقى متاحاً</strong>
+            — فهو يكتب على ما علّمتَ عليه بعينه لا على شرطٍ يتّسع، والاقتطاع لا يوسّعه.
           </span>
         </p>
       )}
@@ -117,96 +146,194 @@ export function PriceSheetCard({
         </p>
       )}
 
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[40rem] text-sm">
-          <thead>
-            <tr className="border-b border-border text-xs text-muted-foreground">
-              <th className="p-2 text-start font-medium">المسار</th>
-              <th className="p-2 text-start font-medium">التغطية</th>
-              <th className="p-2 text-start font-medium">الفئة</th>
-              <th className="p-2 text-start font-medium">تكلفة المتعهد</th>
-              <th className="p-2 text-start font-medium">
-                <span className="inline-flex items-center gap-1.5">
-                  سعر العميل
-                  <HelpTip>
-                    السعر للاتجاه الواحد إن كان هذا المتعهد أرخص تغطية للمسار. تُضاف عليه
-                    لاحقاً معاملات الذهاب والعودة وساعات الانتظار وعمولة الذروة.
-                  </HelpTip>
-                </span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {lists.map((list) => {
-              const items = (itemsByList.get(list.id) ?? [])
-                .map((item) => ({ item, info: pricing.byClass.get(item.classSlug) ?? null }))
-                .sort((a, b) => (a.info?.sort ?? 999) - (b.info?.sort ?? 999));
+      {/*
+        نموذجٌ واحد يلفّ الجدول وزرَّي القرار الجزئي: الخانات المعلَّمة تُرسَل مع
+        أيّهما ضُغط (‏`formAction`)، فلا نموذجَين ولا حالةَ عميل ولا جافاسكربت.
+      */}
+      <form>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[40rem] text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs text-muted-foreground">
+                {selectable && (
+                  <th className="w-8 p-2 text-start font-medium">
+                    <span className="sr-only">اختيار</span>
+                  </th>
+                )}
+                <th className="p-2 text-start font-medium">المسار</th>
+                <th className="p-2 text-start font-medium">التغطية</th>
+                <th className="p-2 text-start font-medium">الفئة</th>
+                <th className="p-2 text-start font-medium">تكلفة المتعهد</th>
+                <th className="p-2 text-start font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    سعر العميل
+                    <HelpTip>
+                      السعر للاتجاه الواحد إن كان هذا المتعهد أرخص تغطية للمسار. تُضاف عليه
+                      لاحقاً معاملات الذهاب والعودة وساعات الانتظار وعمولة الذروة.
+                    </HelpTip>
+                  </span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {lists.map((list) => {
+                const items = (itemsByList.get(list.id) ?? [])
+                  .map((item) => ({ item, info: pricing.byClass.get(item.classSlug) ?? null }))
+                  .sort((a, b) => (a.info?.sort ?? 999) - (b.info?.sort ?? 999));
 
-              if (items.length === 0) {
-                return (
-                  <tr key={list.id} className="border-b border-border last:border-0">
-                    <td className="p-2 align-top font-medium">{list.title}</td>
-                    <td className="p-2 align-top text-muted-foreground">
-                      {list.originLabel} ← {list.destLabel}
-                    </td>
-                    <td className="p-2 align-top text-amber-700 dark:text-amber-300" colSpan={3}>
-                      بلا أسعار — لا يغطي شيئاً حتى لو اعتُمد
-                    </td>
-                  </tr>
-                );
-              }
-
-              return items.map(({ item, info }, idx) => {
-                const preview =
-                  item.cost === null
-                    ? null
-                    : customerPrice(item.cost, pricing.margin, info?.minPrice ?? null);
-                return (
-                  <tr
-                    key={`${list.id}-${item.classSlug}`}
-                    className="border-b border-border last:border-0"
-                  >
-                    {idx === 0 ? (
-                      <>
-                        <td className="p-2 align-top font-medium" rowSpan={items.length}>
-                          {list.title}
-                          {list.bidirectional && (
-                            <Badge variant="outline" className="ms-1.5 text-[10px]">
-                              الاتجاهان
-                            </Badge>
-                          )}
+                if (items.length === 0) {
+                  return (
+                    <tr key={list.id} className="border-b border-border last:border-0">
+                      {selectable && (
+                        <td className="p-2 align-top">
+                          <input
+                            type="checkbox"
+                            name="route"
+                            value={list.id}
+                            aria-label={`اختيار ${list.title}`}
+                            className="size-4 accent-primary"
+                          />
                         </td>
-                        <td
-                          className="p-2 align-top text-xs leading-5 text-muted-foreground"
-                          rowSpan={items.length}
-                        >
-                          {list.originLabel} ({radiusText(list.originRadiusKm)})
-                          <br />←{" "}
-                          {list.destLabel} ({radiusText(list.destRadiusKm)})
-                        </td>
-                      </>
-                    ) : null}
-                    <td className="p-2 align-top">{info?.title ?? item.classSlug}</td>
-                    <td className="p-2 align-top" dir="ltr">
-                      {item.cost === null ? "—" : formatMoney(item.cost, pricing.currency)}
-                    </td>
-                    <td className="p-2 align-top">
-                      <span dir="ltr" className="font-bold">
-                        {preview === null ? "—" : formatMoney(preview.price, pricing.currency)}
-                      </span>
-                      {preview?.minApplied && (
-                        <Badge variant="outline" className="ms-2">
-                          أرضية الفئة
-                        </Badge>
                       )}
-                    </td>
-                  </tr>
-                );
-              });
-            })}
-          </tbody>
-        </table>
-      </div>
+                      <td className="p-2 align-top font-medium">{list.title}</td>
+                      <td className="p-2 align-top text-muted-foreground">
+                        {list.originLabel} ← {list.destLabel}
+                      </td>
+                      <td className="p-2 align-top text-amber-700 dark:text-amber-300" colSpan={3}>
+                        بلا أسعار — لا يغطي شيئاً حتى لو اعتُمد
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return items.map(({ item, info }, idx) => {
+                  const preview =
+                    item.cost === null
+                      ? null
+                      : customerPrice(item.cost, pricing.margin, info?.minPrice ?? null);
+                  return (
+                    <tr
+                      key={`${list.id}-${item.classSlug}`}
+                      className="border-b border-border last:border-0"
+                    >
+                      {idx === 0 ? (
+                        <>
+                          {selectable && (
+                            <td className="p-2 align-top" rowSpan={items.length}>
+                              <input
+                                type="checkbox"
+                                name="route"
+                                value={list.id}
+                                aria-label={`اختيار ${list.title}`}
+                                className="size-4 accent-primary"
+                              />
+                            </td>
+                          )}
+                          <td className="p-2 align-top font-medium" rowSpan={items.length}>
+                            {list.title}
+                            {list.bidirectional && (
+                              <Badge variant="outline" className="ms-1.5 text-[10px]">
+                                الاتجاهان
+                              </Badge>
+                            )}
+                          </td>
+                          <td
+                            className="p-2 align-top text-xs leading-5 text-muted-foreground"
+                            rowSpan={items.length}
+                          >
+                            {list.originLabel} ({radiusText(list.originRadiusKm)})
+                            <br />←{" "}
+                            {list.destLabel} ({radiusText(list.destRadiusKm)})
+                          </td>
+                        </>
+                      ) : null}
+                      <td className="p-2 align-top">{info?.title ?? item.classSlug}</td>
+                      <td className="p-2 align-top" dir="ltr">
+                        {item.cost === null ? "—" : formatMoney(item.cost, pricing.currency)}
+                      </td>
+                      <td className="p-2 align-top">
+                        <span dir="ltr" className="font-bold">
+                          {preview === null ? "—" : formatMoney(preview.price, pricing.currency)}
+                        </span>
+                        {preview?.minApplied && (
+                          <Badge variant="outline" className="ms-2">
+                            أرضية الفئة
+                          </Badge>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                });
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {selectable && (
+          <div className="mt-4 space-y-3 rounded-lg border border-border p-3">
+            <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+              <ListChecks className="size-4 text-primary" aria-hidden="true" />
+              قرارٌ على المُعلَّم وحده
+              <HelpTip>
+                علّم على المسارات التي تريد البتّ فيها الآن، واترك الباقي في الطابور.
+                القرار يقع على <span className="font-semibold">ما علّمتَ عليه بالضبط</span>:
+                معرّفٌ مكرَّر أو مسارٌ لم يعد في هذا الكشف يوقف النداء كله فلا يُعتمد أقلُّ
+                مما اخترتَ ولا أكثر. والرفض الجزئي يُعيد المُعلَّم وحده إلى المتعهد ويترك
+                الكشف قائماً بما بقي، ولا يُبطل ما اعتُمد.
+              </HelpTip>
+            </p>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor={`select-approve-${sheet.id}`}>ملاحظة الاعتماد (اختيارية)</Label>
+                {/*
+                  🔴 `textarea` لا `input`، والسبب سلوكيّ بحت: هذا نموذجٌ واحد بزرَّي
+                  قرارٍ متضادَّين، وضغطُ Enter داخل حقلٍ نصّيّ يُفعّل **أول** زرِّ إرسال
+                  فيه — أي أن كتابة سبب رفضٍ ثم Enter كانت ستعتمد بدل أن ترفض.
+                  وفي `textarea` يُدرج Enter سطراً ولا يُرسل، فلا يقع قرارٌ إلا بنقرة.
+                */}
+                <textarea
+                  id={`select-approve-${sheet.id}`}
+                  name="select_approve_note"
+                  rows={1}
+                  className={controlClass}
+                  placeholder="ملاحظة اختيارية يقرأها المتعهد"
+                />
+                <Button
+                  type="submit"
+                  className="w-full"
+                  formAction={reviewSelectedPriceLists.bind(null, sheet.id, true, returnTo)}
+                >
+                  <CheckCircle2 />
+                  اعتماد المُعلَّم
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor={`select-reject-${sheet.id}`}>سبب الرفض — إلزامي</Label>
+                {/* `textarea` للسبب نفسه المشروح أعلاه. ولا `required` هنا: الحقل
+                    إلزاميٌّ للرفض وحده، والإلزام يقع في الإجراء وفي القاعدة معاً */}
+                <textarea
+                  id={`select-reject-${sheet.id}`}
+                  name="select_reject_note"
+                  rows={1}
+                  className={controlClass}
+                  placeholder="سبب الرفض يقرأه المتعهد"
+                />
+                <Button
+                  type="submit"
+                  variant="destructive"
+                  className="w-full"
+                  formAction={reviewSelectedPriceLists.bind(null, sheet.id, false, returnTo)}
+                >
+                  <XCircle />
+                  رفض المُعلَّم
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </form>
 
       <Separator />
 
@@ -263,7 +390,7 @@ export function PriceSheetCard({
         <p className="text-sm text-muted-foreground">
           {readOnly
             ? "الطابور للقراءة فقط حتى تُنفَّذ هجرات كشوف الأسعار."
-            : "لا قرار على هذه البطاقة — راجع التنبيه أعلاه."}
+            : "لا قرارَ على الدفعة كاملةً من هذه البطاقة — راجع التنبيه أعلاه، وقرارُ المُعلَّم أعلاه متاح."}
         </p>
       )}
     </Card>

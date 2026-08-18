@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { signDriverDocs } from "@/lib/drivers/documents";
+import { DriverDocView } from "@/lib/drivers/doc-thumb";
+import { signDriverDocsDetailed, type DriverDocOutcome } from "@/lib/drivers/documents";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { verifyDriverLicense } from "./driver-docs-actions";
 
@@ -30,9 +31,33 @@ import { verifyDriverLicense } from "./driver-docs-actions";
  *
  * ⚠ **ولا مسار خام يعبر إلى JSX**: ما يصل رابطٌ عمره دقيقة، والمفتاح يبقى على
  * الخادم (نفس قرار `receipt_path` في 0039).
+ *
+ * ── 🔴 وما أُصلح في 2026-08-18: الفراغُ صار كلاماً ────────────────────────
+ *
+ * كانت البطاقة تعرض **مربّعاً فارغاً** بدل الصورة، وسببُه مقيسٌ لا مظنون:
+ * الرابط الموقَّع عمرُه دقيقة، و`<img loading="lazy">` **لا يُطلب إطلاقاً**
+ * حتى يقترب التمرير منه — وهذه البطاقة أسفل صفحةٍ تعرض أسطولاً وأربعاً وعشرين
+ * بطاقةَ أسعار. (‏القياس في المتصفح: صورةٌ على بعد ١٣٣١١ بكسل لم تُطلب بعد
+ * ٩٫٤ ثانية.) والكسلُ رُفع في `lib/drivers/doc-thumb.tsx`.
+ *
+ * والشقُّ الثاني هنا: كلُّ إخفاقٍ كان يُقال بجملةٍ واحدة («تعذّر عرضها الآن»)
+ * لثلاثة أسبابٍ علاجُها مختلف. فصار لكلِّ سببٍ **حالةٌ مكتوبة تقول ماذا يفعل
+ * المالك** — والقاعدة: لا مربّعَ صامتٌ في هذه البطاقة بعد اليوم.
  */
 
 const MAX_DRIVERS = 60;
+
+/**
+ * حالةُ خانةٍ واحدة — **ستٌّ لا تُخلط**، لأن علاج كلٍّ منها مختلف.
+ * وخلطُها هو بعينه ما جعل «تعذّر عرضها الآن» تُقال للغياب وللرفض وللانقطاع معاً.
+ */
+type DocState =
+  | { kind: "url"; url: string }
+  | { kind: "none" }
+  | { kind: "purged" }
+  | { kind: "bad_path" }
+  | { kind: "unavailable" }
+  | { kind: "unreachable" };
 
 type Row = {
   id: string;
@@ -42,10 +67,8 @@ type Row = {
   licenseExpiry: string | null;
   verifiedAt: string | null;
   purgedAt: string | null;
-  photoUrl: string | null;
-  licenseUrl: string | null;
-  hasPhoto: boolean;
-  hasLicense: boolean;
+  photo: DocState;
+  license: DocState;
   active: boolean;
 };
 
@@ -59,6 +82,25 @@ const dateLabel = (value: string | null): string => {
     ? "—"
     : d.toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" });
 };
+
+/**
+ * من المسار + حصيلة التوقيع إلى الحالة المعروضة.
+ *
+ * والترتيب مقصود: **الغياب أولاً**، ثم الحذف بالمدّة، ثم أسباب الإخفاق. فمسارٌ
+ * غائبٌ بعد كنسٍ يُقرأ «حُذفت» لا «تعذّرت» — وقولُ «تعذّر» عن سلوكٍ سليم يجعل
+ * المالك يطارد عطلاً لا وجود له.
+ */
+function docState(
+  path: string | null,
+  purged: boolean,
+  outcomes: Map<string, DriverDocOutcome>
+): DocState {
+  if (!path) return purged ? { kind: "purged" } : { kind: "none" };
+  const outcome = outcomes.get(path);
+  if (!outcome) return { kind: "unreachable" };
+  if ("url" in outcome) return { kind: "url", url: outcome.url };
+  return { kind: outcome.failure };
+}
 
 async function load(subcontractorId: string): Promise<{ ready: boolean; rows: Row[] }> {
   const supabase = await createServerSupabase();
@@ -78,14 +120,13 @@ async function load(subcontractorId: string): Promise<{ ready: boolean; rows: Ro
   if (res.error) return { ready: false, rows: [] };
 
   const raw = (res.data ?? []).map((r) => r as Record<string, unknown>);
-  const links = await signDriverDocs(
+  const outcomes = await signDriverDocsDetailed(
     supabase,
     raw.flatMap((r) => [asText(r.photo_path), asText(r.license_photo_path)])
   );
 
   const rows = raw.map((r) => {
-    const photoPath = asText(r.photo_path);
-    const licensePath = asText(r.license_photo_path);
+    const purged = Boolean(asText(r.docs_purged_at));
     return {
       id: String(r.id),
       name: asText(r.name) ?? "سائق بلا اسم",
@@ -94,10 +135,8 @@ async function load(subcontractorId: string): Promise<{ ready: boolean; rows: Ro
       licenseExpiry: asText(r.license_expiry),
       verifiedAt: asText(r.license_verified_at),
       purgedAt: asText(r.docs_purged_at),
-      photoUrl: photoPath ? (links.get(photoPath) ?? null) : null,
-      licenseUrl: licensePath ? (links.get(licensePath) ?? null) : null,
-      hasPhoto: Boolean(photoPath),
-      hasLicense: Boolean(licensePath),
+      photo: docState(asText(r.photo_path), purged, outcomes),
+      license: docState(asText(r.license_photo_path), purged, outcomes),
       active: r.active === true,
     };
   });
@@ -105,16 +144,24 @@ async function load(subcontractorId: string): Promise<{ ready: boolean; rows: Ro
   return { ready: true, rows };
 }
 
+/**
+ * الجملةُ التي تُكتب مكان الصورة — **لكل سببٍ جملتُه**، وكلُّها تقول ماذا يفعل
+ * المالك الآن. والقاعدة في `CONVENTIONS` §١: رسالةُ الخطأ تشرح السبب والخطوة.
+ */
+const STATE_TEXT: Record<Exclude<DocState["kind"], "url">, string> = {
+  none: "لم تُرفع",
+  purged: "حُذفت بانقضاء مدة الحفظ — سلوك النظام لا عطل فيه",
+  bad_path: "المسار المخزَّن في السجل غير صالح — أبلِغ الإدارة التقنية",
+  unavailable: "الملف غير مقروء: إمّا أنه ليس في التخزين وإمّا أن صلاحيتك لا تشمله",
+  unreachable: "تعذّر الاتصال بالتخزين — حدِّث الصفحة، وإن تكرر فأبلِغ الإدارة",
+};
+
 function Thumb({
-  url,
-  has,
-  purged,
+  state,
   label,
   icon: Icon,
 }: {
-  url: string | null;
-  has: boolean;
-  purged: boolean;
+  state: DocState;
   label: string;
   icon: typeof UserRound;
 }) {
@@ -125,16 +172,11 @@ function Thumb({
         {label}
       </p>
       <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/40">
-        {url ? (
-          // رابطٌ موقَّع قصير العمر — لا `next/image` كي لا يُضاف نطاق التخزين
-          // إلى `remotePatterns` فيُفتح لكل صورة في المشروع
-          <a href={url} target="_blank" rel="noreferrer" className="size-full">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={url} alt={label} loading="lazy" decoding="async" className="size-full object-contain" />
-          </a>
+        {state.kind === "url" ? (
+          <DriverDocView url={state.url} label={label} />
         ) : (
           <span className="px-2 text-center text-[11px] leading-4 text-muted-foreground">
-            {has ? "تعذّر عرضها الآن" : purged ? "حُذفت بانقضاء المدة" : "لم تُرفع"}
+            {STATE_TEXT[state.kind]}
           </span>
         )}
       </div>
@@ -201,20 +243,8 @@ export async function DriverDocsCard({ subcontractorId }: { subcontractorId: str
             </div>
 
             <div className="flex flex-wrap items-start gap-4">
-              <Thumb
-                url={row.photoUrl}
-                has={row.hasPhoto}
-                purged={Boolean(row.purgedAt)}
-                label="صورة السائق"
-                icon={UserRound}
-              />
-              <Thumb
-                url={row.licenseUrl}
-                has={row.hasLicense}
-                purged={Boolean(row.purgedAt)}
-                label="صورة الرخصة"
-                icon={FileImage}
-              />
+              <Thumb state={row.photo} label="صورة السائق" icon={UserRound} />
+              <Thumb state={row.license} label="صورة الرخصة" icon={FileImage} />
 
               <dl className="grid min-w-56 flex-1 gap-1 text-sm">
                 <div className="flex gap-2">

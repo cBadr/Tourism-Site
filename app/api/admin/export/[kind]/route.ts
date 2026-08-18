@@ -436,7 +436,7 @@ async function buildPartnerStatement(input: BuilderInput): Promise<Response> {
 /**
  * ⚠ **قاعدة الازدواج في هذا القسم: يُنسَخ النصّ، ولا يُنسَخ منطقٌ أبداً.**
  *
- * خرائط التسميات أدناه (مصادر القيود، الاتجاهات، أدوار المقاصة، حالات الحجز،
+ * خرائط التسميات أدناه (مصادر القيود، الاتجاهات، أدوار التسوية، حالات الحجز،
  * خطط الدفع) منسوخة من `finance-ui.tsx` و`booking-ui.tsx` على سُنّة
  * `STATEMENT_KIND_LABELS` أعلاه، ولنفس السبب المكتوب في ترويسة الملف: سلسلة
  * استيراد تينك الوحدتين تصل إلى مكوّنات React ولا شأن لمسار API بها. ونصٌّ
@@ -630,7 +630,7 @@ const LEDGER_SOURCE_LABELS: Record<string, string> = {
 const LEDGER_DIRECTION_LABELS: Record<string, string> = { in: "وارد", out: "منصرف" };
 
 /**
- * أدوار المقاصة الأربعة (`lib/finance-types.ts`) — ومعناها هنا أوسع من تسمية.
+ * أدوار التسوية الأربعة (`lib/finance-types.ts`) — ومعناها هنا أوسع من تسمية.
  *
  * الدوران الأولان قيدا **التزام** بلا حساب خزينة (يمنعه القيد البنيوي
  * `ledger_entries_liability_no_account_chk`)، والآخران قيدا **نقد**. ومن يطابق
@@ -704,7 +704,7 @@ async function buildLedger(input: BuilderInput): Promise<Response> {
       labelOf(
         accounts,
         pick(row, ["account_id"]),
-        "بلا حساب — التزام مقاصة",
+        "بلا حساب — التزام تسوية",
         "حساب محذوف أو غير مقروء"
       ),
       LEDGER_SOURCE_LABELS[source] ?? source,
@@ -730,7 +730,7 @@ async function buildLedger(input: BuilderInput): Promise<Response> {
       "التاريخ",
       "الحساب",
       "المصدر",
-      "دور المقاصة",
+      "دور التسوية",
       "الاتجاه",
       withCurrency("المبلغ", currency),
       "الملاحظة",
@@ -742,7 +742,7 @@ async function buildLedger(input: BuilderInput): Promise<Response> {
     sourceNote:
       `المصدر: ledger_entries · الحساب: ${accountLabel} · الفترة: ${periodLabel}` +
       ` · العملة: ${currency} · المبلغ موجب دائماً وإشارته في عمود «الاتجاه»،` +
-      ` فلا يُجمع العمود بلا ترشيح · القيود بلا حساب التزامات مقاصة لا نقد.`,
+      ` فلا يُجمع العمود بلا ترشيح · القيود بلا حساب التزامات تسوية لا نقد.`,
   });
 }
 

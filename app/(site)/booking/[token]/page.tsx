@@ -68,6 +68,7 @@ import { PrintButton } from "@/components/booking/print-button";
 import { PRINT_HIDDEN_CLASS } from "@/lib/export-types";
 import { readEnabledGateways } from "@/components/booking/checkout/gateways";
 import { LinkThisBooking } from "@/app/(site)/account/_components/link-this-booking";
+import { TripAlerts } from "./_components/trip-alerts";
 import {
   PaymentMethodChoice,
   type GatewayChoice,
@@ -2836,6 +2837,12 @@ export default async function BookingStatusPage({ params }: PageParams) {
               وحيازةُ التوكن هي الإثبات. تظهر لصاحب الجلسة، وتدعو غيره إلى
               الدخول بلا أن تشترطه: الحساب طبقةُ راحة لا بوابة. */}
           <LinkThisBooking token={token} locale={locale} t={t} />
+
+          {/* «نبّهني على هذا الجهاز» (‏0131) — أولُ قناةٍ تبلغ العميل.
+              🔒 بإذنٍ صريحٍ منه ولا اشتراكَ صامت: طلبُ المتصفح داخل معالج
+              النقرة وحده، والحظرُ شبه دائم فلا يُستدرَج إليه.
+              ولا تظهر على حجزٍ انتهى أو أُلغي: قناةٌ بلا رسالةٍ قادمة. */}
+          <TripAlerts token={token} active={status !== "completed" && status !== "cancelled" && status !== "failed"} />
 
           {/* تذييل مساعد */}
           <p className="text-center text-xs leading-6 text-muted-foreground">

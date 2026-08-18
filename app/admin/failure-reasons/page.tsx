@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { AlertTriangle, Plus, Power, PowerOff, Timer, Trash2 } from "lucide-react";
+import { AlertTriangle, Info, Plus, Power, PowerOff, Timer, Trash2 } from "lucide-react";
 
 import { toArabicDigits } from "@/components/booking/format";
 import { SaveButton } from "@/components/admin/save-feedback";
@@ -111,27 +111,34 @@ const INITIATOR_LABELS: Record<string, string> = {
 };
 
 /* ------------------------------------------------------------------ */
-/* 🔴 «يخصم بلا مبلغ» — الفجوة التي تجعل الاتفاقية تَعِد والقاعدة تصمت  */
+/* الخصم يدويٌّ بقرارٍ — لا فجوةٌ تُسدّ  (هجرة 0130)                    */
 /* ------------------------------------------------------------------ */
 
 /**
  * سببٌ إجراؤه **خصم** ولا `default_deduct_amount` له.
  *
- * ── المقيس على القاعدة الحيّة (‏`pg_get_functiondef`، لا ملفّ هجرة — D-58) ──
+ * ── ولماذا لم يعد هذا تحذيراً ────────────────────────────────────────────
  *
- * المستهلكان اثنان لا ثالث، **وسلوكهما عند الفراغ متعاكس**:
+ * كانت هذه الشاشة تحذّر من «سببٍ يخصم بلا مبلغ» بوصفه فجوةً تُسدّ. **وقرّر بدر
+ * (2026-08-18)**: «اتركها بلا مبلغ ويكون الخصم يدوياً في كل مرة» — فالفراغُ
+ * صار **قراراً منفَّذاً** لا نقصاً، وتحذيرٌ عليه يرنّ في كل بطاقةٍ ودائماً هو
+ * بالضبط الإنذار الذي لا يُسمع (‏`LESSONS` §١-٣).
  *
- * | المسار | الحساب | ماذا يقع بلا مبلغ |
- * |---|---|---|
- * | `mark_booking_failed` (فشلٌ من اللوحة) | `coalesce(p_deduct_amount, default, 0)` | **يرفع خطأً** `deduct-amount-required` ⇒ المدير يكتبه بيده |
- * | `withdraw_from_trip` (اعتذارٌ من البورتال) | `least(coalesce(default, 0), payout)` ثم `if <= 0 then null` | **صفرٌ صامت**: يُسجَّل الاعتذار بلا اقتراح خصم ولا رسالة |
+ * وهجرة `0130` جعلت القرار قابلاً للتنفيذ بدل أن يبقى عُرفاً:
  *
- * فالفجوة **ليست واحدة**: في الفشل إزعاجٌ يُرى، وفي الاعتذار خسارةٌ لا تُرى.
- * ولذلك يفرّق التحذير أدناه بالنطاق بدل أن يقول جملةً واحدة تصدق في نصف
- * الحالات — وهو بعينه النمط ٢ في `LESSONS.md`: نصٌّ يَعِد بما لا تنفّذه القاعدة.
+ * | ما يقع اليوم | أين يُفرض |
+ * |---|---|
+ * | لا خصمَ بلا **مبلغٍ صريحٍ موجب** يكتبه المدير في كل واقعة | `mark_booking_failed` · `apply_withdrawal_deduction` |
+ * | ولا خصمَ بلا **مبرَّرٍ مكتوب** يبلغ عشرة أحرف بعد طيّ المسافات | الدالتان **ومُشغّلا الصفَّين** — حارسان مستقلان |
+ * | والمبرَّرُ يُخزَّن في صفّ الواقعة، ويدخل سجلَّ التدقيق، **ويظهر للمتعهد في بوابته** | `portal_deductions()` |
  *
- * ⚠ **ولا رقم يُبذَر هنا ولا يُخترع**: القيم قرارُ المالك وحده. وظيفة هذه
- * الشاشة أن تُظهر الفجوة لا أن تسدّها بتخمين.
+ * وسنَدُه البند ٨ من اتفاقية المتعهد المنشورة: «ولا تُقبل المخالفة إلا بمبرر
+ * مكتوب يُثبَّت في السجل ويُتاح للمتعهد» — وبلا قيمةٍ افتراضية **كلُّ خصمٍ
+ * مخالفة**، فالمبرر واجبٌ في كل مرة.
+ *
+ * ⚠ **ولا رقم يُبذَر هنا ولا يُخترع**: القيمة قرارُ المالك وحده — وله أن يكتب
+ * مبلغاً افتراضياً لسببٍ بعينه متى شاء، فيصير اقتراحاً يُملأ به الحقل، ويبقى
+ * المبرَّرُ المكتوب واجباً على أي حال.
  */
 function deductWithoutAmount(reason: FailureReason): boolean {
   return (
@@ -140,49 +147,40 @@ function deductWithoutAmount(reason: FailureReason): boolean {
   );
 }
 
-/** هل يقع هذا السبب في المسار **الصامت** (اعتذار المتعهد)؟ */
+/** هل يقع هذا السبب في مسار اعتذار المتعهد؟ */
 const inApologyPath = (reason: FailureReason) =>
   reason.appliesTo === "apology" || reason.appliesTo === "both";
 
-/** وهل يقع في مسار الفشل الصاخب كذلك؟ */
-const inFailurePath = (reason: FailureReason) =>
-  reason.appliesTo === "failure" || reason.appliesTo === "both";
-
 /**
- * التحذير في بطاقة السبب — **صريحٌ لا لمزٌ**، ويقول ما يقع بالضبط في كل مسار
- * يظهر فيه هذا السبب. وسببُ صراحته: مفتاحُ تنفيذ الخصم مطفأٌ اليوم، فمن يقرأ
- * «الإجراء: خصم» يظن أن الرقم موجودٌ ينتظر الإشعال — ولا رقمَ أصلاً.
+ * بيانُ السياسة في بطاقة السبب — **خبرٌ لا إنذار**، ولذلك بلونٍ محايد لا كهرماني.
+ *
+ * وظيفتُه أن يقول لمن يفتح البطاقة ويرى حقلاً فارغاً: هذا مقصود، وهذا ما يقع
+ * بالضبط عند الخصم. وكلُّ جملةٍ فيه ادعاءُ إنفاذٍ **قابلٌ للفتح والتحقق** —
+ * فلا تَعِد الشاشةُ بما لا تنفّذه القاعدة (النمط ٢ في `LESSONS`).
  */
-function DeductGapNotice({ reason }: { reason: FailureReason }) {
+function ManualDeductNotice({ reason }: { reason: FailureReason }) {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+    <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm leading-relaxed text-muted-foreground">
+      <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <div className="space-y-1.5">
         <p>
-          <span className="font-semibold">
-            هذا السبب إجراؤه «خصم» ولا مبلغ افتراضيّ له — فالخصم المقترح صفر.
+          <span className="font-semibold text-foreground">
+            بلا مبلغ افتراضي — والخصم يدويٌّ في كل واقعة.
           </span>{" "}
-          والحقل «الخصم المقترح» أعلاه هو موضعه.
+          هذا قرارٌ لا نقص: لا يُقترح رقمٌ سلفاً، ويكتب المدير المبلغ بيده وقت الواقعة.
+        </p>
+        <p>
+          <span className="font-semibold text-foreground">ومعه مبرَّرٌ مكتوب إلزامي</span> لا
+          يقلّ عن عشرة أحرف — قاعدة البيانات ترفض الخصم بدونه، ويُخزَّن في سجل الواقعة،{" "}
+          <span className="font-semibold text-foreground">ويظهر للمتعهد في بوابته</span> كما
+          يشترط البند ٨ من اتفاقيته.
         </p>
         {inApologyPath(reason) && (
           <p>
-            🔴 <span className="font-semibold">وفي اعتذار المتعهد يقع هذا بصمت:</span> يُسجَّل
-            الاعتذار بلا اقتراح خصمٍ إطلاقاً — لا رسالة ولا رقم في السجل — لأن قاعدة البيانات
-            تحسب <span dir="ltr" className="font-mono text-xs">least(coalesce(المبلغ, 0), المستحق)</span>{" "}
-            فتخرج صفراً. أي أن «خصم» هنا اليوم لا يفرق عن «لا شيء».
+            وفي اعتذار المتعهد لا يُقترح خصمٌ ولا يقع تلقائياً: يُسجَّل الاعتذار، وتنفيذُ
+            الخصم قرارٌ إداريّ لاحق خلف مفتاحٍ مطفأ اليوم.
           </p>
         )}
-        {inFailurePath(reason) && (
-          <p>
-            <span className="font-semibold">وفي نموذج الفشل لا يقع بصمت:</span> قاعدة البيانات
-            ترفض العملية برسالة «الخصم يستلزم مبلغاً موجباً» حتى يكتب المدير الرقم بيده في كل
-            واقعة.
-          </p>
-        )}
-        <p className="text-amber-900/80 dark:text-amber-100/80">
-          والعلاج أحد اثنين: اكتب المبلغ الافتراضي، أو غيّر الإجراء إلى «لا شيء» كي تقول
-          الشاشة ما يحدث فعلاً.
-        </p>
       </div>
     </div>
   );
@@ -409,16 +407,16 @@ const DEDUCT_HELP = (
     مستحق الرحلة أقل من هذا الرقم فالمنفَّذ هو المستحق. وقرار المالك صريح — لا يصير المتعهد
     مديناً بمالٍ لم يقبضه، ولا تُلاحَق عنده ديون.
     <br />
-    🔴 <span className="font-semibold">وتركُه فارغاً ليس محايداً — وأثره يختلف بالنطاق:</span>
+    <span className="font-semibold">وتركُه فارغاً هو الوضع المقرَّر اليوم:</span> عندها لا
+    يُقترح رقم، ويكتب المدير المبلغ بيده في كل واقعة — وقاعدة البيانات ترفض الخصم بلا مبلغٍ
+    صريحٍ موجب. أي أن الفراغ <span className="font-semibold">لا يعني خصمَ صفر</span>، بل يعني
+    «اسألني في كل مرة».
     <br />
-    <span className="font-semibold">في نموذج الفشل (اللوحة):</span> يُطالَب المدير بكتابة المبلغ
-    بيده في كل واقعة، وقاعدة البيانات ترفض بلا رقمٍ موجب («الخصم يستلزم مبلغاً موجباً»). أي
-    إزعاجٌ ظاهر لا خسارة صامتة.
-    <br />
-    <span className="font-semibold">في اعتذار المتعهد (البورتال):</span> لا أحد يُسأل — يُسجَّل
-    الاعتذار <span className="font-semibold">بلا اقتراح خصمٍ إطلاقاً وبصمت</span>، لأن الحساب
-    هناك <span dir="ltr" className="font-mono text-xs">least(coalesce(المبلغ, 0), المستحق)</span>{" "}
-    فيخرج صفراً. فاختيار «خصم» بلا مبلغ هناك لا يفرق عن «لا شيء».
+    🔴 <span className="font-semibold">وفي كل الأحوال: مبرَّرٌ مكتوب إلزامي</span> لا يقلّ عن
+    عشرة أحرف مع أي خصم — يُخزَّن في سجل الواقعة، ويدخل سجل التدقيق،{" "}
+    <span className="font-semibold">ويظهر للمتعهد في بوابته</span>. وسندُه البند ٨ من اتفاقيته:
+    الخصمُ الذي يخالف قيمةً افتراضية لا يُقبل بلا مبرر مكتوب — وبلا قيمةٍ افتراضية فكلُّ خصمٍ
+    مخالفة.
   </>
 );
 
@@ -726,21 +724,16 @@ function ReasonCard({
         <Badge variant="outline" className="text-muted-foreground">
           {SCOPE_LABELS[reason.appliesTo] ?? reason.appliesTo}
         </Badge>
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-muted-foreground",
-            // الشارة نفسها تحمل الخبر: من يمسح الصفحة بعينه يرى أي سببٍ ناقص
-            // قبل أن يفتح بطاقته — لا تحذيرٌ مدفونٌ في الأسفل وحده.
-            deductWithoutAmount(reason) &&
-              "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-600 dark:bg-amber-950 dark:text-amber-100"
-          )}
-        >
+        {/*
+          الشارة تحمل الخبر بلا لونِ إنذار: «يدويّ» وصفُ سياسةٍ قائمة لا نقصٌ
+          يُسدّ — والكهرمانُ هنا كان يرنّ على عشرة أسبابٍ من عشرة، أي دائماً.
+        */}
+        <Badge variant="outline" className="text-muted-foreground">
           المقترح: {FAILURE_ACTION_LABELS[reason.defaultAction] ?? reason.defaultAction}
           {reason.defaultDeduct !== null && reason.defaultDeduct > 0
             ? ` ${toArabicDigits(reason.defaultDeduct)}`
             : deductWithoutAmount(reason)
-              ? " — بلا مبلغ"
+              ? " — يدويّ بمبرَّر"
               : ""}
         </Badge>
         {reason.initiator !== "any" ? (
@@ -811,7 +804,7 @@ function ReasonCard({
           disabled={readOnly}
         />
 
-        {deductWithoutAmount(reason) && <DeductGapNotice reason={reason} />}
+        {deductWithoutAmount(reason) && <ManualDeductNotice reason={reason} />}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <ActionSelect
@@ -959,11 +952,11 @@ export default async function FailureReasonsPage({
   const readOnly = !ready;
   const activeCount = reasons.filter((reason) => reason.active).length;
 
-  // 🔴 عدّادُ الفجوة — يُحسب على **المفعَّلة وحدها**: سببٌ معطَّل لا يُختار أصلاً
-  //    فتحذيرٌ عليه ضجيجٌ يُفقد التحذيرَ الحقيقي معناه (اتفاقية «إنذارٌ يرنّ
-  //    دائماً لا يُسمع» — LESSONS §١-٣). وبطاقتُه تبقى محذَّرةً حين تُفتح.
-  const deductGaps = reasons.filter((reason) => reason.active && deductWithoutAmount(reason));
-  const silentGaps = deductGaps.filter(inApologyPath);
+  // الأسبابُ المفعَّلة التي يقع خصمُها يدوياً — تُعدّ لبيان السياسة أعلى الشاشة،
+  // لا لتحذيرٍ يُسدّ. والمعطَّلُ خارجها لأنه لا يُختار أصلاً.
+  const manualDeductReasons = reasons.filter(
+    (reason) => reason.active && deductWithoutAmount(reason)
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -1009,45 +1002,43 @@ export default async function FailureReasonsPage({
       />
 
       {/*
-        🔴 عدّادُ «يخصم بلا مبلغ» — **أعلى الشاشة قبل أي بطاقة.**
+        بيانُ السياسة — **أعلى الشاشة قبل أي بطاقة**، وبلونٍ محايد.
 
-        وسببُ موضعه: الفجوة لا تُرى من القائمة. البطاقة تقول «المقترح: خصم»
-        فيُقرأ أن هناك سياسةً قائمة، والرقمُ الغائب لا يظهر إلا بفتح البطاقة
-        والنظر في حقلٍ فارغ. فالعدّاد هنا يجعل «كم سبباً في هذه الحالة؟» سؤالاً
-        له جوابٌ بلا تصفّح — وهو نفس منطق عدّاد الاستعمال في كل بطاقة: يفسّر
-        ولا يقرّر، ولا يحجب زراً ولا يغيّر رقماً.
+        كان هنا تحذيرٌ كهرمانيّ يعدّ «الأسباب التي تخصم بلا مبلغ». وقرّر بدر
+        (2026-08-18) أن الفراغ مقصود والخصمُ يدويٌّ في كل مرة — فصار العدّادُ
+        إنذاراً يرنّ على عشرةٍ من عشرة، أي دائماً، أي لا يُسمع (`LESSONS` §١-٣).
+        وهذا البيان يقول ما يقع فعلاً، وكلُّ جملةٍ فيه تنفّذها هجرة `0130`.
       */}
-      {ready && deductGaps.length > 0 && (
-        <Card className="space-y-2 border-amber-300 bg-amber-50 p-5 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+      {ready && manualDeductReasons.length > 0 && (
+        <Card className="space-y-2 p-5">
           <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
-            <AlertTriangle className="size-4" />
-            {toArabicDigits(deductGaps.length)} من الأسباب المفعَّلة إجراؤها «خصم» ولا مبلغ
-            افتراضيّ لها
+            <Info className="size-4 text-primary" aria-hidden="true" />
+            الخصم يدويٌّ في كل واقعة — بمبلغٍ يُكتب بيدك ومبرَّرٍ مكتوب
           </h3>
-          <p className="text-sm leading-relaxed">
-            الخصم المقترح لكلٍّ منها <span className="font-semibold">صفر</span>.{" "}
-            {silentGaps.length > 0 ? (
-              <>
-                ومنها <span className="font-semibold">{toArabicDigits(silentGaps.length)}</span>{" "}
-                يظهر في <span className="font-semibold">اعتذار المتعهد</span>، وهناك يقع الصفر{" "}
-                <span className="font-semibold">بلا أي رسالة</span>: يُسجَّل الاعتذار ولا يُقترح
-                خصمٌ ولا يُكتب رقمٌ في السجل. أمّا ما يظهر في نموذج الفشل فقاعدة البيانات ترفضه
-                صراحةً حتى يكتب المدير الرقم بيده.
-              </>
-            ) : (
-              <>
-                وكلُّها في نموذج الفشل وحده، وهناك ترفض قاعدة البيانات العملية صراحةً حتى يكتب
-                المدير الرقم بيده — إزعاجٌ يُرى لا خسارةٌ صامتة.
-              </>
-            )}
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            <span className="font-semibold text-foreground">
+              {toArabicDigits(manualDeductReasons.length)}
+            </span>{" "}
+            من الأسباب المفعَّلة إجراؤها «خصم» بلا مبلغ افتراضي، وهذا{" "}
+            <span className="font-semibold text-foreground">قرارٌ لا نقص</span>: لا رقمَ
+            يُقترَح سلفاً، وقاعدة البيانات ترفض أي خصمٍ بلا{" "}
+            <span className="font-semibold text-foreground">مبلغٍ صريحٍ موجب</span> تكتبه أنت
+            وقت الواقعة.
           </p>
-          <p className="text-sm leading-relaxed">
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            🔴 <span className="font-semibold text-foreground">ومعه مبرَّرٌ مكتوب إلزامي</span>{" "}
+            لا يقلّ عن عشرة أحرف — يُثبَّت في سجل الواقعة، ويدخل سجل التدقيق،{" "}
+            <span className="font-semibold text-foreground">ويظهر للمتعهد في بوابته</span>. وهذا
+            نصُّ البند ٨ من اتفاقية المتعهد المقبولة: لا تُقبل مخالفة القيمة الافتراضية إلا
+            بمبرر مكتوب — وبلا قيمةٍ افتراضية فكلُّ خصمٍ مخالفة.
+          </p>
+          <p className="text-sm leading-relaxed text-muted-foreground">
             الأسباب:{" "}
-            <span className="font-semibold">
-              {deductGaps.map((reason) => reason.label || reason.slug).join(" · ")}
+            <span className="font-semibold text-foreground">
+              {manualDeductReasons.map((reason) => reason.label || reason.slug).join(" · ")}
             </span>
-            . والقيمُ قرارك وحدك — لا تُبذَر ولا تُخمَّن هنا؛ اكتب المبلغ في بطاقة كلٍّ منها،
-            أو غيّر إجراءه إلى «لا شيء».
+            . ولك أن تكتب مبلغاً افتراضياً لأيٍّ منها متى شئت — يصير عندها اقتراحاً يُملأ به
+            الحقل، ويبقى المبرَّرُ المكتوب واجباً على أي حال.
           </p>
         </Card>
       )}

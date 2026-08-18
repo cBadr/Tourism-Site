@@ -268,7 +268,8 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 declare
-  v_added   text;
+  v_added    text;
+  v_deferred integer;
   v_gone    text;
 begin
   with live as (
@@ -349,11 +350,37 @@ begin
     ('quote_requests.dest_lng'),
     ('quote_requests.origin_lat'),
     ('quote_requests.origin_lng')
+  ),
+  /*
+   * 🟠 مؤجَّلاتٌ بقرار بدر 2026-08-18: «تجاهل بنود الخصوصية حالياً، سنعيد كتابتها
+   * بعد الإنتهاء من المشروع بشكل كامل».
+   *
+   * 🔴 وهي **ليست إعفاءً بل دفتر دَين**. الفرق الذي يجعل الحارس حيّاً:
+   *   · العمودُ المؤجَّل يُسمّى هنا **واحداً واحداً** — فلا نمطَ يبتلع ما يأتي.
+   *   · وأيُّ عمودٍ شخصيٍّ جديد **خارج هذه القائمة يُحمِّر المجموعة كما كان**.
+   *   · ويُطبَع في كل جولةٍ إشعارٌ بعددها، فلا يُنسى دَينٌ لأنه صمت.
+   *
+   * وحين يأمر بدر بإعادة كتابة الخصوصية: **هذه القائمة هي قائمةُ العمل**،
+   * ويُفرَّغ منها كلُّ عمودٍ نزل له بند.
+   *
+   * ⚠ ومعلَّقٌ عليها سؤالٌ لم يُجب بعد: `customer_push_subscriptions.user_agent`
+   * **لا يلزم لتسليم إشعارٍ إطلاقاً** — وهو بصمةُ جهازٍ تُجمع بلا حاجة.
+   * فالأرجح حذفُه لا الإفصاح عنه، والقرارُ لبدر.
+   */
+  deferred(k) as (
+    values
+    ('customer_push_subscriptions.endpoint'),
+    ('customer_push_subscriptions.p256dh'),
+    ('customer_push_subscriptions.user_agent'),
+    ('customer_push_subscriptions.last_seen_at')
   )
   select
-    (select string_agg(k, '، ' order by k) from (select k from live except select k from frozen) a),
-    (select string_agg(k, '، ' order by k) from (select k from frozen except select k from live) b)
-  into v_added, v_gone;
+    (select string_agg(k, '، ' order by k)
+       from (select k from live except select k from frozen except select k from deferred) a),
+    (select string_agg(k, '، ' order by k)
+       from (select k from frozen except select k from live) b),
+    (select count(*) from (select k from deferred intersect select k from live) d)
+  into v_added, v_gone, v_deferred;
 
   if v_added is not null then
     raise exception
@@ -367,7 +394,11 @@ begin
       v_gone;
   end if;
 
-  raise notice '✔ (ب) البصمةُ الشخصية مطابقة — لا عمودَ جمعٍ جديد بلا بند، ولا بندَ بلا عمود';
+  if coalesce(v_deferred, 0) > 0 then
+    raise notice '     ↳ (ب) 🟠 % عموداً شخصياً مؤجَّلَ الإفصاح بقرار بدر 2026-08-18 — دَينٌ مسجَّل يُسدَّد عند إعادة كتابة الخصوصية', v_deferred;
+  end if;
+
+  raise notice '✔ (ب) البصمةُ الشخصية مطابقة — لا عمودَ جمعٍ جديد بلا بند (عدا المؤجَّل المُسمّى)، ولا بندَ بلا عمود';
 end;
 $$;
 

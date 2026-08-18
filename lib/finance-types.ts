@@ -7,7 +7,7 @@
  * العميل يدفع لنا عرباناً ويسلّم الباقي **نقداً للسائق** (أي للمتعهد). فالمتعهد
  * يخرج من الرحلة وقد قبض جزءاً من مالنا، ونحن مدينون له بمستحقه كاملاً. إذن:
  *
- *     صافي المقاصة = مستحق المتعهد − ما حصّله نقداً من العميل
+ *     صافي التسوية = مستحق المتعهد − ما حصّله نقداً من العميل
  *
  * وقد تكون النتيجة **سالبة** (حصّل أكثر من مستحقه) فيصير هو المدين لنا. أي
  * نظام يفترض أن الاتجاه واحد سيخطئ في نصف الرحلات.
@@ -34,7 +34,7 @@ export type LedgerSource =
   | "adjustment"; // تسوية يدوية بسبب مكتوب
 
 /**
- * دور القيد في مقاصة المتعهد — **أربعة أدوار في زوجين متناظرين** (هجرة 0029):
+ * دور القيد في تسوية المتعهد — **أربعة أدوار في زوجين متناظرين** (هجرة 0029):
  *
  *   | الدور       | معناه                        | حساب خزينة | الاتجاه |
  *   |-------------|------------------------------|------------|---------|
@@ -85,7 +85,7 @@ export type ExpenseRow = {
   createdAt: string;
 };
 
-/** دفعة نقدية لمتعهد ضمن المقاصة */
+/** دفعة نقدية لمتعهد ضمن التسويات */
 export type PartnerPayoutRow = {
   id: string;
   subcontractorId: string;
@@ -138,7 +138,7 @@ export type PartnerStatementLine = {
   note: string | null;
 };
 
-/** ملخص مقاصة متعهد — الرقم الذي يُدفع أو يُطالَب به */
+/** ملخص تسوية متعهد — الرقم الذي يُدفع أو يُطالَب به */
 export type PartnerSettlement = {
   subcontractorId: string;
   companyName: string;
@@ -233,7 +233,7 @@ export type FinanceKpis = {
  * تواقيع Postgres (هجرة 0015):
  *   v_account_balances            — عرض أرصدة كل حسابات الخزينة
  *   v_booking_profit              — ربحية كل حجز
- *   v_partner_settlements         — مقاصة كل المتعهدين
+ *   v_partner_settlements         — تسويات كل المتعهدين
  *   partner_statement(p_subcontractor_id uuid, p_from date, p_to date)
  *   cash_flow(p_from date, p_to date, p_granularity text)   -- day | week | month
  *   finance_kpis(p_from date, p_to date)

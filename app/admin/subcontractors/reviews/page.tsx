@@ -290,6 +290,27 @@ export default async function PriceReviewsPage({
   const savedKey = typeof params.saved === "string" ? params.saved : null;
   const error = typeof params.error === "string" ? params.error : null;
 
+  /**
+   * رمزٌ مستقل لكل نتيجة: «الكشف كله» و«المُعلَّم منه» و«خانةٌ حُفظت» ثلاثةُ
+   * أشياء مختلفة، ورسالةٌ واحدة تجمعها تُخفي عن المشرف ما وقع فعلاً.
+   */
+  const SAVED_MESSAGES: Record<string, string> = {
+    approvedlist: "اعتُمد المسار — أسعاره تدخل التسعير فوراً ما دام حساب المتعهد معتمداً.",
+    rejectedlist: "رُفض المسار وعاد إلى المتعهد بملاحظتك.",
+    approvedsheet:
+      "اعتُمد الكشف كله — مساراته تدخل التسعير فوراً ما دام حساب المتعهد معتمداً.",
+    rejectedsheet: "رُفض الكشف كله وعادت مساراته إلى المتعهد بملاحظتك.",
+    approvedsome:
+      "اعتُمد ما علّمتَ عليه وحده — وبقية مسارات الكشف ما زالت في الطابور بانتظار قرارك.",
+    rejectedsome:
+      "رُفض ما علّمتَ عليه وحده وعاد إلى المتعهد بملاحظتك — وما اعتُمد من الكشف لم يُمَسّ.",
+    costlive:
+      "حُفظت التكلفة على قائمةٍ معتمدة — تدخل التسعير فوراً، وكُتب سطر تدقيق باسمك وأُشعِر المتعهد بالتعديل.",
+    costsaved:
+      "حُفظت التكلفة. القائمة ليست معتمدة فلا يُسعَّر بها أحد بعد، وكُتب سطر تدقيق باسمك.",
+    costsame: "الرقم كما هو — لم يُكتب شيء ولم يُرسل إشعار.",
+  };
+
   const totalPending = totalPendingInSheets + totalLoose;
   const shownRoutes =
     [...listsBySheet.values()].reduce((n, rows) => n + rows.length, 0) + loose.length;
@@ -319,23 +340,10 @@ export default async function PriceReviewsPage({
       <Banners
         wired={wired}
         readOnly={!ready}
-        saved={
-          savedKey === "approvedlist" ||
-          savedKey === "rejectedlist" ||
-          savedKey === "approvedsheet" ||
-          savedKey === "rejectedsheet"
-        }
+        saved={savedKey !== null && savedKey in SAVED_MESSAGES}
         error={error}
         errorMessages={SUBCONTRACTOR_ERRORS}
-        savedMessage={
-          savedKey === "rejectedlist"
-            ? "رُفض المسار وعاد إلى المتعهد بملاحظتك."
-            : savedKey === "rejectedsheet"
-              ? "رُفض الكشف كله وعادت مساراته إلى المتعهد بملاحظتك."
-              : savedKey === "approvedsheet"
-                ? "اعتُمد الكشف كله — مساراته تدخل التسعير فوراً ما دام حساب المتعهد معتمداً."
-                : "اعتُمد المسار — أسعاره تدخل التسعير فوراً ما دام حساب المتعهد معتمداً."
-        }
+        savedMessage={savedKey ? (SAVED_MESSAGES[savedKey] ?? "") : ""}
         readOnlyTitle="طابور المراجعة غير جاهز بعد"
         readOnlyBody={
           <p>
@@ -447,6 +455,7 @@ export default async function PriceReviewsPage({
               pricing={pricing}
               returnTo={RETURN_TO}
               readOnly={!ready}
+              canEditCosts={ready}
               companyName={sub?.companyName ?? "متعهد غير معروف"}
               companyHref={sub ? `/admin/subcontractors/${sub.id}` : undefined}
             />

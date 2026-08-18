@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { DRIVER_DOC_MAX_BYTES, type DriverDocKind } from "@/lib/driver-docs-types";
+import { DriverDocView } from "@/lib/drivers/doc-thumb";
 import { removeDriverDocument, uploadDriverDocument } from "../actions";
 import type { PortalDriver } from "../data";
 
@@ -63,17 +64,12 @@ function DocSlot({
 
       <div className="flex h-32 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-background">
         {slot.url ? (
-          // رابطٌ موقَّع قصير العمر على نطاق التخزين — لا `next/image` لأن المصدر
-          // لا يُحسَّن ولا يُخزَّن، ولأن إضافة نطاقٍ إلى `remotePatterns` تفتحه
-          // لكل صورة في المشروع بلا حاجة.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={slot.url}
-            alt={slot.title}
-            loading="lazy"
-            decoding="async"
-            className="size-full object-contain"
-          />
+          // 🔴 مكوّنٌ واحد يعرض الملفّ هنا وفي اللوحة (القاعدة ١٢: لا يُستنسخ
+          // القائم). وفيه ثلاثة أقفال وُلدت من عطلٍ مقيس (2026-08-18): لا تأجيلَ
+          // طلبٍ لأن الرابط يموت بعد دقيقة · و`onError` يكتب السبب بدل مربّعٍ
+          // فارغ · وPDF يُعرض رابطاً لا صورةً تفشل دائماً (الدلو يقبل
+          // `application/pdf` و`<img>` لا يصيّره أبداً).
+          <DriverDocView url={slot.url} label={slot.title} />
         ) : (
           <p className="px-3 text-center text-xs leading-5 text-muted-foreground">
             {slot.has

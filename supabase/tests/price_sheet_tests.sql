@@ -468,14 +468,39 @@ begin
     raise exception '(هـ-٢) مصدر السعر «%» قبل الاعتماد — المتوقع tariff', coalesce(v_src, 'بلا');
   end if;
 
-  -- (هـ-٣) ولا مدخلَ ثانٍ إلى تكلفة المتعهد: `dispatch_pool` تقرؤها عبر
-  -- `coverage_matches` وحدها، فما لا تُرجعه التغطية لا يصل الإرسال أصلاً.
-  -- نُثبت الخاصية بنيوياً لأنها الضمانة نفسها التي قِيست حيّاً في (هـ-١).
-  if (select count(*) from pg_proc p
+  /*
+   * (هـ-٣) ولا مدخلَ ثانٍ إلى تكلفة المتعهد: كلُّ ما يصل الإرسالَ يمرّ بـ
+   * `coverage_matches`، فما لا تُرجعه التغطيةُ لا يبلغ متعهداً أصلاً.
+   *
+   * 🔴 والفحصُ يتتبّع **السلسلة** لا الحرفَ في جسمٍ واحد. وكان يشترط أن يظهر
+   * اسمُ `coverage_matches` داخل `dispatch_pool` نفسها — فلمّا أدخلت `0132`
+   * وسيطاً مشروعاً (`coverage_best_costs` وهي نفسُها تنادي `coverage_matches`)
+   * احمرّ التوكيدُ **على إعادة تنظيمٍ سليمة**، والضمانةُ لم تنكسر لحظةً.
+   * وهي القاعدة ١٩ بعينها: **مكتشِفٌ يقرأ نصّاً يكذب في الاتجاهين** — يرفض
+   * وسيطاً صحيحاً، ويقبل جسماً يذكر الاسم في تعليقٍ ولا ينادِيه.
+   *
+   * فالتتبّعُ الآن عبر `pg_depend`: هل يصل `dispatch_pool` إلى `coverage_matches`
+   * بأي عدد من الوسطاء؟ ⇒ يمرّ الوسيطُ المشروع، ويحمرّ قطعُ السلسلة حقاً.
+   */
+  if not exists (
+    with recursive reached(oid, name) as (
+      select p.oid, p.proname
+      from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname = 'dispatch_pool'
-        and pg_get_functiondef(p.oid) like '%coverage_matches(%') <> 1 then
-    raise exception '(هـ-٣) dispatch_pool لم تعد تمرّ بـ coverage_matches — الضمانة انكسرت';
+      union
+      select callee.oid, callee.proname
+      from reached r
+      join pg_proc caller on caller.oid = r.oid
+      join pg_proc callee on true
+      join pg_namespace callee_ns on callee_ns.oid = callee.pronamespace
+      where callee_ns.nspname = 'public'
+        and callee.oid <> caller.oid
+        and pg_get_functiondef(caller.oid) like '%public.' || callee.proname || '(%'
+    )
+    select 1 from reached where name = 'coverage_matches'
+  ) then
+    raise exception '(هـ-٣) لا سبيلَ من dispatch_pool إلى coverage_matches — الضمانة انكسرت';
   end if;
   if exists (select 1 from pg_proc p
              join pg_namespace n on n.oid = p.pronamespace

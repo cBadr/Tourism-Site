@@ -29,9 +29,22 @@ import { createServerSupabase } from "@/lib/supabase/server";
 
 const LIST_PATH = "/admin/subcontractors";
 const REVIEWS_PATH = "/admin/subcontractors/reviews";
+const ROUTES_PATH = "/admin/subcontractors/routes";
 
 const listUrl = (qs: string) => `${LIST_PATH}?${qs}`;
 const detailUrl = (id: string, qs: string) => `${LIST_PATH}/${id}?${qs}`;
+
+/**
+ * إلحاق رمز الحالة بوجهةٍ قد تحمل استعلاماً سلفاً — فلا يخرج `?a=1?saved=1`.
+ * صار لازماً حين بدأ التعديل بالنقر يقع داخل شاشة بحث المسارات، وهي تحمل
+ * البحث والصفحة والمسار المفتوح في الرابط ولا يجوز أن تضيع بعد كل حفظ.
+ */
+const withCode = (to: string, qs: string) => {
+  const cut = to.indexOf("#");
+  const bare = cut === -1 ? to : to.slice(0, cut);
+  const anchor = cut === -1 ? "" : to.slice(cut);
+  return `${bare}${bare.includes("?") ? "&" : "?"}${qs}${anchor}`;
+};
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -69,6 +82,8 @@ const HINT_CODES: Record<string, string> = {
   "note-required": "note",
   // 0109: عدد مسارات الكشف تغيّر بين رسم الصفحة والضغط ⇒ لم تُكتب حالةٌ واحدة
   "count-changed": "sheetcount",
+  // 0135: القيمة المعروضة على الشاشة لم تعد هي القيمة في القاعدة ⇒ لا كتابة
+  stale: "pricestale",
 };
 
 function hintCode(error: { hint?: string | null } | null, fallback: string): string {
@@ -76,11 +91,48 @@ function hintCode(error: { hint?: string | null } | null, fallback: string): str
   return HINT_CODES[hint] ?? fallback;
 }
 
-/** وجهة العودة بعد المراجعة — قائمة بيضاء لا نص حر */
+/**
+ * وجهة العودة بعد المراجعة أو التعديل — **قائمة بيضاء لا نص حر**.
+ *
+ * والمسار والاستعلام يُبنيان من جديد لا يُمرَّران: أربعة مفاتيح معلومة بأطوالٍ
+ * مسقوفة (بحثُ المسارات · الصفحة · المسار المفتوح · تبويب الحالة)، وما عداها
+ * يسقط. فالوجهةُ تبقى مغلقةً على اللوحة ولا تصير تحويلاً مفتوحاً، **ويبقى مع
+ * ذلك** بحثُ المشرف وصفحتُه بعد كل حفظ — وضياعُهما بعد كل تعديل خانةٍ يجعل
+ * التحرير بالنقر غير قابلٍ للاستعمال أصلاً على مئة مسار.
+ */
+const KEEP_PARAMS = new Set(["q", "offset", "route", "status"]);
+
+/**
+ * مراسٍ مسموحة — بها يعود المشرف إلى قسم المسارات لا إلى رأس الصفحة بعد كل حفظ.
+ * ⚠ ولا تُترك حرّة: مرساةٌ غير مُنقّاة تصل `route=<uuid>#routes` فيصير المعرّف
+ * نصّاً لا معرّفاً — أي أن غيابَ هذا التنقية يكسر الوجهة صامتاً لا يفتح ثغرة.
+ */
+const KEEP_HASHES = new Set(["routes", "route-detail"]);
+
 function safeReturn(to: string): string {
-  if (to === REVIEWS_PATH) return to;
-  const id = to.startsWith(`${LIST_PATH}/`) ? to.slice(LIST_PATH.length + 1) : "";
-  return UUID.test(id) ? `${LIST_PATH}/${id}` : REVIEWS_PATH;
+  const hashCut = to.indexOf("#");
+  const hash = hashCut === -1 ? "" : to.slice(hashCut + 1);
+  const bare = hashCut === -1 ? to : to.slice(0, hashCut);
+
+  const cut = bare.indexOf("?");
+  const path = cut === -1 ? bare : bare.slice(0, cut);
+  const query = cut === -1 ? "" : bare.slice(cut + 1);
+
+  let base: string;
+  if (path === REVIEWS_PATH || path === ROUTES_PATH || path === LIST_PATH) {
+    base = path;
+  } else {
+    const id = path.startsWith(`${LIST_PATH}/`) ? path.slice(LIST_PATH.length + 1) : "";
+    base = UUID.test(id) ? `${LIST_PATH}/${id}` : REVIEWS_PATH;
+  }
+
+  const keep = new URLSearchParams();
+  for (const [key, value] of new URLSearchParams(query)) {
+    if (KEEP_PARAMS.has(key) && value.length <= 120) keep.set(key, value);
+  }
+  const rest = keep.toString();
+  const anchor = KEEP_HASHES.has(hash) ? `#${hash}` : "";
+  return `${base}${rest ? `?${rest}` : ""}${anchor}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +356,7 @@ export async function reviewPriceList(
   formData: FormData
 ) {
   const back = safeReturn(returnTo);
-  const url = (qs: string) => `${back}?${qs}`;
+  const url = (qs: string) => withCode(back, qs);
 
   const supabase = await createServerSupabase();
   if (!supabase) redirect(url("error=env"));
@@ -348,7 +400,7 @@ export async function reviewPriceSheet(
   formData: FormData
 ) {
   const back = safeReturn(returnTo);
-  const url = (qs: string) => `${back}?${qs}`;
+  const url = (qs: string) => withCode(back, qs);
 
   const supabase = await createServerSupabase();
   if (!supabase) redirect(url("error=env"));
@@ -370,4 +422,123 @@ export async function reviewPriceSheet(
 
   revalidatePath("/", "layout");
   redirect(url(approve ? "saved=approvedsheet" : "saved=rejectedsheet"));
+}
+
+// ---------------------------------------------------------------------------
+// الاعتماد الجزئي — مساراتٌ مختارة من كشفٍ واحد (0135)
+// ---------------------------------------------------------------------------
+
+/**
+ * سقفُ ما يُرسله نموذجٌ واحد. حدُّ الاستيراد نفسه (٥٠٠ صف/ملف)، فكشفٌ أكبر
+ * يُراجَع دفعةً كاملة بزرّ الكشف لا باختيارٍ يدوي لخمسمئة خانة.
+ */
+const MAX_SELECTION = 500;
+
+/**
+ * اعتماد أو رفض **مساراتٍ بأعيانها** من كشف — `review_selected_price_lists`
+ * وحدها من يقرّر، وهي تفوّض كل صفٍّ إلى `review_price_list` فلا منطقَ اعتمادٍ
+ * ثانٍ لا هنا ولا هناك.
+ *
+ * 🔴 والرقمُ المُمرَّر في `p_expected` هو **عدد الخانات كما وصلت من المتصفح
+ * قبل أي تنقية** (`raw.length`)، بينما القاعدة تقارنه بعددها هي **بعد**
+ * `distinct` وعضويةِ الكشف. فهما رقمان من مصدرين، واختلافُهما يوقف الكتابة
+ * كلها — ولو اشتُقّ الاثنان من المصفوفة نفسها لصار الفحص زينةً لا تفشل أبداً
+ * (‏`LESSONS.md` النمط ٩). ومعرّفٌ مكرَّر أو مشوَّه أو من كشفٍ آخر يُسقط النداء
+ * كلَّه بدل أن يعتمد أقلَّ مما علّم عليه المشرف بصمت.
+ */
+export async function reviewSelectedPriceLists(
+  sheetId: string,
+  approve: boolean,
+  returnTo: string,
+  formData: FormData
+) {
+  const back = safeReturn(returnTo);
+  const url = (qs: string) => withCode(back, qs);
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url("error=env"));
+
+  const raw = formData.getAll("route").filter((v): v is string => typeof v === "string");
+  if (raw.length === 0) redirect(url("error=noselection"));
+  if (raw.length > MAX_SELECTION) redirect(url("error=selbig"));
+
+  const ids = raw.filter((v) => UUID.test(v));
+
+  const note = trimNote(text(formData, approve ? "select_approve_note" : "select_reject_note"));
+  if (!approve && !note) redirect(url("error=note"));
+
+  const { error } = await supabase.rpc("review_selected_price_lists", {
+    p_sheet: sheetId,
+    p_ids: ids,
+    p_approve: approve,
+    p_note: note,
+    p_expected: raw.length,
+  });
+  if (error) {
+    const code = hintCode(error, "save");
+    // «تغيّر العدد» هنا ليس نموّ الكشف بل انحرافُ الاختيار — ورسالتان مختلفتان
+    redirect(url(`error=${code === "sheetcount" ? "selcount" : code}`));
+  }
+
+  revalidatePath("/", "layout");
+  redirect(url(approve ? "saved=approvedsome" : "saved=rejectedsome"));
+}
+
+// ---------------------------------------------------------------------------
+// التعديل بالنقر — خانةُ تكلفةٍ واحدة (0135)
+// ---------------------------------------------------------------------------
+
+/**
+ * حفظُ تكلفة فئةٍ واحدة في مسار.
+ *
+ * 🔴 **ولا رقمَ يُحسب ولا يُتحقَّق منه هنا** (D-05): النصّ يُمرَّر كما كتبه
+ * المشرف إلى `set_price_list_item_cost`، وهي التي تُطبّع الأرقام العربية
+ * الهندية وتردّ `NaN` و`±Infinity` و«ليس رقماً» بحرّاسٍ قائمة (0108 · 0112).
+ * وأيُّ تحقّقٍ نُكرّره هنا يصير رقماً ثانياً ينحرف عن الأول.
+ *
+ * و`seen` هي القيمة التي كانت **معروضةً على شاشة المشرف** حين فتحها: تُرسل مع
+ * التعديل فترفض القاعدة الكتابةَ فوق تعديلِ زميلٍ وقع في الأثناء، وتقول الرقمين
+ * معاً بدل أن يضيع أحدهما صامتاً.
+ */
+export async function setPriceListItemCost(
+  priceListId: string,
+  classSlug: string,
+  returnTo: string,
+  formData: FormData
+) {
+  const back = safeReturn(returnTo);
+  const url = (qs: string) => withCode(back, qs);
+
+  const supabase = await createServerSupabase();
+  if (!supabase) redirect(url("error=env"));
+
+  const rawCost = formData.get("cost");
+  const rawSeen = formData.get("seen");
+  if (typeof rawCost !== "string" || typeof rawSeen !== "string") {
+    redirect(url("error=cost"));
+  }
+  // سقفُ طولٍ لا تحقّقٌ من الشكل: حقلٌ بمئة ألف محرف لا معنى له، والشكل للقاعدة
+  const cost = rawCost.slice(0, 40);
+  const seen = rawSeen.slice(0, 40);
+
+  const { data, error } = await supabase.rpc("set_price_list_item_cost", {
+    p_list: priceListId,
+    p_class: classSlug,
+    p_cost: cost,
+    p_seen_cost: seen,
+  });
+  if (error) {
+    const code = hintCode(error, "save");
+    redirect(url(`error=${code === "input" ? "cost" : code}`));
+  }
+
+  // الدالة تُرجع صفاً واحداً؛ `changed = false` تعني «الرقم نفسه» لا فشلاً
+  const row = Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : undefined;
+  const changed = row?.changed === true;
+  const notified = row?.notified === true;
+
+  revalidatePath("/", "layout");
+  redirect(
+    url(!changed ? "saved=costsame" : notified ? "saved=costlive" : "saved=costsaved")
+  );
 }

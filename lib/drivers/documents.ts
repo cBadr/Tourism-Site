@@ -111,25 +111,86 @@ export async function removeDriverDocs(
  *
  * والمسار الخام لا يخرج إلى المتصفح أبداً: ما يصل الشاشة هو الرابط الموقَّع
  * وحده — نفس قرار `receipt_path` في 0039.
+ *
+ * ── 🔴 ولماذا صار لكل مسارٍ **حصيلةٌ** لا `undefined` صامت ────────────────
+ *
+ * كانت هذه الدالة تُرجع `Map` فيها الناجحون وحدهم، فيقرأ المستهلك `get(path)`
+ * ويجد `undefined` — **بلا أن يعرف أيَّ الثلاثة وقع**: مسارٌ لم يطابق النمط
+ * فسقط من التصفية قبل أي نداء · أم أن التخزين ردّ «لا وجود أو لا صلاحية» ·
+ * أم أن الاتصال نفسه أخفق. والثلاثة كانت تُعرض جملةً واحدة («تعذّر عرضها
+ * الآن») لا تقول للمالك ما يفعل. فصارت الحصيلة صريحة، والجملة تُشتق منها.
  */
-export async function signDriverDocs(
+
+/** سببُ تعذُّر العرض — ثلاثةٌ لا تُخلط، لأن علاج كلٍّ منها مختلف */
+export type DriverDocFailure =
+  /** المسار المخزَّن في الصف لا يطابق النمط الملزم — عطلُ بياناتٍ لا صلاحية */
+  | "bad_path"
+  /** التخزين ردّ رفضاً لهذا المفتاح: إمّا لا وجود له، وإمّا لا تشمله صلاحيتك */
+  | "unavailable"
+  /** لم يصل الردّ أصلاً — التخزين غير قابلٍ للاتصال الآن */
+  | "unreachable";
+
+/** حصيلةُ مسارٍ واحد: رابطٌ يُعرض، أو سببٌ يُكتب — ولا حالةَ ثالثة صامتة */
+export type DriverDocOutcome = { url: string } | { failure: DriverDocFailure };
+
+/**
+ * التوقيع المفصَّل — لكل مسارٍ **حصيلة**، فلا يبتلع المستهلكُ سبباً.
+ *
+ * ⚠ ولا مفتاح خدمة هنا: العميل هو عميل جلسة المنادي، فالسياسة
+ * `driver_docs_select_own_or_admin` هي التي تسمح أو تمنع — ولو وُقِّع بمفتاح
+ * الخدمة لَعملت الشاشة حتى لو انهارت السياسة.
+ */
+export async function signDriverDocsDetailed(
   supabase: SupabaseClient,
   paths: (string | null)[]
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const valid = [...new Set(paths.filter(isDriverDocPath))];
+): Promise<Map<string, DriverDocOutcome>> {
+  const out = new Map<string, DriverDocOutcome>();
+
+  // المسارات المطلوبة كما وردت — كي يحصل غيرُ المطابق على سببه لا على صمت
+  const asked = [...new Set(paths.filter((p): p is string => typeof p === "string" && p !== ""))];
+  const valid = asked.filter(isDriverDocPath);
+  for (const p of asked) {
+    if (!valid.includes(p)) out.set(p, { failure: "bad_path" });
+  }
   if (valid.length === 0) return out;
 
   try {
     const { data, error } = await supabase.storage
       .from(DRIVER_DOCS_BUCKET)
       .createSignedUrls(valid, DRIVER_DOC_URL_TTL);
-    if (error || !data) return out;
+
+    if (error || !data) {
+      for (const p of valid) out.set(p, { failure: "unreachable" });
+      return out;
+    }
+
+    // 🔴 الردّ ٢٠٠ حتى حين يُرفض مفتاح: الرفض يأتي **داخل الصف**
+    // (`signedUrl === null`) لا في `error`. فالاعتماد على `error` وحده كان
+    // يجعل الرفض يبدو نجاحاً بخريطةٍ ناقصة.
     for (const row of data) {
-      if (row.path && row.signedUrl) out.set(row.path, row.signedUrl);
+      if (row.path && row.signedUrl) out.set(row.path, { url: row.signedUrl });
+    }
+    for (const p of valid) {
+      if (!out.has(p)) out.set(p, { failure: "unavailable" });
     }
   } catch {
-    // الدلو خاص وبلا سياسة anon — تعذُّر التوقيع يعني «لا صورة تُعرض» لا تسريباً
+    for (const p of valid) if (!out.has(p)) out.set(p, { failure: "unreachable" });
+  }
+  return out;
+}
+
+/**
+ * الشكل المختصر — رابطٌ أو لا شيء. يبقى لأن `app/portal/drivers/data.ts`
+ * يستهلكه بهذا العقد، ولئلا يصير للتوقيع مسارانِ ينحرفان (النمط ٨).
+ */
+export async function signDriverDocs(
+  supabase: SupabaseClient,
+  paths: (string | null)[]
+): Promise<Map<string, string>> {
+  const detailed = await signDriverDocsDetailed(supabase, paths);
+  const out = new Map<string, string>();
+  for (const [path, outcome] of detailed) {
+    if ("url" in outcome) out.set(path, outcome.url);
   }
   return out;
 }

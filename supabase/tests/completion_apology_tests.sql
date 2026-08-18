@@ -44,6 +44,9 @@
 --   (ي) العزل: المتعهد لا يعتمد ولا يشغّل الدورة ولا يقرأ اعتذارات غيره
 --   (ل) 🔴 0124 — الاعتماد التلقائي امتيازُ الصمت لا امتيازُ تجاوز قرار
 --   (م) 🔴 0124 — سقفُ الخصم لكل **رحلة** لا لكل صفّ اعتذار
+--   (ن) 🔴 0126 — والسقفُ نفسه يسري على مسار الفشل
+--   (س) 🔴 0130 — مبلغٌ صريح ومبرَّرٌ مكتوبٌ بحدٍّ أدنى في **كل** خصم، ويصل
+--       بوابةَ المتعهد — بحارسَين مستقلَّين يُنزعان ويُعادان
 --   (ك) صفر أثر
 --
 -- ══════════════════════════════════════════════════════════════════════════
@@ -65,6 +68,8 @@
 -- المرجع: supabase/migrations/0119_completion_apology_and_loyalty_rate.sql
 --         · supabase/migrations/0121_apology_route_one_source.sql
 --         · supabase/migrations/0124_completion_guards_and_deduction_cap.sql
+--         · supabase/migrations/0126_adversarial_fixes.sql
+--         · supabase/migrations/0130_manual_deduction_needs_written_reason.sql
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -96,6 +101,11 @@ begin
     ('public.settle_due_completions(integer)'),
     ('public.withdraw_from_trip(uuid, text, text)'),
     ('public.apply_withdrawal_deduction(uuid, numeric, text)'),
+    -- 0130
+    ('public.deduction_reason_min_chars()'),
+    ('public.deduction_reason_norm(text)'),
+    ('public.deduction_reason_ok(text)'),
+    ('public.portal_deductions(integer)'),
     ('public.apology_route(numeric)'),
     ('public.file_grievance(uuid, text, text)'),
     ('public.resolve_grievance(uuid, boolean, text)'),
@@ -324,6 +334,8 @@ declare
   v_thr    integer;
   -- 0124
   v_def    text;      -- نصُّ الدالة الحارسة كما هو على القاعدة (لإعادته حرفياً)
+  v_mut     text;
+  v_trg    text;      -- 0130: ونصُّ المُشغّل الحارس كذلك
   v_room   record;
   v_amt    numeric;
   v_y0     integer;
@@ -364,10 +376,11 @@ begin
     perform set_config('request.jwt.claims',
       json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
 
-    -- ستَّ عشرةَ رحلةً مُسنَدة متطابقة — والسابعة لمتعهدٍ آخر كي يُقاس العزل،
+    -- عشرون رحلةً مُسنَدة متطابقة — والسابعة لمتعهدٍ آخر كي يُقاس العزل،
     -- و٨‑١٢ لحواجز 0124 على الاعتماد التلقائي، و١٣‑١٤ لسقف الخصم عن الرحلة،
-    -- و١٥‑١٦ لسريان السقف نفسه على **مسار الفشل** (‏0126)
-    for v_n in 1 .. 16 loop
+    -- و١٥‑١٦ لسريان السقف نفسه على **مسار الفشل** (‏0126)، و١٧‑٢٠ لشرط
+    -- المبرر المكتوب على المسارين معاً (‏0130)
+    for v_n in 1 .. 20 loop
       select * into v_bk from public.create_booking(
         jsonb_build_object('label', 'CA مبدأ' || v_n, 'lat', 25.0, 'lng', 27.5),
         jsonb_build_object('label', 'CA منتهى' || v_n, 'lat', 24.5, 'lng', 28.2),
@@ -398,7 +411,7 @@ begin
        where id = v_ids[v_n];
     end loop;
 
-    raise notice '✔ (ج-٠) ستَّ عشرةَ رحلةً مُسنَدة بمستحق % (والسابعة لمتعهدٍ آخر) داخل معاملةٍ فرعية تُرجَع', v_pay;
+    raise notice '✔ (ج-٠) عشرون رحلةً مُسنَدة بمستحق % (والسابعة لمتعهدٍ آخر) داخل معاملةٍ فرعية تُرجَع', v_pay;
 
     -- ══ (ج) الطلب — و**لا مالَ يتحرك** ═════════════════════════════════════
     perform set_config('request.jwt.claims',
@@ -746,7 +759,8 @@ begin
 
     -- والمبلغُ يسقط على اقتراح الكتالوج حين لا يرسل المدير رقماً
     update public.failure_reasons set default_deduct_amount = 100 where slug = 'driver-no-show';
-    perform * from public.mark_booking_failed(v_ids[6], 'driver-no-show', 'deduct', null, 'CA');
+    perform * from public.mark_booking_failed(v_ids[6], 'driver-no-show', 'deduct', null,
+                                              'CA مبلغٌ من الكتالوج');
     select f.deduct_amount into v_n from public.booking_failures f where f.booking_id = v_ids[6];
     if v_n is distinct from 100 then
       raise exception '(ح-٣) المبلغ الافتراضي في الكتالوج لم يُستعمل: % لا 100', v_n;
@@ -758,7 +772,7 @@ begin
     select w.id into v_req from public.trip_withdrawals w where w.booking_id = v_ids[4];
     v_msg := null;
     begin
-      perform public.apply_withdrawal_deduction(v_req, 50, 'CA');
+      perform public.apply_withdrawal_deduction(v_req, 50, 'CA محاولةٌ والمفتاح مطفأ');
       v_msg := '(قُبل)';
     exception when others then
       get stacked diagnostics v_msg = message_text;
@@ -776,7 +790,7 @@ begin
     -- 🔴 (ط-٢) 0124: الفاحشُ **يُقصّ إلى سقف الرحلة ولا يمرّ بحاله**، والقصُّ
     --    ليس صامتاً: المُرجَع هو المنفَّذ، ونصُّ القيد يقول من كم إلى كم.
     select count(*)::integer into v_l0 from public.ledger_entries;
-    v_amt := public.apply_withdrawal_deduction(v_req, v_pay * 10, 'CA فاحش');
+    v_amt := public.apply_withdrawal_deduction(v_req, v_pay * 10, 'CA خصمٌ فاحش يُقصّ');
     if v_amt <> v_pay then
       raise exception
         '(ط-٢) 🔴 طُلب خصمُ % فنُفِّذ % — والسقف مستحقُّ الرحلة %', v_pay * 10, v_amt, v_pay;
@@ -801,7 +815,7 @@ begin
     -- ولا يُنفَّذ مرتين
     v_msg := null;
     begin
-      perform public.apply_withdrawal_deduction(v_req, 10, 'CA تكرار');
+      perform public.apply_withdrawal_deduction(v_req, 10, 'CA تكرارُ التنفيذ');
       v_msg := '(قُبل)';
     exception when others then
       get stacked diagnostics v_msg = message_text;
@@ -831,7 +845,7 @@ begin
 
     v_msg := null;
     begin
-      perform public.apply_withdrawal_deduction(v_req, 10, 'CA');
+      perform public.apply_withdrawal_deduction(v_req, 10, 'CA متعهدٌ ينفّذ خصماً');
       v_msg := '(قُبل)';
     exception when others then
       get stacked diagnostics v_msg = message_text;
@@ -1424,6 +1438,412 @@ begin
     raise notice
       '✔ (ن) 🔴 0126 — سقفُ الرحلة صار واحداً للمسارين: `mark_booking_failed` تسأل `trip_deduction_room` فتُرفض ما يتجاوز المتبقّي وتقبل المتبقّي بالضبط، ونزعُ السطر الواحد يُعيد التجاوز فوراً';
 
+
+    -- ══ (س) 🔴 0130 — المبررُ المكتوب شرطٌ في **كل** خصم، ويصل بوابةَ المتعهد ═
+    --
+    --   البند ٨ من الاتفاقية المنشورة: «ولا تُقبل المخالفة إلا بمبرر مكتوب
+    --   يُثبَّت في السجل **ويُتاح للمتعهد**». وبلا قيمةٍ افتراضية في الكتالوج
+    --   (قرارُ المالك 2026-08-18) فكلُّ خصمٍ مخالفة ⇒ المبررُ واجبٌ في كل واقعة.
+    --
+    --   والقسمُ يملك فيكسترته: سببٌ من صنعه (`catest-0130`) بمبلغٍ افتراضي
+    --   **فارغ** — فلا يثبّت رقماً يملكه المالك ولا صفّاً يملكه شريك.
+    -- ────────────────────────────────────────────────────────────────────────
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    insert into public.failure_reasons
+      (slug, label, default_action, applies_to, initiator, default_deduct_amount, sort)
+    values
+      ('catest-0130', 'CA سببٌ بلا مبلغ افتراضي', 'deduct', 'both', 'partner', null, 9130);
+
+    -- (س-٠) المسطرة نفسها التي يقرؤها المنفِّذان — لا شرطٌ منسوخٌ هنا (القاعدة ١٢)
+    if public.deduction_reason_ok(null) or public.deduction_reason_ok('   ')
+       or public.deduction_reason_ok('.') or public.deduction_reason_ok('ok')
+       or public.deduction_reason_ok('تم') then
+      raise exception '(س-٠) 🔴 مسطرةُ المبرر تقبل ما لا يشرح شيئاً لمن يقرأ السجل غداً';
+    end if;
+    -- 🔬 والحدُّ يُقاس **بعد طيّ المسافات**: عشرُ مسافاتٍ بين حرفين لا تشتريه،
+    --    وإلا كان الحارسُ فحصاً لا يمكن أن يفشل (النمط ٩ في `LESSONS`)
+    if public.deduction_reason_ok('ا' || repeat(' ', 40) || 'ب') then
+      raise exception '(س-٠) 🔴 الحدُّ الأدنى يُشترى بضغطِ مسطرة المسافة';
+    end if;
+    -- وشاهدٌ إيجابي: المشروع يمرّ، فالتأكيدات أعلاه ليست عميّة
+    if not public.deduction_reason_ok('السائق لم يحضر') then
+      raise exception '(س-٠) مسطرةُ المبرر ترفض مبرراً مشروعاً — حاجزٌ على المشروع';
+    end if;
+
+    -- (س-١) مسارُ الفشل: خصمٌ بمبررٍ **فارغ** ⇒ رفض
+    v_msg := null;
+    begin
+      -- 🔴 سالبٌ عمداً: المبررُ `null` هو المقصود، فلا يُملأ
+      perform * from public.mark_booking_failed(v_ids[17], 'catest-0130', 'deduct', 100, null);
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-١) 🔴 خصمٌ مرّ بلا مبرر مكتوب — البند ٨ مثقوب';
+    end if;
+    if v_msg not like '%مبرر%' then
+      raise exception '(س-١) الرفض جاء برسالة «%» — ليست رسالة المبرر', v_msg;
+    end if;
+
+    -- (س-١ب) ومسافاتٌ بيضاء ليست مبرراً: الفراغُ المموَّه يُرفض كالفراغ
+    v_msg := null;
+    begin
+      perform * from public.mark_booking_failed(v_ids[17], 'catest-0130', 'deduct', 100,
+                                                repeat(' ', 25));
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-١ب) 🔴 خمسٌ وعشرون مسافةً مرّت مبرراً';
+    end if;
+
+    -- (س-٢) وقصيرٌ ⇒ رفض، **والرسالة تقول الحدَّ من الدالة لا من رقمٍ محفور**
+    v_msg := null;
+    begin
+      perform * from public.mark_booking_failed(v_ids[17], 'catest-0130', 'deduct', 100, '.');
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٢) 🔴 «.» مرّت مبرراً لخصمٍ مالي';
+    end if;
+    if v_msg not like '%' || public.deduction_reason_min_chars()::text || '%' then
+      raise exception '(س-٢) الرفض جاء برسالة «%» — لا تحمل الحدَّ الأدنى', v_msg;
+    end if;
+
+    -- (س-٣) ومبلغٌ غائبٌ ⇒ رفضٌ **برسالةِ الغياب** لا برسالةِ «غير موجب»:
+    --       `catest-0130` بلا قيمةٍ افتراضية، فلا صفرَ صامتاً يسقط عليه
+    v_msg := null;
+    begin
+      perform * from public.mark_booking_failed(v_ids[17], 'catest-0130', 'deduct', null,
+                                                'CA مبررٌ سليمٌ ومبلغٌ غائب');
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٣) 🔴 خصمٌ مرّ بلا مبلغ — وصفرٌ صامتٌ يخصم لا شيء ويقفل الرحلة';
+    end if;
+    if v_msg not like '%صريحاً%' then
+      raise exception
+        '(س-٣) الرفض جاء برسالة «%» — والمطلوب رسالةُ «اكتب الرقم» لا «رقمُك خطأ»', v_msg;
+    end if;
+
+    -- 🔒 ولا شيء وقع بعد ثلاثة رفوض: كلُّ نداءٍ معاملةٌ واحدة (**D-48**)
+    select count(*)::integer into v_n
+      from public.booking_failures f where f.booking_id = v_ids[17];
+    if v_n <> 0 then
+      raise exception '(س-٣) 🔴 بقي % صفَّ فشلٍ بعد نداءاتٍ مرفوضة — نصفُ خصمٍ في القاعدة', v_n;
+    end if;
+
+    -- (س-٤) والسليمُ يمرّ — ويُخزَّن **مطبَّعاً** لا كما كُتب
+    select count(*)::integer into v_l0 from public.ledger_entries;
+    select * into v_res from public.mark_booking_failed(
+      v_ids[17], 'catest-0130', 'deduct', 120,
+      '  CA السائق    لم يحضر وأبلغ العميل بنفسه  ');
+    if v_res.action_taken <> 'deduct' or v_res.deduct_amount <> 120 then
+      raise exception '(س-٤) المدخلُ الصحيح رُفض أو نُفِّذ بغير مبلغه: «%»/%',
+        v_res.action_taken, v_res.deduct_amount;
+    end if;
+    select f.override_note into v_txt
+      from public.booking_failures f where f.booking_id = v_ids[17];
+    if v_txt <> 'CA السائق لم يحضر وأبلغ العميل بنفسه' then
+      raise exception
+        '(س-٤) 🔴 المبرر خُزِّن «%» — والمقيس هو المطبَّع، فما يُقاس غيرُ ما يُخزَّن', v_txt;
+    end if;
+    select count(*)::integer into v_l1 from public.ledger_entries;
+    if v_l1 <= v_l0 then
+      raise exception '(س-٤) الخصم قُبل ولم يكتب قيداً';
+    end if;
+    -- ونصُّ القيد يحمل المبرر: من يراجع الدفتر لا يملك صفَّ الفشل أمامه
+    if not exists (
+      select 1 from public.ledger_entries e
+      where e.subcontractor_id = v_sub and e.note like '%وأبلغ العميل بنفسه%'
+    ) then
+      raise exception '(س-٤) 🔴 المبرر لم يسافر مع القيد — الدفتر يقول «خُصم» ولا يقول لماذا';
+    end if;
+
+    -- (س-٥) 🔴 «ويُتاح للمتعهد» — يقرؤه **بهويته هو** من بوابته
+    --
+    --   وقبل القراءة يُخصم على **متعهدٍ آخر** (الرحلة ٧ للمتعهد الثاني)، وإلا
+    --   كان تأكيدُ العزل أدناه يقيس غياباً لا حجباً — أي فحصاً لا يمكن أن يفشل
+    --   (النمط ٩ في `LESSONS`).
+    perform * from public.mark_booking_failed(
+      v_ids[7], 'catest-0130', 'deduct', 90, 'CA خصمٌ على متعهدٍ آخر لقياس العزل');
+    if not exists (
+      select 1 from public.booking_failures f
+      where f.booking_id = v_ids[7] and f.subcontractor_id = v_sub2 and f.action_taken = 'deduct'
+    ) then
+      raise exception '(س-٥) الفرضية لم تتحقق: لا خصمَ على المتعهد الثاني ليُحجب عن الأول';
+    end if;
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+    select count(*)::integer into v_n
+      from public.portal_deductions() d
+     where d.booking_id = v_ids[17]
+       and d.kind = 'failure'
+       and d.amount = 120
+       and d.written_reason = 'CA السائق لم يحضر وأبلغ العميل بنفسه';
+    if v_n <> 1 then
+      raise exception
+        '(س-٥) 🔴 المتعهد يقرأ % بنداً عن خصمه بمبرِّره — والبند ٨ يشترط إتاحته له', v_n;
+    end if;
+    -- 🔒 وما لا يجوز أن يعبر لا يعبر (**D-19**): رمزُ الرحلة لا مرجعُ العميل
+    if exists (
+      select 1 from public.portal_deductions() d
+      join public.bookings b on b.id = d.booking_id
+      where d.trip_code = b.reference
+    ) then
+      raise exception '(س-٥) 🔴 مرجعُ العميل عبر إلى بوابة المتعهد مع الخصم';
+    end if;
+    -- 🔒 ولا يرى خصمَ غيره: الرحلة ٧ خُصم عليها فعلاً، ومع ذلك لا تصله
+    if exists (select 1 from public.portal_deductions() d where d.booking_id = v_ids[7]) then
+      raise exception '(س-٥) 🔴 المتعهد يقرأ خصماً وقع على متعهدٍ آخر — D-20';
+    end if;
+    -- وصاحبُه يراه: الحجبُ عزلٌ لا عطلٌ في الدالة
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr2, 'role', 'authenticated')::text, true);
+    if not exists (
+      select 1 from public.portal_deductions() d
+      where d.booking_id = v_ids[7]
+        and d.written_reason = 'CA خصمٌ على متعهدٍ آخر لقياس العزل'
+    ) then
+      raise exception '(س-٥) 🔴 صاحبُ الخصم لا يراه — الحجب صار عطلاً لا عزلاً';
+    end if;
+    if exists (select 1 from public.portal_deductions() d where d.booking_id = v_ids[17]) then
+      raise exception '(س-٥) 🔴 والعزل في الاتجاه الآخر مثقوب كذلك';
+    end if;
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    -- 🔬 (س-٦أ) الطفرة الأولى: يُنزع من **الدالة** كلُّ ما يعتمد على المبرر —
+    --     شرطُه الصريح، **ومعه** ضمُّه إلى نصّ القيد. والثاني يُنزع لأنه يحجب
+    --     الأول عن القياس: `record_partner_adjustment` ترفض قيداً بلا نصّ،
+    --     ونصُّنا يصير `null` بضمّ `v_note` الفارغ إليه — فيرتدّ النداءُ من
+    --     الدفتر قبل أن يبلغ صفَّ الفشل، ويبقى حارسُ الصفّ **غيرَ مقيس**.
+    --     وبعد نزعهما معاً يبقى حارسٌ واحد: مُشغّلُ الصفّ — وهو ما يقيسه هذا
+    --     التأكيد (حارسان مستقلان لقدرةٍ خطرة، النمط ٧ في `LESSONS`).
+    v_def := pg_get_functiondef(
+               to_regprocedure('public.mark_booking_failed(uuid,text,text,numeric,text)')::oid);
+    if v_def not like '%البند ٨ يشترط تثبيته في السجل%' then
+      raise exception '(س-٦أ) 🔴 لا شرطَ مبررٍ في mark_booking_failed — 0130 غير مطبَّقة أو نُقضت';
+    end if;
+    /*
+     * 🔴 الطفرةُ بتعبيرٍ نمطيّ لا بنصٍّ حرفيّ.
+     *
+     * كانت `replace(...)` تشترط مسافاتِ البادئة حرفاً بحرف، فلمّا كتبت `0130`
+     * الحارسَ بمسافاتٍ أخرى **لم يقع الاستبدالُ أصلاً** — فبقي الحارسُ قائماً،
+     * ومرّ المنعُ منه لا من مُشغّل الصفّ، **والطفرةُ صارت عقيماً تقيس نفسها**.
+     * (وكشفَها التأكيدُ التالي، فالتصميمُ سليمٌ والنصُّ وحده كان هشّاً.)
+     *
+     * فالنمطُ الآن يمسك الكتلة من `if` إلى `end if;` أياً كانت بادئتُها،
+     * ويشدّها إلى رسالةِ الحارس نفسِها فلا يبتلع كتلةً أخرى.
+     */
+    v_mut := regexp_replace(v_def,
+      $mut$if[^;]*?v_note is null then\s*raise exception\s*'الخصم لا يقع بلا مبرر مكتوب[^']*'\s*using hint = 'override-note-required';\s*end if;$mut$,
+      'null; -- طفرة 0130');
+    if v_mut = v_def then
+      raise exception '(س-٦أ) 🔬 الطفرةُ لم تُغيّر الجسم — النمطُ لم يطابق حارسَ 0130، فالقياسُ عقيم';
+    end if;
+    v_mut := regexp_replace(v_mut, $mut$\|\|\s*' — '\s*\|\|\s*v_note$mut$, '');
+    execute v_mut;
+
+    v_msg := null;
+    begin
+      -- 🔴 سالبٌ عمداً
+      perform * from public.mark_booking_failed(v_ids[18], 'catest-0130', 'deduct', 100, null);
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception
+        '(س-٦أ) 🔴 نُزع شرطُ الدالة فمرّ الخصم — حارسُ الصفّ لا يحرس، والقدرةُ بحارسٍ واحد';
+    end if;
+    if v_msg not like '%مبرَّرٍ مكتوب%' then
+      raise exception '(س-٦أ) المنعُ جاء من رسالة «%» — ليست رسالة حارس الصفّ', v_msg;
+    end if;
+
+    -- 🔬 (س-٦ب) والطفرة الثانية: يُنزع حارسُ الصفّ **أيضاً** ⇒ العيبُ يمرّ أمام
+    --     أعيننا، فيُعرف أن التأكيدات أعلاه تقيس حارسَين لا عدماً
+    v_trg := pg_get_triggerdef(
+               (select t.oid from pg_trigger t join pg_class c on c.oid = t.tgrelid
+                 where c.relname = 'booking_failures'
+                   and t.tgname = 'booking_failures_deduct_reason'));
+    drop trigger booking_failures_deduct_reason on public.booking_failures;
+
+    v_msg := null;
+    begin
+      -- 🔴 سالبٌ عمداً
+      perform * from public.mark_booking_failed(v_ids[18], 'catest-0130', 'deduct', 100, null);
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    -- ثم يُعاد الحارسان **حرفياً** من النصَّين الملتقَطين لا من نسخةٍ مكتوبةٍ بيد (D-58)
+    execute v_trg;
+    execute v_def;
+
+    if v_msg <> '(قُبل)' then
+      raise exception
+        '(س-٦ب) 🔬 نُزع الحارسان ولم يمرّ العيب («%») — فتأكيدات (س-١) لا تقيس هذين الحارسين',
+        v_msg;
+    end if;
+    if not exists (
+      select 1 from public.booking_failures f
+      where f.booking_id = v_ids[18] and f.action_taken = 'deduct'
+        and coalesce(f.override_note, '') = ''
+    ) then
+      raise exception '(س-٦ب) 🔬 الطفرة لم تُنتج الصفَّ بلا مبرر — القياس بلا معنى';
+    end if;
+
+    -- (س-٦ج) وبالحارسَين المُعادين: نفسُ النداء على رحلةٍ أخرى ⇒ **يُرفض**
+    v_msg := null;
+    begin
+      -- 🔴 سالبٌ عمداً
+      perform * from public.mark_booking_failed(v_ids[19], 'catest-0130', 'deduct', 100, null);
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٦ج) 🔴 أُعيد الحارسان ولم يُمنع الخصمُ بلا مبرر';
+    end if;
+
+    -- (س-٧) وحارسُ الصفّ **مستقلٌّ عن الدالة**: إدراجٌ مباشر بلا مبرر يُرفض
+    v_msg := null;
+    begin
+      insert into public.booking_failures (
+        booking_id, reason_id, reason_slug, reason_label, default_action,
+        action_taken, deduct_amount, override_note, from_status,
+        subcontractor_id, payout_snapshot, ledger_effect, failed_at, created_by
+      )
+      select v_ids[19], r.id, r.slug, r.label, r.default_action,
+             'deduct', 50, 'ok', 'assigned',
+             v_sub, v_pay, 'none', now(), v_admin
+      from public.failure_reasons r where r.slug = 'catest-0130';
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٧) 🔴 صفُّ خصمٍ بمبررٍ من حرفين دخل الجدول من خارج الدالة';
+    end if;
+
+    -- ══ (س-٨) ونفسُ المسطرة على مسار **الاعتذار** — والمفتاح يُشعَل ثم يُطفأ ══
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+    perform public.withdraw_from_trip(v_ids[20], 'catest-0130', 'CA اعتذارٌ لقياس المبرر');
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+    update public.trip_closure_settings set apology_deduction_enabled = true where id;
+
+    select w.id into v_wid from public.trip_withdrawals w
+     where w.booking_id = v_ids[20] and not w.deduct_applied
+     order by w.withdrawn_at limit 1;
+
+    -- قصيرٌ ⇒ رفض
+    v_msg := null;
+    begin
+      perform public.apply_withdrawal_deduction(v_wid, 100, 'ok');
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٨أ) 🔴 «ok» مرّت مبرراً لخصمِ اعتذار';
+    end if;
+
+    -- ومبلغٌ غائب ⇒ رفض: الاقتراحُ المسجَّل في الصفّ لا يُنفَّذ بنفسه
+    v_msg := null;
+    begin
+      perform public.apply_withdrawal_deduction(v_wid, null, 'CA مبررٌ سليمٌ ومبلغٌ غائب');
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٨ب) 🔴 نُفِّذ خصمُ اعتذارٍ بلا مبلغٍ صريح';
+    end if;
+    if v_msg not like '%صريحاً%' then
+      raise exception '(س-٨ب) الرفض جاء برسالة «%» — ليست رسالة المبلغ الصريح', v_msg;
+    end if;
+
+    -- والسليمُ يمرّ، ويُثبَّت المبرر **في الصفّ** فيبلغ بوابةَ المتعهد
+    v_amt := public.apply_withdrawal_deduction(
+               v_wid, round(v_pay * 0.5, 2), 'CA اعتذارٌ متأخرٌ أربع ساعات قبل التحرك');
+    if v_amt <> round(v_pay * 0.5, 2) then
+      raise exception '(س-٨ج) نُفِّذ % والمطلوب %', v_amt, round(v_pay * 0.5, 2);
+    end if;
+    if not exists (
+      select 1 from public.trip_withdrawals w
+      where w.id = v_wid and w.deduct_applied
+        and w.deduct_note = 'CA اعتذارٌ متأخرٌ أربع ساعات قبل التحرك'
+    ) then
+      raise exception '(س-٨ج) 🔴 المبرر لم يُثبَّت في صفّ الاعتذار — فلا سبيل للمتعهد إليه';
+    end if;
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+    if not exists (
+      select 1 from public.portal_deductions() d
+      where d.booking_id = v_ids[20] and d.kind = 'apology'
+        and d.written_reason = 'CA اعتذارٌ متأخرٌ أربع ساعات قبل التحرك'
+    ) then
+      raise exception '(س-٨ج) 🔴 خصمُ الاعتذار لا يبلغ بوابةَ المتعهد بمبرِّره';
+    end if;
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    -- 🔬 (س-٨د) وحارسُ صفّ الاعتذار مستقلٌّ عن الدالة كذلك: يُسنَد الحجزُ من
+    --     جديد ويُعتذَر عنه ثانيةً — ثم تُرفع رايةُ «خُصم» بتحديثٍ مباشر بلا
+    --     مبرَّرٍ كافٍ، فتُرفض. (والصفُّ المستهدَف موجودٌ فعلاً، وإلا كان
+    --     التأكيدُ يقيس تحديثاً على صفر صفوف — أي فحصاً لا يمكن أن يفشل.)
+    update public.dispatches d
+       set status = 'assigned', assigned_subcontractor_id = v_sub,
+           assigned_payout = v_pay, assigned_at = now()
+     where d.booking_id = v_ids[20];
+    update public.bookings b set status = 'assigned' where b.id = v_ids[20];
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+    perform public.withdraw_from_trip(v_ids[20], 'catest-0130', 'CA اعتذارٌ ثانٍ لقياس الحارس');
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    select count(*)::integer into v_n from public.trip_withdrawals w
+     where w.booking_id = v_ids[20] and not w.deduct_applied;
+    if v_n <> 1 then
+      raise exception '(س-٨د) الفرضية لم تتحقق: % صفَّ اعتذارٍ غير منفَّذ لا واحداً', v_n;
+    end if;
+
+    v_msg := null;
+    begin
+      update public.trip_withdrawals w
+         set deduct_applied = true, deduct_amount = 10, deduct_note = '.'
+       where w.booking_id = v_ids[20] and not w.deduct_applied;
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(س-٨د) 🔴 رايةُ «خُصم» رُفعت بمبررٍ من محرفٍ واحد بتحديثٍ مباشر';
+    end if;
+    if v_msg not like '%مبرَّرٍ مكتوب%' then
+      raise exception '(س-٨د) المنعُ جاء من رسالة «%» — ليست رسالة حارس الصفّ', v_msg;
+    end if;
+
+    update public.trip_closure_settings set apology_deduction_enabled = false where id;
+
+    raise notice
+      '✔ (س) 🔴 0130 — لا خصمَ بلا مبلغٍ صريحٍ موجب ولا بلا مبرَّرٍ مكتوبٍ يبلغ % حرفاً بعد طيّ المسافات، على المسارين معاً؛ والمبررُ يُخزَّن مطبَّعاً في الصفّ ويسافر مع القيد ويصل بوابةَ المتعهد بلا مرجعِ عميل؛ وحارسان مستقلان — نزعُ حارسِ الدالة وحده لا يُمرّر العيب، ونزعُهما معاً يُمرّره ثم تُعيدهما فيُمنع',
+      public.deduction_reason_min_chars();
+
     raise exception 'COMPLETION_APOLOGY_TESTS_ROLLBACK';
   exception
     when others then
@@ -1494,6 +1914,6 @@ begin
   perform set_config('request.jwt.claim.sub', '', false);
   perform set_config('request.jwt.claims', '', false);
 
-  raise notice 'ALL PASSED — البوابة قائمة: المتعهد يطلب ولا يتحرك دينار، والاعتماد (إدارياً أو تلقائياً بفاعلٍ اسمه auto) هو وحده ما يحرّك الدفتر والولاء؛ و🔴 الاعتماد التلقائي صار امتيازَ الصمت وحده — طلبٌ يلي رفضاً إدارياً لا يُعتمد أبداً، وتظلّمٌ مفتوح يجمّده حتى يُحسم، وكلاهما بسببٍ مكتوبٍ في الصفّ وعدّادٍ منفصل؛ والاعتذار بعد الإسناد صار له مخرجٌ يُخلي الإسناد ويعيد الحجز مؤكَّداً ويستثني المنسحب من الموجة التالية ويتفرّع بعتبةٍ من اللوحة؛ و🔴 سقفُ الخصم صار عن الرحلة نفسها لا عن كل صفّ اعتذار — يُقصّ عند المتبقّي ويُرفض عند الصفر ومجموعُه لا يتجاوز المستحق، وخصمُ الاعتذار خاملٌ بالبذرة بمنفِّذٍ حقيقي خلف مفتاحه، ومعه بابُ تظلّمٍ لا يفتحه صاحبه على نفسه — وكلُّ حاجزٍ منها مقيسٌ بنزعه ثم إعادته حرفياً، وصفر أثرٍ في القاعدة';
+  raise notice 'ALL PASSED — البوابة قائمة: المتعهد يطلب ولا يتحرك دينار، والاعتماد (إدارياً أو تلقائياً بفاعلٍ اسمه auto) هو وحده ما يحرّك الدفتر والولاء؛ و🔴 الاعتماد التلقائي صار امتيازَ الصمت وحده — طلبٌ يلي رفضاً إدارياً لا يُعتمد أبداً، وتظلّمٌ مفتوح يجمّده حتى يُحسم، وكلاهما بسببٍ مكتوبٍ في الصفّ وعدّادٍ منفصل؛ والاعتذار بعد الإسناد صار له مخرجٌ يُخلي الإسناد ويعيد الحجز مؤكَّداً ويستثني المنسحب من الموجة التالية ويتفرّع بعتبةٍ من اللوحة؛ و🔴 سقفُ الخصم صار عن الرحلة نفسها لا عن كل صفّ اعتذار — يُقصّ عند المتبقّي ويُرفض عند الصفر ومجموعُه لا يتجاوز المستحق، وخصمُ الاعتذار خاملٌ بالبذرة بمنفِّذٍ حقيقي خلف مفتاحه، ومعه بابُ تظلّمٍ لا يفتحه صاحبه على نفسه — و🔴 0130 — لا خصمَ بلا مبلغٍ صريحٍ موجب ولا بلا مبرَّرٍ مكتوبٍ يبلغ عشرة أحرف بعد طيّ المسافات، يُخزَّن مطبَّعاً في الصفّ ويسافر مع القيد **ويصل بوابةَ المتعهد** كما يشترط البند ٨، بحارسَين مستقلَّين؛ وكلُّ حاجزٍ منها مقيسٌ بنزعه ثم إعادته حرفياً، وصفر أثرٍ في القاعدة';
 end;
 $$;

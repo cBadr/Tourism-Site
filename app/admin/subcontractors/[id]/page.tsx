@@ -120,7 +120,7 @@ const hasSupabaseEnv = () =>
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * ملخص مقاصة متعهد — من العرض `v_partner_settlements` (المرحلة ٧، ثم 0027).
+ * ملخص تسوية متعهد — من العرض `v_partner_settlements` (المرحلة ٧، ثم 0027).
  *
  * `netDue` هو الرقم الوحيد الذي يُدفع أو يُطالَب به، **وإشارته تنقلب**:
  * موجب = مستحق له علينا، وسالب = محصَّلٌ زائد عليه لنا. أي شاشة تفترض اتجاهاً
@@ -218,7 +218,7 @@ type Loaded = {
   routeDetail: { hit: RouteHit; items: PriceItemView[] } | null;
 };
 
-/** قراءة مقاصة شريك واحد — كل رقم محسوب في Postgres، ولا جمع هنا */
+/** قراءة تسوية شريك واحد — كل رقم محسوب في Postgres، ولا جمع هنا */
 async function loadSettlement(
   supabase: NonNullable<Awaited<ReturnType<typeof createServerSupabase>>>,
   subcontractorId: string
@@ -576,7 +576,7 @@ function SocialLinks({ socials }: { socials: SubcontractorView["socials"] }) {
   );
 }
 
-/** خانة رقم واحدة داخل ملخص المقاصة */
+/** خانة رقم واحدة داخل ملخص التسوية */
 function SettlementTile({
   title,
   value,
@@ -602,7 +602,7 @@ function SettlementTile({
 }
 
 /**
- * ملخص المقاصة — الرقم الذي يُدفع أو يُطالَب به، بصياغة تحترم إشارته.
+ * ملخص التسوية — الرقم الذي يُدفع أو يُطالَب به، بصياغة تحترم إشارته.
  *
  * المعادلة كلها في Postgres، و**بأربعة حدود** منذ 0029:
  * `net_due = مستحقاته − ما حصّله نقداً − ما دفعناه له + ما سدّده لنا`.
@@ -642,7 +642,7 @@ function SettlementCard({
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="flex items-center gap-1.5 font-heading text-base font-bold">
           <Scale className="size-4 text-primary" />
-          المقاصة
+          التسوية
           <HelpTip>
             العميل يدفع لنا عرباناً ويسلّم الباقي <span className="font-semibold">نقداً
             للسائق</span>. فالمتعهد يخرج من الرحلة وقد قبض جزءاً من مالنا ونحن مدينون له
@@ -676,7 +676,7 @@ function SettlementCard({
       ) : (
         <>
           <div className={`rounded-lg border p-4 ${SETTLEMENT_PANEL_TONE[wording.tone]}`}>
-            <p className="text-xs text-muted-foreground">صافي المقاصة الآن</p>
+            <p className="text-xs text-muted-foreground">صافي التسوية الآن</p>
             <p className="mt-0.5 text-3xl font-bold" dir="ltr">
               {headline}
             </p>
@@ -700,7 +700,7 @@ function SettlementCard({
                   <Link href="/admin/finance/partners" className="underline">
                     بطاقة سقف الديون
                   </Link>{" "}
-                  في شاشة المقاصة.
+                  في شاشة التسويات.
                   {wording.dispatchBlocked
                     ? " ولإسناد رحلة بعينها له رغم ذلك، استعمل الإسناد اليدوي من شاشة الطلب بسبب مكتوب."
                     : ""}
@@ -858,6 +858,16 @@ export default async function SubcontractorProfilePage({
     rejectedsheet: "رُفض الكشف كله وعادت مساراته إلى المتعهد بملاحظتك.",
     tgunlinked:
       "فُصل ربط تليجرام عن هذا المتعهد — لن تصله عروض عليه حتى يربط حساباً مستقلاً من بوابته.",
+    // 0135 — «الكشف كله» و«المُعلَّم منه» و«خانةٌ حُفظت» ثلاثةُ أشياء لا واحد
+    approvedsome:
+      "اعتُمد ما علّمتَ عليه وحده — وبقية مسارات الكشف ما زالت بانتظار قرارك.",
+    rejectedsome:
+      "رُفض ما علّمتَ عليه وحده وعاد إلى المتعهد بملاحظتك — وما اعتُمد من الكشف لم يُمَسّ.",
+    costlive:
+      "حُفظت التكلفة على قائمةٍ معتمدة — تدخل التسعير فوراً، وكُتب سطر تدقيق باسمك وأُشعِر المتعهد بالتعديل.",
+    costsaved:
+      "حُفظت التكلفة. القائمة ليست معتمدة فلا يُسعَّر بها أحد بعد، وكُتب سطر تدقيق باسمك.",
+    costsame: "الرقم كما هو — لم يُكتب شيء ولم يُرسل إشعار.",
   };
 
   if (!sub) {
@@ -1033,8 +1043,8 @@ export default async function SubcontractorProfilePage({
       </Card>
 
       {/*
-        المقاصة مباشرة بعد التغطية: التغطية تقول «ماذا يقدّم هذا الشريك»،
-        والمقاصة تقول «وكم بيننا وبينه الآن» — وهو أول ما يُسأل عنه عند الاتصال به.
+        التسوية مباشرة بعد التغطية: التغطية تقول «ماذا يقدّم هذا الشريك»،
+        والتسوية تقول «وكم بيننا وبينه الآن» — وهو أول ما يُسأل عنه عند الاتصال به.
       */}
       <SettlementCard
         subcontractorId={sub.id}
@@ -1364,6 +1374,7 @@ export default async function SubcontractorProfilePage({
                 pricing={pricing}
                 returnTo={`/admin/subcontractors/${sub.id}`}
                 readOnly={!ready}
+                canEditCosts={ready}
               />
             ))}
 
@@ -1465,6 +1476,10 @@ export default async function SubcontractorProfilePage({
                 items={routeDetail.items}
                 pricing={pricing}
                 reviewHref="/admin/subcontractors/reviews"
+                canEditCosts={ready}
+                /* الوجهة تحمل بحثَ المسارات وصفحتَه والمسارَ المفتوح، فلا يعود
+                   المشرف إلى رأس القائمة بعد كل تعديل خانة */
+                returnTo={routesHref({})}
               />
             )}
           </>
@@ -1574,7 +1589,7 @@ export default async function SubcontractorProfilePage({
         <Separator />
 
         <p className="text-xs text-muted-foreground">
-          هذه الشاشة تُعرّف الشريك وتضبط مشاركته في التسعير وتعرض مقاصته. إسناد الرحلات
+          هذه الشاشة تُعرّف الشريك وتضبط مشاركته في التسعير وتعرض تسويته. إسناد الرحلات
           (البث والقبول خلال مهلة) يُدار من شاشة «الإسناد»، وتفصيل حسابه سطراً سطراً وتسجيل
           دفعاته في «كشف الحساب».
         </p>

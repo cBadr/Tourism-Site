@@ -42,7 +42,7 @@ import { type DateRange, rangeSentence, resolveRange } from "../../_components/r
  *
  * (٢) **الرصيد لا يُجمع هنا.** عمود الرصيد التراكمي يصل محسوباً من دالة
  *     `partner_statement`؛ جمعه في الواجهة كان سيعطي رقماً يختلف عن رقم شاشة
- *     المقاصة أول ما يتجاوز الكشف سقف الصفوف أو يتغيّر ترتيب سطرين بنفس اللحظة.
+ *     التسويات أول ما يتجاوز الكشف سقف الصفوف أو يتغيّر ترتيب سطرين بنفس اللحظة.
  *
  * (٣) **يُطبع أبيض على أسود بلا شريط جانبي.** قواعد `@media print` تخفي تنقّل
  *     اللوحة والفلاتر وتفكّ ألوان البطاقات، فتخرج ورقة تُسلَّم لطرف ثانٍ لا لقطة
@@ -98,7 +98,7 @@ type Summary = {
   overLimit: boolean | null;
 };
 
-/** ملخص فارغ لشريك لا صفّ مقاصة له بعد — «غير معروف» لا صفر */
+/** ملخص فارغ لشريك لا صفّ تسوية له بعد — «غير معروف» لا صفر */
 const BLANK_SUMMARY: Omit<Summary, "companyName"> = {
   earned: null,
   collected: null,
@@ -167,7 +167,7 @@ async function callStatement(supabase: Supabase, id: string, range: DateRange) {
   });
 }
 
-/** اسم الشركة من سجل المتعهدين — احتياط حين لا صف مقاصة له بعد */
+/** اسم الشركة من سجل المتعهدين — احتياط حين لا صف تسوية له بعد */
 async function fallbackName(supabase: Supabase, id: string): Promise<string | null> {
   try {
     const res = await supabase.from("subcontractors").select("*").eq("id", id).maybeSingle();
@@ -334,7 +334,7 @@ export default async function PartnerStatementPage({
               }
             />
           )}
-          {/* لوح التسوية يعيش في شاشة المقاصات؛ بدون هذا الرابط كان الكشف طريقاً
+          {/* لوح التسوية يعيش في شاشة التسويات؛ بدون هذا الرابط كان الكشف طريقاً
               مسدوداً: يقول «سجّل الدفعة» ولا سبيل إليها من هنا. والاسم «تسوية» لا
               «دفعة» منذ 0029: اللوح يقرأ `net_due` ويفتح فرع الدفع أو فرع التحصيل
               بنفسه، فوعدُ زرٍّ بالدفع وحده يكذب على نصف المتعهدين. */}
@@ -348,7 +348,7 @@ export default async function PartnerStatementPage({
             href="/admin/finance/partners"
             className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
           >
-            كل المقاصات
+            كل التسويات
             <ArrowLeft className="size-3.5" />
           </Link>
         </div>
@@ -541,7 +541,7 @@ export default async function PartnerStatementPage({
               <Link href="/admin/finance/partners" className="underline">
                 بطاقة سقف الديون
               </Link>{" "}
-              في شاشة المقاصة.
+              في شاشة التسويات.
               {wording.dispatchBlocked
                 ? " ولاستئناف الإسناد إليه: حصّل منه المبلغ وسجّله تسويةً، أو ارفع السقف، أو أسند له رحلة بعينها يدوياً من شاشة الطلب بسبب مكتوب."
                 : ""}

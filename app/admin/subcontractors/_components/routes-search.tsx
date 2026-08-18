@@ -12,6 +12,7 @@ import { asNumber, asText, pick } from "../../orders/_components/booking-ui";
 import type { PricingContext } from "./pricing-context";
 import {
   customerPrice,
+  EditableCost,
   ListStatusBadge,
   readPriceItem,
   type PriceItemView,
@@ -409,28 +410,58 @@ export async function loadRouteItems(
 }
 
 /**
- * بطاقةُ تفصيل مسارٍ واحد — **بلا زرِّ قرار بقصد**.
+ * بطاقةُ تفصيل مسارٍ واحد — **بلا زرِّ قرارٍ بقصد، ومعها تحريرُ الخانة بقصد**.
  *
- * 🔴 والسبب بنيويّ لا تجميلي: قرارُ الاعتماد بعد `0109` يقع على **دفعةٍ كاملة**
+ * 🔴 لا زرَّ اعتماد: قرارُ الاعتماد بعد `0109` يقع على **دفعةٍ كاملة**
  * (`review_price_sheet` مع `p_expected`)، وأيُّ زرٍّ يظهر بجوار صفٍّ خرج من بحثٍ
  * مرشَّح يفتح بابَ اعتمادٍ لا يطابق ما عُرض. فمن أراد أن يقرّر فمن طابور
  * المراجعة أو من ملف المتعهد، حيث تُعرض الدفعة كاملةً غير مرشَّحة.
  * والرابط إلى هناك مكتوبٌ في البطاقة نفسها كي لا يبحث عنه أحد.
+ *
+ * ✏️ **ونعم للتحرير في مكانه** (0135) — والفارقُ بينهما ليس ذوقاً:
+ *   • **الاعتماد** يغيّر حالةَ **دفعة**، فسياقُه الدفعةُ كاملةً لا صفٌّ مرشَّح.
+ *   • **تصحيحُ رقم** يغيّر **خانةً واحدة بعينها**، وسياقُه هو هذه الخانة نفسها.
+ *     ولا شيء في تصحيحها يتّسع إلى غيرها، ولا يعتمد على ما عُرض حولها.
+ * وهنا بالذات موضعُه الأنفع: هذه الشاشة هي التي يفتحها المدير حين يبحث عن مسارٍ
+ * **معتمد** ليصحّح سعره — والقاعدة تكتب حينها سطرَ تدقيقٍ وتُشعر المتعهد.
  */
 export function RouteDetailCard({
   hit,
   items,
   pricing,
   reviewHref,
+  canEditCosts = false,
+  returnTo,
 }: {
   hit: RouteHit;
   items: PriceItemView[];
   pricing: PricingContext;
   reviewHref: string | null;
+  /** تحرير الخانات في مكانها — تُطفئه شاشةٌ لم تُقرأ لها القاعدة */
+  canEditCosts?: boolean;
+  /** وجهةُ العودة بعد الحفظ — تحمل البحث والصفحة فلا يضيعان بعد كل تعديل */
+  returnTo?: string;
 }) {
+  const editable = canEditCosts && typeof returnTo === "string" && returnTo !== "";
+
   const priced = items
     .map((item) => ({ item, info: pricing.byClass.get(item.classSlug) ?? null }))
     .sort((a, b) => (a.info?.sort ?? 999) - (b.info?.sort ?? 999));
+
+  // الفئاتُ بلا سعر تظهر بخانةٍ فارغة حين يكون التحرير مفتوحاً — إضافةُ سعرٍ
+  // بنقرةٍ في مكانها بدل جملةٍ تقول «ناقص» وتترك المدير يبحث عن بابها.
+  const pricedSlugs = new Set(items.map((i) => i.classSlug));
+  const rows = editable
+    ? [
+        ...priced,
+        ...pricing.classes
+          .filter((c) => c.active && !pricedSlugs.has(c.slug))
+          .map((info) => ({
+            item: { priceListId: hit.id, classSlug: info.slug, cost: null } as PriceItemView,
+            info,
+          })),
+      ]
+    : priced;
 
   return (
     <Card className="space-y-3 p-5" id="route-detail">
@@ -458,7 +489,7 @@ export function RouteDetailCard({
         {hit.sheetTitle ? ` · كشف: ${hit.sheetTitle}` : ""}
       </p>
 
-      {priced.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           لا توجد أسعار فئات في هذا المسار — لا يغطي أي رحلة حتى يضيف المتعهد سعراً
           واحداً على الأقل.
@@ -469,7 +500,18 @@ export function RouteDetailCard({
             <thead>
               <tr className="border-b border-border text-xs text-muted-foreground">
                 <th className="p-2 text-start font-medium">الفئة</th>
-                <th className="p-2 text-start font-medium">تكلفة المتعهد</th>
+                <th className="p-2 text-start font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    تكلفة المتعهد
+                    {editable && (
+                      <HelpTip>
+                        اكتب في الخانة واضغط Enter أو زرّ القلم — يُحفظ فوراً. وعلى
+                        مسارٍ معتمد يُكتب سطر تدقيق باسمك ويصل المتعهد إشعارٌ بالتعديل،
+                        لأن الرقم حينها هو ما يُسعَّر به عميلٌ الآن.
+                      </HelpTip>
+                    )}
+                  </span>
+                </th>
                 <th className="p-2 text-start font-medium">
                   <span className="inline-flex items-center gap-1.5">
                     سعر العميل
@@ -483,7 +525,7 @@ export function RouteDetailCard({
               </tr>
             </thead>
             <tbody>
-              {priced.map(({ item, info }) => {
+              {rows.map(({ item, info }) => {
                 const preview =
                   item.cost === null
                     ? null
@@ -491,8 +533,17 @@ export function RouteDetailCard({
                 return (
                   <tr key={item.classSlug} className="border-b border-border last:border-0">
                     <td className="p-2 align-top">{info?.title ?? item.classSlug}</td>
-                    <td className="p-2 align-top" dir="ltr">
-                      {item.cost === null ? "—" : formatMoney(item.cost, pricing.currency)}
+                    <td className="p-2 align-top">
+                      <EditableCost
+                        listId={hit.id}
+                        classSlug={item.classSlug}
+                        className={info?.title ?? item.classSlug}
+                        cost={item.cost}
+                        currency={pricing.currency}
+                        status={hit.status}
+                        canEdit={editable}
+                        returnTo={returnTo ?? ""}
+                      />
                     </td>
                     <td className="p-2 align-top font-bold" dir="ltr">
                       {preview === null ? "—" : formatMoney(preview.price, pricing.currency)}
