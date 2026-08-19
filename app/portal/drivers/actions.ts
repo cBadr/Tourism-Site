@@ -46,6 +46,17 @@ import { portalSetupAccess } from "../_lib/session";
 
 const url = (qs: string) => `/portal/drivers?${qs}`;
 
+/**
+ * العودة إلى **لوح السائق مفتوحاً** بعد الحفظ أو الرفع.
+ *
+ * 🔴 وليست زينة: لوحُ السائق يُفتح بالرابط (`?edit=`) كي تُوقَّع روابط صوره
+ * لحظة التصيير — عمرُها دقيقة (`DRIVER_DOC_URL_TTL`). فالعودة إلى صفحةٍ بلا
+ * `edit` بعد رفع صورةٍ تعني ألّا يرى الشريك ما رفعه للتوّ، وهو نصفُ العطل
+ * الذي عولج في `lib/drivers/doc-thumb.tsx` في 2026-08-18.
+ */
+const panelUrl = (driverId: string, qs: string) =>
+  `/portal/drivers?${qs}&edit=${encodeURIComponent(driverId)}#driver-panel`;
+
 /** حدود مطابقة لقيود الجدول في 0040 و0120 */
 const MIN_NAME = 2;
 const MAX_NAME = 120;
@@ -136,7 +147,7 @@ export async function saveDriver(driverId: string, formData: FormData) {
   if (!res.data || res.data.length === 0) redirect(url("error=notfound"));
 
   revalidatePath("/", "layout");
-  redirect(url("saved=1"));
+  redirect(panelUrl(driverId, "saved=1"));
 }
 
 /** عمود المسار لكل صنف — الخريطة مكتوبة مرة واحدة فلا تنحرف نسختان */
@@ -202,7 +213,7 @@ export async function uploadDriverDocument(driverId: string, formData: FormData)
   if (oldPath && oldPath !== path) await removeDriverDocs(supabase, [oldPath]);
 
   revalidatePath("/", "layout");
-  redirect(url("saved=1"));
+  redirect(panelUrl(driverId, "saved=1"));
 }
 
 /** حذف صورة قبل انقضاء مدتها — حقُّ الشريك في بيانات سائقه، ويبقى النصّ كما هو */
@@ -247,7 +258,7 @@ export async function removeDriverDocument(driverId: string, formData: FormData)
   if (oldPath) await removeDriverDocs(supabase, [oldPath]);
 
   revalidatePath("/", "layout");
-  redirect(url("saved=1"));
+  redirect(panelUrl(driverId, "saved=1"));
 }
 
 /**
@@ -282,7 +293,7 @@ export async function toggleDriver(driverId: string) {
   if (res.error || !res.data || res.data.length === 0) redirect(url("error=save"));
 
   revalidatePath("/", "layout");
-  redirect(url("saved=1"));
+  redirect(panelUrl(driverId, "saved=1"));
 }
 
 export async function deleteDriver(driverId: string) {

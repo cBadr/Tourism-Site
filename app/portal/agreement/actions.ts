@@ -26,7 +26,13 @@ import { portalSetupAccess } from "../_lib/session";
  *     وهو بعينه ما يُبطل الاحتجاج بالسجل.
  */
 
-const url = (qs: string) => `/portal/agreement?${qs}`;
+/**
+ * ⚠ **الوجهة صارت ملفَّ المستخدم** بعد نقل القسم إليه (2026-08-19): القبول يقع
+ * من `/portal/profile#agreement`، فالعودةُ إلى `/portal/agreement` كانت ستُنتج
+ * قفزتين (تحويلٌ ثم هبوط) على فعلٍ ينتظره الشريك. والمرساة تُعيده إلى القسم
+ * نفسه لا إلى أعلى الصفحة — وهي مسافةُ شاشتين في «حسابي».
+ */
+const url = (qs: string) => `/portal/profile?${qs}#agreement`;
 
 /** رموز الخطأ التي ترفعها القاعدة (`using hint = …`) مترجَمةً إلى رمز شاشة */
 function codeFor(message: string, hint: string | null): string {
@@ -67,7 +73,14 @@ export async function acceptAgreement(formData: FormData) {
     والشريطُ فيها يُقرآن من نفس النداء. فبطلانُ الذاكرة يشمل الاثنتين، وإلا قرأ
     الشريك «لم تقبل بعد» بعد أن قبل — وهو أسوأ من ألا تظهر رسالة نجاح أصلاً.
   */
+  revalidatePath("/portal/profile");
   revalidatePath("/portal/agreement");
   revalidatePath("/portal");
-  redirect(url("saved=1"));
+  /*
+    ⚠ `signed=1` لا `saved=1`: الوجهة صارت `/portal/profile` وهي تستقبل **ثلاثة**
+    أفعالٍ من ثلاثة أقسام. ولو تشاركا الرمز نفسه لقرأ الشريكُ بعد توقيعه
+    «حُفظت بيانات ملفك» — رسالةٌ صحيحةُ اللون كاذبةُ المعنى، وهي أسوأ من الصمت
+    على شاشةٍ يوثّق فيها التزاماً قانونياً.
+  */
+  redirect(url("signed=1"));
 }

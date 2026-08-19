@@ -4,10 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import type { PriceImportRow } from "@/lib/subcontractor-types";
-import { clamp, MAX_TEXT, text } from "../../_lib/form";
+import { clamp, MAX_TEXT, text, toLatinDigits } from "../../_lib/form";
 import { portalSetupAccess } from "../../_lib/session";
 import { rowsFromCsv } from "../_lib/csv";
-import { loadCoveredClasses, toImportRow } from "../_lib/sheets";
+import { loadCoveredClasses, ROUTE_COLUMNS, toImportRow, toRoute } from "../_lib/sheets";
 
 /**
  * إجراءات كشوف الأسعار — الكشف هو ما يسمّيه المالك «قائمة الأسعار»: يضم
@@ -174,4 +174,124 @@ export async function importSheetRows(
     unknownHeaders,
     rows,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* التحرير الفوريّ لأسعار مسارٍ واحد — من جدول الكشف بلا مغادرة الصفحة  */
+/* ------------------------------------------------------------------ */
+
+export type RowEditState =
+  | { status: "idle" }
+  | { status: "error"; message: string }
+  | { status: "saved"; classesSaved: number; note: string | null };
+
+/**
+ * حفظ أسعار مسارٍ واحد من صفّه في الجدول — ملاحظة بدر: «بمجرد الضغط على المسار
+ * يمكن تعديل أي جزء فيه ومن ثم يتم حفظها بشكل فوري ويظهر بعدها زر الإرسال
+ * للاعتماد».
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 لا دالةَ قاعدةٍ جديدة تحت هذا الزرّ — تفويضٌ كامل (القاعدة الذهبية ١٢)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * البابُ هو `import_price_sheet_rows` نفسه الذي يستعمله رفع CSV: صفٌّ واحد
+ * بحمولةٍ كاملة و`p_commit = true`. وكلُّ حارسٍ تحتاجه هذه الشاشة قائمٌ فيه
+ * سلفاً، ومقيسٌ حيّاً في `supabase/tests/portal_price_edit_tests.sql`:
+ *
+ * | الحارس | مَن ينفّذه |
+ * |---|---|
+ * | الهوية والملكية: كشفُك أنت لا كشفُ شريك | `current_subcontractor_id()` داخل الدالة |
+ * | 🔴 **المسار المعتمد لا يُحرَّر إطلاقاً** | «المسار معتمد ويعمل الآن — الاستيراد لا يعدّله» |
+ * | والمسار على مكتب المشرف لا يُحرَّر | «المسار على مكتب المشرف الآن» |
+ * | `NaN` · `±Infinity` · `1e1000` · نصٌّ · فاصلةٌ مبهمة | `numeric_or_null` + سقف المليون×١٠ (‏0108/0112) |
+ * | فئةٌ لا يغطّيها أسطولك | `price_sheet_classes` — التعريف الوحيد |
+ *
+ * 🔴 **والفرق الجوهريّ عن شاشة المشرف** (`set_price_list_item_cost` في 0135):
+ * تلك تحرّر **المعتمَدة** بأثرِ تدقيقٍ وإشعارٍ للمتعهد، لأن المشرف يملك أن
+ * يغيّر رقماً يُسعَّر به عميلٌ الآن. وهذه لا تحرّرها **أبداً** — والمتعهد يمرّ
+ * بالمراجعة كي لا يتغيّر تحت عرضٍ حيّ سعرٌ وقّع عليه (البند ٨ من الاتفاقية).
+ * فالدالتان معنيان مختلفان لا نسختان من معنى واحد.
+ *
+ * ⚠ **والنقاط والعنوان تُقرآن من القاعدة لا من المتصفح**: ما يرسله النموذج هو
+ *   الأسعار وحدها. فلا تُزوَّر إحداثية بحقلٍ مخفيّ، والعنوانُ يبقى كما هو فيطابق
+ *   المسار القائم (‏الاستيراد يطابق بالعنوان) ولا يُنشأ مسارٌ ثانٍ بالخطأ.
+ *   وتغييرُ العنوان أو النقاط مكانه محرّر المسار الكامل — ورابطُه في الصفّ نفسه.
+ *
+ * 🔴 **ولماذا حالةٌ مُعادة لا `redirect`** (خلافاً لبقية إجراءات البورتال):
+ *   سببُ الرفض جملةٌ عربية كاملة تكتبها القاعدة («فئات لا يغطّيها أسطولك: …»)،
+ *   ووضعُها في `?error=` يقتلها إلى رمز. وهو نفس قرار `importSheetRows` أعلاه،
+ *   ونفس علّته: التقرير هو الرسالة. و«الحفظ الفوريّ» يعني ألّا تُغادر الصفحة.
+ */
+export async function saveRoutePrices(
+  sheetId: string,
+  routeId: string,
+  _prev: RowEditState,
+  formData: FormData
+): Promise<RowEditState> {
+  const access = await portalSetupAccess();
+  if (!access.ok) {
+    return { status: "error", message: "الجلسة غير صالحة — أعد تحميل الصفحة والدخول." };
+  }
+  const { supabase, sub } = access;
+
+  // حزامان: RLS تعزل الصفوف، والشرط المكتوب يجعل النية مقروءة ويمنع مساراً من كشفٍ آخر
+  const found = await supabase
+    .from("price_lists")
+    .select(ROUTE_COLUMNS)
+    .eq("id", routeId)
+    .eq("sheet_id", sheetId)
+    .eq("subcontractor_id", sub.id)
+    .maybeSingle();
+
+  if (found.error || !found.data) {
+    return { status: "error", message: "المسار غير موجود في هذا الكشف أو ليس لحسابك." };
+  }
+  const route = toRoute(found.data as Record<string, unknown>);
+
+  // الفئات المعروضة للتسعير في هذا المسار — من `price_sheet_classes` وحدها
+  const { classes } = await loadCoveredClasses(supabase, undefined, routeId);
+  const prices: Record<string, string> = {};
+  for (const cls of classes) {
+    if (!cls.covered) continue;
+    const raw = text(formData, `cost.${cls.slug}`);
+    // الفراغ يعني «لا أغطي هذه الفئة» ولا يعني صفراً — فلا يُرسَل أصلاً
+    if (raw === null) continue;
+    // الأرقام العربية الهندية تُقبل وتُطبَّع قبل الإرسال (اتفاقية المستودع)،
+    // **والحكم على الرقم يبقى في القاعدة**: ما بعد التطبيع يُرسَل نصّاً كما هو.
+    prices[cls.slug] = toLatinDigits(raw);
+  }
+
+  const res = await supabase.rpc("import_price_sheet_rows", {
+    p_sheet_id: sheetId,
+    p_rows: [
+      {
+        title: route.title,
+        originLabel: route.originLabel,
+        originLat: route.originLat,
+        originLng: route.originLng,
+        originRadiusKm: route.originRadiusKm,
+        destLabel: route.destLabel,
+        destLat: route.destLat,
+        destLng: route.destLng,
+        destRadiusKm: route.destRadiusKm,
+        bidirectional: route.bidirectional,
+        prices,
+      },
+    ],
+    p_commit: true,
+  });
+
+  if (res.error) return { status: "error", message: res.error.message };
+
+  const rows = ((res.data ?? []) as Record<string, unknown>[]).map(toImportRow);
+  const row = rows[0];
+  if (!row) {
+    return { status: "error", message: "لم تُرجع القاعدة حكماً على هذا المسار — أعد المحاولة." };
+  }
+  if (!row.accepted) {
+    return { status: "error", message: row.reason ?? "رُفض الحفظ بلا سبب مذكور." };
+  }
+
+  revalidatePath("/", "layout");
+  return { status: "saved", classesSaved: row.classesSaved, note: row.reason };
 }

@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  BellRing,
   CarFront,
   IdCard,
   LayoutDashboard,
   ReceiptText,
-  ScrollText,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -20,39 +18,54 @@ import { cn } from "@/lib/utils";
  * المتعهد شريك يفتح أداته لينجز مهمة بعينها، لا مدير يستعرض نظاماً كاملاً؛
  * لذلك التنقل صف أفقي هادئ يعمل بنفس الشكل على الهاتف (تمرير أفقي عند الضيق).
  *
+ * ── 🔴 ما تغيّر في 2026-08-19: سبعةُ بنود صارت خمسة ─────────────────────────
+ *
+ * ملاحظة المالك: «ليس لدينا user profile مناسب للمتعهد مع إمكانية إدارة حسابه من
+ * خلاله … تكون إعدادات قنوات التنبيه داخل إعدادات حساب المتعهد … وأيضاً الاتفاقية
+ * تكون في ملف المستخدم … بدلاً من أن تكون في الواجهة».
+ *
+ * وكان الشريطُ يحمل **ثلاثة** بنودٍ لإعدادات حسابٍ تُلمس مراتٍ معدودة — «ملفي»
+ * و«قنوات التنبيه» و«الاتفاقية» — تزاحم الأسطولَ والسائقين والأسعار، وهي عملُ
+ * الشريك اليومي. فصارت بنداً واحداً «حسابي»، وأقساماً في `/portal/profile`.
+ *
+ * ⚠ **ولم يُكسر رابطٌ واحد.** المسارات الثلاثة كلها ما زالت تعمل:
+ *
+ *   | المسار | ماذا يفعل الآن |
+ *   |---|---|
+ *   | `/portal/profile`      | الصفحة نفسها، بأقسامها الثلاثة |
+ *   | `/portal/agreement`    | **تحويلٌ** إلى `/portal/profile#agreement` |
+ *   | `/portal/notifications`| باقيةٌ كما هي — محرِّرُ القنوات، ومنها يُحرَّر ما تعرضه «حسابي» |
+ *
+ * والقاعدة الذهبية ١٧ («ابحث عن المنادي قبل الإعلان») مصونةٌ في الاتجاهين:
+ * الشاشتان المنزوعتان من الشريط لهما مُنادٍ صريح **داخل** «حسابي» (زرُّ «إدارة
+ * قنوات التنبيه»، وقسمُ الاتفاقية بنصّه)، فلم تصيرا مجهولتين لمن لا يعرف رابطهما.
+ *
  * و«سائقيّ» يقع بعد «أسطولي» مباشرةً لأنهما وجها سجلٍّ واحد: المركبة ومن يقودها،
  * وهما معاً ما يُسنَد للرحلة وما يقرؤه العميل بعد الإسناد.
- *
- * و«قنوات التنبيه» تلي «ملفي» مباشرةً: الملف من أنت، والقنوات كيف نبلغك — وهي
- * أول ما يجب أن يجده الشريك الجديد. **وبلا هذا البند لا وجود للشاشة أصلاً** من
- * وجهة نظر من لا يعرف رابطها (القاعدة الذهبية ١٧: ابحث عن المنادي قبل الإعلان).
  */
 
 type PortalNavItem = {
-  href:
-    | "/portal"
-    | "/portal/agreement"
-    | "/portal/profile"
-    | "/portal/notifications"
-    | "/portal/fleet"
-    | "/portal/drivers"
-    | "/portal/prices";
+  href: "/portal" | "/portal/profile" | "/portal/fleet" | "/portal/drivers" | "/portal/prices";
   label: string;
   icon: LucideIcon;
+  /**
+   * مساراتٌ يُبقيها البندُ فعّالاً وهي ليست تحته في شجرة العناوين.
+   *
+   * 🔒 وهذا ليس تجميلاً: `/portal/notifications` **قسمٌ في «حسابي»** من وجهة نظر
+   * الشريك، فلو أُطفئ البند وهو فيها لقرأ أنه خرج من حسابه — وهو أوّلُ ما يربك
+   * في شريطٍ لا يحمل غير خمسة بنود.
+   */
+  alsoActive?: readonly string[];
 };
 
 const ITEMS: PortalNavItem[] = [
   { href: "/portal", label: "لوحة المتعهد", icon: LayoutDashboard },
-  /*
-    «الاتفاقية» أولُ بندٍ بعد اللوحة، وقبل «ملفي»: هي **شرط الأهلية نفسه** لا
-    خطوةَ تجهيز — من لم يقبلها بعد انقضاء مهلته يسقط من حوض البثّ (هجرة 0113).
-    وبقاؤها بلا بندٍ في التنقل كان يعني أنها لا وجود لها عند من لا يعرف رابطها
-    (القاعدة الذهبية ١٧: ابحث عن المنادي قبل الإعلان) — ومعالج التجهيز وحده لا
-    يكفي: هو يزول بزوال سببه، والشريك يحتاج أن يعود إلى نصّها بعد قبولها.
-  */
-  { href: "/portal/agreement", label: "الاتفاقية", icon: ScrollText },
-  { href: "/portal/profile", label: "ملفي", icon: UserRound },
-  { href: "/portal/notifications", label: "قنوات التنبيه", icon: BellRing },
+  {
+    href: "/portal/profile",
+    label: "حسابي",
+    icon: UserRound,
+    alsoActive: ["/portal/notifications", "/portal/agreement"],
+  },
   { href: "/portal/fleet", label: "أسطولي", icon: CarFront },
   { href: "/portal/drivers", label: "سائقيّ", icon: IdCard },
   { href: "/portal/prices", label: "قوائم أسعاري", icon: ReceiptText },
@@ -69,9 +82,13 @@ export function PortalNav() {
       {ITEMS.map((item) => {
         const Icon = item.icon;
         // المسارات الفرعية (محرر قائمة الأسعار مثلاً) تُبقي بند القائمة الأم فعالاً
-        const active =
+        const onSelf =
           pathname === item.href ||
           (item.href !== "/portal" && pathname.startsWith(`${item.href}/`));
+        const onSibling = (item.alsoActive ?? []).some(
+          (route) => pathname === route || pathname.startsWith(`${route}/`)
+        );
+        const active = onSelf || onSibling;
 
         return (
           <Link

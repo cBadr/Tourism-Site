@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, Plus, Power, PowerOff, XCircle } from "lucide-react";
 
+import { toArabicDigits } from "@/components/booking/format";
 import { SaveButton } from "@/components/admin/save-feedback";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
@@ -474,11 +475,39 @@ function ClassCard({
   );
 }
 
+/**
+ * فجوةُ التغطية لكل فئة — من `class_coverage_gaps()` (‏0138).
+ *
+ * 🔴 لماذا على هذه الشاشة بالذات: هنا يقرّر المالك أيَّ فئةٍ يعرضها ويسعّرها،
+ * وهي الشاشةُ الوحيدة التي يمكن أن يقول له فيها الرقمُ **إن ما يعرضه لا ينفّذه
+ * أحد**. والفجوةُ لا تُخفي الفئة عن العميل: التسعيرُ بالتعريفة يعمل والطابورُ
+ * اليدويّ مسارٌ مصمَّم — والخفاءُ وحده هو العيب.
+ */
+async function loadCoverage(): Promise<
+  { slug: string; vehicles: number; routes: number; covered: boolean }[] | null
+> {
+  if (!hasSupabaseEnv()) return null;
+  const supabase = await createServerSupabase();
+  // العميلُ قد يعود `null` حين تنقص البيئة — والصمتُ هنا صحيح: الشاشة تعمل
+  // بلا اللافتة، ولا تدّعي تغطيةً لم تُقس
+  if (!supabase) return null;
+  const res = await supabase.rpc("class_coverage_gaps");
+  if (res.error) return null;
+  return ((res.data ?? []) as Record<string, unknown>[]).map((r) => ({
+    slug: String(r.class_slug),
+    vehicles: Number(r.vehicles) || 0,
+    routes: Number(r.priced_routes) || 0,
+    covered: r.covered === true,
+  }));
+}
+
 export default async function FleetPage({ searchParams }: PageProps<"/admin/fleet">) {
-  const [params, { classes, ready, luggageReady, pulse }] = await Promise.all([
+  const [params, { classes, ready, luggageReady, pulse }, coverage] = await Promise.all([
     searchParams,
     loadFleet(),
+    loadCoverage(),
   ]);
+  const uncovered = (coverage ?? []).filter((c) => !c.covered);
   const wired = hasSupabaseEnv();
   const saved = params.saved === "1";
   const error = typeof params.error === "string" ? params.error : null;
@@ -497,6 +526,45 @@ export default async function FleetPage({ searchParams }: PageProps<"/admin/flee
           شاشة التسعير.
         </HelpTip>
       </div>
+
+      {/*
+        🔴 فئةٌ تُباع ولا ينفّذها أحد — تُقال بالرقم لا بالتلميح.
+        `dispatch_pool` تشترط مركبةً نشطة من الفئة **و**تكلفةً من قائمةٍ معتمدة،
+        فغيابُ أحدهما يعني أن كل حجزٍ فيها يمضي إلى الإسناد اليدوي حتماً.
+      */}
+      {uncovered.length > 0 ? (
+        <Card className="flex flex-row items-start gap-3 border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+          <div className="space-y-1.5 text-sm leading-relaxed">
+            <p className="font-semibold">
+              {uncovered.length === 1
+                ? "فئةٌ معروضةٌ للعملاء ولا يغطيها متعهد"
+                : `${toArabicDigits(uncovered.length)} فئات معروضة للعملاء ولا يغطيها متعهد`}
+            </p>
+            <ul className="space-y-0.5">
+              {uncovered.map((c) => {
+                const cls = shown.find((x) => x.slug === c.slug);
+                return (
+                  <li key={c.slug}>
+                    <span className="font-medium">{cls?.title || c.slug}</span>
+                    {" — "}
+                    {c.vehicles === 0 && c.routes === 0
+                      ? "لا مركبة نشطة ولا سعر معتمَد"
+                      : c.vehicles === 0
+                        ? "مُسعَّرة ولا مركبة نشطة لها"
+                        : "لها مركبة ولم يُسعّرها أحد"}
+                  </li>
+                );
+              })}
+            </ul>
+            <p>
+              تُسعَّر بالتعريفة وتُباع كالمعتاد، لكن{" "}
+              <span className="font-semibold">كل حجز فيها يذهب إلى الإسناد اليدوي</span> — لا يصل
+              عرضُه إلى أي متعهد. اضمم متعهداً يملكها، أو أوقف عرضها من زر الحالة أدناه.
+            </p>
+          </div>
+        </Card>
+      ) : null}
 
       {readOnly && (
         <Card className="flex flex-row items-start gap-3 border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">

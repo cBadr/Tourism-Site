@@ -11,10 +11,14 @@ import {
 } from "@/components/portal/portal-ui";
 import { Card } from "@/components/ui/card";
 import { getSettings } from "@/lib/settings";
+import { resolveStatRange } from "@/lib/stats/range";
 import type { PriceListStatus } from "@/lib/subcontractor-types";
 import { PortalBalanceCard } from "./_components/balance-card";
+import { PortalDashboardPulse } from "./_components/dashboard-pulse";
+import { loadPortalPulse } from "./_components/dashboard-pulse-data";
 import { OnboardingWizard } from "./_components/onboarding-wizard";
 import { ReadinessStateCard } from "./_components/readiness-state";
+import { isLiveOffer, loadOffers } from "./requests/data";
 import { loadPortalBalance } from "./_lib/balance";
 import { loadCurrency } from "./_lib/data";
 import { loadOnboarding } from "./_lib/onboarding";
@@ -45,13 +49,26 @@ import { portalSetupAccess } from "./_lib/session";
  *
  * ولا حساب مالي هنا: الأعداد عدّ صفوف، وكل أرقام الحساب تصل جاهزة بإشارتها من
  * `portal_balance()`، والهامش والسعر النهائي يقعان في Postgres.
+ *
+ * ⚠ **وحيويةُ الصفحة ليست زينة.** شكوى بدر: «لا تحتوي على رسوم بيانية أو مؤشرات
+ * أو مرشحات… فجلّ ما أراه بطاقات ثابتة». فوُلد `PortalDashboardPulse` أعلى
+ * المحتوى الساكن: أربعة مؤشرات ومخطّطٌ يوميّ ومرشّحا مدةٍ وحالة — **بمنظومة
+ * الرسوم القائمة نفسها** (`StatChart`/`StatsPanel`/`KpiCard`) لا بثانية.
+ * والحالة كلها تسافر في الرابط (`?range=` · `?from=&to=` · `?status=`)، فلا
+ * `useState` ولا `"use client"` في أي جزءٍ من هذه الشاشة.
  */
 
 export const metadata = { title: "لوحة المتعهد" };
 
 const STATUS_ORDER: PriceListStatus[] = ["draft", "pending", "approved", "rejected"];
 
-export default async function PortalDashboardPage() {
+/** مرشّح الحالة من الرابط — أول قيمة، ونصٌّ فارغٌ يعني «الكل» */
+function statusParam(value: string | string[] | undefined): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : "all";
+}
+
+export default async function PortalDashboardPage({ searchParams }: PageProps<"/portal">) {
   const access = await portalSetupAccess();
   // الغلاف يعرض شاشة الحالة المناسبة؛ الصفحة لا تُصيَّر أصلاً في تلك الحالات
   if (!access.ok) return null;
@@ -59,7 +76,12 @@ export default async function PortalDashboardPage() {
   const { supabase, sub, stage } = access;
   const onboarding = stage === "onboarding";
 
-  const [readiness, balance, currency, settings] = await Promise.all([
+  // الفترة والمرشّح من الرابط لا من الذاكرة — نفس اتفاقية شاشات الإحصائيات
+  const params = await searchParams;
+  const range = resolveStatRange(params);
+  const status = statusParam(params.status);
+
+  const [readiness, balance, currency, settings, pulse, openOffersResult] = await Promise.all([
     // القياس مُذاكَر: البنود والعدّادات وفجوات الفئات من نداءٍ واحد
     loadOnboarding(),
     // بلا وسيط إطلاقاً: نطاق الدالة مثبَّت داخلها على صاحب الجلسة (`_lib/balance.ts`)
@@ -69,7 +91,22 @@ export default async function PortalDashboardPage() {
     loadCurrency(supabase),
     // قنوات تواصل الإدارة لشريط الحجب — من الإعدادات لا من الكود، والنداء مُذاكَر مع الغلاف
     getSettings(),
+    // نبض الفترة: عدُّ صفوفٍ لا غير — ولا مبلغَ يُجمع فيه (D-05، وترويسة الوحدة)
+    loadPortalPulse(range, status),
+    /*
+      صندوق الطلبات — **نفس النداء المذاكَر** الذي تقرؤه شارة التنقل، فلا نداء ثانٍ.
+      ولا يُستعمل `countLiveOffers()` هنا رغم وجودها: هي تُسقط تمييز «تعذّرت
+      القراءة» فتُرجع صفراً في الحالتين، وصفرٌ مكانه «لا نعرف» هو فخُّ الصفوف
+      الصفرية بعينه. فالعدُّ يقع هنا بالمُسنِد المُصدَّر نفسه (`isLiveOffer`)،
+      والفشل يصل `null` فتُطبع «—».
+    */
+    loadOffers(),
   ]);
+
+  const openOffers =
+    openOffersResult.failed || !openOffersResult.ready
+      ? null
+      : openOffersResult.offers.filter((offer) => isLiveOffer(offer, openOffersResult.now)).length;
 
   const counts = readiness?.counts.lists ?? { draft: 0, pending: 0, approved: 0, rejected: 0 };
   const totalLists = STATUS_ORDER.reduce((sum, status) => sum + counts[status], 0);
@@ -141,6 +178,21 @@ export default async function PortalDashboardPage() {
       {!onboarding && readiness && !(settled && !readiness.pausedByChoice) ? (
         <ReadinessStateCard data={readiness} debtBlocked={debtBlocked} />
       ) : null}
+
+      {/*
+        🔴 نبض العمل — ردُّ الشكوى: «بطاقات ثابتة لا توحي لأي حيوية ولا تفاعلية».
+        موضعُه هنا لا فوق: الحسابُ وما يمنع الرحلات إجراءٌ يُطلب اليوم، والنبضُ
+        قراءةٌ يعود إليها. ومكوّنُه يُخفي نفسه للمدعوّ ولمن لا رحلةَ له قط —
+        فلا يقرأ الجديدُ محاورَ فارغة (البند ٦: الصفرُ يُقال، لا يُرسم).
+      */}
+      <PortalDashboardPulse
+        pulse={pulse}
+        balance={balance}
+        currency={currency}
+        range={range}
+        status={status}
+        openOffers={openOffers}
+      />
 
       <div>
         <h3 className="pb-3 font-heading text-base font-bold">قوائم أسعارك</h3>

@@ -73,12 +73,29 @@ begin
     ('public.customer_register_push(text, text, text, text, text)'),
     ('public.customer_remove_push(text, text)'),
     ('public.customer_push_registered(text, text)'),
-    ('public.queue_customer_reminders(integer)'),
     ('public.notification_channels_for(text, uuid)')
   ) as x(s)
   where to_regprocedure(x.s) is null;
   if v_missing is not null then
     raise exception 'شرط مسبق: دوالّ مفقودة (نفّذ 0131): %', v_missing;
+  end if;
+
+  /*
+   * 🔴 `queue_customer_reminders` تُفحص **بالاسم والقدرة** لا بتوقيعٍ حرفيّ.
+   *
+   * كان توقيعُها مثبَّتاً `(integer)` في القائمة أعلاه، فلمّا أضافت 0139 معاملَ
+   * نطاقٍ بافتراضيّ (‏`p_booking_id uuid DEFAULT NULL`) — وهو **توسعةٌ مقصودة
+   * تُتيح اختبارها بلا لمس حجزٍ حقيقي** — سقط الشرطُ المسبق وماتت المجموعة
+   * كلُّها. وهي خامسُ مرةٍ يقع فيها هذا النمط في يومين: توكيدٌ يقيس **شكل**
+   * الكود لا **ما يفعله**.
+   *
+   * فالمقصودُ هنا: الدالةُ موجودةٌ بتحميلٍ واحد، وتقبل حداً للعدد. وزيادةُ
+   * معاملٍ بافتراضيّ تمرّ، وحذفُ الدالة أو تعدّدُ تحميلاتها يحمرّ.
+   */
+  if (select count(*) from pg_catalog.pg_proc pr
+       join pg_catalog.pg_namespace ns on ns.oid = pr.pronamespace
+      where ns.nspname = 'public' and pr.proname = 'queue_customer_reminders') <> 1 then
+    raise exception 'شرط مسبق: queue_customer_reminders مفقودة أو لها تحميلان (نفّذ 0131 و0139)';
   end if;
 
   if not exists (
@@ -785,7 +802,11 @@ begin
   end if;
 
   -- (ط-٤) والدوالُّ الحسّاسة ليست للزائر
-  if has_function_privilege('anon', 'public.queue_customer_reminders(integer)', 'EXECUTE')
+  -- بالمعرّف لا بقائمة الأنواع: التوقيعُ توسَّع في 0139، والمنحةُ هي المقصودة
+  if coalesce((select bool_or(has_function_privilege('anon', pr.oid, 'EXECUTE'))
+                 from pg_catalog.pg_proc pr
+                 join pg_catalog.pg_namespace ns on ns.oid = pr.pronamespace
+                where ns.nspname = 'public' and pr.proname = 'queue_customer_reminders'), false)
      or has_function_privilege('anon', 'public.customer_notification_payload(uuid)', 'EXECUTE')
      or has_function_privilege('anon', 'public.customer_channels(uuid)', 'EXECUTE') then
     raise exception '(ط-٤) 🔴 الزائر ينفّذ دالةَ توجيهٍ أو حمولة — وهي للخادم وحده';

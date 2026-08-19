@@ -351,7 +351,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
           : !doc
             ? "لا اتفاقية سارية الآن."
             : doc.accepted
-              ? `قَبِلت الإصدار ${n(doc.acceptedVersion ?? doc.version)} في ${dateLabel(doc.acceptedAt)}. والنسخة التي قَبِلتها محفوظة بنصّها ويمكنك قراءتها في أي وقت.`
+              ? `قَبِلت الإصدار ${n(doc.acceptedVersion ?? doc.version)} في ${dateLabel(doc.acceptedAt)}. والنسخة التي قَبِلتها محفوظة بنصّها في «حسابي»، ومعها نسخةٌ تنزّلها متى شئت.`
               : !doc.required
                 ? "الاتفاقية منشورة ولم يُفعَّل اشتراطها بعد — اقرأها الآن، فقبولُها سيصير شرطاً لوصول العروض."
                 : doc.inGrace
@@ -374,7 +374,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     href: "/portal/profile",
     cta: hasCore ? "أضف قناة تواصل" : "أكمل البيانات",
     body: !hasCore
-      ? "اسم الشركة ورقم الهاتف حقلان إلزاميان في ملفك — أكملهما كي تصل إليك الإدارة عند إسناد رحلة."
+      ? "اسم الشركة ورقم الهاتف حقلان إلزاميان في «حسابي» — أكملهما كي تصل إليك الإدارة عند إسناد رحلة."
       : !hasSecondChannel
         ? "قناة واحدة تكفي لوصول العروض إليك، فلا شيء متوقف الآن بسببها. لكن أضف واتساب أو بريداً إلكترونياً كقناة ثانية: التنسيق بعد الإسناد عاجل، ولا ينتظر رداً على رقمٍ واحد لا يُجيب."
         : "مكتملة — راجعها كلما تغيّر رقم أو حساب.",

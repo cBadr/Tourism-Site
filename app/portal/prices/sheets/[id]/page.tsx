@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, MapPin, MessageSquareWarning, Plus, Send, Trash2 } from "lucide-react";
 
-import { toArabicDigits } from "@/components/booking/format";
 import {
   Banners,
   countLabel,
@@ -16,7 +15,9 @@ import {
 } from "@/components/portal/portal-ui";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import type { PriceListStatus } from "@/lib/subcontractor-types";
 import { cn } from "@/lib/utils";
+import { loadCurrency } from "../../../_lib/data";
 import { portalSetupAccess } from "../../../_lib/session";
 import { routesText, SheetCounts } from "../../_components/sheet-bits";
 import {
@@ -26,7 +27,14 @@ import {
   loadSheet,
 } from "../../_lib/sheets";
 import { ImportPanel } from "../_components/import-panel";
-import { deleteSheet, importSheetRows, saveSheet, submitSheet } from "../actions";
+import { RouteRow, type PricedClass } from "../_components/route-row";
+import {
+  deleteSheet,
+  importSheetRows,
+  saveRoutePrices,
+  saveSheet,
+  submitSheet,
+} from "../actions";
 
 /**
  * كشف أسعار واحد — الشاشة التي حلّت شكوى المالك: مئة مسار في مكان واحد،
@@ -50,6 +58,21 @@ const ERROR_MESSAGES: Record<string, string> = {
   forbidden: "هذا الإجراء ليس من صلاحيتك.",
 };
 
+/**
+ * لماذا لا يُحرَّر هذا المسار في مكانه — بنصٍّ يقول ماذا يفعل المتعهد الآن.
+ *
+ * 🔴 وهذه **جملٌ تشرح حارساً قائماً** لا جملٌ تَعِد بحارس: الرفضُ يقع في
+ * `import_price_sheet_rows` داخل Postgres، ومقيسٌ حيّاً بهوية متعهدٍ اصطناعيّ
+ * في `supabase/tests/portal_price_edit_tests.sql` (قسما هـ وو).
+ */
+const LOCKED_NOTES: Record<PriceListStatus, string | null> = {
+  draft: null,
+  rejected: null,
+  approved:
+    "معتمد ويعمل الآن — ورقمه هو ما يُسعَّر به عميلٌ في هذه اللحظة، فلا يُغيَّر إلا بمراجعة. عدّله من صفحته وسيعود «قيد الاعتماد».",
+  pending: "على مكتب الإدارة الآن — تغييره تحت المراجعة يجعل قرارها على رقمٍ غير الذي رأته.",
+};
+
 export default async function PortalPriceSheetPage({
   params,
   searchParams,
@@ -59,10 +82,11 @@ export default async function PortalPriceSheetPage({
 
   const { supabase, sub } = access;
 
-  const [sheet, { routes, ready }, { classes }] = await Promise.all([
+  const [sheet, { routes, ready }, { classes }, currency] = await Promise.all([
     loadSheet(supabase, id),
     loadRoutes(supabase, sub.id),
     loadCoveredClasses(supabase),
+    loadCurrency(supabase),
   ]);
 
   if (!ready) {
@@ -87,6 +111,15 @@ export default async function PortalPriceSheetPage({
   // أسماءُ الفئات بالعربية من نفس مصدر شاشة التسعير — لا قائمةٌ ثانية تنحرف
   const classTitles = new Map(classes.map((c) => [c.slug, c.title]));
   const sendable = sheet.draftCount + sheet.rejectedCount > 0;
+
+  // الفئات المعروضة في التحرير الفوريّ = فئات أسطولك في الخدمة، من `price_sheet_classes`
+  // وحدها (‏التعريف الوحيد). والإجراء يقرأها من القاعدة ثانيةً فلا يُصدَّق ما يصل من النموذج.
+  const editableClasses = covered.map((c) => ({
+    slug: c.slug,
+    title: c.title,
+    capacity: c.capacity,
+  }));
+  const editableSlugs = new Set(editableClasses.map((c) => c.slug));
 
   return (
     <div className="space-y-6">
@@ -172,63 +205,45 @@ export default async function PortalPriceSheetPage({
                   <th className="p-2 text-start font-medium">من ← إلى</th>
                   <th className="p-2 text-start font-medium">الأسعار لكل فئة</th>
                   <th className="p-2 text-start font-medium">الحالة</th>
+                  <th className="p-2 text-start font-medium">التحرير</th>
                 </tr>
               </thead>
               <tbody>
-                {mine.map((route) => (
-                  <tr key={route.id} className="border-b border-border last:border-0">
-                    <td className="p-2 align-top">
-                      <Link
-                        href={`/portal/prices/${route.id}`}
-                        className="font-medium transition-colors hover:text-primary hover:underline"
-                      >
-                        {route.title || "مسار بلا عنوان"}
-                      </Link>
-                      {route.reviewNote ? (
-                        <p className="mt-0.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          {route.reviewNote}
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="p-2 align-top text-muted-foreground">
-                      {route.originLabel} ← {route.destLabel}
-                    </td>
-                    <td className="p-2 align-top">
-                      {(() => {
-                        const rows = priceItems.get(route.id) ?? [];
-                        /*
-                         * 🔴 «لا سعر» تُقال ولا تُترك خانةً فارغة: مسارٌ بلا سعرٍ
-                         * لا يدخل التسعير أصلاً، فسكوتُ الجدول عنه يخفي عن المتعهد
-                         * أهمَّ ما يحتاج أن يراه.
-                         */
-                        if (rows.length === 0) {
-                          return (
-                            <span className="text-xs text-amber-700 dark:text-amber-300">
-                              بلا سعر بعد
-                            </span>
-                          );
-                        }
-                        return (
-                          <ul className="space-y-0.5">
-                            {rows.map((it) => (
-                              <li key={it.classSlug} className="flex gap-1.5 whitespace-nowrap">
-                                <span className="text-muted-foreground">
-                                  {classTitles.get(it.classSlug) ?? it.classSlug}
-                                </span>
-                                <span className="font-medium tabular-nums">
-                                  {toArabicDigits(it.cost)}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        );
-                      })()}
-                    </td>
-                    <td className="p-2 align-top">
-                      <PriceListStatusBadge status={route.status} />
-                    </td>
-                  </tr>
-                ))}
+                {mine.map((route) => {
+                  const rows = priceItems.get(route.id) ?? [];
+                  const named: PricedClass[] = rows.map((it) => ({
+                    slug: it.classSlug,
+                    title: classTitles.get(it.classSlug) ?? it.classSlug,
+                    cost: it.cost,
+                  }));
+                  /*
+                   * الحفظ يجعل ما أرسلتَه هو الحقيقة الكاملة للمسار (سلوك
+                   * `import_price_sheet_rows`)، والفئات المعروضة للتحرير فئاتُ
+                   * أسطولك وحدها. فسعرٌ على فئةٍ لم تعد تملك فيها مركبة **لن
+                   * يبقى** — ويُقال قبل الحفظ لا بعده.
+                   */
+                  const dropped = named.filter((p) => !editableSlugs.has(p.slug));
+                  const editable = route.status === "draft" || route.status === "rejected";
+                  return (
+                    <RouteRow
+                      key={route.id}
+                      title={route.title}
+                      originLabel={route.originLabel}
+                      destLabel={route.destLabel}
+                      reviewNote={route.reviewNote}
+                      statusBadge={<PriceListStatusBadge status={route.status} />}
+                      mapHref={`/portal/prices/${route.id}`}
+                      editable={editable}
+                      lockedNote={editable ? null : LOCKED_NOTES[route.status]}
+                      classes={editableClasses}
+                      priced={named}
+                      droppedOnSave={dropped}
+                      currency={currency}
+                      action={saveRoutePrices.bind(null, id, route.id)}
+                      sendAction={submitSheet.bind(null, id)}
+                    />
+                  );
+                })}
               </tbody>
             </table>
           </div>

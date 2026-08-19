@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { signDriverDocs } from "@/lib/drivers/documents";
+import { isUpcoming, loadTrips } from "../requests/data";
 import { isSchemaMissing } from "../_lib/session";
 
 /**
@@ -100,4 +101,125 @@ export async function loadDrivers(
   });
 
   return { drivers, ready: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* تقارير رحلات السائقين — جردٌ لما هو موجودٌ فعلاً، لا ما نتمنّاه         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ملاحظة بدر: «تبدأ الصفحة بعرض السائقين **وتقارير الرحلات لكل سائق**».
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 جردُ ما يربط رحلةً بسائق — قبل أن نَعِد بشيء
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * الربطُ في القاعدة **عمودٌ واحد لا غير**: `dispatches.assigned_driver_id`
+ * (‏يكتبه `set_trip_crew` حين يسجّل الشريك طاقم الرحلة، أو `admin_set_trip_crew`
+ * نيابةً عنه). ولا عمود سائقٍ في `bookings` إطلاقاً — قِيس بالكتالوج لا بالظنّ:
+ * كل أعمدة `public` التي تحمل «driver» هي هذا العمود و`trip_settings.driver_phone_lead_minutes`.
+ *
+ * فالتقرير الممكن **بلا هجرة** هو: رحلاتُ الشريك المُسنَدة إليه، مقسومةً على من
+ * سجّله سائقاً لها. وما لا يوجد لا يُختلق:
+ *
+ * | ليس عندنا | فلا نَعِد به |
+ * |---|---|
+ * | زمنُ بدءٍ أو انتهاءٍ فعليّ للرحلة | لا «ساعات قيادة» ولا «التزامٌ بالمواعيد» |
+ * | تقييمٌ للسائق من العميل | لا نجوم ولا معدّلات |
+ * | مسافةٌ نفّذها السائق | `distanceKm` تقديرُ المسار لا عدّادُ السيارة |
+ *
+ * ⚠ **ولا مبلغَ في هذا التقرير**: `portal_trips()` تحمل `payout` وهو مستحقُّ
+ *   الشريك لا مستحقُّ السائق، وجمعُه «لكل سائق» يخترع رقماً ماليّاً لا مصدر له
+ *   (‏والجمع المالي في TypeScript ممنوع أصلاً). فالعدُّ عدُّ رحلاتٍ لا مال.
+ *
+ * 🔒 والمصدر `portal_trips()` وحدها — دالةٌ `security definer` تفرض
+ * `assigned_subcontractor_id = current_subcontractor_id()` بنفسها، فلا يبلغ
+ * شريكٌ رحلةَ غيره ولو مرّر معرّفاً.
+ */
+export type DriverTripStats = {
+  total: number;
+  upcoming: number;
+  completed: number;
+  /** ملغاة أو متعثّرة — تُعرض مجموعةً لأنهما «لم تُنفَّذ» عند الشريك */
+  troubled: number;
+  last: {
+    reference: string;
+    originLabel: string;
+    destLabel: string;
+    pickupAt: string | null;
+  } | null;
+};
+
+export type DriverTripsReport = {
+  byDriver: Map<string, DriverTripStats>;
+  /** رحلاتٌ مُسنَدة إليك ولم تُسجّل لها سائقاً — تُقال ولا تُخفى */
+  withoutDriver: number;
+  /**
+   * هل يصل ربطُ السائق من الخادم أصلاً؟ `crew = null` في العقد تعني **«لا نعرف»**
+   * لا «لم يُسجَّل» — والفرق هو الفرق بين «لا رحلات لهذا السائق» و«الربط غير
+   * مقروء»، وكلتاهما جملة تُقال في موضعها وحدها.
+   */
+  linkReadable: boolean;
+  /** الدالة غير منشورة على الخادم بعد */
+  ready: boolean;
+  /** الدالة موجودة والنداء فشل — لا تُعرض «لا رحلات» أبداً في هذه الحالة */
+  failed: boolean;
+};
+
+const EMPTY_STATS = (): DriverTripStats => ({
+  total: 0,
+  upcoming: 0,
+  completed: 0,
+  troubled: 0,
+  last: null,
+});
+
+const at = (value: string | null): number => {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+export async function loadDriverTripsReport(): Promise<DriverTripsReport> {
+  // 🔴 نفس القارئ الذي تستعمله شاشة الرحلات (‏القاعدة ١٢) — لا نداءَ ثانٍ
+  // لـ`portal_trips` ولا تعريفَ ثانٍ لـ«رحلةٌ قادمة».
+  const { trips, ready, failed, now } = await loadTrips();
+
+  const byDriver = new Map<string, DriverTripStats>();
+  let withoutDriver = 0;
+  let known = 0;
+
+  for (const trip of trips) {
+    if (trip.crew !== null) known += 1;
+    const driverId = trip.crew?.driverId ?? null;
+    if (!driverId) {
+      withoutDriver += 1;
+      continue;
+    }
+
+    const stats = byDriver.get(driverId) ?? EMPTY_STATS();
+    stats.total += 1;
+    if (trip.status === "completed") stats.completed += 1;
+    else if (trip.status === "cancelled" || trip.status === "failed") stats.troubled += 1;
+    else if (isUpcoming(trip, now)) stats.upcoming += 1;
+
+    if (stats.last === null || at(trip.pickupAt) > at(stats.last.pickupAt)) {
+      stats.last = {
+        reference: trip.reference,
+        originLabel: trip.originLabel,
+        destLabel: trip.destLabel,
+        pickupAt: trip.pickupAt,
+      };
+    }
+    byDriver.set(driverId, stats);
+  }
+
+  return {
+    byDriver,
+    withoutDriver,
+    // لا رحلات أصلاً ⇒ لا شيء يكذب: الربط «مقروء» حتى يثبت العكس بصفٍّ واحد
+    linkReadable: trips.length === 0 || known > 0,
+    ready,
+    failed,
+  };
 }

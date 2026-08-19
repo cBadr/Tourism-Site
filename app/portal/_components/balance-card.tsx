@@ -41,7 +41,7 @@ const NET_TONE_CLASS: Record<NetTone, string> = {
   settled: "border-border bg-muted/40",
 };
 
-type NetWording = { tone: NetTone; headline: string; hint: string };
+export type NetWording = { tone: NetTone; headline: string; hint: string };
 
 /**
  * صياغة الصافي بالعربية الصحيحة لكل إشارة — **بضمير المخاطب** لأن القارئ هنا
@@ -51,8 +51,13 @@ type NetWording = { tone: NetTone; headline: string; hint: string };
  * والسالب يُعرض بحجمه القادم في `owed_to_us`. فلا تحويل إشارة هنا ولا قيمة
  * مطلقة — «−٣٦٠ ج.م لك علينا» جملة لا يفهمها أحد، وحلّها أن تأتي الكلمة
  * والحجم كلاهما من مصدرهما.
+ *
+ * 🔴 **ومصدَّرةٌ عمداً**: بطاقةُ مؤشّر «صافي حسابك» في نبض اللوحة تعرض الجملة
+ * نفسها، وكتابتُها هناك ثانيةً كانت ستُنتج **صياغتين للحالة الواحدة** تنحرفان
+ * بأول تعديل (القاعدة ١٢). وأولُ ما كان سينحرف هو ما اشتكى منه بدر بعينه:
+ * «الحساب مصفّى» ⇐ «تمت تصفية الحساب» — الجملةُ تُكتب مرّةً هنا فحسب.
  */
-function netWording(balance: PortalBalance, currency: string | null): NetWording {
+export function netWording(balance: PortalBalance, currency: string | null): NetWording {
   if (balance.netDue > 0) {
     return {
       tone: "we-owe",
