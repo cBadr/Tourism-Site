@@ -58,7 +58,7 @@ begin
     ('public.submit_price_list(uuid)'),
     ('public.review_price_list(uuid, boolean, text)'),
     ('public.quote_price(numeric, integer, boolean, numeric)'),
-    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)'),
+    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)'),
     ('public.haversine_km(numeric, numeric, numeric, numeric)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
@@ -1122,7 +1122,7 @@ begin
 
   -- (ي-٣-ج) والتوقيع الثماني للتسعير للخادم وحده (الرباعي يبقى متاحاً)
   if has_function_privilege('authenticated',
-       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)',
+       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)',
        'EXECUTE') then
     raise exception '(ي-٣-ج) ثغرة: المسجَّل ينفّذ التسعير المُفصَّل بالإحداثيات';
   end if;
@@ -1171,7 +1171,7 @@ begin
       raise exception '(ي-٦) الزائر لم يعد يسعّر رحلته عبر quote_public — المسار العام مقطوع: %', sqlerrm;
   end;
   if has_function_privilege('anon',
-       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)',
+       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)',
        'EXECUTE') then
     raise exception '(ي-٦) ثغرة: الزائر ينفّذ التسعير المُفصَّل بالإحداثيات';
   end if;
@@ -1186,18 +1186,18 @@ begin
   if to_regprocedure('public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer, text)') is null then
+       timestamptz, integer, jsonb, integer, text, jsonb)') is null then
     raise exception '(ي-٧) توقيع create_booking تغيّر عمّا يفحصه هذا الاختبار — حدّث النص هنا قبل أي شيء';
   end if;
 
   if has_function_privilege('anon', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer, text)', 'EXECUTE')
+       timestamptz, integer, jsonb, integer, text, jsonb)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer, text)', 'EXECUTE') then
+       timestamptz, integer, jsonb, integer, text, jsonb)', 'EXECUTE') then
     raise exception '(ي-٧) ثغرة: create_booking عادت متاحة لدور عام (نقض د١ من 0009)';
   end if;
 

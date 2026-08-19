@@ -6,6 +6,7 @@ import { readPlaceSearchSettings } from "@/lib/geo/place-search-settings";
 import { SearchWidget } from "./search-widget";
 import { getPublicExtras } from "./extras-catalog";
 import { getFleetCaps } from "./fleet-luggage";
+import { getStopsCap } from "./stops-cap";
 import type { BookingContact } from "./offers";
 
 /**
@@ -45,6 +46,7 @@ export async function BookingWidget({
     extras,
     fleet,
     placeSearch,
+    stopsCap,
   ] = await Promise.all([
       isDiscountEnabled(),
       // راية الولاء (١٢ب) — تُقرأ هنا لا في الجزيرة، ولنفس سبب أختها: قراءةُ
@@ -64,6 +66,11 @@ export async function BookingWidget({
       // كانت ستضيف رحلة شبكة قبل أول حرف يكتبه الزائر. ولا يعبر إلى المتصفح
       // مفتاحٌ ولا اسمُ متغيّر بيئة — راياتٌ ورقمان لا غير.
       readPlaceSearchSettings(),
+      // 🔴 سقفُ المحطات كما ضبطه المالك (‏`max_trip_stops()`، هجرة `0140`) —
+      // يُقرأ هنا لأن الدالة غير ممنوحة لـ`anon` ولا `authenticated` (D-20)،
+      // ولأن سقفاً لا يطابق ما تفرضه القاعدة يعرض على العميل زرّاً يضمن الرفض
+      // **بعد** أن يرى السعر. التعليل الكامل في ترويسة `stops-cap.ts`.
+      getStopsCap(),
     ]);
 
   return (
@@ -79,6 +86,7 @@ export async function BookingWidget({
       extras={extras}
       maxLuggage={fleet.maxLuggage}
       maxPassengers={fleet.maxPassengers}
+      maxStops={stopsCap}
       placeSearch={placeSearch}
     />
   );

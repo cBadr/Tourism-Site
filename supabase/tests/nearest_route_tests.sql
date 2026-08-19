@@ -77,7 +77,7 @@ begin
     ('public.coverage_best_costs(numeric, numeric, numeric, numeric)'),
     ('public.haversine_km(numeric, numeric, numeric, numeric)'),
     ('public.quote_price(numeric, integer, boolean, numeric)'),
-    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)'),
+    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)'),
     ('public.dispatch_pool(uuid, integer)'),
     ('public.dispatch_ceiling(uuid, integer)'),
     ('public.partner_agreement_ok(uuid)')

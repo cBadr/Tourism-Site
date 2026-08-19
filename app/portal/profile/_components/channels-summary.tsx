@@ -1,54 +1,142 @@
-import Link from "next/link";
-import { BellOff, BellRing, PlugZap, Settings2 } from "lucide-react";
+import { BellOff, BellRing, PlugZap } from "lucide-react";
 
 import { Notice } from "@/components/portal/portal-ui";
-import { buttonVariants } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { PARTNER_CHANNELS, type PartnerChannel } from "@/lib/partner-alerts-types";
-import { cn } from "@/lib/utils";
+import { REACHING_CHANNELS, type PartnerChannel } from "@/lib/partner-alerts-types";
+import { PushSetup } from "../../_components/push-setup";
 /**
- * 🔴 من الوحدة المحيّدة `channel-meta.ts` لا من `channels-form.tsx`.
+ * 🔴 التسميات من الوحدة المحيّدة `channel-meta.ts` لا من `channels-form.tsx`.
  *
  * هذا مكوّنٌ **خادميّ**، و`channels-form.tsx` يبدأ بـ`"use client"`. وقيمةٌ
  * تُصدَّر من وحدة عميل لا تعبر إلى الخادم: ما يراه الخادم مرجعُ عميل لا الكائن،
- * فيرمي `STATE_LABELS[state]` ويُسقط الصفحة بـ٥٠٠ — وهو العيبُ المقيس الذي بيّض
- * `/portal/notifications` في 2026-08-17 (القسم ٥ في `LESSONS.md`).
+ * فيرمي `channelLabel(channel)` ويُسقط الصفحة بـ٥٠٠ — وهو العيبُ المقيس الذي
+ * بيّض `/portal/notifications` في 2026-08-17 (القسم ٥ في `LESSONS.md`).
+ *
+ * ⚠ ولا يُخالف هذا استيرادَ `ChannelsForm` نفسه أدناه: **المكوّن** يعبر (فهو ما
+ * صُنع مرجعُ العميل لأجله)، و**القيمة** لا تعبر. والفرق هو كل الدرس.
  */
-import { channelLabel, STATE_LABELS, STATE_TONE } from "../../notifications/channel-meta";
-import { loadPartnerAlerts } from "../../notifications/data";
+import { channelLabel } from "../../notifications/channel-meta";
+import { ChannelsForm } from "../../notifications/channels-form";
+import { loadPartnerAlerts, type PartnerAlertsView } from "../../notifications/data";
+import { TelegramCard } from "../../notifications/telegram-card";
 
 /**
- * قسمُ «قنوات التنبيه» داخل ملف المستخدم — **حالةٌ كاملة هنا، والتحرير بنقرة.**
+ * قسمُ «قنوات التنبيه» داخل «حسابي» — **المحرِّر نفسه، لا ملخّصٌ يشير إليه.**
  *
- * ── لماذا حالةٌ لا محرِّر ───────────────────────────────────────────────────
+ * ── ماذا تغيّر هنا وماذا لم يتغيّر ───────────────────────────────────────────
  *
  * طلب المالك (2026-08-19) أن تكون إعدادات القنوات «داخل إعدادات حساب المتعهد من
- * الـ user profile». والمنفّذ هنا شقُّه الذي **يعمل اليوم بلا كسر**: كلُّ ما يحتاج
- * الشريك أن يعرفه معروضٌ في «حسابي» — أمتصلٌ هو أم لا، وبأي قناة، وما ينقص — ثم
- * زرٌّ واحد إلى محرّر القنوات.
+ * الـ user profile». وأُنجز الطلبُ **نصفاً** أولاً — حالةٌ هنا وزرٌّ إلى شاشةٍ
+ * أخرى — لأن أفعال `notifications/actions.ts` كانت تنتهي بـ
+ * `redirect('/portal/notifications?…')` **مكتوباً في ملفها**، فتركيبُ النموذجين
+ * هنا كان يُنتج شاشةً تحفظ ثم تقذف الشريك إلى صفحةٍ أخرى. وذاك النصفُ هو بعينه
+ * ما شكا منه المالك: بابان للشيء الواحد.
  *
- * ⚠ **والسبب مكتوبٌ لأنه ليس ذوقاً**: `ChannelsForm` و`TelegramCard` يستوردان
- * أفعالَهما من `app/portal/notifications/actions.ts` بأسمائها، وتلك الأفعال
- * تنتهي بـ`redirect('/portal/notifications?…')` **مكتوباً في ملفها**. فتركيبُ
- * النموذجين هنا كان يُنتج شاشةً تحفظ ثم تقذف الشريك إلى صفحةٍ أخرى، أو نسخةً
- * ثانية من الأفعال على نفس دالة القاعدة (نقضُ القاعدة الذهبية ١٢). وذلك الملف
- * **خارج نطاق هذه الجبهة فلا يُحرَّر**، والتوصية بسطرٍ واحد فيه مكتوبةٌ في تقرير
- * الجبهة: تُغيَّر وجهةُ `url()` إلى `/portal/profile?…#channels`، فينتقل المحرّر
- * كاملاً إلى هنا بلا سطرٍ مكرَّر.
+ * والحلُّ سطرٌ واحد في ذلك الملف — `url()` صارت `/portal/profile?…#channels` —
+ * فانتقل المحرِّر كاملاً إلى هنا **بنسخته الواحدة**: لا فعلَ مكرَّراً، ولا نموذجَ
+ * ثانياً، ولا دالةَ قاعدةٍ تُنادى من مكانين (القاعدة الذهبية ١٢).
+ *
+ * | المكوّن | حدُّ تصييره | لماذا يُستورد ولا يُستنسخ |
+ * |---|---|---|
+ * | `TelegramCard` | **خادميّ** (‏`async`، يقرأ `getMe` حيّاً) | اسمُ البوت لا يُكتب في كود |
+ * | `PushSetup` | **عميليّ** (‏يقرأ `/api/push/*` بنفسه) | قدرةُ المتصفح تُقاس في المتصفح |
+ * | `ChannelsForm` | **عميليّ** (‏يعرض أثر الاختيار قبل الحفظ) | إطفاءُ آخر قناةٍ = «غير متصل» |
  *
  * ولا يُعاد اشتقاق الحالة هنا بحرف: `reachable/willing` تصلان من
  * `partner_availability()` — نفسِ الدالة التي يقرؤها حوض البثّ. وشاشةٌ تقول
  * «متصل» وحوضٌ يتخطّاه هو النمط ٢ في `LESSONS.md` بصيغته الأخطر.
  */
-export async function ChannelsSummary() {
-  const result = await loadPartnerAlerts();
 
-  const editLink = (
-    <Link href="/portal/notifications" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-      <Settings2 aria-hidden="true" />
-      إدارة قنوات التنبيه
-    </Link>
-  );
+/* ------------------------------------------------------------------ */
+/* رموزُ أخطاء أفعال القنوات — تُترجَم في `../page.tsx`                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * الرموز التي ترفعها `notifications/actions.ts`، وقد صارت وجهتُها هذه الصفحة.
+ * وتُصدَّر من هنا — لا من `page.tsx` — على نفس نمط `AGREEMENT_ERROR_MESSAGES`:
+ * **القسمُ يملك رموزَه**، والصفحةُ تجمعها. وفُحصت اسماً اسماً فلا تصادمَ مع رموز
+ * بيانات الحساب ولا الاتفاقية ولا `COMMON_PORTAL_ERRORS`.
+ */
+export const ALERTS_ERROR_MESSAGES: Record<string, string> = {
+  // رموز الربط — من `PAIRING_ISSUES`
+  "no-credentials": "قناة تليجرام متوقفة عند المنصة الآن، فتعذّر الربط. لا شيء مطلوب منك.",
+  "bot-unreachable": "تعذّر الوصول إلى تليجرام في هذه اللحظة — أعد المحاولة بعد قليل.",
+  "webhook-set":
+    "ربط تليجرام متوقف لسبب فني عند المنصة. أبلغ الإدارة بهذه الرسالة كما تظهر لك.",
+  "no-match":
+    "لم نجد ضغطتك على «ابدأ». افتح الرابط، واضغط الزر داخل محادثة البوت، ثم عُد واضغط «تحققتُ».",
+  expired: "انتهت صلاحية الرابط. حدّث الصفحة، ثم افتح الرابط الجديد واضغط «ابدأ».",
+  "not-private":
+    "ضغطتَ «ابدأ» داخل مجموعة. افتح محادثة خاصة مع البوت — عروض رحلاتك لا تُرسل إلى مجموعة يقرؤها غيرك.",
+  /*
+   * رموز ارتباط المحادثة (0057) — ترفعها القاعدة في `hint` والشاشة تترجمها.
+   * 🔒 ولا يُذكر **مَن** يملك المحادثة الأخرى: «حسابٌ آخر» يكفي الشريك ليصلح،
+   * ومعرفةُ اسم الجهة هي بعينها ما يمنعه D-20.
+   */
+  "telegram-taken":
+    "حساب تليجرام هذا مربوط بحساب آخر في المنصة. المحادثة الواحدة تخصّ جهة واحدة — افتح تليجرام بحساب خاص بشركتك، اضغط «ابدأ» من الرابط أعلاه، ثم أعد المحاولة.",
+  "telegram-is-ops":
+    "حساب تليجرام هذا مستعمَل لاستقبال إشعارات إدارة المنصة، فلا يصلح لاستقبال عروض رحلاتك — رسائل الإدارة تحتوي بيانات لا تخصّك. استخدم حساباً مستقلاً لهذه الشركة ثم أعد المحاولة.",
+  /*
+   * ⚠ الاتجاه المعاكس لا يُنشأ من هذه الشاشة — `portal_set_telegram_chat_id`
+   * تكتب على `subcontractors` فترفع `telegram-taken` أو `telegram-is-ops` وحدهما.
+   * ومع ذلك يُترجَم هنا لأن `readTelegramBindCode` **يُرجعه بنوعه**: رمزٌ يعبر
+   * ولا تقابله جملة يصل الشريكَ «حدث خطأ غير متوقع» — وخريطةٌ ناقصةٌ عن رمزٍ
+   * ممكنٍ في العقد هي بعينها الثغرة التي أوجدت 0097.
+   */
+  "ops-telegram-taken":
+    "حساب تليجرام هذا محجوز كوجهة إشعارات لإدارة المنصة، فلا يمكن ربطه بحسابك. استخدم حساباً مستقلاً لهذه الشركة ثم أعد المحاولة — ولا شيء تغيّر في ربطك الحالي.",
+  /** رمزٌ قديم من قبل 0057 — يبقى مترجَماً كي لا يظهر رابطٌ محفوظ بلا رسالة */
+  taken:
+    "حساب تليجرام هذا مربوط بحساب آخر. لكل شريك حسابه — استخدم حسابك أنت ثم أعد المحاولة.",
+  proof:
+    "تم الربط، لكن رسالة التأكيد لم تصل. افتح المحادثة وتأكد أنك لم تحظر البوت، ثم جرّب «أرسل رسالة تجربة».",
+  "test-failed":
+    "لم تصل رسالة التجربة — الغالب أنك حظرت البوت أو حذفت المحادثة. افتحها من جديد واضغط «ابدأ»، ثم أعد الربط.",
+};
+
+/* ------------------------------------------------------------------ */
+/* ما ينقص بالضبط ليصير المتعهد بالغاً                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * سطرٌ لكل قناةٍ ينفع فيها فعل.
+ * ⚠ والقنوات المعطّلة عند المنصة **لا تُذكر هنا كمطلوب**: مطالبةُ الشريك بما لا
+ * يملكه هي بعينها الشكوى التي أُصلحت في معالج التجهيز (يطارد ما ليس هو العائق).
+ */
+function missingSteps(view: PartnerAlertsView): string[] {
+  const steps: string[] = [];
+  for (const channel of REACHING_CHANNELS) {
+    const state = view.channels[channel];
+    if (state === "needs-link") {
+      steps.push(
+        channel === "telegram"
+          ? "اربط تليجرام من البطاقة أدناه — دقيقة واحدة وخطوتان."
+          : channel === "email"
+            ? "أضف بريدك في «حسابي» ليصلك العرض عليه."
+            : "سجّل جهازاً لإشعارات المتصفح."
+      );
+    }
+    if (state === "off") {
+      steps.push(`فعّل قناة «${channelLabel(channel)}» في التفضيلات أدناه.`);
+    }
+  }
+  return steps;
+}
+
+/* ------------------------------------------------------------------ */
+/* القسم                                                              */
+/* ------------------------------------------------------------------ */
+
+export async function ChannelsSummary({
+  subcontractorId,
+  onboarding,
+}: {
+  /** ⚠ المعرّف لا الاسم: رمزُ ربط تليجرام يُشتقّ منه، والأسماء تتصادم. */
+  subcontractorId: string;
+  /** المدعوّ في مرحلة التجهيز — يحجب دفع الويب وحده (انظر أدناه). */
+  onboarding: boolean;
+}) {
+  const result = await loadPartnerAlerts();
 
   if (result.state === "hidden") {
     return (
@@ -66,15 +154,24 @@ export async function ChannelsSummary() {
         <p>
           حدّث الصفحة. إن تكرّر الأمر فراسل الإدارة — ولا تعتمد على وصول العروض حتى تتأكد.
         </p>
-        <p className="pt-2">{editLink}</p>
       </Notice>
     );
   }
 
   const view = result.view;
+  const steps = missingSteps(view);
 
   return (
     <div className="space-y-4">
+      {onboarding ? (
+        <Notice tone="info">
+          <p>
+            حسابك قيد المراجعة، فلا تصلك عروض بعد. لكن ربط قنواتك الآن يعني أن أول عرض بعد
+            اعتمادك يجدك <b>متصلاً</b> — لا أن تكتشف يومها أن شيئاً لم يصلك.
+          </p>
+        </Notice>
+      ) : null}
+
       {/* ── الحالة أولاً: أمتصلٌ هو أم يُتخطّى ─────────────────────────── */}
       {!view.reachable ? (
         <Notice tone="danger" icon={<BellOff className="size-5 shrink-0" />}>
@@ -83,13 +180,20 @@ export async function ChannelsSummary() {
             لا قناة واحدة تستطيع أن تبلغك بعرض رحلة، فتوزيع الرحلات <b>يتخطّاك</b>. ولا يظهر
             لك شيء حين يقع ذلك — العروض تذهب إلى غيرك بصمت.
           </p>
+          {steps.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-1 ps-5">
+              {steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ul>
+          ) : null}
         </Notice>
       ) : !view.willing ? (
         <Notice tone="warning" icon={<PlugZap className="size-5 shrink-0" />}>
           <p className="font-semibold">أوقفتَ استقبال الطلبات</p>
           <p>
-            قنواتك تعمل، لكنك أوقفتَ الاستقبال بنفسك — فلا يصلك عرض جديد حتى تعيد العلامة
-            في محرّر القنوات.
+            قنواتك تعمل، لكنك أوقفتَ الاستقبال بنفسك — فلا يصلك عرض جديد. أعد العلامة في
+            «أستقبل طلبات الرحلات» أدناه ليعود الوصول فوراً.
           </p>
         </Notice>
       ) : (
@@ -107,32 +211,37 @@ export async function ChannelsSummary() {
         </Notice>
       )}
 
-      {/* ── وسمُ كل قناة كما قاسته القاعدة ─────────────────────────────── */}
-      <Card className="gap-3 p-5">
-        <ul className="space-y-2">
-          {PARTNER_CHANNELS.map((channel) => (
-            <li key={channel} className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-medium">{channelLabel(channel)}</span>
-              <span
-                className={cn(
-                  "inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-                  STATE_TONE[view.channels[channel]]
-                )}
-              >
-                {STATE_LABELS[view.channels[channel]]}
-              </span>
-            </li>
-          ))}
-        </ul>
+      <TelegramCard view={view} subcontractorId={subcontractorId} />
 
-        <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
-          {editLink}
-          <span className="text-xs leading-5 text-muted-foreground">
-            الربط والإطفاء ومفتاح «أستقبل طلبات الرحلات» — كلها من هناك، وأثر كل اختيار
-            يُعرض قبل الحفظ.
-          </span>
-        </div>
-      </Card>
+      {/*
+        تدفّق دفع الويب (ج٢) — والقرار ١-ز ينصّ على بيته: «شرح **لماذا** ← زرٌّ
+        صريح ← ثم يظهر طلب المتصفح». والمكوّن يقرأ حالته بنفسه من `/api/push/*`
+        ولا يحتاج منّا وسيطاً.
+
+        ⚠ **وللمعتمَد وحده**: مسارات `/api/push` على الحارس **الضيّق**
+        (`portalAccess` — مكتوبٌ في `app/api/push/_shared.ts`)، فتركيبه للمدعوّ
+        كان سيُنتج زرّاً يردّ `auth` — وهو أسوأ من غيابه («الشاشة تتبع الحارس»).
+        وربطُ تليجرام أعلاه مفتوحٌ له لأن دواله على الحارس الموسَّع فعلاً.
+      */}
+      {onboarding ? null : <PushSetup />}
+
+      <div className="space-y-3">
+        <h3 className="font-heading text-base font-bold">قنواتك</h3>
+        <ChannelsForm view={view} />
+      </div>
+
+      {/*
+        الحقيقة التي تجعل القسم كله مفهوماً، ومكانها آخره لا أوله:
+        من قرأ ما فوقه يعرف الآن **لماذا** لا يكفي الصندوق وحده.
+      */}
+      <Notice tone="info">
+        <p className="font-semibold">لماذا لا يكفي صندوق البورتال وحده؟</p>
+        <p className="mt-1">
+          لأنه سجلٌّ يستلزم أن تفتحه، وعرض الرحلة له مهلة تنتهي قبل أن تنظر. ولذلك لا يُحسب
+          قناةً «تبلغك» في حالة الإتاحة: من ليس له إلا الصندوق يُعدّ <b>غير متصل</b>،
+          ويتخطّاه التوزيع.
+        </p>
+      </Notice>
     </div>
   );
 }

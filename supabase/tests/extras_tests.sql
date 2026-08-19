@@ -85,9 +85,9 @@ begin
     ('public.public_extras()'),
     ('public.price_extras(jsonb)'),
     ('public.derive_waiting_hours(timestamptz, timestamptz)'),
-    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)'),
-    ('public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)'),
+    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)'),
+    ('public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb, jsonb)'),
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)'),
     ('public.apply_discount(text, numeric, text, numeric, text)'),
     ('public.get_booking_by_token(text)'),
     ('public.haversine_km(numeric, numeric, numeric, numeric)')
@@ -257,11 +257,11 @@ declare
   v_ins text;
   v_sel text;
   v_cb  constant text :=
-    'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)';
+    'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)';
   v_qp9 constant text :=
-    'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)';
+    'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)';
   v_qpub constant text :=
-    'public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb)';
+    'public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb, jsonb)';
 begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     raise notice '  ↳ (ب) لا دور anon في هذه القاعدة — الفحص الكتالوجي متخطّى';

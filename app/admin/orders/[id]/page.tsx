@@ -32,6 +32,7 @@ import {
   passengersLabel,
   toArabicDigits,
 } from "@/components/booking/format";
+import { readTripStops } from "@/components/booking/stops";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1973,6 +1974,17 @@ export default async function OrderDetailPage({
   const waitingDerived = pick(tripRaw, ["waitingDerived", "waiting_derived"]) === true;
   const extrasTotal = asNumber(pick(tripRaw, ["extrasTotal", "extras_total"]));
   const hasExtras = extras.length > 0 || (extrasTotal ?? 0) > 0;
+  /**
+   * 🔴 المحطات الوسطى — **الشاشة التي يُسنِد منها المشغّل يدوياً**.
+   *
+   * وهي هنا أهمُّ منها في أي موضعٍ آخر: من يختار متعهداً بيده يقرّر على أساس
+   * الطريق الذي سيُقاد فعلاً. ورحلةٌ تمرّ بمحطتين أطولُ زمناً ومسافةً من مسارٍ
+   * مباشر بين النقطتين نفسيهما — فإخفاؤها هنا يجعله يُسند على وصفٍ ناقص.
+   *
+   * والقراءة متسامحة كأخواتها أعلاه: ثمانية عشر حجزاً قائماً بلا الحقل، وغيابُه
+   * يعني رحلةً بنقطتين لا بياناتٍ ناقصة — فلا يظهر صفٌّ فارغ.
+   */
+  const tripStops = readTripStops(tripRaw);
 
   /**
    * سطر المركبة: وصفها وسنتها معاً — والسنة تمرّ بـ`toArabicDigits` وحدها لا
@@ -2149,6 +2161,32 @@ export default async function OrderDetailPage({
             </HelpTip>
           </h3>
           <Row label="من">{trip.originLabel ?? "—"}</Row>
+          {/*
+            المحطات بين «من» و«إلى» — **بترتيب القيادة لا بترتيب الإدخال**،
+            وبصفٍّ مرقَّم لكلٍّ منها: من يقرأ الجدول يحتاج أن يعرف أيُّها الأولى.
+          */}
+          {tripStops.map((stop, index) => (
+            <Row
+              key={`${index}-${stop.lat},${stop.lng}`}
+              label={`محطة ${toArabicDigits(index + 1)}`}
+              help={
+                index === 0
+                  ? "محطة وسطى اختارها العميل. الرحلة تمرّ بها بهذا الترتيب، والمسافة والسعر محسوبان على الطول الكامل مروراً بها — لا على المسار المباشر. ولهذا سُعِّرت بالتعريفة لا من قائمة أسعار متعهد: المتعهد سعّر مساراً مباشراً ولم يسعّر هذا الانحراف."
+                  : undefined
+              }
+            >
+              {/*
+                وسمٌ فارغ ⇒ الإحداثيات نفسها بـ`dir="ltr"` — **ولا يُحذف الصفّ**.
+                المحطةُ في المسار سواءٌ عرفنا اسمها أم لا، وإسقاطُها يجعل الشاشة
+                تصف طريقاً أقصر مما سيُقاد فعلاً.
+              */}
+              {stop.label.trim().length > 0 ? (
+                stop.label
+              ) : (
+                <span dir="ltr">{`${stop.lat.toFixed(5)}, ${stop.lng.toFixed(5)}`}</span>
+              )}
+            </Row>
+          ))}
           <Row label="إلى">{trip.destLabel ?? "—"}</Row>
           <Row
             label="المسافة"

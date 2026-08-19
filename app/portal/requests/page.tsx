@@ -103,6 +103,20 @@ function OfferActions({ offer }: { offer: PortalOffer }) {
               تنفيذ الرحلة في موعدها ({dateTimeLabel(offer.pickupAt)}) بمركبة من فئة{" "}
               <span className="font-medium">{offer.classTitle || "المطلوبة"}</span>.
             </li>
+            {/*
+              🔴 آخرُ بوابةٍ قبل الالتزام — والمحطاتُ تُذكر فيها بالاسم لا بالعدد.
+              «رحلة بمحطتين» جملةٌ تُقرأ ولا تُتصوَّر؛ والاسمُ هو ما يجعله يقول
+              «هذه ليست الرحلة التي ظننتها» قبل الضغطة لا بعدها.
+            */}
+            {offer.stopLabels.length > 0 ? (
+              <li>
+                الرحلة <span className="font-semibold">تمرّ بمحطات وسطى</span> بهذا الترتيب:{" "}
+                <span className="font-semibold">
+                  {offer.stopLabels.map((label) => label || "محطة بلا اسم").join(" ← ")}
+                </span>{" "}
+                — وهي تطيل المسار مسافةً وزمناً بمستحقٍّ لا يتغيّر.
+              </li>
+            ) : null}
             <li>
               تُغلق الرحلة أمام باقي المتعهدين فور قبولك، وتظهر لك بيانات تواصل العميل في «رحلاتي»
               لتنسيق الاستلام.
@@ -208,11 +222,30 @@ function OfferCard({ offer, now }: { offer: PortalOffer; now: number }) {
           </span>
         </div>
 
-        <PayoutBlock payout={offer.payout} currency={offer.currency} roundTrip={offer.roundTrip} />
+        {/*
+          🔴 `stopsCount` هنا وحدها — لا في «رحلاتي»: الجملة التي تُضيفها تقول
+          «المحطات لا تزيد مستحقك، فاقرأ المسار قبل أن تقبل»، وهي معلومةُ قرارٍ
+          قبل القبول وعتابٌ بعده.
+        */}
+        <PayoutBlock
+          payout={offer.payout}
+          currency={offer.currency}
+          roundTrip={offer.roundTrip}
+          stopsCount={offer.stopLabels.length}
+        />
+        {/*
+          ══════════════════════════════════════════════════════════════════════
+           🔴 المحطات داخل سطر المسار — **الفارقُ بين فرضٍ يقع عليه وعرضٍ يرفضه**
+          ══════════════════════════════════════════════════════════════════════
+          `portal_offers()` تُرجع `stops` وسوماً معمّاةً بلا إحداثيات (‏`0140`)،
+          وكانت الشاشة تُسقطها فيقرأ المتعهد «من ← إلى» ويقبل رحلةً لا يعلم
+          شكلها. والمستحقُّ لا يتغيّر بالمحطات، فالانحرافُ كلُّه عليه.
+        */}
         <TripRoute
           originLabel={offer.originLabel}
           destLabel={offer.destLabel}
           roundTrip={offer.roundTrip}
+          stopLabels={offer.stopLabels}
         />
         <TripFacts trip={offer} />
         <TripNotes notes={offer.notes} />

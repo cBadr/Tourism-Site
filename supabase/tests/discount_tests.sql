@@ -84,8 +84,8 @@ begin
     ('public.analytics_admin_allowed()'),
     ('public.section_stats(text, date, date)'),
     -- التوقيعان الموسَّعان: غيابهما يعني قاعدة توقّفت قبل 0024
-    ('public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)')
+    ('public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb, jsonb)'),
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 
@@ -1009,7 +1009,7 @@ begin
     -- ⚠ المنح باقٍ **للتسعير بلا رمز وحده**: الموقع يسعّر قبل الدخول. أما تمرير
     -- رمز كوبون من دور متصفح فيرفضه حارس في مطلع الدالة، والفحص الحيّ لذلك في
     -- (ط-٢) أدناه — وهو الفحص الملزِم، لأن المنح وحده لا يقول شيئاً عن الحارس.
-    if not has_function_privilege('anon', 'public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb)', 'execute') then
+    if not has_function_privilege('anon', 'public.quote_public(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, text, integer, jsonb, jsonb)', 'execute') then
       raise exception '(ط-١) الزائر فقد التسعير العام — الموقع لا يسعّر قبل الدخول';
     end if;
   end if;

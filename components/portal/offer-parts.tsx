@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ExternalLink,
   MapPin,
+  MapPinPlus,
   MessageCircle,
   Navigation,
   Phone,
@@ -94,11 +95,30 @@ export function PayoutBlock({
   payout,
   currency,
   roundTrip,
+  stopsCount = 0,
   hint,
 }: {
   payout: number;
   currency: string | null;
   roundTrip: boolean;
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   *  🔴 عددُ المحطات — **وهذه أهمُّ جملةٍ ماليةٍ على بطاقة العرض**
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * الرحلةُ ذاتُ المحطات تُسعَّر للعميل بمسافتها الحقيقية متعددة الأرجل، **أما
+   * مستحقُّ المتعهد فيبقى سعرَ قائمته للمسار المباشر**: قِيس ثلاثَ رحلاتٍ
+   * بـ٣٨٫٣ و٥٨ و٧٦٫٣ كم ⇒ **٩٥٠ في الثلاث**. فمنطقةٌ مسطّحة تبلغ **+٥٦٪
+   * مسافةً بلا جنيهٍ إضافيّ له**.
+   *
+   * وصمتُ هذه الكتلة عن ذلك يجعل الرقمَ الأبرز في البطاقة يَعِد بما لا يفعله —
+   * وهو النمط ٢ في `LESSONS.md` مطبَّقاً على المال. والبند ٢ من اتفاقيته يقول
+   * إنه «حرٌّ في قبول أي عرضٍ أو رفضه»، **وحريةٌ بلا علمٍ ليست حرية**.
+   *
+   * ⚠ **وتُمرَّر على بطاقة العرض وحدها.** بعد الإسناد صار المستحقُّ مثبَّتاً
+   * والقرارُ ماضياً، فجملةُ «اقرأ قبل أن تقبل» تصير عتاباً لا معلومة.
+   */
+  stopsCount?: number;
   hint?: ReactNode;
 }) {
   return (
@@ -112,8 +132,18 @@ export function PayoutBlock({
       <p className="mt-1 text-xs leading-5 text-emerald-900/80 dark:text-emerald-100/80">
         {hint ?? (
           <>
-            هذا ما تتقاضاه أنت عن تنفيذ الرحلة كاملة{roundTrip ? " ذهاباً وعودة" : ""} — محسوب من
-            قائمة أسعارك المعتمدة. سعر العميل شأن المنصة ولا يظهر لك.
+            هذا ما تتقاضاه أنت عن تنفيذ الرحلة كاملة{roundTrip ? " ذهاباً وعودة" : ""}
+            {stopsCount > 0 ? " بمحطاتها الوسطى المبيّنة في المسار أدناه" : ""} — محسوب من قائمة
+            أسعارك المعتمدة. سعر العميل شأن المنصة ولا يظهر لك.
+            {stopsCount > 0 ? (
+              <>
+                {" "}
+                <span className="font-semibold">
+                  والمحطات لا تزيد هذا الرقم: قائمتك سعّرت المسار المباشر، والمرور بها يطيل
+                  الرحلة مسافةً وزمناً بالمستحق نفسه — فاقرأ المسار كاملاً قبل أن تقبل.
+                </span>
+              </>
+            ) : null}
           </>
         )}
       </p>
@@ -125,21 +155,97 @@ export function PayoutBlock({
 /* المسار والتفاصيل                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * صيغةُ جمعِ المحطات — «محطة واحدة / محطتان / ٣ محطات». والسقفُ ٥
+ * (`MAX_TRIP_STOPS`) فلا حاجة لصيغة ما فوق العشرة.
+ *
+ * ⚠ ولا مُعادِلَ لها في المستودع اليوم (‏`passengersLabel` و`luggageLabel` في
+ * `components/booking/format.ts` لجنسٍ آخر من الأسماء)، وهي **نصُّ عرضٍ عربيّ**
+ * لا منطق — فمكانُها حيث تُقرأ. ويومَ تحتاجها شاشةُ العميل تُرفع إلى `format.ts`
+ * ولا تُنسخ (القاعدة ١٢).
+ */
+function stopsCountLabel(count: number): string {
+  if (count === 1) return "محطة واحدة في الطريق";
+  if (count === 2) return "محطتان في الطريق";
+  return `${toArabicDigits(count)} محطات في الطريق`;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *  سطرُ المسار — 🔴 **المنطلق ← المحطات بترتيبها ← الوجهة، في سطرٍ واحد**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * ── لماذا داخل هذا السطر لا في كتلةٍ تحته ──────────────────────────────────
+ *
+ * كان المتعهد يقرأ «القاهرة ← الإسكندرية» ويقرّر. وكتلةٌ منفصلة أسفلَها تحتمل
+ * أن تُتخطّى بنظرةٍ عجلى **والمهلةُ تجري**؛ أما سطرُ المسار فهو ما يُقرأ حتماً.
+ * فوضعُ المحطات فيه يجعل قراءةَ مسارٍ ناقصٍ **غيرَ ممكنة** لا «غيرَ مرجَّحة» —
+ * وهو الفرق بين حاجزٍ وعُرف (نفس منطق §٧ في `CONVENTIONS.md`).
+ *
+ * ── الإتاحة ────────────────────────────────────────────────────────────────
+ *
+ * • القائمة `<ol>` لأن **الترتيب هو المعلومة**: قارئُ الشاشة ينطقها بترتيبها،
+ *   وهو ترتيبُ القيادة نفسه.
+ * • السهم والدبّوس `aria-hidden` — زخرفةٌ بصرية؛ والدورُ في المسار يُنطق نصّاً
+ *   في `sr-only` («المنطلق» · «محطة في الطريق» · «الوجهة») فلا يُترك للّون ولا
+ *   للأيقونة وحدها (‏١٫٤٫١ AA)، ويُقرأ على الورقة المطبوعة بالأبيض والأسود.
+ * • ولا عنصرَ تفاعليّ هنا إطلاقاً — فلا هدفَ لمسٍ ٤٤×٤٤ يُقاس على هذه اللبنة.
+ *
+ * ⚠ **والوسمُ الفارغ يُعرض ولا يُحذف**: `dispatch_public_label` قد تُرجع `null`
+ * لوسمٍ كلُّ مقاطعه مرقَّمة. فمحطةٌ بلا اسم تبقى نقطةً في الطريق، وإسقاطُها
+ * يُري مساراً أقصر مما سيُقاد.
+ */
 export function TripRoute({
   originLabel,
   destLabel,
   roundTrip,
+  stopLabels = [],
 }: {
   originLabel: string;
   destLabel: string;
   roundTrip: boolean;
+  /** وسومُ المحطات بترتيب القيادة — بلا إحداثيات (D-19)؛ الغياب رحلةُ نقطتين */
+  stopLabels?: readonly string[];
 }) {
+  const points = [originLabel, ...stopLabels, destLabel];
+  const last = points.length - 1;
+
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <MapPin className="size-4 shrink-0 text-primary" aria-hidden="true" />
-      <span className="font-medium">{originLabel || "—"}</span>
-      <ArrowLeft className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="font-medium">{destLabel || "—"}</span>
+      <ol className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {points.map((label, index) => {
+          const middle = index > 0 && index < last;
+          return (
+            // 🔑 الفهرس مفتاحٌ مشروع: قائمةُ عرضٍ محضة بلا حالةٍ ولا إدخال
+            <li key={`${index}-${label}`} className="inline-flex items-center gap-2">
+              {index > 0 ? (
+                <ArrowLeft
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              ) : null}
+              {middle ? (
+                <MapPinPlus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              ) : null}
+              <span className="font-medium">
+                <span className="sr-only">
+                  {index === 0 ? "المنطلق: " : middle ? "محطة في الطريق: " : "الوجهة: "}
+                </span>
+                {label || (middle ? "محطة بلا اسم" : "—")}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      {stopLabels.length > 0 ? (
+        <Badge
+          variant="outline"
+          className="ms-1 border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+        >
+          {stopsCountLabel(stopLabels.length)}
+        </Badge>
+      ) : null}
       <Badge variant="outline" className="ms-1">
         {roundTrip ? "ذهاب وعودة" : "اتجاه واحد"}
       </Badge>
@@ -173,10 +279,19 @@ export function TripRoute({
 export function TripMap({
   bookingId,
   approximate,
+  stopsCount = 0,
 }: {
   bookingId: string | null;
   /** رُسم الخط مستقيماً لتعذّر الهندسة — تُقال، ولا تُترك للتخمين (0079) */
   approximate?: boolean;
+  /**
+   * عددُ المحطات الوسطى — لا أسماؤها ولا إحداثياتها.
+   *
+   * فالصورةُ تُبنى في الخادم من لقطة الحجز خلف حارسٍ مستقل، وهذا المكوّن لا
+   * يحتاج إلا أن يعرف **هل على الصورة علاماتٌ ثالثة** ليصفها في المفتاح وفي
+   * النصّ البديل. ورقمٌ وحدَه لا يوسّع ما يصل المتعهد بحرف (D-19).
+   */
+  stopsCount?: number;
 }) {
   if (!bookingId) return null;
   return (
@@ -216,9 +331,13 @@ export function TripMap({
         <img
           src={`/portal/trips/map/${bookingId}`}
           alt={
-            approximate
-              ? "خريطة تُظهر نقطة الالتقاط ونقطة الوصول وخطاً تقريبياً بينهما."
-              : "خريطة تُظهر نقطة الالتقاط ونقطة الوصول ومسار القيادة بينهما."
+            stopsCount > 0
+              ? approximate
+                ? `خريطة تُظهر نقطة الالتقاط ونقطة الوصول و${toArabicDigits(stopsCount)} من محطات الطريق مرقَّمةً بترتيب الرحلة، وخطاً تقريبياً يمرّ بها.`
+                : `خريطة تُظهر مسار القيادة من نقطة الالتقاط إلى نقطة الوصول مروراً بـ${toArabicDigits(stopsCount)} من محطات الطريق، وعلى كل محطة رقمُها في ترتيب الرحلة.`
+              : approximate
+                ? "خريطة تُظهر نقطة الالتقاط ونقطة الوصول وخطاً تقريبياً بينهما."
+                : "خريطة تُظهر نقطة الالتقاط ونقطة الوصول ومسار القيادة بينهما."
           }
           width={1280}
           height={720}
@@ -243,6 +362,16 @@ export function TripMap({
           />
           <span className="font-medium">نقطة الوصول</span>
         </li>
+        {/* بندٌ مشروط: مفتاحٌ يذكر لوناً لا وجودَ له يجعل القارئ يبحث عمّا ليس هناك */}
+        {stopsCount > 0 ? (
+          <li className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className="size-2.5 shrink-0 rounded-full bg-[#d97706] ring-2 ring-[#d97706]/25"
+            />
+            <span className="font-medium">محطات الطريق — مرقَّمة بترتيب الرحلة</span>
+          </li>
+        ) : null}
       </ul>
 
       {approximate ? (
@@ -270,16 +399,36 @@ export type TripFactsInput = {
   waitingHours: number;
   classTitle: string;
   pickupAt: string | null;
+  /** وسومُ المحطات — تُقرأ هنا **عدداً** وحده، لتصدق تسميةُ حقل المسافة */
+  stopLabels: readonly string[];
 };
 
-/** شبكة الحقائق — كل ما يحتاجه المتعهد ليقرر التنفيذ، بلا أي بيانات عميل */
+/**
+ * شبكة الحقائق — كل ما يحتاجه المتعهد ليقرر التنفيذ، بلا أي بيانات عميل.
+ *
+ * ── 🔴 تسميةُ حقل المسافة تتبع ما يقيسه الرقمُ فعلاً ────────────────────────
+ *
+ * `distanceKm` في لقطة الحجز هو ناتجُ `routeDistance(origin, destination, stops)`
+ * — أي **مجموعُ الأرجل**، لا الوترُ بين الطرفين. وتحقّقُ `create_booking` نفسُه
+ * يقيسه على `trip_straight_km(..., v_stops)` أي على السلسلة كاملةً.
+ *
+ * فالرقمُ صادقٌ، **وكانت التسميةُ وحدها هي الكاذبة**: «المسافة (اتجاه واحد)»
+ * تُقرأ «من المنطلق إلى الوجهة» فيقيس المتعهدُ وقودَه وزمنَه على مسارٍ مباشر
+ * أقصر مما سيقود. ورقمٌ صادقٌ بوسمٍ كاذب أسوأ من غيابه.
+ *
+ * و«اتجاه واحد» يبقى في التسميتين لأنه يفصل الذهابَ عن الذهاب والعودة — وهو
+ * تمييزٌ آخر لا يُستغنى عنه، ومعروضٌ في «نوع الرحلة» بجواره.
+ */
 export function TripFacts({ trip }: { trip: TripFactsInput }) {
+  const hasStops = trip.stopLabels.length > 0;
   return (
     <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <Fact label="موعد الانطلاق">{dateTimeLabel(trip.pickupAt)}</Fact>
       <Fact label="الفئة المطلوبة">{trip.classTitle || "—"}</Fact>
       <Fact label="الركاب">{passengersLabel(trip.passengers)}</Fact>
-      <Fact label="المسافة (اتجاه واحد)">{formatDistance(trip.distanceKm)}</Fact>
+      <Fact label={hasStops ? "المسافة عبر المحطات (اتجاه واحد)" : "المسافة (اتجاه واحد)"}>
+        {formatDistance(trip.distanceKm)}
+      </Fact>
       <Fact label="الانتظار">{waitingLabel(trip.waitingHours)}</Fact>
       <Fact label="نوع الرحلة">{trip.roundTrip ? "ذهاب وعودة" : "اتجاه واحد"}</Fact>
     </dl>

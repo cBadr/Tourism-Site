@@ -110,7 +110,7 @@ export function ReadinessStateCard({
       ) : paused ? (
         <div>
           <Link
-            href="/portal/notifications"
+            href="/portal/profile#channels"
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             أعد استقبال الطلبات

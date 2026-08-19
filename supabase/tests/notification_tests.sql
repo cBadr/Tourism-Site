@@ -47,6 +47,9 @@
 --   (د)  «مكنوس» ≠ «مقروء» · والاستعادة تُرجع الاثنين
 --   (هـ) لا بابَ حذفٍ واحد: صفر منح delete/truncate لـanon/authenticated
 --   (ح)  🔬 الطفرات الثلاث تُبنى وتُشغَّل ويُثبَت أنها تُسقط تأكيداتها
+--   (ط)  🚏 المحطاتُ تبلغ الحمولةَ والصندوق (0144): حمولةُ العرض والتشغيل
+--        والعميل · إسقاطُ `portal_inbox` **بجلسة المتعهد نفسه** · التوافقُ
+--        الرجعيّ للرحلة المباشرة · و🔒 لا إحداثيةَ محطةٍ في صفِّ إشعارٍ أبداً
 --   (ي)  صفر أثر
 --
 -- المرجع: supabase/migrations/0077_notification_view_state.sql · 0054 · D-19 · D-20
@@ -155,6 +158,13 @@ declare
   v_base   integer;
   v_ok     boolean;
   v_msg    text;
+  -- (ط) المحطات الوسطى في الحمولات وفي صندوق البورتال — 0144
+  v_bk     uuid;
+  v_bk0    uuid;
+  v_trip   jsonb;
+  v_pl     jsonb;
+  v_sum    jsonb;
+  v_inb    constant uuid := 'b1000000-0000-4000-8000-00000000004d';
 begin
   begin
     -- ══ الفيكسترة ═════════════════════════════════════════════════════════
@@ -397,6 +407,127 @@ begin
     execute 'drop policy nt_mut_open on public.notifications';
     execute 'drop function if exists public.nt_mut_dismiss(uuid)';
     execute 'drop function if exists public.nt_mut_mark_read(uuid)';
+
+    -- ══ (ط) 🚏 المحطاتُ تبلغ الرسالةَ والصندوق (0144) ══════════════════════
+    --
+    -- 🔴 **ما يمسكه هذا القسم:** نزلت المحطاتُ في `0140` وعرضتها بطاقةُ
+    -- البورتال، **وبقيت حمولةُ الإشعار بلا `stops`** — فيصل المتعهدَ «من ← إلى»
+    -- عن رحلةٍ بمحطتين، **ويقبل على ذلك**. والشاهدُ على `portal_offers()` وحده
+    -- (النمط ٦ج في `LESSONS.md`) كان يبقى أخضرَ والضررُ واقع، لأن القرار يُتّخذ
+    -- على الرسالة لا على الشاشة.
+    --
+    -- ولذلك يقيس القسمُ الطبقاتِ الثلاث: **الحمولة** ⇐ **إسقاط الصندوق** ⇐
+    -- **السلوك عند المتعهد نفسه بجلسته هو**.
+
+    insert into public.bookings (reference, public_token, status, class_slug, class_title,
+                                 total, currency, plan, amount_due, amount_remaining,
+                                 customer_name, customer_phone, trip)
+    values ('TR-NT0144A', repeat('s', 48), 'under_review', 'nt-sedan', 'NT_TESTS فئة',
+            2400, 'EGP', 'full', 2400, 0, 'NT_TESTS عميل محطات', '01000000202',
+            jsonb_build_object(
+              'originLabel', 'NT_TESTS منطلق',
+              'destLabel',   'NT_TESTS وجهة',
+              'distanceKm',  120,
+              'passengers',  3,
+              'pickupAt',    (now() + interval '5 days')::text,
+              'stops', jsonb_build_array(
+                jsonb_build_object('label', 'NT_TESTS محطة أولى', 'lat', 29.96, 'lng', 31.26),
+                jsonb_build_object('label', 'NT_TESTS محطة ثانية', 'lat', 29.99, 'lng', 31.30))))
+    returning id, trip into v_bk, v_trip;
+
+    insert into public.bookings (reference, public_token, status, class_slug, class_title,
+                                 total, currency, plan, amount_due, amount_remaining,
+                                 customer_name, customer_phone, trip)
+    values ('TR-NT0144B', repeat('t', 48), 'under_review', 'nt-sedan', 'NT_TESTS فئة',
+            2400, 'EGP', 'full', 2400, 0, 'NT_TESTS عميل مباشر', '01000000203',
+            jsonb_build_object(
+              'originLabel', 'NT_TESTS منطلق',
+              'destLabel',   'NT_TESTS وجهة',
+              'distanceKm',  120,
+              'passengers',  3,
+              'pickupAt',    (now() + interval '5 days')::text))
+    returning id into v_bk0;
+
+    -- ── (ط-١) حمولةُ العرض: وسمان بترتيبهما، **ولا إحداثية**
+    v_pl := public.dispatch_trip_payload(v_bk, true);
+    if jsonb_typeof(v_pl -> 'stops') <> 'array' or jsonb_array_length(v_pl -> 'stops') <> 2 then
+      raise exception
+        '(ط-١) 🔴 حمولةُ العرض بلا محطتين — المتعهد يقرأ «من ← إلى» عن رحلةٍ بمحطتين ويقبل عليها. الفعليّ: %',
+        coalesce(v_pl -> 'stops', 'null'::jsonb);
+    end if;
+    if (v_pl -> 'stops' -> 0) ? 'lat' or (v_pl -> 'stops' -> 0) ? 'lng'
+       or (v_pl -> 'stops' -> 1) ? 'lat' or (v_pl -> 'stops' -> 1) ? 'lng' then
+      raise exception '(ط-١) 🔒 إحداثيةُ محطةٍ في حمولةِ عرضٍ قبل القبول — نقضٌ لـD-19';
+    end if;
+    if (v_pl -> 'stops' -> 1 ->> 'label') not like '%محطة ثانية%' then
+      raise exception '(ط-١) ترتيبُ المحطات انقلب: الثانيةُ «%»', (v_pl -> 'stops' -> 1 ->> 'label');
+    end if;
+
+    -- ── (ط-٢) والحمولةُ التشغيلية كذلك بلا إحداثيات — الثابتُ المعلَن في 0144:
+    --         «لا إحداثيةَ محطةٍ تدخل صفَّ إشعارٍ أبداً»
+    v_pl := public.dispatch_trip_payload(v_bk, false);
+    if jsonb_array_length(v_pl -> 'stops') <> 2
+       or (v_pl -> 'stops' -> 0) ? 'lat' then
+      raise exception '(ط-٢) 🔒 حمولةُ التشغيل: محطاتٌ ناقصةٌ أو بإحداثيات';
+    end if;
+
+    -- ── (ط-٣) وحمولةُ العميل — أربعةُ إشعاراتٍ تصف رحلته، ومنها التذكير
+    v_pl := public.customer_notification_payload(v_bk);
+    if jsonb_array_length(v_pl -> 'stops') <> 2 then
+      raise exception
+        '(ط-٣) 🔴 حمولةُ العميل بلا محطات — تذكيرُ ما قبل الموعد يصفُ رحلةً غير التي حجزها';
+    end if;
+
+    -- ── (ط-٤) 🔒 التوافقُ الرجعيّ: الرحلةُ المباشرة بحمولةٍ **لم تتغيّر شكلاً**
+    if public.dispatch_trip_payload(v_bk0, true) -> 'stops' <> 'null'::jsonb then
+      raise exception '(ط-٤) رحلةٌ بلا محطات وحمولتُها تحمل قيمةً في stops: %',
+        public.dispatch_trip_payload(v_bk0, true) -> 'stops';
+    end if;
+    if public.customer_notification_payload(v_bk0) ? 'stops' then
+      raise exception '(ط-٤) حمولةُ عميلٍ لرحلةٍ مباشرة اكتسبت مفتاح stops — تغيّرَ شكلُ ما لم يتغيّر';
+    end if;
+
+    -- ── (ط-٥) 🔴 صندوقُ البورتال **بجلسة المتعهد نفسه** — لا بقراءة الدالة
+    --         (النمط ٦ج: الشاهدُ على الدالة نصفُ شاهد؛ الإسقاطُ هو موضعُ الضرر)
+    insert into public.notifications
+      (id, event, payload, channels, status, attempts, delivered_at,
+       recipient_kind, recipient_id)
+    values (v_inb, 'trip_offered', public.dispatch_trip_payload(v_bk, true),
+            array['telegram','inbox'], 'sent', 1, now(), 'partner', v_sub);
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+    select i.summary into v_sum from public.portal_inbox(200) i where i.id = v_inb;
+    execute 'reset role';
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    if v_sum is null then
+      raise exception '(ط-٥) لم يقرأ المتعهد صفَّه — القياسُ كان سيقيس صندوقاً فارغاً لا إسقاطاً';
+    end if;
+    if jsonb_typeof(v_sum -> 'stops') <> 'array' or jsonb_array_length(v_sum -> 'stops') <> 2 then
+      raise exception
+        '(ط-٥) 🔴 القائمةُ البيضاء في portal_inbox تُسقط stops — الصفُّ يحملها والصندوقُ لا يعرضها. الملخّصُ: %',
+        v_sum;
+    end if;
+    if (v_sum -> 'stops' -> 0) ? 'lat' then
+      raise exception '(ط-٥) 🔒 إحداثيةٌ عبرت إلى ملخّص الصندوق';
+    end if;
+
+    -- ── (ط-٦) 🔬 الطفرةُ التي يمسكها تأكيدُ D-19 أعلاه — وتُشغَّل فعلاً
+    --         الخطأُ الواقعيّ الوحيد هنا هو استعمالُ `trip_stops_full` (وهي
+    --         موجودةٌ وتغري) بدل `trip_stops_public`. فإن لم تكن الأولى تحمل
+    --         إحداثياتٍ فعلاً، فتأكيدُ «لا lat» زينةٌ لا يميّز شيئاً.
+    if not ((public.trip_stops_full(v_trip) -> 0) ? 'lat') then
+      raise exception
+        '(ط-٦) 🔬 trip_stops_full بلا إحداثيات — فتأكيدا D-19 في (ط-١) و(ط-٥) لا يميّزان بديلاً خاطئاً';
+    end if;
+    if jsonb_array_length(public.trip_stops_public(v_trip)) <> 2 then
+      raise exception '(ط-٦) 🔬 trip_stops_public لم تُخرج وسمين — المصدرُ نفسه مكسور';
+    end if;
+
+    raise notice '✔ (ط) 🚏 المحطات في حمولة العرض وحمولة التشغيل وحمولة العميل وملخّص صندوق المتعهد — وسومٌ بترتيبها بلا إحداثيات · والرحلةُ المباشرة بحمولةٍ لم تتغيّر · و🔬 البديلُ الخاطئ (trip_stops_full) يحمل إحداثياتٍ فعلاً فالتأكيدُ يميّز';
 
     raise exception 'NOTIFICATION_TESTS_ROLLBACK';
   exception

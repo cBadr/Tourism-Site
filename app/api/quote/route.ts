@@ -2,6 +2,13 @@ import { trackFunnelBatch } from "@/lib/analytics/emit";
 import { routeDistance } from "@/lib/geo/route";
 import { createServiceSupabase } from "@/lib/supabase/admin";
 import type { FunnelPayload } from "@/lib/analytics-types";
+import {
+  MAX_PLACE_LABEL_LENGTH,
+  MAX_TRIP_STOPS,
+  sanitizeLine,
+  type TripStop,
+} from "@/lib/booking-types";
+import { getStopsCap } from "@/components/booking/stops-cap";
 import type { QuoteError } from "@/lib/pricing-types";
 import type { OfferPricing, PriceSource } from "@/lib/subcontractor-types";
 import {
@@ -70,7 +77,25 @@ import {
  *   no-classes         ٢٠٠ — لا فئة تتسع لعدد **الركاب** (ليس خطأ خادم)
  *   no-classes-luggage ٢٠٠ — لا فئة تتسع للركاب **والحقائب** معاً
  *   pricing-failed     ٥٠٠/٥٠٣ — فشل دالة التسعير أو بيئة غير مضبوطة
+ *   stops-unsupported  ٥٠٣ — طُلبت محطات وقاعدةُ البيانات لا تعرف `p_stops` بعد
  *   distance-failed    ٥٠٠ — احتياطي لا يقع عملياً (طبقة التقدير تضمن مسافة)
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  المحطات الوسطى — والفشلُ فيها **مغلقٌ** لا متسامح
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * الجسم يقبل `stops` (‏`TripStop[]`، عقد `lib/booking-types.ts`) ويمرّرها في
+ * موضعين لا ثالث لهما:
+ *   (١) `routeDistance(origin, destination, stops)` ⇒ المسافة صارت **مجموع
+ *       الأرجل** لا الخط المباشر، وهي ما يُسعَّر عليه العميل.
+ *   (٢) `quote_public(..., p_stops)` ⇒ القاعدةُ وحدها تقرّر أثرَها على مصدر
+ *       السعر. **ولا شرطَ هنا ولا مقارنة**: كلُّ حسابٍ ماليّ في Postgres (D-05).
+ *
+ * 🔴 **وسلّم التوافق يسقط كلُّه حين توجد محطة.** إعادةُ النداء بلا `p_stops`
+ * تعني تسعير **مسارٍ مباشر** لرحلةٍ فيها انحراف — أي أن تُطابَق قائمةُ أسعار
+ * متعهدٍ سعّر رحلةً أقصر، فيُطلب منه ما لم يسعّره. فما لا نعرف تسعيره **يُرفض
+ * برمزٍ صريح** ولا يُسعَّر ناقصاً؛ ونافذةُ هذا الرمز دقائقُ النشر قبل الهجرة.
+ * (نفس ما حسمته `0024` في حالة الكوبون: `0024_discounts.sql:1035`.)
  *
  * ⚠ **ورمزا `no-classes*` ليسا خطأً — هما نتيجة بحث.** الواجهة **تفرّقهما عن
  * البقية** بالرمز: البقية صندوق أحمر «حاول مرة أخرى»، وهما بطاقةُ مخرج تحمل ما
@@ -152,6 +177,57 @@ function isFiniteCoords(v: unknown): v is { lat: number; lng: number } {
   );
 }
 
+/**
+ * أقصى طول تسمية مكان — **مستوردٌ من عقد الحجز، لا رقمٌ محلّيّ**.
+ *
+ * 🔴 وكان هذا الملف يقصّ وسمَ **المحطة** ولا يقصّ وسمَ المنطلق ولا الوجهة
+ * إطلاقاً — يمرّان خاميْن. قِيس حياً: وسمُ منطلقٍ بـ٥٠٠٣ محارف يبدأ بـU+202E
+ * وفيه U+0007 قُبل بـ٢٠٠.
+ *
+ * ⚠ **وحدُّ الأثر يُقال كما هو**: الوسمان هنا **لا يُخزَّنان ولا يُرسَلان** —
+ * `funnel_events` بلا عمودٍ لهما بقصد، و`meta-capi` و`browser` تُسقطهما صراحةً
+ * (عنوانُ الالتقاط كثيراً ما يكون بيت العميل). فالمكسبُ ثلاثة لا واحد:
+ * (١) لا يعبر نصٌّ بلا حدٍّ من جسمٍ غير موثوق داخل الخادم؛ (٢) الوسمُ الذي
+ * يُسعَّر هو الوسمُ الذي يُحجز — فلا يفترق مسارٌ عن مسار؛ (٣) ومن يقرأ
+ * `FunnelPayload` غداً لا يرث ثقباً مفتوحاً.
+ */
+const MAX_LABEL_LENGTH = MAX_PLACE_LABEL_LENGTH;
+
+/**
+ * المحطات الوسطى: مصفوفةُ نقاطٍ صالحة بالترتيب — و**الرفضُ صريحٌ لا صامت**.
+ *
+ * ثلاثة أسباب رفض، وكلُّها تُرجع `null` ⇒ ٤٠٠:
+ *   • ليست مصفوفة.
+ *   • أكثر من `MAX_TRIP_STOPS` محطة (حدُّ كلفة: كل محطةٍ رجلٌ ونداءٌ خارجيّ).
+ *   • محطةٌ بلا إحداثيات صالحة (D-09).
+ *
+ * 🔴 **ولا تُبتلع محطةٌ مشوَّهة بصمت.** إسقاطُها يعني تسعير رحلةٍ **أقصر** مما
+ * سيقودها السائق — وهو العطلُ الماليّ بعينه، لا حالةٌ حافّة. والغيابُ التامّ
+ * للحقل ليس رفضاً: هو رحلةُ النقطتين كما كانت دائماً.
+ *
+ * ⚠ **والتنقيةُ هنا شكليةٌ لا حارسٌ ثانٍ**: صحةُ النقطة رياضياً تُفحص هنا لتخرج
+ * رسالةٌ مفهومة مبكراً، وكلُّ ما هو حكمٌ (تسعيرٌ · تغطيةٌ · مسافة) في القاعدة.
+ */
+function parseStops(value: unknown): TripStop[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  if (value.length > MAX_TRIP_STOPS) return null;
+
+  const stops: TripStop[] = [];
+  for (const item of value) {
+    if (!isFiniteCoords(item)) return null;
+    // 🔒 التنقية مفوَّضةٌ إلى `sanitizeLine` في عقد الحجز — نفسُ ما يفعله
+    //    `/api/booking` حرفاً (القاعدة الذهبية ١٢). وكان السطر هنا
+    //    `label.replace(/\s+/g," ")` و`\s` لا يمسّ U+0007 ولا U+202E.
+    const label = sanitizeLine((item as { label?: unknown }).label, MAX_LABEL_LENGTH);
+    // 🔴 **الوسمُ الفارغ رفض** — مرآةٌ لـ`trip_stops_reject_reason` في القاعدة
+    //    (`stop-label-missing`). وبلا هذا يُعرض سعرٌ لرحلةٍ ترفضها `create_booking`.
+    if (label.length === 0) return null;
+    stops.push({ label, lat: item.lat, lng: item.lng });
+  }
+  return stops;
+}
+
 /** تاريخ ISO صالح للعرض السعري — أو null. لا حدود مستقبلية هنا: هذا مسار معاينة
  *  لا يُنشئ شيئاً، وحدود الوقت الحقيقية (انحراف الساعة والسقف السنوي وترتيب
  *  العودة بعد الانطلاق) تُفرض في `/api/booking` وفي `create_booking`. */
@@ -161,8 +237,18 @@ function parseIsoOrNull(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+/**
+ * جسمُ هذا المسار بعد المحطات.
+ *
+ * والتوسعةُ **محليّة** لأن `QuoteRequestWithExtras` عقدٌ يعيش في
+ * `components/booking/extras.ts` — وهو خارج ملفّات هذه الجبهة، ومن يلمسه هو من
+ * يبني الويدجت. والاسمُ `stops` هو نفسه في العقود الثلاثة (‏اللقطة · جسم الحجز ·
+ * هذا الجسم) فلا ينحرف مفتاحٌ عن مفتاح.
+ */
+type QuoteRequestWithStops = QuoteRequestWithExtras & { stops: TripStop[] };
+
 /** تحقق كامل من جسم الطلب — يرجع null عند أي خلل */
-function parseQuoteRequest(body: unknown): QuoteRequestWithExtras | null {
+function parseQuoteRequest(body: unknown): QuoteRequestWithStops | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as Record<string, unknown>;
 
@@ -186,17 +272,26 @@ function parseQuoteRequest(body: unknown): QuoteRequestWithExtras | null {
   const extras = parseExtrasSelection(b.extras);
   if (extras === null) return null;
 
-  const originLabel = (b.origin as { label?: unknown }).label;
-  const destLabel = (b.destination as { label?: unknown }).label;
+  // المحطات الوسطى — الرفض صريح (مصفوفة مشوَّهة · تجاوُز السقف · نقطة بلا إحداثيات)
+  const stops = parseStops(b.stops);
+  if (stops === null) return null;
+
+  // 🔴 وسما المنطلق والوجهة يمرّان بنفس مُنقّي المحطة — كانا يعبران **خاميْن**
+  //    بلا سقفٍ ولا تنقية (وحدُّ أثرهما مشروحٌ عند `MAX_LABEL_LENGTH` أعلاه).
+  //    والوسمُ هنا **معلومةُ عرضٍ لا شرطُ قبول**: خلوّه لا يُفشل عرضَ سعرٍ
+  //    يُحسب على الإحداثيات وحدها — بخلاف المحطة التي ترفضها القاعدة بلا وسم.
+  const originLabel = sanitizeLine((b.origin as { label?: unknown }).label, MAX_LABEL_LENGTH);
+  const destLabel = sanitizeLine((b.destination as { label?: unknown }).label, MAX_LABEL_LENGTH);
 
   return {
+    stops,
     origin: {
-      label: typeof originLabel === "string" ? originLabel : "",
+      label: originLabel,
       lat: b.origin.lat,
       lng: b.origin.lng,
     },
     destination: {
-      label: typeof destLabel === "string" ? destLabel : "",
+      label: destLabel,
       lat: b.destination.lat,
       lng: b.destination.lng,
     },
@@ -249,15 +344,56 @@ export async function POST(request: Request) {
   if (!input) {
     return errorJson(
       "invalid-input",
-      "بيانات الرحلة غير مكتملة: نقطتا الانطلاق والوصول بإحداثيات صحيحة، وعدد ركاب من ١ إلى ٦٠، وعدد حقائب من ٠ إلى ٢٠.",
+      // ⚠ **بلا عددِ محطاتٍ هنا بقصد**: عددُها يحكمه سقفُ المالك، وتقوله بوابةُ
+      //   `getStopsCap` أدناه بقيمته الحيّة. ورقمان لشيءٍ واحد في رسالتين يُربكان.
+      "بيانات الرحلة غير مكتملة: نقطتا الانطلاق والوصول بإحداثيات صحيحة، وعدد ركاب من ١ إلى ٦٠، وعدد حقائب من ٠ إلى ٢٠، ومحطاتٌ وسطى كلٌّ منها مختارة من قائمة الاقتراحات ولها اسم.",
       400
     );
   }
 
-  // (١) المسافة — لا تفشل نظرياً (طبقة التقدير تضمن رقماً دائماً)، والحارس احتياط
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  🔴 (٠) سقفُ المحطات **من القاعدة** — قبل نداء المسافة الخارجيّ
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * كان هذا المسار يعرف `MAX_TRIP_STOPS` = ٥ وحده، والقاعدةُ تفرض
+   * `max_trip_stops()` = **٣** بالافتراض (‏هجرة `0140`، يضبطه المالك في
+   * `trip_settings`). قِيس حياً قبل هذا الفرع: أربعُ محطاتٍ ⇒ ٢٠٠ بسعر ٩٤٨ ج،
+   * وخمسٌ ⇒ ٢٠٠ بسعر ١٠٥٩ ج — **وكلتاهما ترفضها `create_booking`**. أي أن
+   * الشاشة تعرض سعراً، وتستهلك ٥–٦ أرجلٍ من OSRM لتحسبه، لرحلةٍ **لا تُحجز**.
+   *
+   * والقراءةُ مفوَّضةٌ إلى `getStopsCap` — نفسُ ما تقرؤه الحاسبة لتقرّر كم زرَّ
+   * «أضف محطة» تعرض (القاعدة الذهبية ١٢)، فالرقمُ واحدٌ في الشاشة والمسار
+   * والقاعدة.
+   *
+   * ⚠ **ولا نداءَ قاعدةٍ لكل طلب**: الشرطُ `hasStops` — ورحلةُ النقطتين، وهي
+   * الغالبةُ الساحقة على هذا المسار الساخن، لا تدفع رحلةَ شبكةٍ واحدة.
+   *
+   * 🔒 **والفشلُ مغلق**: تعذّرت القراءة ⇒ `DEFAULT_STOPS_CAP` = ٣ = افتراضُ
+   * العمود، أي **الأدنى لا الأعلى**.
+   *
+   * ⚠ **وموضعُه قبل `routeDistance` بقصد**: بعده كنّا ندفع نداءً خارجياً ثم
+   * نرفض. ورمزُه `invalid-input` لا رمزٌ جديد — فالواجهة تعرض `message` لكل ما
+   * ليس `no-classes*`، ورمزٌ جديد كان يلزمه فرعٌ في مكوّنٍ خارج هذه الجبهة.
+   */
+  if (input.stops.length > 0) {
+    const cap = await getStopsCap();
+    if (input.stops.length > cap) {
+      return errorJson(
+        "invalid-input",
+        cap === 0
+          ? "الرحلات متعددة المحطات غير متاحة حالياً. جرّب رحلةً من نقطة إلى نقطة، أو اطلب عرض سعر مخصص."
+          : `لا يمكن إضافة أكثر من ${cap.toLocaleString("ar-EG")} محطات وسطى في الرحلة الواحدة. احذف محطة أو اطلب عرض سعر مخصص.`,
+        400
+      );
+    }
+  }
+
+  // (١) المسافة — لا تفشل نظرياً (طبقة التقدير تضمن رقماً دائماً)، والحارس احتياط.
+  //     ومع المحطات تصير **مجموع الأرجل**، ومصدرُها أضعفُ رجلٍ فيها.
   let distance;
   try {
-    distance = await routeDistance(input.origin, input.destination);
+    distance = await routeDistance(input.origin, input.destination, input.stops);
   } catch {
     return errorJson("distance-failed", "تعذر حساب مسافة الرحلة. حاول مرة أخرى.", 500);
   }
@@ -339,11 +475,18 @@ export async function POST(request: Request) {
   //
   // ⚠ **الحقائب والخدمات تُمرَّران دائماً** ولو كانا صفراً/فارغين: تمريرهما
   // شرطياً يعني توقيعين مختلفين حسب المُدخل، وأولهما يخفي فشل الآخر.
+  const hasStops = input.stops.length > 0;
+
   let { data, error } = await supabase.rpc("quote_public", {
     ...publicArgs,
     p_luggage: input.luggage ?? 0,
     p_extras: input.extras && input.extras.length > 0 ? input.extras : null,
+    // المحطات تُلحق **بالشرط**: رحلةُ النقطتين تبقى على التوقيع الذي تعرفه كل
+    // قاعدة اليوم، فلا ينكسر التسعير العام لحظةَ تُطبَّق الهجرة ولا قبلها.
+    ...(hasStops ? { p_stops: input.stops } : {}),
   });
+
+  const missingSignature = (code?: string) => code === "PGRST202" || code === "42883";
 
   // ── سلّم التوافق أثناء النشر — ثلاث درجات، وكلٌّ منها أضعف مما فوقها ──────
   //
@@ -353,11 +496,26 @@ export async function POST(request: Request) {
   //     ولا يستطيع الزائر اختيار شيء. أما الحقائب فتُتجاهَل — وهو **سلوك اليوم
   //     نفسه** قبل الهجرة، لا انحدار جديد، ونافذته دقائق النشر.
   // (٢) قاعدة قبل 0012: `quote_public` نفسها غير موجودة ⇒ التوقيع الرباعي.
-  if (error && (error.code === "PGRST202" || error.code === "42883")) {
-    ({ data, error } = await supabase.rpc("quote_public", publicArgs));
-  }
-  if (error && (error.code === "PGRST202" || error.code === "42883")) {
-    ({ data, error } = await supabase.rpc("quote_price", baseArgs));
+  //
+  // 🔴 **والسلّم كلُّه موقوفٌ حين توجد محطة.** كلُّ درجةٍ فيه تُسقط `p_stops`
+  // فتُسعِّر **مساراً مباشراً** لرحلةٍ فيها انحراف: تُطابَق تغطيةُ متعهدٍ سعّر
+  // ما هو أقصر، فيُطلب منه ما لم يسعّره ويُعرض على العميل سعرُ رحلةٍ غير رحلته.
+  // فالفشل يقع **مغلقاً** برمزٍ صريح، ونافذتُه دقائقُ النشر قبل الهجرة.
+  if (hasStops) {
+    if (error && missingSignature(error.code)) {
+      return errorJson(
+        "stops-unsupported",
+        "الرحلات متعددة المحطات غير متاحة في هذه اللحظة. أعد المحاولة بعد قليل، أو احجز رحلةً من نقطة إلى نقطة.",
+        503
+      );
+    }
+  } else {
+    if (error && missingSignature(error.code)) {
+      ({ data, error } = await supabase.rpc("quote_public", publicArgs));
+    }
+    if (error && missingSignature(error.code)) {
+      ({ data, error } = await supabase.rpc("quote_price", baseArgs));
+    }
   }
 
   if (error) {

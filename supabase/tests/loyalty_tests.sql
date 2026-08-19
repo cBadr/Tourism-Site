@@ -71,7 +71,7 @@ begin
     ('public.my_loyalty_entries(integer)'),
     ('public.loyalty_reconcile()'),
     ('public.discount_floor_room(numeric, text, numeric)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
   if v_missing is not null then

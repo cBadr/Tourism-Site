@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 
+import { MAX_PLACE_LABEL_LENGTH, MAX_TRIP_STOPS, sanitizeLine } from "@/lib/booking-types";
 import { isSchemaMissing, portalAccess } from "../_lib/session";
 
 /**
@@ -35,6 +36,30 @@ export type PortalOffer = {
   waitingHours: number;
   classTitle: string;
   pickupAt: string | null;
+  /**
+   * ══════════════════════════════════════════════════════════════════════════
+   *  المحطات الوسطى — **وسومٌ بالترتيب، ولا إحداثيَّ واحد** (هجرة `0140`)
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * 🔴 **ولماذا `string[]` لا `TripStop[]`؟** لأن `portal_offers()` تُرجع
+   * `[{"label": …}]` **بلا `lat` ولا `lng` في الكائن أصلاً** — مقيسٌ حيّاً
+   * بـ`pg_get_functiondef(public.trip_stops_public)`: الدالة تبني الكائن
+   * بـ`jsonb_build_object('label', …)` وحده. فنوعٌ يحمل إحداثيات هنا يَعِد
+   * الواجهةَ بما لا يصلها، ويفتح البابَ لأن يُملأ الفراغُ يوماً من مكانٍ آخر —
+   * وهو نقضُ **D-19** في صورةِ نوع. الاسمُ نفسه يقول الحدَّ فلا يُنسى.
+   *
+   * 🔴 **وغيابُ الوسم لا يُسقط المحطة.** `dispatch_public_label` قد تُرجع `null`
+   * لوسمٍ كلُّ مقاطعه مرقَّمة، وحينها يبقى في المصفوفة نصٌّ فارغ تعرضه الشاشة
+   * «محطة بلا اسم» — لأن **المحطة موجودةٌ في الطريق حتى لو غاب اسمها**، وحذفُها
+   * يُري المتعهدَ مساراً أقصر مما سيقوده. (نفس حكم `readTripStops` حرفاً.)
+   *
+   * ⚠ **ولماذا حقلٌ واحد للعرضين؟** `portal_trips()` تُرجع `trip_stops_full`
+   * بإحداثياتها بعد الإسناد، لكن الشاشة لا ترسم بها شيئاً: الخريطةُ والملاحةُ
+   * تُبنيان في الخادم من `bookingId` بعد حارسٍ مستقل (`TripMap`). فنقلُ
+   * الإحداثيات إلى حمولة الصفحة كان توسيعاً بلا مستهلك — وهو ما ترفضه القاعدة
+   * الأم في §د من `DECISIONS.md`.
+   */
+  stopLabels: string[];
   /** مستحق هذا المتعهد — لا سعر العميل ولا هامش المنصة */
   payout: number;
   /** العملة من لقطة الحجز؛ null ⇒ يُعرض الرقم مجرداً بلا وحدة مكتوبة في الكود */
@@ -157,6 +182,62 @@ function asBool(v: unknown): boolean {
   return v === 1;
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *  تسميةُ مكانٍ تُعرض للمتعهد — **مفوَّضةٌ إلى مُنقّي عقد الحجز، ولا ثالثَ له**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * `sanitizeLine` في `lib/booking-types.ts` هو المُنقّي الوحيد في المستودع لهذا
+ * الصنف من النصّ: يقرؤه `/api/quote` و`/api/booking` عند **الكتابة**، ويقرؤه هذا
+ * السطر عند **القراءة** (القاعدة ١٢: يُفوَّض ولا يُستنسخ).
+ *
+ * ── 🔴 ولماذا يُعاد تشغيله هنا وقد جرى عند الكتابة؟ ثلاثةُ أسبابٍ **مقيسة** ──
+ *
+ * ١) **القاعدة لا تُنقّي.** جسمُ `public.dispatch_public_label` — المقروء حيّاً
+ *    بـ`pg_get_functiondef` — يشطر على الفواصل ويُسقط المقاطع المرقَّمة **ولا
+ *    يمسّ محرفاً غير مرئيّ واحد**. فما دخل القاعدة خرج منها كما هو.
+ *
+ * ٢) **وفي القاعدة الحيّة اليوم مُدخَلٌ يُثبت ذلك.** وسمُ منطلقِ الحجز
+ *    `15ddd191` ينتهي بـ**U+202C** — قِيس بقراءةِ نقاط ترميزه واحدةً واحدة —
+ *    وهو صفٌّ سبق التنقية، يصل شاشةَ المتعهد اليوم عبر `origin_label`.
+ *
+ * ٣) **وسطحُ الكتابة ليس مغلقاً إلى الأبد.** استيرادٌ أو تحويلُ طلبٍ أو تصحيحٌ
+ *    إداريّ يكتب `bookings.trip` بلا المرور بمسارَي الـAPI ⇒ وسمٌ خام. وحارسٌ
+ *    عند العرض يقع على المسارات كلها دفعةً واحدة.
+ *
+ * وما تُسقطه: فئةُ `Cf` كلَّها — ومنها **U+202E (RLO)** الذي يقلب اتجاه كلِّ ما
+ * بعده على الشاشة، و**U+200B/U+061C** اللذان يشطران وسماً يبدو متطابقاً. وما
+ * يبقى: التشكيلُ والتطويل وZWNJ/ZWJ والأرقامُ العربية الهندية — مبرَّراً بنداً
+ * بنداً في ترويسة `sanitizeLine` نفسها.
+ */
+const placeLabel = (value: unknown): string => sanitizeLine(value, MAX_PLACE_LABEL_LENGTH);
+
+/**
+ * وسومُ المحطات بترتيب القيادة — من عمود `stops jsonb` في `portal_offers()`
+ * و`portal_trips()` معاً.
+ *
+ * 🔴 **وترتيبُ المصفوفة هو ترتيبُ القيادة**: `trip_stops_public` تُجمّع
+ * بـ`order by e.ord`، و`create_booking` تُخزّن باللقطة بالترتيب نفسه. فلا
+ * فرزَ هنا ولا إعادةَ ترتيب — أيُّ لمسٍ للترتيب يُري المتعهدَ طريقاً غير طريقه.
+ *
+ * والسقف `MAX_TRIP_STOPS` من العقد لا رقماً هنا: لقطةٌ فيها أكثر بيانةٌ لا
+ * نثق بها، فلا تُمدَّد بلا حدٍّ على شاشةٍ يُبنى عليها قرار.
+ */
+function toStopLabels(row: Record<string, unknown>): string[] {
+  const raw = row.stops ?? row.tripStops ?? row.trip_stops;
+  if (!Array.isArray(raw)) return [];
+
+  const labels: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const entry = item as Record<string, unknown>;
+    // الوسمُ وحده يُقرأ — ولا `lat` ولا `lng` حتى لو أرسلتهما الدالة بعد الإسناد
+    labels.push(placeLabel(entry.label ?? entry.stopLabel ?? entry.stop_label));
+    if (labels.length >= MAX_TRIP_STOPS) break;
+  }
+  return labels;
+}
+
 function toOffer(row: Record<string, unknown>): PortalOffer | null {
   const offerId = asText(pick(row, ["offer_id", "offerId", "id"]));
   if (!offerId) return null;
@@ -164,9 +245,10 @@ function toOffer(row: Record<string, unknown>): PortalOffer | null {
   return {
     offerId,
     reference: asText(pick(row, ["reference", "booking_reference", "bookingReference"])) ?? "",
-    originLabel: asText(pick(row, ["origin_label", "originLabel"])) ?? "",
-    destLabel: asText(pick(row, ["dest_label", "destLabel", "destination_label"])) ?? "",
+    originLabel: placeLabel(pick(row, ["origin_label", "originLabel"])),
+    destLabel: placeLabel(pick(row, ["dest_label", "destLabel", "destination_label"])),
     distanceKm: asNumber(pick(row, ["distance_km", "distanceKm"])),
+    stopLabels: toStopLabels(row),
     passengers: Math.max(0, Math.round(asNumber(pick(row, ["passengers"])))),
     roundTrip: asBool(pick(row, ["round_trip", "roundTrip"])),
     waitingHours: asNumber(pick(row, ["waiting_hours", "waitingHours"])),

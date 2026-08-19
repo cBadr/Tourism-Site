@@ -27,6 +27,8 @@ import { createFormatter, type LocaleFormatter } from "./format";
 import { PromoBanners } from "./promo-banner";
 import { Checkout, type CheckoutTrip } from "./checkout/checkout";
 import type { OfferWithExtras } from "./extras";
+import { RouteLine } from "./route-line";
+import { stopsFingerprint, type TripStop } from "./stops";
 
 /**
  * بطاقات عروض الأسعار — تعرض ناتج /api/quote كما هو دون أي حساب.
@@ -66,6 +68,13 @@ export type TripSummary = {
   originLng?: number | null;
   destLat?: number | null;
   destLng?: number | null;
+  /**
+   * المحطات الوسطى بترتيبها — **كما سُعِّرت**، لا كما هي في حقول النموذج الآن.
+   *
+   * والغياب (أو الفارغة) رحلةٌ بنقطتين حرفياً: كلُّ مستدعٍ قائمٍ لهذا النوع لا
+   * يمرّرها، وسلوكُه لا يتغيّر بحرف.
+   */
+  stops?: TripStop[];
   /** الدفعة ٣ — تُمرَّر كما هي إلى مسار الحجز، ولا يُحسب منها شيء هنا */
   luggage?: number;
   pickupAt?: string | null;
@@ -187,6 +196,8 @@ function toCheckoutTrip(trip: TripSummary): CheckoutTrip | null {
     destinationLabel: trip.destinationLabel,
     destLat,
     destLng,
+    // 🔒 تمرّ كما هي: `TripStop` بإحداثيات دائماً بحكم نوعه، فلا فحص هنا
+    stops: trip.stops ?? [],
     passengers: trip.passengers,
     roundTrip: trip.roundTrip,
     waitingHours: trip.waitingHours,
@@ -772,6 +783,9 @@ export function Offers({
   const tripKey = [
     trip.originLabel,
     trip.destinationLabel,
+    // المحطات وترتيبها مُدخلٌ سعريّ: تبديلُ محطتين مسارٌ آخر بمسافةٍ أخرى،
+    // فمسارُ حجزٍ مفتوحٌ على العرض القديم يجب أن يسقط كما يسقط عند تغيير الوجهة.
+    stopsFingerprint(trip.stops ?? []),
     trip.passengers,
     trip.roundTrip,
     trip.waitingHours,
@@ -819,14 +833,18 @@ export function Offers({
 
       {/* ملخص الرحلة */}
       <div className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3">
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
-          <Route className="size-4 shrink-0 text-primary" aria-hidden="true" />
-          <span>{trip.originLabel}</span>
-          <span className="text-muted-foreground" aria-hidden="true">
-            ←
-          </span>
-          <span>{trip.destinationLabel}</span>
-        </p>
+        {/*
+          المسار كاملاً بمحطاته — **هنا تُعرض الأسماء لا العدد**، خلافاً للسطر
+          المطويّ في الويدجت: هذه بطاقةٌ بعرض العمود لا سطرٌ يُقصّ، وهي الموضع
+          الذي يقرأ فيه العميل «على ماذا سعّرتم» قبل أن يضغط «احجز».
+        */}
+        <RouteLine
+          className="text-sm font-medium"
+          icon={<Route className="size-4 shrink-0 text-primary" aria-hidden="true" />}
+          originLabel={trip.originLabel}
+          destLabel={trip.destinationLabel}
+          stops={trip.stops ?? []}
+        />
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span>
             {t("summary.distance", "المسافة: {value}", { value: fmt.distance(distanceKm) })}

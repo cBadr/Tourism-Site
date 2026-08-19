@@ -9,7 +9,10 @@ import {
   audienceLink,
   bookingReference,
   formatDateTime,
+  routeLabel,
+  stopsLine,
   str,
+  tripStops,
   type MessageLine,
   type NotificationAudience,
   type RenderContext,
@@ -46,7 +49,9 @@ import type { EscalationCode, RecipientKind } from "@/lib/partner-alerts-types";
  *   المشترك:        trip_code (للمتعهد) · reference (للتشغيل وحده)،
  *                   booking_id, round, max_rounds, currency,
  *                   origin_label, dest_label, distance_km, class_title,
- *                   passengers, round_trip, waiting_hours, pickup_at
+ *                   passengers, round_trip, waiting_hours, pickup_at,
+ *                   stops (‏0144 — مصفوفةُ `{label}` **بلا إحداثيات**، تبنيها
+ *                   `trip_stops_public()` في القاعدة؛ وغيابُها = رحلةٌ مباشرة)
  *   trip_offered:   payout, expires_at, window_minutes, notes,
  *                   company_name, partner_telegram_chat_id, partner_email
  *   trip_assigned:  company_name, partner_phone, payout, total,
@@ -160,13 +165,20 @@ function roundLabel(round: number | null, maxRounds: number | null): string | nu
   return maxRounds !== null && maxRounds > 0 ? `${head} من ${toArabicDigits(maxRounds)}` : head;
 }
 
-/** «القاهرة ← الغردقة» — نقطتان عامّتان لا عنوان دقيق */
-function routeLabel(payload: Payload): string | null {
-  const from = firstStr(payload, ["originLabel", "origin", "from"]);
-  const to = firstStr(payload, ["destLabel", "destinationLabel", "destination", "to"]);
-  if (from && to) return `${from} ← ${to}`;
-  return from ?? to;
-}
+/*
+ * ── 🔴 حُذفت `routeLabel` المحلّية وحلّت محلّها المشتركة (‏0144) ──────────────
+ *
+ * كانت نسخةً ثانية بجسمٍ مطابقٍ حرفاً لِما في `lib/notifications/render.ts`،
+ * وهو النمط ٨ في `LESSONS.md`. وثمنُ الازدواج قِيس عند أول تغيير: إضافةُ
+ * المحطات إلى نسخةٍ واحدة كانت تترك **رسالةَ العرض نفسها** — وهي الرسالة
+ * الوحيدة التي يُتّخذ عليها قرارُ القبول — تقول «مطار القاهرة ← حلوان» عن رحلةٍ
+ * بمحطتين. فالسردُ والعدُّ وحدُّ القناة والتنقيةُ صارت كلُّها هناك، **ولا نسخةَ
+ * ثانية منها في هذا الملف**.
+ *
+ * وقاعدةُ الخصوصية في ترويسة الملف باقيةٌ كما هي: الأوسمةُ التي تصل هنا
+ * لجمهور المتعهد قد **عُمِّيت في القاعدة** (`trip_stops_public` ⇐
+ * `dispatch_public_label`) قبل أن تدخل الحمولة أصلاً — لا هنا.
+ */
 
 /** «SUV · ٤ ركاب · ذهاب وعودة · انتظار ساعتان» */
 function tripLabel(payload: Payload): string | null {
@@ -403,6 +415,8 @@ export function renderDispatchNotification(
   const lines: MessageLine[] = [];
 
   const route = routeLabel(payload);
+  const stops = tripStops(payload);
+  const stopsDetail = stopsLine(payload);
   const trip = tripLabel(payload);
   const pickup = formatDateTime(firstStr(payload, ["pickupAt", "pickup"]));
   const round = firstNum(payload, ["round", "roundNumber"]);
@@ -430,7 +444,20 @@ export function renderDispatchNotification(
       push(lines, "رقم الطلب", reference);
       if (audience === "ops") push(lines, "المتعهد", company);
       push(lines, "المسار", route);
-      push(lines, "المسافة", distanceLabel(payload));
+      push(lines, "المحطات", stopsDetail);
+      /**
+       * 🔴 **المسافة توصف بصدق.** `distanceKm` في اللقطة هو **مجموع الأرجل**
+       * (‏`combineLegs` في `lib/geo/route.ts` تجمع طولَ كل رجلٍ على حدة)، لا
+       * الطولُ المباشر من المنطلق إلى الوجهة. وسطرٌ اسمُه «المسافة» بجوار سطر
+       * مسارٍ طرفاه مكانان يُقرأ حتماً «من هنا إلى هناك» — فيصير الرقمُ الوحيد
+       * الذي يقيس به المتعهد وقودَه ووقتَه **أكبر مما يفهمه**، وهو يقبل عليه.
+       * فالاسمُ يتغيّر حين تتغيّر حقيقتُه، ولا يتغيّر حين لا محطات.
+       */
+      push(
+        lines,
+        stops.count > 0 ? "إجمالي المسافة عبر المحطات" : "المسافة",
+        distanceLabel(payload)
+      );
       push(lines, "الرحلة", trip);
       push(lines, "موعد الانطلاق", pickup);
       push(lines, audience === "partner" ? "مستحقك" : "مستحق المتعهد", money(payout, currency));
@@ -458,6 +485,7 @@ export function renderDispatchNotification(
       push(lines, "المتعهد", company);
       push(lines, "هاتف المتعهد", firstStr(payload, ["partnerPhone", "subcontractorPhone"]));
       push(lines, "المسار", route);
+      push(lines, "المحطات", stopsDetail);
       push(lines, "الرحلة", trip);
       push(lines, "موعد الانطلاق", pickup);
       push(lines, "مستحق المتعهد", money(payout, currency));
@@ -487,6 +515,7 @@ export function renderDispatchNotification(
 
       push(lines, "رقم الحجز", reference);
       push(lines, "المسار", route);
+      push(lines, "المحطات", stopsDetail);
       push(lines, "الموجة المنتهية", roundLabel(round, maxRounds));
       if (pending !== null && pending > 0) {
         push(lines, "متعهدون لم يردّوا", toArabicDigits(pending));
@@ -505,6 +534,7 @@ export function renderDispatchNotification(
 
       push(lines, "رقم الحجز", reference);
       push(lines, "المسار", route);
+      push(lines, "المحطات", stopsDetail);
       push(lines, "الرحلة", trip);
       push(lines, "موعد الانطلاق", pickup);
       if (rounds !== null && rounds > 0) push(lines, "عدد الموجات", toArabicDigits(rounds));

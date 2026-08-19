@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
+import { RouteLine } from "@/components/booking/route-line";
+import { readTripStops, type TripStop } from "@/components/booking/stops";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +69,12 @@ type QueueRow = {
   currency: string;
   originLabel: string | null;
   destLabel: string | null;
+  /**
+   * 🔴 المحطات الوسطى بترتيبها — **بيانُ قرارٍ لا زينة** في طابور الإسناد
+   * اليدوي: من يسند هنا يختار متعهداً لطريقٍ سيُقاد، ورحلةٌ بمحطتين أطولُ من
+   * مسارٍ مباشر بين النقطتين نفسيهما. والفارغة رحلةٌ بنقطتين حرفياً.
+   */
+  stops: TripStop[];
   pickupAt: string | null;
   /** آخر موجة بُثَّت قبل استنفاد المحاولات */
   round: number | null;
@@ -177,6 +185,9 @@ async function loadScreen(): Promise<Loaded> {
       currency: asText(booking?.currency) ?? "EGP",
       originLabel: asText(trip.originLabel),
       destLabel: asText(trip.destLabel),
+      // من اللقطة الخام لا من `TripSnapshot`: عقد `lib/booking-types.ts` لا يملكه
+      // هذا العمل، والقراءة متسامحة فحجزٌ بلا الحقل يعطي `[]` أي رحلةً بنقطتين
+      stops: readTripStops(trip),
       pickupAt: asText(trip.pickupAt),
       round: d.round,
       lastBroadcastAt: d.lastBroadcastAt,
@@ -403,9 +414,17 @@ export default async function DispatchPage({ searchParams }: PageProps<"/admin/d
                         </span>
                       </td>
                       <td className="p-2 text-xs leading-relaxed">
-                        {row.originLabel ?? "—"}
-                        <span className="text-muted-foreground"> ← </span>
-                        {row.destLabel ?? "—"}
+                        {/*
+                          المسارُ كاملاً بمحطاته — **بالأسماء لا بالعدد** خلافاً
+                          لقائمة الطلبات: هذا طابورُ إسنادٍ يدويّ، ومن يسند
+                          يحتاج أن يعرف **أين** تمرّ لا أنها تمرّ بشيء ما.
+                        */}
+                        <RouteLine
+                          className="gap-x-1.5 text-xs"
+                          originLabel={row.originLabel ?? "—"}
+                          destLabel={row.destLabel ?? "—"}
+                          stops={row.stops}
+                        />
                       </td>
                       <td className="p-2 text-xs whitespace-nowrap text-muted-foreground">
                         {dateTimeLabel(row.pickupAt)}

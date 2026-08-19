@@ -50,7 +50,7 @@ begin
     ('public.review_price_sheet(uuid, boolean, text, integer)'),
     ('public.price_sheet_stats(uuid)'),
     ('public.coverage_matches(numeric, numeric, numeric, numeric)'),
-    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)')
+    ('public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

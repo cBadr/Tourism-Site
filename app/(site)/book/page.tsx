@@ -10,6 +10,7 @@ import { SearchWidget } from "@/components/booking/search-widget";
 import { PromoBanners } from "@/components/booking/promo-banner";
 import { getPublicExtras } from "@/components/booking/extras-catalog";
 import { getFleetCaps } from "@/components/booking/fleet-luggage";
+import { getStopsCap } from "@/components/booking/stops-cap";
 import { getPromoBanners } from "@/lib/discounts/banners";
 import { isDiscountEnabled } from "@/lib/discounts/settings";
 import { isLoyaltyEnabled } from "@/lib/loyalty/settings";
@@ -85,6 +86,7 @@ export default async function BookPage() {
     extras,
     fleet,
     placeSearch,
+    stopsCap,
   ] = await Promise.all([
       getSettings(locale),
       getT("pages.book", locale),
@@ -103,6 +105,11 @@ export default async function BookPage() {
       // إعدادات بحث الأماكن (0076) — نفس القراءة التي يفعلها `BookingWidget`،
       // ولأن هذه الصفحة تُركّب `SearchWidget` مباشرةً لا عبر الغلاف.
       readPlaceSearchSettings(),
+      // 🔴 سقفُ المحطات كما ضبطه المالك (`max_trip_stops()`، هجرة `0140`) —
+      // نفس قراءة `BookingWidget` حرفياً، ولأن هذه الصفحة تُركّب `SearchWidget`
+      // مباشرةً لا عبر الغلاف. وسقفٌ لا يطابق ما تفرضه القاعدة يعرض على العميل
+      // زرّاً يضمن الرفض **بعد** أن يرى السعر (ترويسة `stops-cap.ts`).
+      getStopsCap(),
     ]);
   const contact = {
     whatsapp: settings.contact.whatsapp,
@@ -154,6 +161,7 @@ export default async function BookPage() {
               extras={extras}
               maxLuggage={fleet.maxLuggage}
               maxPassengers={fleet.maxPassengers}
+              maxStops={stopsCap}
               placeSearch={placeSearch}
             />
           </div>

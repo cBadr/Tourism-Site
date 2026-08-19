@@ -56,8 +56,11 @@ import {
   RouteMapFigure,
   RoutePendingPanel,
 } from "@/components/booking/route-map";
+import { RouteLine } from "@/components/booking/route-line";
+import { readTripStops } from "@/components/booking/stops";
 import {
   ensureBookingRouteMap,
+  readTripRouteStops,
   routeMapEnabled,
   routeMapStatusReady,
   withinServiceArea,
@@ -1365,6 +1368,14 @@ export default async function BookingStatusPage({ params }: PageParams) {
 
   const originLabel = readText(trip, "originLabel", "origin_label") ?? "";
   const destLabel = readText(trip, "destLabel", "dest_label", "destinationLabel") ?? "";
+  /**
+   * 🔴 المحطات الوسطى — من اللقطة نفسها التي تحمل الطرفين، بقارئٍ واحد
+   * (‏`components/booking/stops.ts`) لا بقراءةٍ سادسةٍ مكتوبةٍ هنا.
+   *
+   * والغياب رحلةٌ بنقطتين: ثمانية عشر حجزاً قائماً لا تحمل لقطتُها هذا الحقل،
+   * وصفحتُهم تبقى كما هي حرفاً بحرف — لا سطرٌ فارغ ولا حاشيةٌ تعتذر عن لا شيء.
+   */
+  const tripStops = readTripStops(trip);
   const distanceKm = readNumber(trip, "distanceKm", "distance_km");
   const passengers = readNumber(trip, "passengers") ?? 1;
   const luggage = readNumber(trip, "luggage");
@@ -1409,11 +1420,29 @@ export default async function BookingStatusPage({ params }: PageParams) {
    *
    * والحقول الغائبة تسقط بسطورها: حجزٌ بلا موعد لا يُنتج سطر «الموعد: —».
    */
+  /** أسماءُ المحطات لرسالة المشاركة — بلا الوسوم الفارغة */
+  const stopsShareValue = tripStops
+    .map((stop) => stop.label.trim())
+    .filter((label) => label.length > 0)
+    .join(" ← ");
+
   const tripShareLines = [
     t("confirmed.shareLineTrip", "رحلة {origin} ← {dest}", {
       origin: originLabel,
       dest: destLabel,
     }),
+    /**
+     * سطرُ المحطات — **لمن يستقبل الضيف حاجةٌ لا تفصيل**: هو من يسأل «هل نمرّ
+     * على مكانٍ في الطريق؟». ويسقط بسطره حين لا محطات، كأخواته أعلاه.
+     *
+     * 🔒 ولا يخرق شيئاً مما لا يُشارَك: أسماءُ أماكن اختارها العميل بنفسه —
+     * لا مبلغ ولا عمولة ولا هاتف (وهي محجوبةٌ في الدالة أصلاً).
+     */
+    // ⚠ والشرط على **الأسماء** لا على العدد: محطاتٌ بلا وسومٍ تُنتج «عبر: »
+    //   فارغة — سطرٌ يقول لا شيء في رسالةٍ يقرؤها غريب.
+    stopsShareValue.length > 0
+      ? t("confirmed.shareLineStops", "عبر: {value}", { value: stopsShareValue })
+      : null,
     pickupLabel ? t("confirmed.shareLineWhen", "الموعد: {value}", { value: pickupLabel }) : null,
     t("confirmed.shareLineRef", "رقم الحجز: {value}", { value: reference }),
     bookingUrl,
@@ -1677,13 +1706,22 @@ export default async function BookingStatusPage({ params }: PageParams) {
    */
   const originPoint = { lat: readNumber(trip, "originLat", "origin_lat"), lng: readNumber(trip, "originLng", "origin_lng") };
   const destPoint = { lat: readNumber(trip, "destLat", "dest_lat"), lng: readNumber(trip, "destLng", "dest_lng") };
+  /**
+   * 🔴 **ونقاطُ المرور من نفس اللقطة ونفس القارئ** — `readTripRouteStops` هي
+   * التي تقرأ بها `lib/maps/route-map.ts` محطاتِ الصورة، فالصورةُ والرابطُ
+   * يصفان الطريقَ نفسه بالضرورة لا بالتوفيق. و`null` منها تعني محطةً خارج نطاق
+   * التشغيل ⇒ **لا رابط**: رابطٌ يقفز فوق محطةٍ دفع العميل ثمنَ المرور بها
+   * أسوأُ من زرٍّ غائب.
+   */
+  const routeStops = readTripRouteStops(trip);
   const directionsUrl =
     routeMapStatusReady(status) &&
     isDrawablePoint(originPoint) &&
     isDrawablePoint(destPoint) &&
     withinServiceArea(originPoint) &&
-    withinServiceArea(destPoint)
-      ? tripDirectionsUrl(originPoint, destPoint)
+    withinServiceArea(destPoint) &&
+    routeStops !== null
+      ? tripDirectionsUrl(originPoint, destPoint, routeStops)
       : null;
 
   const whatsapp = settings.contact.whatsapp;
@@ -2021,14 +2059,18 @@ export default async function BookingStatusPage({ params }: PageParams) {
       >
         <h2 className="text-base font-bold">{t("trip.heading", "تفاصيل الرحلة")}</h2>
 
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
-          <RouteIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
-          <span>{originLabel}</span>
-          <span className="text-muted-foreground" aria-hidden="true">
-            ←
-          </span>
-          <span>{destLabel}</span>
-        </p>
+        {/*
+          🔴 المسارُ كاملاً بمحطاته بترتيب القيادة — **وهو أول ما يُقرأ في
+          «تفاصيل الرحلة»**، وعليه تُبنى ثقةُ العميل بأن ما دفعه يخصّ ما طلبه.
+          والصفحةُ تُطبَع (‏`PRINT_CSS`) فتحملها الورقةُ معه إلى السائق.
+        */}
+        <RouteLine
+          className="text-sm font-medium"
+          icon={<RouteIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />}
+          originLabel={originLabel}
+          destLabel={destLabel}
+          stops={tripStops}
+        />
 
         {/*
           موضع الخريطة — تحت سطر «من ← إلى» مباشرةً لأنها صورتُه، وفوق
@@ -2043,6 +2085,23 @@ export default async function BookingStatusPage({ params }: PageParams) {
             destLabel={destLabel}
             geometrySource={routeMapView.geometrySource}
             directionsUrl={directionsUrl}
+            /*
+              ══ 🔴 الحاشيةُ صارت شرطيةً على العجز لا على وجود المحطات ══════════
+              كانت `tripStops.length > 0` حين كانت الصورة تُرسم من نقطتين
+              دائماً. وقد صارت `lib/maps/route-map.ts` تمرّ بالمحطات وتُرقّمها،
+              **فالجملةُ نفسها انقلبت كذباً** على كل رحلةٍ بمحطات: تعتذر عن نقصٍ
+              لم يعد قائماً فتدفع العميل إلى الشكّ في صورةٍ صحيحة.
+
+              والشرطُ الجديد يقول ما بقي صادقاً حرفاً: `readTripRouteStops`
+              تُرجع `null` وحدها حين تحمل اللقطة محطةً **خارج نطاق التشغيل** —
+              وهي الحالةُ الوحيدة التي لا تصف فيها الصورةُ الرحلةَ كاملة.
+
+              ⚠ وحدُّ هذا الشرط معلَنٌ: لو وُجد صفٌّ مخزَّنٌ **قبل** هذا التغيير
+              لرحلةٍ بمحطات لكانت صورتُه من نقطتين والحاشيةُ غائبةً عنها ظلماً.
+              ولا صفَّ كهذا: `bookings_with_stops = 0` وقتَ الكتابة — أي أن كل
+              صورةٍ لرحلةٍ بمحطات ستُولَّد بعد هذا السطر لا قبله.
+            */
+            hasStops={tripStops.length > 0 && routeStops === null}
             t={t}
           />
         ) : showRoutePending ? (

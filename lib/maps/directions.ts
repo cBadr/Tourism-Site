@@ -34,19 +34,71 @@ import type { MapPoint } from "@/lib/maps/static-map";
 
 const MAPS_DIR_URL = "https://www.google.com/maps/dir/";
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *  حدُّ نقاط المرور — مقروءٌ من توثيق جوجل لا مُخترعاً
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * التوثيق (Maps URLs · Get started · فقرة `waypoints`) يقول حرفياً:
+ * «Up to three waypoints on mobile browsers; maximum of nine waypoints
+ * otherwise»، و«Waypoints are displayed on the map in the same order they are
+ * listed in the URL»، و«Waypoints are not supported on all Google Maps
+ * products; in those cases this parameter will be ignored».
+ *
+ * ── ثلاثة أرقام، وكلٌّ منها يعني شيئاً آخر ──────────────────────────────────
+ *
+ * | الرقم | من يفرضه | ماذا يقع عند تجاوزه |
+ * |---|---|---|
+ * | `MAX_TRIP_STOPS` = ٥ | عقدُ الحجز (`lib/booking-types.ts`) | الحجز يُرفض أصلاً — فلا تصل هذه الدالة رحلةٌ بأكثر من خمس |
+ * | `max_trip_stops` (افتراضه ٣) | عمودٌ في `trip_settings` يضبطه المالك | المُشغّل يرفض الحجز |
+ * | `WAYPOINTS_LIMIT` = ٩ | جوجل | عنوانٌ لا يُحترم — **فلا رابط أصلاً** |
+ *
+ * 🔴 **والسلوك عند التجاوز مكتوبٌ لا متروك:** `null`. ورابطٌ ناقصُ المحطات
+ * يقود السائقَ في غير طريقه وهو لا يدري، **ولا رابطَ أهونُ من رابطٍ كاذب** —
+ * فالمتعهد حينها يقرأ وسومَ المحطات المكتوبة في بطاقته ويبنيها بنفسه.
+ * والفرعُ **غيرُ بالغٍ اليوم بنيوياً** (٥ ≤ ٩)، وهو مكتوبٌ لأن السقفَ الأول قد
+ * يرتفع يوماً في ملفٍّ لا يعرف كاتبُه هذا الملف.
+ *
+ * ⚠ **وحدُّ الثلاثة على متصفّح الجوال ليس لنا فيه حيلة**: هو سلوك جوجل نفسه،
+ * ولا يُقاس من الخادم (‏نفس الرابط يفتح على تطبيقٍ وعلى متصفّح). وسقفُ المالك
+ * اليوم **٣** فنحن عنده تماماً؛ ولو رفعه إلى ٤ أو ٥ فقد تُهمَل الزائدةُ على
+ * متصفّح جوال — **وقصّها من عندنا كان سيعني إهمالاً مضموناً على كل جهاز**،
+ * فنُرسلها كاملةً ونترك الإهمال لمن يملكه.
+ */
+const WAYPOINTS_LIMIT = 9;
+
 function coord(point: MapPoint): string {
   return `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
 }
 
 /**
- * مسار الرحلة كاملاً: من نقطة الانطلاق إلى نقطة الوصول.
- * جمهوره: العميل بعد التأكيد، والمتعهد بعد الإسناد (رابطاً ثانوياً).
+ * مسار الرحلة كاملاً: من نقطة الانطلاق، **مارّاً بالمحطات في ترتيبها**، إلى
+ * نقطة الوصول. جمهوره: العميل بعد التأكيد، والمتعهد بعد الإسناد.
+ *
+ * 🔴 **والترتيب هو المعلومة لا الزينة.** جوجل يعرض نقاط المرور بالترتيب المكتوب
+ * في العنوان حرفياً (‏التوثيق أعلاه)، والمصفوفة تصل مرتَّبةً من لقطة
+ * `bookings.trip` — وهي الترتيب الذي سُعِّرت به الرحلة متعددة الأرجل.
+ *
+ * ⚠ **ورحلةُ النقطتين تُنتج العنوانَ نفسه حرفاً**: الوسيط اختياريّ، والمعامل
+ * `waypoints` **لا يُضاف إطلاقاً** حين تكون المصفوفة فارغة — لا فارغاً ولا
+ * بقيمةٍ خاوية. وترتيب المعاملات محفوظٌ كما كان (`api` · `origin` ·
+ * `destination` · `travelmode`) لأن `URLSearchParams` تحفظ ترتيب الإدخال.
  */
-export function tripDirectionsUrl(origin: MapPoint, destination: MapPoint): string {
+export function tripDirectionsUrl(
+  origin: MapPoint,
+  destination: MapPoint,
+  stops: readonly MapPoint[] = []
+): string | null {
+  if (stops.length > WAYPOINTS_LIMIT) return null;
+
   const url = new URL(MAPS_DIR_URL);
   url.searchParams.set("api", "1");
   url.searchParams.set("origin", coord(origin));
   url.searchParams.set("destination", coord(destination));
+  // الفاصل `|` كما ينصّ التوثيق، و`URLSearchParams` ترمّزه `%7C` — وهو الشكل
+  // الذي يكتبه جوجل نفسه في مثاله. (والفاصلة داخل الإحداثي تُرمَّز `%2C` كما
+  // هي اليوم في `origin`/`destination` بلا تغيير.)
+  if (stops.length > 0) url.searchParams.set("waypoints", stops.map(coord).join("|"));
   url.searchParams.set("travelmode", "driving");
   return url.toString();
 }

@@ -2,27 +2,32 @@
 
 import * as React from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   CalendarClock,
   Flag,
+  Info,
   LoaderCircle,
   Luggage,
   MapPin,
+  MapPinPlus,
   Minus,
   Plus,
   Repeat,
   Search,
   Sparkles,
   TriangleAlert,
+  Trash2,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import type { GeoPlace, QuoteError } from "@/lib/pricing-types";
 import { DEFAULT_LOCALE } from "@/lib/i18n-types";
-import { useT } from "@/components/site/i18n";
+import { useT, type Tx } from "@/components/site/i18n";
 import { trackBrowserFunnel } from "@/lib/analytics/browser";
 import type { PromoBanner } from "@/lib/discount-types";
 import { PLACE_SEARCH_DEFAULTS, type PlaceSearchSettings } from "@/lib/place-search-types";
-import { createFormatter } from "./format";
+import { createFormatter, type LocaleFormatter } from "./format";
 import { CollapsedStep } from "./collapsed-step";
 import { PlaceField } from "./place-field";
 import {
@@ -52,6 +57,13 @@ import {
   type QuoteRequestWithExtras,
   type QuoteResponseWithExtras,
 } from "./extras";
+import {
+  DEFAULT_STOPS_CAP,
+  MAX_TRIP_STOPS,
+  stopsFingerprint,
+  toTripStop,
+  type TripStop,
+} from "./stops";
 
 /**
  * ويدجت البحث عن سعر رحلة — قلب التحويل في الموقع.
@@ -121,6 +133,29 @@ import {
  * (‏`extras-picker.tsx`، والقياس والتعليل في ترويسته). و**الحمولة لم تتغيّر
  * بحرف**: `toSelection(quantities)` هي هي، ورموزٌ وكمياتٌ فقط تمضي إلى
  * `/api/quote` (‏D-09).
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 المحطات الوسطى — إضافةٌ وحذفٌ وإعادةُ ترتيب، **والسعر يتحرك أمام العين**
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * (١) **بنفس منتقي الأماكن القائم — لا منتقٍ ثانٍ.** كل صفّ محطةٍ هو
+ *     `PlaceField` نفسه بطبقاته الأربع ومنتقي خريطته ودورةِ رمز جلسته. ومنتقٍ
+ *     ثانٍ كان سيعني سلوكَي بحثٍ ينحرفان، وفاتورتَي جلساتٍ عند جوجل.
+ *
+ * (٢) 🔴 **والسعرُ يُعاد حسابه فور أن تُحلّ محطةٌ أو تُحذف أو تُبدَّل مواضعُها**
+ *     — بنفس آلية `requoteOwed` التي وُلدت لقلب مفتاح «عودة» حرفياً، ولنفس
+ *     السبب حرفياً: مُدخلٌ يغيّر السعر يُترك على الشاشة رقمٌ صار كاذباً. وحدُّه
+ *     المعلن: **المحطة المُحلّة وحدها** تحرّك النداء — فتحُ صفٍّ فارغ لا يفعل
+ *     شيئاً، وإلا صار كلُّ ضغطةِ «أضف محطة» نداءً على `/api/quote`.
+ *
+ * (٣) ⚠ **ويُقال للعميل الحقيقة قبل الدفع لا عنده**: رحلةٌ بمحطات **تُسعَّر
+ *     بالتعريفة** لا بسعر المسار المباشر — وقد تكون أعلى. والسطر يظهر **لحظة
+ *     فتح أول صفّ**، قبل أن يختار مكاناً، لا بعد أن يرى السعر تغيّر: جملةٌ
+ *     واحدة صادقة في موضعها خيرٌ من مفاجأةٍ في الخطوة الأخيرة.
+ *
+ * (٤) 🔒 **وما يُرسَل نقاطٌ لا أرقام**: `stops` إحداثياتٌ ووسومٌ فقط، والمسافةُ
+ *     متعددةُ الأرجل والسعرُ من القاعدة وحدها (D-05 · D-09). ولا محطةَ بلا
+ *     إحداثيات تُرسَل أصلاً — النصُّ غيرُ المُحلّ يبقى في الحقل ولا يدخل الحمولة.
  */
 
 const MIN_PASSENGERS = 1;
@@ -195,6 +230,16 @@ export type SearchWidgetProps = {
    * و`null`/`undefined` = تعذّرت القراءة فيبقى الثابت المطلق كما كان.
    */
   maxPassengers?: number | null;
+  /**
+   * 🔴 سقفُ المحطات **كما ضبطه المالك في القاعدة** (‏`max_trip_stops()`، هجرة
+   * `0140`) — يصل من الغلافين الخادميَّين وحدهما (‏`getStopsCap`).
+   *
+   * ⚠ **وغيابُه لا يعني «بلا سقف» بل الافتراضَ المتحفّظ** — عكس أختيه أعلاه:
+   * القاعدةُ ترفض فوق `max_trip_stops()` (‏افتراضُه ٣)، فسقوطٌ إلى الثابت
+   * المطلق ٥ كان يعرض على العميل زرّاً **يضمن الرفض عند الحجز** بعد أن يكون قد
+   * رأى السعر ومَلأ النموذج. والتعليل الكامل في ترويسة `stops-cap.ts`.
+   */
+  maxStops?: number | null;
   /**
    * إعدادات بحث الأماكن (هجرة 0076) — تصل من الصفحة الخادمية وحدها التي تقرأ
    * `place_search_config()`. وغيابها يعني **سلوك اليوم حرفياً**: جوجل مطفأ،
@@ -318,6 +363,149 @@ function CounterField({
 }
 
 /* ------------------------------------------------------------------ */
+/* 🔴 المحطات الوسطى                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * مسوّدةُ محطةٍ في النموذج — **نصٌّ ونقطةٌ ومفتاحٌ ثابت**.
+ *
+ * 🔴 **و`key` ليس الفهرس، وهذا شرطُ صحةٍ لا تحسينُ أداء.** حقلُ المكان جزيرةٌ
+ * بحالةٍ داخلية (قائمةُ اقتراحاتٍ ورمزُ جلسةٍ ونصٌّ «يخصّه»). فمفتاحٌ بالفهرس
+ * يجعل React — عند حذف الأولى أو تبديل موضعين — **يُبقي حالة الحقل مكانها
+ * ويُبدّل ما تحتها**: يرى العميل اسم محطةٍ في صفٍّ وإحداثياتِ أخرى تُرسَل معه.
+ * والمفتاح الثابت يجعل الصفَّ يهاجر بحالته كاملةً.
+ */
+type StopDraft = {
+  key: string;
+  /** ما كتبه العميل — قد لا يكون قد اختار من القائمة بعد */
+  text: string;
+  /** النقطة المُحلّة — و`null` تعني **لا تدخل التسعير** (D-09) */
+  place: GeoPlace | null;
+};
+
+/**
+ * صفُّ محطةٍ واحدة: منتقي المكان القائم، ومعه حذفٌ وسهما ترتيب.
+ *
+ * **الإتاحة — ثلاثة شروط مقيسة على الشريط السفلي وما يفرضه ٢٫٥٫٥ AA:**
+ *   • كلُّ زرّ باسمٍ عربيٍّ صريح لقارئ الشاشة، **وفيه رقم المحطة** — «حذف
+ *     المحطة ٢» لا «حذف»: من يسمع الأزرار متتاليةً بلا رقمٍ لا يعرف أيَّها
+ *     يضغط، وقائمةُ الأزرار هي بالضبط ما يقرؤه قارئ الشاشة بالجملة.
+ *   • **هدفُ لمسٍ ٤٤×٤٤** (‏`size-11`) لا ٣٦ كأزرار العدّاد: هذه أفعالٌ
+ *     **مدمِّرة أو مُربِكة** (حذفٌ وتبديلُ ترتيب)، وخطأُ اللمس فيها يُفقد ما
+ *     أدخله العميل بدل أن يزيد رقماً بواحد.
+ *   • **والسهمان يُعطَّلان في الطرفين ولا يُخفيان**: زرٌّ يظهر ويختفي يزحزح
+ *     الصفَّ تحت الإصبع، والمعطَّلُ يبقى في ترتيب القراءة يقول «لا موضع فوقها».
+ */
+function StopRow({
+  index,
+  count,
+  draft,
+  fieldHeight,
+  t,
+  fmt,
+  settings,
+  locale,
+  onTextChange,
+  onPlaceChange,
+  onRemove,
+  onMove,
+}: {
+  index: number;
+  count: number;
+  draft: StopDraft;
+  fieldHeight: string;
+  t: Tx;
+  fmt: LocaleFormatter;
+  settings: PlaceSearchSettings;
+  locale: string;
+  onTextChange: (value: string) => void;
+  onPlaceChange: (place: GeoPlace | null) => void;
+  onRemove: () => void;
+  onMove: (direction: -1 | 1) => void;
+}) {
+  // الرقم المعروض بأرقام لغة الزائر — لا `index + 1` خاماً في نصٍّ عربي
+  const ordinal = fmt.digits(index + 1);
+  const actionClass =
+    "grid size-11 shrink-0 place-items-center rounded-2xl border border-input bg-background text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40";
+
+  return (
+    /**
+     * 🔴 **يلتفّ على الجوال، ولا يقتسم الصفّ.**
+     *
+     * قيسَ على ٣٧٥ بكسل: ثلاثةُ أزرارٍ بـ٤٤ لكلٍّ + فجواتُها تأكل ~١٤٠ بكسل،
+     * فيبقى للحقل ١٥٣ — أضيقُ من نصف الصفّ، ولا يسع حتى نصَّه الإرشادي. وهو
+     * نفسُ العطل الذي دفع عدّادَي الركاب والحقائب إلى عمودين لا ثلاثة في هذا
+     * الملف: **حقلٌ يصعب ضبطه يدفع العميل إلى تركه**، والمتروك هنا محطةٌ
+     * ستُقاد فعلاً.
+     *
+     * فالحقل يأخذ السطر كاملاً دون `sm`، والأزرار سطراً تحته محاذاةً للنهاية
+     * (‏`justify-end` مع `dir="rtl"` تضعها حيث تقع العين بعد الحقل). ومن `sm`
+     * فأعلى يعودان صفّاً واحداً كما هما على المكتب.
+     */
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+        <PlaceField
+          id={`${draft.key}-field`}
+          label={t("stops.fieldLabel", "المحطة {index}", { index: ordinal })}
+          placeholder={t("stops.placeholder", "مكان تمرّ به في الطريق")}
+          icon={<MapPinPlus className="size-4" />}
+          value={draft.text}
+          place={draft.place}
+          onValueChange={onTextChange}
+          onPlaceChange={onPlaceChange}
+          fieldHeight={fieldHeight}
+          t={t}
+          fmt={fmt}
+          settings={settings}
+          locale={locale}
+          /*
+            🔒 **ولا `buildQuoteHref` هنا بقصد** — أي الطبقة الرابعة مطفأة لصفّ
+            المحطة وحده. تلك الطبقة تُخرج العميل من الحاسبة إلى `/quote-request`
+            حين يعجز البحث، وهو مخرجٌ صحيح لمنطلقٍ أو وجهةٍ لا تُوجد؛ أما محطةٌ
+            **اختيارية** فمخرجُها الطبيعي أن يحذفها ويكمل — وقذفُه إلى نموذجٍ
+            آخر يُسقط منطلقاً ووجهةً اختارهما بالفعل. والطبقتان الثالثة
+            («حدّد على الخريطة») والثانية باقيتان كما هما.
+          */
+        />
+      </div>
+
+      {/*
+        الأزرار محاذاةً لأسفل الصفّ (‏`items-end`) فتقع على خطّ الحقل نفسه مهما
+        طال عنوانُه أو ظهر تحته سطرُ حالة — ولا تطفو في منتصف الفراغ.
+      */}
+      <div className="flex w-full shrink-0 items-center justify-end gap-1 pb-px sm:w-auto">
+        <button
+          type="button"
+          onClick={() => onMove(-1)}
+          disabled={index === 0}
+          aria-label={t("stops.moveUp", "نقل المحطة {index} إلى ما قبلها", { index: ordinal })}
+          className={actionClass}
+        >
+          <ArrowUp className="size-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onMove(1)}
+          disabled={index === count - 1}
+          aria-label={t("stops.moveDown", "نقل المحطة {index} إلى ما بعدها", { index: ordinal })}
+          className={actionClass}
+        >
+          <ArrowDown className="size-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={t("stops.remove", "حذف المحطة {index}", { index: ordinal })}
+          className={cn(actionClass, "text-destructive hover:bg-destructive/10")}
+        >
+          <Trash2 className="size-4" aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* الويدجت                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -333,6 +521,7 @@ export function SearchWidget({
   extras = [],
   maxLuggage = null,
   maxPassengers = null,
+  maxStops = null,
   placeSearch = PLACE_SEARCH_DEFAULTS,
 }: SearchWidgetProps) {
   const t = useT("booking.search");
@@ -353,6 +542,17 @@ export function SearchWidget({
   const [origin, setOrigin] = React.useState<GeoPlace | null>(null);
   const [destinationText, setDestinationText] = React.useState("");
   const [destination, setDestination] = React.useState<GeoPlace | null>(null);
+  /**
+   * المحطات الوسطى بترتيبها. **الفارغة هي الافتراض**، وهي بالضبط سلوك اليوم:
+   * رحلةٌ بنقطتين لا تمرّ بشيء من هذا الكود.
+   */
+  const [stops, setStops] = React.useState<StopDraft[]>([]);
+  /**
+   * عدّادُ مفاتيح الصفوف — **مرجعٌ لا حالة**: تغيّرُه لا يُرسم، وحالةٌ له كانت
+   * تُعيد التصيير عند كل إضافة بلا فائدة. و`useId` يجعل المفاتيح فريدةً بين
+   * نسختين من الويدجت على الصفحة نفسها (البطل وأسفلها).
+   */
+  const stopSeq = React.useRef(0);
   const [passengers, setPassengers] = React.useState(DEFAULT_PASSENGERS);
   const [luggage, setLuggage] = React.useState(DEFAULT_PASSENGERS);
   /**
@@ -588,6 +788,44 @@ export function SearchWidget({
 
   const selection = React.useMemo(() => toSelection(quantities), [quantities]);
 
+  /* ---------------------------------------------------------------- */
+  /* 🔴 المحطات — ما يدخل التسعير منها، وما يبقى في الحقل              */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * المحطات **المُحلّة إلى نقاط** بترتيبها — وهي وحدها ما يُرسَل وما يُبنى عليه
+   * أي مفتاح. صفٌّ فتحه العميل ولم يختر فيه مكاناً بعد **لا وجود له في التسعير**
+   * (‏**D-09**: لا يُسعَّر نصٌّ لم يُحلّ إلى نقطة)، ولا يُسقط سعراً معروضاً.
+   */
+  const resolvedStops = React.useMemo<TripStop[]>(
+    () =>
+      stops
+        .map((draft) => draft.place)
+        .filter((place): place is GeoPlace => place !== null)
+        .map(toTripStop),
+    [stops]
+  );
+  /** بصمةُ المحطات بترتيبها — الترتيب جزءٌ منها (انظر `stopsFingerprint`) */
+  const stopsKey = stopsFingerprint(resolvedStops);
+  const hasStops = stops.length > 0;
+  /**
+   * 🔴 السقفُ المعروض = **ما تفرضه القاعدة**، مقصوصاً على الثابت المطلق.
+   *
+   * ⚠ والفشلُ في القراءة يسقط إلى `DEFAULT_STOPS_CAP` **لا إلى `MAX_TRIP_STOPS`**
+   * — التعليل الكامل في ترويسة `stops-cap.ts`: هذا السقفُ الوحيد في هذا الملف
+   * الذي يميل فشلُه إلى التحفّظ، لأن القاعدة ترفض فوقه بينما ترفض أختاه تحتهما.
+   *
+   * و**صفرٌ يعني إطفاء الميزة** (‏`max_trip_stops = 0` قرارُ مالكٍ مذكورٌ في
+   * تعليق العمود): فلا يظهر زرُّ الإضافة أصلاً — لا معطَّلاً ولا برسالة سقف.
+   * زرٌّ لا يعمل أبداً أسوأ من غيابه.
+   */
+  const stopsCap =
+    typeof maxStops === "number" && Number.isFinite(maxStops) && maxStops >= 0
+      ? Math.min(Math.trunc(maxStops), MAX_TRIP_STOPS)
+      : DEFAULT_STOPS_CAP;
+  const stopsEnabled = stopsCap > 0;
+  const canAddStop = stops.length < stopsCap;
+
   /**
    * بصمة كل مُدخل يغيّر السعر. بعد وصول عرض، أي تعديل عليها يجعل البطاقات
    * المعروضة **قديمة** — والزائر يظن أنها تتبعه (خاصة مع الخدمات: يزيد كرسي
@@ -598,6 +836,8 @@ export function SearchWidget({
     origin?.lng ?? "",
     destination?.lat ?? "",
     destination?.lng ?? "",
+    // المحطات مُدخلٌ سعريّ كامل: تغيّرُ واحدةٍ أو موضعِها يغيّر المسافة
+    stopsKey,
     passengers,
     luggage,
     roundTrip,
@@ -670,6 +910,84 @@ export function SearchWidget({
 
   function updateQuantity(slug: string, qty: number) {
     setQuantities((current) => ({ ...current, [slug]: qty }));
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 🔴 تعديلُ المحطات — وكلُّ تعديلٍ يمسّ نقطةً يُقيّد دَينَ إعادة الحساب */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * «هذا التعديل غيّر مسار الرحلة فعلاً ⇒ أعِد الحساب».
+   *
+   * ولا يُنادى إلا حين تكون على الشاشة أسعارٌ أصلاً (‏`result !== null`): قبل أول
+   * حساب لا شيء ليتحرك، ونداءٌ تلقائيٌّ حينها يسبق العميلَ إلى قرارٍ لم يتّخذه.
+   * والتنفيذ في التأثير أدناه — وهي نفس آلية قلب مفتاح «عودة» بلا نسخةٍ ثانية.
+   */
+  function markRouteChanged() {
+    if (result !== null) requoteOwed.current = true;
+  }
+
+  function addStop() {
+    if (!canAddStop) return;
+    stopSeq.current += 1;
+    const key = `${uid}-stop-${stopSeq.current}`;
+    setStops((current) => [...current, { key, text: "", place: null }]);
+    // 🔒 **ولا إعادة حساب هنا**: صفٌّ فارغ لا يغيّر مسافةً ولا سعراً. وإعادةُ
+    //    الحساب على فتح الصفّ كانت ستُنفق نداءً على مُدخلٍ لم يتغيّر.
+  }
+
+  function removeStop(key: string) {
+    const removed = stops.find((draft) => draft.key === key) ?? null;
+    setStops((current) => current.filter((draft) => draft.key !== key));
+    // حذفُ صفٍّ فارغ لا يمسّ المسار؛ وحذفُ محطةٍ مُحلّة يقصّره
+    if (removed?.place) markRouteChanged();
+  }
+
+  function setStopText(key: string, text: string) {
+    setStops((current) =>
+      current.map((draft) => (draft.key === key ? { ...draft, text } : draft))
+    );
+  }
+
+  /**
+   * اختيارُ مكانٍ للمحطة — أو مسحُه.
+   *
+   * 🔴 **والحالتان تحرّكان السعر**: من يختار محطةً يُطيل المسار، ومن يمسح ما
+   * اختاره يُقصّره. وترك أحدهما بلا إعادة حساب يُبقي على الشاشة رقماً لا يخصّ
+   * المسار المعروض تحته.
+   */
+  function setStopPlace(key: string, place: GeoPlace | null) {
+    const before = stops.find((draft) => draft.key === key)?.place ?? null;
+    setStops((current) =>
+      current.map((draft) => (draft.key === key ? { ...draft, place } : draft))
+    );
+    const changed =
+      (before === null) !== (place === null) ||
+      (before !== null && place !== null && (before.lat !== place.lat || before.lng !== place.lng));
+    if (changed) markRouteChanged();
+  }
+
+  /**
+   * تبديلُ موضع محطةٍ بجارتها.
+   *
+   * ⚠ **ولا يُعاد الحساب إلا إذا تغيّر ترتيبُ المُحلّات فعلاً**: تبديلُ صفٍّ
+   * فارغٍ بصفٍّ فارغ — أو صفٍّ فارغٍ بمُحلّة — لا يغيّر شيئاً مما يُرسَل. والفحص
+   * يقارن البصمة قبلَ وبعد بدل أن يخمّن من الفهارس.
+   */
+  function moveStop(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= stops.length) return;
+    const next = [...stops];
+    [next[index], next[target]] = [next[target], next[index]];
+    const before = stopsFingerprint(resolvedStops);
+    const after = stopsFingerprint(
+      next
+        .map((draft) => draft.place)
+        .filter((place): place is GeoPlace => place !== null)
+        .map(toTripStop)
+    );
+    setStops(next);
+    if (before !== after) markRouteChanged();
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -765,6 +1083,11 @@ export function SearchWidget({
       luggage,
       // رموز وكميات فقط — ولا سعر ولا إجمالي (D-09)
       extras: selection,
+      /**
+       * 🔒 نقاطُ المحطات بترتيبها — ولا مسافة ولا سعر. والمصفوفة الفارغة تعني
+       * رحلةً بنقطتين، وهي بالضبط ما كان يُرسَل قبل هذه الدفعة.
+       */
+      stops: resolvedStops,
     };
 
     setPending(true);
@@ -806,6 +1129,33 @@ export function SearchWidget({
           return;
         }
 
+        /**
+         * 🔴 **`stops-unsupported` — رمزٌ له مخرجٌ في يد العميل، فلا يُترك للرسالة العامة.**
+         *
+         * يردّه `/api/quote` حين تُطلب محطاتٌ وقاعدةُ البيانات لا تعرف `p_stops`
+         * بعد (نافذةُ دقائق النشر قبل الهجرة). والرفضُ هناك **صواب**: تسعيرُ
+         * مسارٍ مباشر لرحلةٍ فيها انحراف يُطابق قائمةَ أسعار متعهدٍ سعّر رحلةً
+         * أقصر — أي يُطلب منه ما لم يسعّره.
+         *
+         * ⚠ لكن «حاول مرة أخرى بعد قليل» **نصيحةٌ خاطئة** هنا: إعادةُ المحاولة
+         * بالمُدخلات نفسها لا يمكن أن تنجح. والمخرجُ الوحيد بيده — يحذف
+         * المحطات فيحصل على سعر المسار المباشر — فيُقال له صراحةً.
+         * وهي نفس قاعدة `no-classes*` أعلاه: **رمزٌ إعادةُ المحاولة فيه مستحيلة
+         * يستحق جملةً تقول ماذا يفعل الآن**.
+         *
+         * 🔒 والنصّ من `messages/*.json` بلغة الزائر لا من `json.message` —
+         * جملةُ الخادم عربيةٌ دائماً وكانت ستطبع عربيةً على `/en`.
+         */
+        if (json.code === "stops-unsupported") {
+          setError(
+            t(
+              "errors.stopsUnsupported",
+              "الرحلات ذات المحطات غير متاحة في هذه اللحظة. احذف المحطات لترى سعر المسار المباشر، أو حاول بعد قليل."
+            )
+          );
+          return;
+        }
+
         setError(
           json.message ||
             t("errors.quoteFailed", "تعذر حساب السعر الآن. حاول مرة أخرى بعد قليل.")
@@ -836,6 +1186,8 @@ export function SearchWidget({
         destinationLabel: destination.label || destinationText,
         destLat: destination.lat,
         destLng: destination.lng,
+        // المحطات كما سُعِّرت — ومنها تمضي إلى مسار الحجز بلا اشتقاقٍ ثانٍ
+        stops: resolvedStops,
         passengers,
         roundTrip,
         waitingHours: quotedWaiting,
@@ -878,7 +1230,10 @@ export function SearchWidget({
     if (roundTrip && (pickupAt === null || returnAt === null || returnBeforePickup)) return;
     requoteOwed.current = false;
     void runQuoteRef.current?.({ silent: true });
-  }, [pending, roundTrip, pickupAt, returnAt, returnBeforePickup]);
+    // ⚠ `stopsKey` في الاعتماديات لا `stops`: التأثير يهمّه **المسار المُرسَل**،
+    //   ومصفوفةُ المسوّدات تتغيّر مرجعياً على كل ضغطة مفتاح في حقل محطة —
+    //   فتُعيد تشغيله بلا أن يتغيّر شيءٌ يُسعَّر.
+  }, [pending, roundTrip, pickupAt, returnAt, returnBeforePickup, stopsKey]);
 
   /**
    * فتحُ «بيانات الرحلة» من سطرها — **حيث كان العميل، لا في رأس النموذج**.
@@ -925,6 +1280,21 @@ export function SearchWidget({
         {shortPlaceLabel(trip.destinationLabel)}
       </span>
     );
+    /**
+     * المحطات في السطر المطويّ — **عددٌ لا أسماء**.
+     *
+     * السطر يُقصّ على ٣٧٥ بكسل، ووسمُ مكانٍ واحد يبتلعه (وهو سببُ
+     * `shortPlaceLabel` أصلاً). فثلاثةُ أسماءٍ هنا كانت ستُخفي الركاب والنوع
+     * والموعد. والأسماء كاملةً معروضةٌ في بطاقة العروض وفي ملخّص مسار الحجز
+     * تحته — فلا تختفي معلومة، بل تُختصر في موضع الاختصار وحده.
+     */
+    if ((trip.stops ?? []).length > 0) {
+      tripSummaryParts.push(
+        t("summary.stops", "{count} محطة في الطريق", {
+          count: fmt.digits((trip.stops ?? []).length),
+        })
+      );
+    }
     tripSummaryParts.push(fmt.passengers(trip.passengers));
     if ((trip.luggage ?? 0) > 0) tripSummaryParts.push(fmt.bags(trip.luggage ?? 0));
     tripSummaryParts.push(
@@ -1052,6 +1422,117 @@ export function SearchWidget({
             }
           />
         </div>
+
+        {/*
+          ══════════════════════════════════════════════════════════════════
+           🔴 المحطات الوسطى — بين المنطلق والوجهة، حيث تقع في الواقع
+          ══════════════════════════════════════════════════════════════════
+
+          **ولماذا زرٌّ لا صفٌّ ظاهرٌ دائماً:** الأغلبية الساحقة من الرحلات
+          نقطتان. وصفُّ محطةٍ فارغٌ في كل نموذج يُطيل شاشةً نقصّرها بأمر المالك،
+          ويسأل كلَّ عميلٍ سؤالاً لا يخصّه. فالزرّ يفتح ما يحتاجه من يحتاجه.
+
+          **والزرّ خارج المنطقة `aria-live` بقصد**: هو الفعل، وما تحته هو
+          الأثر. وقارئُ الشاشة يعلن الأثر عند وقوعه لا عند وجود الزرّ.
+        */}
+        {/*
+          🔴 **`stopsEnabled === false` ⇒ لا شيء إطلاقاً.** المالك يُطفئ الميزة
+          بضبط `max_trip_stops = 0` (‏قرارٌ منصوصٌ في تعليق العمود في `0140`)،
+          وحينها يجب أن يعود النموذجُ إلى شكله قبل هذه الدفعة حرفاً بحرف: لا
+          زرَّ معطَّلاً ولا سطرَ سقف. **زرٌّ لا يعمل أبداً أسوأ من غيابه** —
+          يسأل العميلَ عن شيءٍ ثم يمنعه منه.
+        */}
+        {!stopsEnabled ? null : (
+        <div className="flex flex-col gap-3">
+          {hasStops ? (
+            <div className="flex flex-col gap-3">
+              <span className="text-sm font-medium leading-none">
+                {t("stops.label", "محطات في الطريق")}
+              </span>
+              {stops.map((draft, index) => (
+                <StopRow
+                  key={draft.key}
+                  index={index}
+                  count={stops.length}
+                  draft={draft}
+                  fieldHeight={fieldHeight}
+                  t={t}
+                  fmt={fmt}
+                  settings={placeSearch}
+                  locale={locale}
+                  onTextChange={(value) => setStopText(draft.key, value)}
+                  onPlaceChange={(place) => setStopPlace(draft.key, place)}
+                  onRemove={() => removeStop(draft.key)}
+                  onMove={(direction) => moveStop(index, direction)}
+                />
+              ))}
+
+              {/*
+                ⚠ **جملةُ الصدق — وموضعُها هو نصفُ قيمتها.**
+
+                تظهر لحظةَ فتح أول صفّ، **قبل** أن يختار العميل مكاناً وقبل أن
+                يتحرّك أيُّ رقم: فيقرّر وهو يعرف، لا يكتشف عند الدفع. والنصُّ
+                يقول ما تفعله القاعدة حرفياً — رحلةٌ بمحطات تُسعَّر بتعريفة
+                الكيلومتر على الطول الحقيقي، لا بسعر مسارٍ مباشر سعّره متعهد —
+                **ولا يَعِد بأنها أرخص ولا يخفي أنها قد تكون أغلى** (النمط ٢ في
+                `handover/LESSONS.md`: الواجهة لا تَعِد بما لا تنفّذه القاعدة).
+
+                🔒 **ولا رقم فيها**: كم تزيد وكم تنقص جوابٌ لا نملكه قبل نداء
+                التسعير، وذكرُ نسبةٍ هنا كان سيصير سعراً ثانياً في الواجهة.
+              */}
+              <p className="flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <span>
+                  {t(
+                    "stops.pricingNotice",
+                    "الرحلة التي تمرّ بمحطات تُحسب على المسافة الكاملة مروراً بها، بتعريفة الكيلومتر — لا بسعر المسار المباشر. وقد يكون الإجمالي أعلى، وسيظهر لك كاملاً قبل الحجز."
+                  )}
+                </span>
+              </p>
+            </div>
+          ) : null}
+
+          <div>
+            <button
+              type="button"
+              onClick={addStop}
+              disabled={!canAddStop}
+              className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-dashed border-input bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
+            >
+              <MapPinPlus className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              {t("stops.add", "أضف محطة في الطريق")}
+            </button>
+            {/*
+              السقف يُقال **عند بلوغه وحده** — لا رقمٌ معلَّقٌ فوق كل نموذج.
+              وهي نفس قاعدة `passengersAtCap` و`luggageAtCap` في هذا الملف: لا
+              يُعلن حدٌّ إلا لمن اصطدم به، ويُقال معه ما البديل.
+            */}
+            {!canAddStop ? (
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                {t(
+                  "stops.atCap",
+                  "بلغتَ أقصى عدد محطات في الحاسبة ({count}). لرحلة بمحطات أكثر اطلب عرض سعر ونرتّبها لك.",
+                  // 🔒 **السقفُ المفروض لا الثابتُ المطلق**: الرقم المعروض هو
+                  //    الذي ستقبله القاعدة فعلاً، وإلا وعدت الجملة بأكثر مما
+                  //    يمكن حجزه (النمط ٢ في `handover/LESSONS.md`).
+                  { count: fmt.digits(stopsCap) }
+                )}{" "}
+                <a
+                  href={buildQuoteRequestHref(locale, {
+                    passengers,
+                    pickupAt,
+                    from: origin?.label || originText || null,
+                    to: destination?.label || destinationText || null,
+                  })}
+                  className="font-medium text-primary underline underline-offset-4 hover:no-underline"
+                >
+                  {t("stops.atCapLink", "اطلب عرض سعر")}
+                </a>
+              </p>
+            ) : null}
+          </div>
+        </div>
+        )}
 
         {/*
           ══════════════════════════════════════════════════════════════════

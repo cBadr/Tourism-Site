@@ -14,8 +14,8 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.6.2-F69220?logo=pnpm&logoColor=white)
 ![License](https://img.shields.io/badge/license-private-lightgrey)
 ![Phases](https://img.shields.io/badge/phases-13%2F14-blue)
-![Migrations](https://img.shields.io/badge/migrations-134-informational)
-![Tests](https://img.shields.io/badge/SQL%20suites-53%20green-brightgreen)
+![Migrations](https://img.shields.io/badge/migrations-138-informational)
+![Tests](https://img.shields.io/badge/SQL%20suites-54%20green-brightgreen)
 ![Deployment](https://img.shields.io/badge/deployed-rentlimousine.duckdns.org-success)
 
 <div dir="rtl">
@@ -62,6 +62,7 @@ Two systems ship **switched off by design** and wait on an owner decision: coupo
 | البنية والهوية والأدوار | `site_settings` + `profiles` بأربعة أدوار + RLS على كل جدول + ثيم وإعدادات تُقرأ من القاعدة + سباكة سيو (metadata · robots · sitemap · canonical · JSON-LD) | ١ | 🟨 منشور على الدومين — الباقي **تحقق GSC وتركيب GA4** |
 | الموقع العام ونظام الأقسام | ٢٣ صفحة و١٦٠ قسماً بمحتوى عربي حقيقي في القاعدة (٦ خدمات · مسارات سيو · من نحن · صفحات الثقة)، عشر عارضات أقسام، ومحرر محتوى كامل في اللوحة | ٢ | 🟨 الكود مكتمل — الباقي **Lighthouse سيو ≥ ٩٠ وتقرير فهرسة GSC**، ولا يُقاسان على `localhost` |
 | المسافات والتسعير | محرك مسافات بأربع طبقات (كاش Postgres ← Google Routes ← OSRM ← Haversine ×١٫٣ مُعلَّم تقديراً) + `quote_price` في Postgres: تعريفة كيلومتر · أرضية فئة · ذهاب وعودة · ساعات انتظار · ذروة | ٣ | ✅ |
+| المحطات الوسطى | رحلة بأكثر من نقطة توقّف: المسافة **مجموع الأرجل** (كل رِجل تستفيد من الكاش نفسه، ومصدر المسافة هو **أضعف** رِجل فلا يُدَّعى `osrm` على مجموعٍ فيه تقدير)، والسقف إعدادُ مالك (`max_trip_stops` = ٣).<br>🔴 **ولا تُسعَّر من قائمة متعهد** — بل بالتعريفة، **بأرضية «لا أرخصَ من المباشر»**: فمحطةٌ في منتصف الطريق لا تُنقص الفاتورة. وقبل الأرضية كان ٣١ ممرّاً من ١٠٠ يهبط سعرُه بإضافة محطة، و١٢ منها تبيع دون تكلفة المتعهد | — | 🟨 نزلت — **ومستحقُّ المتعهد لا يتدرّج بالطول بعد**، قرارٌ معلَّق للمالك |
 | الحجز والدفع المحلي والإشعارات | حجز كضيف بلا حساب + آلة حالات محروسة + محافظ وانستا باي بحدود يومية وشهرية تُفرض في SQL + رفع إيصال وطابور تحقق + أنبوب إشعارات بنمط Outbox | ٤ | ✅ منشورة — والتحصيل الحقيقي ينتظر حساب بوابة |
 | بورتال المتعهدين والتغطية | دعوة واعتماد + أسطول + قوائم أسعار ترسو على نقطتين بنطاق كيلومترات + **قاعدة الدمج**: أرخص متعهد مغطٍّ + الهامش، وإلا التعريفة.<br>**ومعالج تجهيز** يفتح للمدعوّ ملفَّه وأسطوله وسائقيه وقوائمه **قبل الاعتماد** ويُبقي الطلبات مقفلة — فيُعتمد شريكٌ جاهز بدل صفٍّ فارغ، و«ما يمنع البثّ» فيه مشتقٌّ من شرط `dispatch_pool` نفسه لا من تقدير | ٥ | ✅ |
 | البث والإسناد | موجات بسقف تكلفة يتسع + مهلة وحد أقصى من الإعدادات + **قبول ذرّي «أول قابل يفوز»** + طابور إسناد يدوي عند الاستنفاد | ٦ | ✅ |
@@ -229,7 +230,7 @@ vercel.json     جدولتان: الإشعارات كل دقيقة · دورة �
 
 <div dir="rtl">
 
-**الترحيلات الـ ١٣٤** في `supabase/migrations/` من `0001_core.sql` إلى `0139_reminder_scope_and_partner_response.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations` (وفجوات `0090` و`0091` و`0116` مقصودة). **ومجموعات الاختبار الثلاث والخمسون** في `supabase/tests/`.
+**الترحيلات الـ ١٣٨** في `supabase/migrations/` من `0001_core.sql` إلى `0143_price_floor_direct_km_clamp.sql` — كلها مطبَّقة على القاعدة الحية ومتتبَّعة في `schema_migrations` (وفجوات `0090` و`0091` و`0116` مقصودة). **ومجموعات الاختبار الأربع والخمسون** في `supabase/tests/`.
 
 ⚠ **والعدد لا يساوي أعلى رقم**: في التسلسل فجوتان (`0090` و`0091` غير موجودتين)، **فالرقم الحرّ يُشتقّ بأمرٍ لا من عدّ الملفّات** — `ls supabase/migrations | tail -1`. وفي `schema_migrations` صفٌّ يتيم `0100_logo_strip_list_label.sql` بلا ملفّ، خلّفه تصادمُ رقمٍ بين وكيلين في 2026-08-17: طُبِّق ثم أُعيدت تسميتُه `0101` وطُبِّق ثانيةً. **وجسمُ الهجرة يُعيد الكتابة بقيمةٍ ثابتة فتشغيلُه مرتين بلا أثر** (تحقَّق: `fleetBrands` عشرة عناصر)، والصفّ يُحذف بـ`delete from public.schema_migrations where name = '0100_logo_strip_list_label.sql';`. خريطة الترحيلات بالمرحلة في [`handover/ARCHITECTURE.md`](handover/ARCHITECTURE.md) القسم ٧.
 

@@ -246,7 +246,7 @@ export default async function PortalDashboardPage({ searchParams }: PageProps<"/
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { href: "/portal/profile" as const, icon: UserRound, label: "تحديث ملفي" },
+          { href: "/portal/profile" as const, icon: UserRound, label: "تحديث حسابي" },
           { href: "/portal/fleet" as const, icon: CarFront, label: "إدارة أسطولي" },
           { href: "/portal/drivers" as const, icon: IdCard, label: "سائقيّ" },
           { href: "/portal/prices" as const, icon: ReceiptText, label: "قوائم أسعاري" },

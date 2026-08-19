@@ -17,7 +17,7 @@ import { createServiceSupabase } from "@/lib/supabase/admin";
 import { AgreementSection, AGREEMENT_ERROR_MESSAGES } from "../agreement/agreement-section";
 import { agreementNeedsAction } from "../agreement/data";
 import { portalSetupAccess } from "../_lib/session";
-import { ChannelsSummary } from "./_components/channels-summary";
+import { ALERTS_ERROR_MESSAGES, ChannelsSummary } from "./_components/channels-summary";
 import { removeAvatar, saveProfile } from "./actions";
 
 /**
@@ -37,8 +37,13 @@ import { removeAvatar, saveProfile } from "./actions";
  * | القسم | مرساته | من يملك محتواه |
  * |---|---|---|
  * | بيانات الحساب | `#account` | هذا الملف + `./actions.ts` |
- * | قنوات التنبيه | `#channels` | `_components/channels-summary.tsx` ← `partner_availability()` |
+ * | قنوات التنبيه | `#channels` | `_components/channels-summary.tsx` ← `partner_availability()` + `../notifications/actions.ts` |
  * | الاتفاقية | `#agreement` | `../agreement/agreement-section.tsx` ← `portal_agreement()` |
+ *
+ * 🔴 **وقنوات التنبيه صارت محرِّرها كاملاً، لا ملخّصاً يشير إلى شاشةٍ أخرى**
+ * (2026-08-19). و`/portal/notifications` صارت **إعادة توجيه** إلى `#channels`
+ * هنا — لا صفحةً محذوفة، فرابطٌ محفوظٌ عند شريكٍ أو في رسالةٍ سابقة يجب ألّا
+ * يموت. وأفعالُ القنوات تنتهي في هذه الصفحة، فرموزُها في `ERROR_MESSAGES` أدناه.
  *
  * ── والترتيب يتبع ما ينتظر فعلاً، لا ترتيباً ثابتاً ─────────────────────────
  *
@@ -58,9 +63,14 @@ import { removeAvatar, saveProfile } from "./actions";
 export const metadata = { title: "حسابي" };
 
 /**
- * رموزُ الخطأ من **قسمين** في صفحةٍ واحدة، ولا تصادمَ بينها (فُحص اسماً اسماً).
- * ورموزُ قنوات التنبيه ليست هنا لأن أفعالها تنتهي في شاشتها هي — انظر ترويسة
- * `_components/channels-summary.tsx`.
+ * رموزُ الخطأ من **ثلاثة** أقسام في صفحةٍ واحدة، ولا تصادمَ بينها (فُحص اسماً
+ * اسماً، وكذلك مقابل `COMMON_PORTAL_ERRORS`). وكلُّ قسمٍ يملك رموزَه في ملفّه
+ * ويصدّرها، والصفحةُ تجمعها وحدها — فلا نسخةَ ثانية من جملةٍ تُعدَّل في أحدهما
+ * وتبقى في الآخر.
+ *
+ * ورموزُ قنوات التنبيه انضمّت هنا حين صارت أفعالُها تنتهي في هذه الصفحة
+ * (`notifications/actions.ts` ← `/portal/profile?…#channels`): رمزٌ يعبر بلا
+ * جملةٍ تقابله يصل الشريكَ «حدث خطأ غير متوقع».
  */
 const ERROR_MESSAGES: Record<string, string> = {
   company: "اسم الشركة حقل إلزامي.",
@@ -72,6 +82,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   avatar_size: "حجم الصورة أكبر من الحد المسموح (٢ ميجابايت).",
   upload: "تعذر رفع الصورة — جرّب صورة أصغر، أو الصق رابط صورة بدلاً منها.",
   ...AGREEMENT_ERROR_MESSAGES,
+  ...ALERTS_ERROR_MESSAGES,
 };
 
 /** رابطُ قفزٍ إلى قسم — التنقل داخل الصفحة يعمل بلا جافاسكربت */
@@ -118,6 +129,14 @@ export default async function PortalProfilePage({ searchParams }: PageProps<"/po
   const { sub } = access;
   const saved = params.saved === "1";
   const signed = params.signed === "1";
+  /*
+   * علاماتُ أفعال قنوات التنبيه — تصل بنصّها من `notifications/actions.ts`.
+   * ⚠ و`linked=1&error=proof` تصل **معاً** عمداً: الربط وقع ورسالةُ الإثبات لم
+   * تصل، فيُعرض الشريطان — نجاحٌ وتحذير — لا أحدهما.
+   */
+  const linked = params.linked === "1";
+  const unlinked = params.unlinked === "1";
+  const tested = params.tested === "1";
   const error = typeof params.error === "string" ? params.error : null;
   const canUpload = createServiceSupabase() !== null;
 
@@ -308,7 +327,13 @@ export default async function PortalProfilePage({ searchParams }: PageProps<"/po
         أين يصلك عرض الرحلة، ومتى توقف استقبال الطلبات. وعرض الرحلة له مهلة تنتهي — فالقناة
         التي تصلك فوراً هي ما يجعلك تلحق به.
       </SectionHeading>
-      <ChannelsSummary />
+      {/*
+        ⚠ المرساة `#channels` أعلاه على العنوان نفسه (‏`scroll-mt-24`)، وإليها
+        تعود كلُّ أفعال القنوات بعد الحفظ. فتحريكُها أو إعادةُ تسميتها تكسر
+        وجهةَ `notifications/actions.ts` بلا خطأٍ يظهر — يهبط الشريك على رأس
+        الصفحة ويظن أن شيئاً لم يُحفظ.
+      */}
+      <ChannelsSummary subcontractorId={sub.id} onboarding={access.stage === "onboarding"} />
     </section>
   );
 
@@ -373,13 +398,27 @@ export default async function PortalProfilePage({ searchParams }: PageProps<"/po
       </nav>
 
       <Banners
-        saved={saved || signed}
+        saved={saved || signed || linked || unlinked || tested}
         error={error}
         errorMessages={ERROR_MESSAGES}
         savedMessage={
           signed
             ? "سُجّل قبولك للاتفاقية. النسخة التي قبلتها محفوظة بنصّها وتجدها في «نُسَخُك الموقَّعة» أسفل هذه الصفحة."
-            : "حُفظت بيانات حسابك."
+            : linked
+              ? "تم ربط تليجرام — أرسلنا رسالة تأكيد إلى محادثتك."
+              : unlinked
+                ? "فُصل تليجرام. لن تصلك عروض عليه بعد الآن."
+                : tested
+                  ? "أُرسلت رسالة التجربة — افتح تليجرام وتأكد من وصولها."
+                  : /*
+                     * ⚠ `saved=1` يصل الآن من **فعلين**: حفظُ بيانات الحساب
+                     * (`./actions.ts`) وحفظُ تفضيلات القنوات
+                     * (`notifications/actions.ts`) — والرمز واحدٌ عمداً، فالمطلوب
+                     * تمريرُ الحالة كما هي لا اختراعُ رمزٍ ثالث. والجملةُ لذلك
+                     * **صادقةٌ على الاثنين**: «حُفظت بيانات حسابك» بعد حفظِ قناةٍ
+                     * جملةٌ تصف ما لم يقع، وهو النمط ٢ في `LESSONS.md`.
+                     */
+                    "حُفظت التعديلات."
         }
       />
 

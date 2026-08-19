@@ -87,7 +87,7 @@ begin
     ('public.dispatch_pool(uuid, integer)'),
     ('public.dispatch_ceiling(uuid, integer)'),
     ('public.current_subcontractor_id()'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 
@@ -1753,11 +1753,11 @@ begin
   if has_function_privilege('anon', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer, text)', 'EXECUTE')
+       timestamptz, integer, jsonb, integer, text, jsonb)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.create_booking(
        jsonb, jsonb, integer, boolean, numeric, numeric, numeric,
        text, text, text, text, text, text, timestamptz, text, text,
-       timestamptz, integer, jsonb, integer, text)', 'EXECUTE') then
+       timestamptz, integer, jsonb, integer, text, jsonb)', 'EXECUTE') then
     raise exception '(ي-٦) نقض تصليب 0009: create_booking عادت متاحة لدور عام';
   end if;
 
@@ -1767,7 +1767,7 @@ begin
   end if;
 
   if has_function_privilege('authenticated',
-       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer)',
+       'public.quote_price(numeric, integer, boolean, numeric, numeric, numeric, numeric, numeric, integer, jsonb)',
        'EXECUTE') then
     raise exception '(ي-٦) نقض عزل 0011: التسعير المُفصَّل عاد متاحاً للمسجَّل';
   end if;

@@ -66,7 +66,7 @@ begin
     -- ⚠ 0067: أُلحق `p_flight_number text` بتوقيع create_booking (وأُسقط
     --   التوقيع العشروني صراحةً كما فعلت 0031). هذا السطر **شرط وجود** لا يخصّ
     --   منطق الدفع، وتحديثه هنا وحده يُبقي المجموعة خضراء.
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)'),
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)'),
     -- تصليب 0025 البند (١): الجسم انتقل إلى دالة داخلية، والغلافان يستدعيانها
     ('public.payment_accounts_within_caps(numeric)'),
     ('public.available_payment_accounts(numeric)'),

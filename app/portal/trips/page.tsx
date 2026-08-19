@@ -206,10 +206,33 @@ function TripCard({
         </span>
       </div>
 
+      {/*
+        ══════════════════════════════════════════════════════════════════════
+         🔴 محطات الطريق — **الطريقُ الذي سيُقاد، لا الطرفان وحدهما**
+        ══════════════════════════════════════════════════════════════════════
+
+        المتعهد يخطّط رحلته على ما يقرؤه هنا: يقدّر الزمن، ويختار السائق
+        والمركبة، ويحسب وقودَه. ورحلةٌ تمرّ بمحطتين **أطولُ زمناً ومسافةً** من
+        مسارٍ مباشر بين النقطتين نفسيهما — فسطرُ «من ← إلى» وحده يجعله يخطّط
+        لرحلةٍ غير التي قَبِلها.
+
+        ── وكانت هنا كتلةٌ مستقلة تحت سطر المسار، فصارت **داخله** ───────────
+        لسببين: (١) الكتلةُ كانت **ميتة** — `readTripStops` تقرأ `trip.stops`
+        و`PortalTrip` لم يكن يحمل الحقل أصلاً، فكانت `[]` دائماً؛ (٢) وسطرُ
+        المسار مكرَّرٌ فيها بطرفيه، فكانت الشاشة تعرض المسار مرتين. والحقلُ وصل
+        الآن (`stopLabels` في `requests/data.ts`) ويصبّ في `TripRoute` وحده —
+        سطرُ مسارٍ واحد على البطاقتين معاً، فلا ينحرف أحدهما عن الآخر.
+
+        📌 **والوسومُ وحدها تُعرض هنا كما في بطاقة العرض.** `portal_trips()`
+        تُرجع `trip_stops_full` بإحداثياتها بعد الإسناد، لكن الرسمَ والملاحة
+        يُبنيان في الخادم من `bookingId` خلف حارسٍ مستقل (`TripMap` أدناه) —
+        فلا إحداثيَّ يدخل حمولة هذه الصفحة (D-19).
+      */}
       <TripRoute
         originLabel={trip.originLabel}
         destLabel={trip.destLabel}
         roundTrip={trip.roundTrip}
+        stopLabels={trip.stopLabels}
       />
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -235,7 +258,13 @@ function TripCard({
         في `OfferCard` قبل القبول، وحارسُ نقطة الصورة نفسه يرفض من ليس مُسنَداً
         إليه (‏`partner_route_map_visible` في 0078).
       */}
-      {hasMap ? <TripMap bookingId={trip.bookingId} approximate={mapApproximate} /> : null}
+      {hasMap ? (
+        <TripMap
+          bookingId={trip.bookingId}
+          approximate={mapApproximate}
+          stopsCount={trip.stopLabels.length}
+        />
+      ) : null}
 
       <TripFacts trip={trip} />
       {/*

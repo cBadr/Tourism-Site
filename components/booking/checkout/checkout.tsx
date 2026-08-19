@@ -41,6 +41,8 @@ import { RedeemField, RedeemRows } from "../redeem-field";
 import { PromoBanners } from "../promo-banner";
 import type { CreateBookingRequestWithExtras, OfferWithExtras } from "../extras";
 import { isAirportTrip } from "../airport";
+import { RouteLine } from "../route-line";
+import type { TripStop } from "../stops";
 import { readPaymentSettings, splitAmounts } from "./payment";
 import {
   todayInputValue,
@@ -103,6 +105,12 @@ export type CheckoutTrip = {
   destinationLabel: string;
   destLat: number;
   destLng: number;
+  /**
+   * المحطات الوسطى بترتيبها — **بإحداثيات دائماً** بحكم نوع `TripStop`، فهي
+   * تمرّ إلى `/api/booking` كما مرّت إلى `/api/quote` بلا فحصٍ ثانٍ. والفارغة
+   * (أو الغياب) رحلةٌ بنقطتين — سلوكُ اليوم حرفياً.
+   */
+  stops?: TripStop[];
   passengers: number;
   roundTrip: boolean;
   /** كما اشتقّتها القاعدة من الموعدين — لا كما قدّرها متصفح */
@@ -387,14 +395,19 @@ function SummaryCard({
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3">
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
-        <Route className="size-4 shrink-0 text-primary" aria-hidden="true" />
-        <span>{trip.originLabel}</span>
-        <span className="text-muted-foreground" aria-hidden="true">
-          ←
-        </span>
-        <span>{trip.destinationLabel}</span>
-      </p>
+      {/*
+        🔴 **المسارُ كاملاً بمحطاته في آخر شاشةٍ قبل الدفع.** بطاقةُ الملخّص هذه
+        هي ما يراه العميل وهو يكتب اسمه ورقمه — وهي البديل الوحيد عن سطرِ
+        «تعديل» الذي أُسقط فوق هذا المسار بقصد. فإن غابت منها المحطات صار آخرُ
+        ما يقرؤه قبل أن يدفع **وصفاً لرحلةٍ أقصر من التي سيحصل عليها**.
+      */}
+      <RouteLine
+        className="text-sm font-medium"
+        icon={<Route className="size-4 shrink-0 text-primary" aria-hidden="true" />}
+        originLabel={trip.originLabel}
+        destLabel={trip.destinationLabel}
+        stops={trip.stops ?? []}
+      />
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{offer.classTitle}</span>
@@ -1025,6 +1038,12 @@ export function Checkout({
     const payload: CreateBookingRequestWithExtras = {
       origin: { label: trip.originLabel, lat: trip.originLat, lng: trip.originLng },
       destination: { label: trip.destinationLabel, lat: trip.destLat, lng: trip.destLng },
+      /**
+       * 🔴 **نفس المحطات وبنفس الترتيب الذي سُعِّر به** — لا من حقلٍ يُقرأ الآن.
+       * `trip` هنا هو ما سُعِّرت عليه البطاقة التي ضغط عليها العميل، وأي مصدرٍ
+       * آخر كان سيجعل الحجز على مسارٍ غير الذي عُرض سعرُه.
+       */
+      stops: trip.stops ?? [],
       passengers: trip.passengers,
       roundTrip: trip.roundTrip,
       // الرقم الذي اشتقّته القاعدة وعُرض في السعر — و`create_booking` تشتقّه

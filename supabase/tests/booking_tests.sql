@@ -62,7 +62,7 @@ begin
   select string_agg(x.sig, '، ')
     into v_missing
   from (values
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)'),
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)'),
     ('public.get_booking_by_token(text)'),
     ('public.available_payment_accounts(numeric)'),
     ('public.attach_receipt(text, text, uuid, numeric)'),
@@ -975,12 +975,12 @@ begin
   --       (تذكير الفخّ: alter default privileges في Supabase تمنح anon صلاحية
   --        EXECUTE على كل دالة جديدة، فسحب PUBLIC وحده لا يُغلق شيئاً.)
   if has_function_privilege('anon',
-       'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)',
+       'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)',
        'EXECUTE') then
     raise exception '(ط-٥-أ) د١ مكسورة: anon ما زال يستطيع تنفيذ create_booking مباشرة';
   end if;
   if has_function_privilege('authenticated',
-       'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)',
+       'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)',
        'EXECUTE') then
     raise exception '(ط-٥-ب) د١ مكسورة: authenticated ما زال يستطيع تنفيذ create_booking مباشرة';
   end if;
@@ -997,7 +997,7 @@ begin
   -- (ط-٥-و) مفتاح الخدمة وحده هو من يُنشئ الحجوزات الآن
   if exists (select 1 from pg_roles where rolname = 'service_role')
      and not has_function_privilege('service_role',
-       'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)',
+       'public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)',
        'EXECUTE') then
     raise exception '(ط-٥-و) service_role لا يستطيع تنفيذ create_booking — مسار /api/booking معطّل';
   end if;

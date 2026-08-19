@@ -1,7 +1,7 @@
 import { MAX_DERIVED_WAITING_HOURS, type ExtraSelection } from "@/lib/extras-types";
 import { siteTimeZone } from "@/lib/site-timezone";
 import type { ExtraServiceRow } from "@/lib/extras-types";
-import type { CreateBookingRequest } from "@/lib/booking-types";
+import type { CreateBookingRequest, TripStop } from "@/lib/booking-types";
 import type { VerifyCouponRequest } from "@/lib/discounts/types";
 import type { Offer, QuoteRequest, QuoteResponse } from "@/lib/pricing-types";
 
@@ -83,6 +83,17 @@ export type QuoteRequestWithExtras = QuoteRequest & {
   returnAt?: string | null;
   luggage?: number;
   extras?: ExtraSelection[];
+  /**
+   * المحطات الوسطى بترتيبها (‏`components/booking/stops.ts`).
+   *
+   * 🔒 **نقاطٌ فقط، ولا مسافة ولا سعر** — بنفس قاعدة `origin`/`destination`
+   * حرفياً: الخادم يحسب المسافة متعددة الأرجل بنفسه، وما يصل من المتصفح
+   * إحداثياتٌ لا أرقامٌ مالية (D-09 · D-05).
+   *
+   * 🔴 **والغياب رحلةٌ بنقطتين**: الحقل اختياريّ، وحذفُه من الجسم هو بالضبط
+   * سلوكُ اليوم — فلا ينكسر طلبٌ قديم ولا خادمٌ لم تصله الترقية.
+   */
+  stops?: TripStop[];
 };
 
 /**
@@ -102,6 +113,15 @@ export type CreateBookingRequestWithExtras = CreateBookingRequest & {
   returnAt?: string | null;
   luggage?: number;
   extras?: ExtraSelection[];
+  /**
+   * المحطات الوسطى — **نفس الترتيب الذي سُعِّر به** في `/api/quote`.
+   *
+   * ⚠ ولا يُفترض أن يقبله خادمٌ قديم: `create_booking` تعيد حساب السعر بنفسها
+   * على ما يصلها، فحقلٌ تتجاهله القاعدة يعني **حجزاً بسعر المسار المباشر
+   * ورحلةً بمحطات** — وهو الفرق المالي بعينه. والتحقق من وصوله شرطُ إغلاق
+   * مذكورٌ في تقرير هذه الدفعة، لا افتراضٌ يُبنى عليه.
+   */
+  stops?: TripStop[];
 };
 
 /**

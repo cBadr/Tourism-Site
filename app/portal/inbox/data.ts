@@ -134,3 +134,30 @@ export const summaryBool = (summary: Record<string, unknown>, key: string): bool
   const value = summary[key];
   return value === true || value === "true" || value === 1;
 };
+
+/**
+ * محطاتُ الطريق من الملخّص — **وسومٌ فقط، بترتيب القيادة**.
+ *
+ * 🔴 وسببُ وجودها هنا أن الصندوق كان يعرض «من ← إلى» عن رحلةٍ بثلاث محطات،
+ * فيقرأ المتعهد سجلَّ ما وصله ولا يجد أثراً لما جعل الرحلة أطول. و`portal_inbox`
+ * صارت تُخرج `stops` (‏0144)، فهذا هو طرفُ الأنبوب الذي كان مقطوعاً.
+ *
+ * والشكلُ الوارد `[{label}]` من `trip_stops_public` — **بلا إحداثيات بتصميم
+ * القاعدة لا باحتراسٍ هنا** (D-19). ومع ذلك لا نقرأ إلا `label`: فلو وسّعت
+ * هجرةٌ قادمة ما تُخرجه الدالة، لم يعبر الزائدُ إلى الشاشة من هذا الباب.
+ *
+ * ووسمٌ فارغ **يُسقَط ولا يُبقى فراغاً**: هنا سجلٌّ يُقرأ لا نموذجٌ يُحرَّر،
+ * فموضعٌ بلا اسمٍ لا يقول لقارئه شيئاً — بخلاف بطاقة العرض حيث يبقى الفراغ
+ * في موضعه لأن الترتيب نفسَه معلومة.
+ */
+export const summaryStops = (summary: Record<string, unknown>, key = "stops"): string[] => {
+  const value = summary[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) =>
+      entry && typeof entry === "object" && typeof (entry as { label?: unknown }).label === "string"
+        ? (entry as { label: string }).label.trim()
+        : ""
+    )
+    .filter((label) => label !== "");
+};

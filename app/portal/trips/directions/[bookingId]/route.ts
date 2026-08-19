@@ -67,11 +67,29 @@ export async function GET(
   const points = await readBookingRoutePoints(id);
   if (!points) return notFound();
 
+  /**
+   * ── 🔴 والمسارُ يمرّ بالمحطات، وإلا فلا مسار ────────────────────────────────
+   *
+   * `points.stops` ثلاثُ حالات (‏`readTripRouteStops`): `[]` رحلةُ نقطتين فيبقى
+   * الرابط كما كان حرفاً · مصفوفةٌ صالحة فتصير نقاطَ مرورٍ بترتيبها · و`null`
+   * محطةٌ لا نثق بها **فلا رابطَ مسارٍ إطلاقاً**.
+   *
+   * ولماذا ٤٠٤ لا «رابطٌ مباشر»؟ لأن الضرر هنا **ليس غياب الرابط بل صحّته
+   * الكاذبة**: السائقُ قَبِل الرحلة سلفاً، فرابطٌ يفتح له طريقاً لا يمرّ بمحطات
+   * العميل يقوده إلى غير طريقه **وهو واثق**. و«الملاحة إلى نقطة الالتقاط» —
+   * وهي فعلُه الأول لا الثاني — تبقى عاملةً في كل هذه الحالات.
+   */
   const to = new URL(request.url).searchParams.get("to");
-  const target =
-    to === "route"
-      ? tripDirectionsUrl(points.origin, points.destination)
-      : pickupDirectionsUrl(points.origin);
+  let target: string | null;
+  if (to === "route") {
+    target =
+      points.stops === null
+        ? null
+        : tripDirectionsUrl(points.origin, points.destination, points.stops);
+  } else {
+    target = pickupDirectionsUrl(points.origin);
+  }
+  if (!target) return notFound();
 
   return new Response(null, {
     status: 302,

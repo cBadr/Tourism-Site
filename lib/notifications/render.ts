@@ -4,6 +4,7 @@ import {
   passengersLabel,
   toArabicDigits,
 } from "@/components/booking/format";
+import { MAX_PLACE_LABEL_LENGTH, sanitizeLine } from "@/lib/booking-types";
 import { siteTimeZone } from "@/lib/site-timezone";
 
 /**
@@ -413,12 +414,148 @@ export function audienceLink(
   return null;
 }
 
-/** «القاهرة ← الغردقة» — يرجع null إن غابت الأطراف */
-function routeLabel(payload: Payload): string | null {
-  const from = firstStr(payload, ["originLabel", "origin", "from"]);
-  const to = firstStr(payload, ["destLabel", "destinationLabel", "destination", "to"]);
-  if (from && to) return `${from} ← ${to}`;
-  return from ?? to;
+// ---------------------------------------------------------------------------
+// 🚏 المحطات الوسطى (0140 ⇐ 0144) — قراءةٌ واحدة يشترك فيها الراسمان
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 **العيب الذي وُلدت منه هذه الكتلة — رسالةٌ تصنع قراراً كاذباً.**
+ *
+ * نزلت المحطاتُ الوسطى في `0140` وعرضتها بطاقةُ البورتال. **لكنّ المتعهد لا
+ * يفتح البورتال ليكتشف العرض — يصله إشعارٌ ثم يقرّر.** وحمولةُ `trip_offered`
+ * كانت بلا `stops`، و`routeLabel()` تبني «من ← إلى» وحدها. فيصله «مطار القاهرة
+ * ← حلوان · ٥٨ كم» فيظنّها مباشرة، ويقبل، ثم يجد محطتين في الطريق.
+ * **الشاشةُ صارت صادقة، والرسالةُ التي تصنع القرار ما زالت تكذب.**
+ *
+ * ── ولماذا نسخةٌ واحدة هنا لا نسختان ───────────────────────────────────────
+ *
+ * كانت `routeLabel` مكتوبةً **مرّتين**: هنا ولأحداث الحجز، وفي
+ * `lib/dispatch/messages.ts` لأحداث البثّ — بنفس الجسم حرفاً بحرف. وهو النمط ٨
+ * في `LESSONS.md`: مصدران لشيءٍ واحد ينحرفان حتماً. وقد انحرفا فعلاً في
+ * اللحظة التي تُقاس: إصلاحُ أحدهما وحده كان يترك **العرضَ نفسه** — الرسالة
+ * الوحيدة التي يُتّخذ القرار عليها — كاذباً. فصارت هنا وحدها ويستوردها ذاك.
+ */
+
+/**
+ * وسمُ محطةٍ لا وسمَ لها. وهو ليس تجميلاً: `dispatch_public_label` **بلا
+ * fallback ثالث** (تعليقُها في القاعدة صريح)، فوسمٌ كلُّ مقاطعه مرقَّمة يخرج
+ * منها `null`. والعدّ يجب أن يبقى صادقاً — «٣ محطات» تعني ثلاثاً حتى لو عُمّي
+ * وسمُ إحداها، وإسقاطُ الصفّ من القائمة كان يجعل الرسالة تكذب من الجهة الأخرى.
+ */
+const UNNAMED_STOP = "محطة بلا وسم";
+
+/**
+ * أقصى عددٍ تُسرد أسماؤه **داخل سطر المسار نفسه**.
+ *
+ * ⚠ والحدُّ تفرضه **القناة لا الذوق**: سطرُ «المسار» هو السطر الوحيد من
+ * أسطر الرحلة الذي يعبر إلى **بطاقة الجهاز** (`PUSH_CARD_LABELS` في
+ * `lib/notifications/dispatch.ts`) وإلى **جرس اللوحة** (`notificationBrief`)،
+ * وكلاهما سطرٌ واحد مقصوص. فسلسلةٌ من خمس عُقد على شاشةٍ مقفلة لا تُقرأ —
+ * **وسطرٌ لا يُقرأ ليس تحسيناً**. وما جاوز الحدَّ يُقال عدداً في سطر المسار
+ * (فيبقى المعنى الحاسم «ليست رحلةً مباشرة» واصلاً في كل قناة) وتُسرَد أسماؤه
+ * كاملةً في سطر «المحطات» — وهو سطرٌ **خارج** قائمة بطاقة الجهاز عمداً، فلا
+ * يزاحم فيها ما يُقرَّر عليه.
+ */
+const MAX_INLINE_STOPS = 2;
+
+export type TripStops = {
+  /** عددُ المحطات كما في الحمولة — لا كما أمكن تسميتُه */
+  count: number;
+  /** بطول `count` دائماً، وبترتيبها؛ وما لا وسم له يأخذ `UNNAMED_STOP` */
+  labels: string[];
+  /** هل نجحت تسميةُ كلِّ محطة؟ */
+  allNamed: boolean;
+};
+
+/**
+ * المحطات كما تقرؤها الرسالة — **وسومٌ فقط**.
+ *
+ * 🔒 ولا تُقرأ `lat`/`lng` هنا ولا تُطبع (D-19: المتعهد قبل القبول لا إحداثيات).
+ * والحمولةُ العامة لا تحملها أصلاً — `trip_stops_public()` تبني `[{label}]`
+ * وحدها — لكنّ حمولةَ التشغيل تصل من `log_booking_change` بلقطة `trip` كاملة،
+ * فالقيدُ هنا طبقةٌ ثانية لا تكرار.
+ *
+ * ⚠ والقراءةُ متسامحةٌ بثلاثة أوجه لأن ثلاثة مُنتِجين يكتبون الحقل:
+ *   · `stops` في أعلى الحمولة (`dispatch_trip_payload` · `customer_notification_payload`)
+ *   · `trip.stops` (‏`log_booking_change` تمرّر اللقطة كما هي) — و`raw` تبحث فيها
+ *   · عنصرٌ نصّيّ خام بدل كائن — يُقبل ولا يُسقط الرسالة
+ *
+ * 🔒 **وكلُّ وسمٍ يمرّ على `sanitizeLine`** قبل أن يدخل نصّاً. وسمُ المحطة
+ * **مدخلُ مستخدم**، و`U+202E` واحدٌ بلا مُغلق يقلب اتجاه كلِّ ما بعده في
+ * الرسالة — أي أن محطةً واحدة تستطيع أن تقلب سطرَ المستحق. وليس هذا تحوّطاً
+ * نظرياً: قِيس على قاعدة الإنتاج **صفٌّ حيٌّ واحد** يحمل `U+202C` في
+ * `originLabel` (‏«مدينتى، ثانى القاهرة الجديدة، محافظة القاهرة» + U+202C).
+ * ولذلك تمرّ **أطرافُ المسار كذلك** على المُنقّي هنا، لا المحطاتُ وحدها.
+ */
+export function tripStops(payload: Payload): TripStops {
+  const value = raw(payload, "stops");
+  if (!Array.isArray(value)) return { count: 0, labels: [], allNamed: true };
+
+  const labels: string[] = [];
+  let allNamed = true;
+
+  for (const item of value) {
+    const source =
+      item && typeof item === "object"
+        ? (item as Record<string, unknown>).label
+        : item;
+    const clean = sanitizeLine(source, MAX_PLACE_LABEL_LENGTH);
+    if (clean) labels.push(clean);
+    else {
+      labels.push(UNNAMED_STOP);
+      allNamed = false;
+    }
+  }
+
+  return { count: labels.length, labels, allNamed };
+}
+
+/** «محطة واحدة» · «محطتان» · «٣ محطات» — والسقف في القاعدة ١٠ (`max_trip_stops`) */
+function stopsCountText(count: number): string {
+  if (count === 1) return "محطة واحدة";
+  if (count === 2) return "محطتان";
+  return count <= 10 ? `${toArabicDigits(count)} محطات` : `${toArabicDigits(count)} محطة`;
+}
+
+/** هل تُسرَد الأسماءُ داخل سطر المسار نفسه؟ — الشرط الوحيد، ويقرؤه السطران معاً */
+function namesFitInRoute(stops: TripStops): boolean {
+  return stops.count > 0 && stops.count <= MAX_INLINE_STOPS && stops.allNamed;
+}
+
+/**
+ * «القاهرة ← الغردقة» بلا محطات · «مطار القاهرة ← المعادي ← حلوان» بمحطتين ·
+ * «مطار القاهرة ← حلوان · ٤ محطات في الطريق» بما فوقهما.
+ *
+ * يرجع `null` إن غابت الأطراف والمحطات معاً.
+ */
+export function routeLabel(payload: Payload): string | null {
+  const clean = (value: string | null): string | null =>
+    value === null ? null : sanitizeLine(value, MAX_PLACE_LABEL_LENGTH) || null;
+
+  const from = clean(firstStr(payload, ["originLabel", "origin", "from"]));
+  const to = clean(firstStr(payload, ["destLabel", "destinationLabel", "destination", "to"]));
+  const ends = from && to ? `${from} ← ${to}` : (from ?? to);
+
+  const stops = tripStops(payload);
+  if (stops.count === 0) return ends;
+
+  if (from && to && namesFitInRoute(stops)) return [from, ...stops.labels, to].join(" ← ");
+
+  const tail = `${stopsCountText(stops.count)} في الطريق`;
+  return ends ? `${ends} · ${tail}` : tail;
+}
+
+/**
+ * سطرُ «المحطات» — الأسماءُ كاملةً بترتيبها، **مُكمِّلاً لسطر المسار لا مكرِّراً
+ * له**: يرجع `null` بالضبط حين يكون سطرُ المسار قد سمّاها بنفسه.
+ *
+ * ⚠ ولا يُضاف إلى `PUSH_CARD_LABELS`: البطاقةُ سطرٌ واحد مقصوص، وقد قال سطرُ
+ *   المسار فيها ما يلزم للقرار.
+ */
+export function stopsLine(payload: Payload): string | null {
+  const stops = tripStops(payload);
+  if (stops.count === 0 || namesFitInRoute(stops)) return null;
+  return stops.labels.map((label, i) => `${toArabicDigits(i + 1)}) ${label}`).join(" · ");
 }
 
 /** «SUV · ٤ ركاب · ذهاب وعودة · انتظار ساعتان» */
@@ -569,6 +706,7 @@ export function renderNotification(
       lead = `حجز جديد على ${ctx.brandName} — العميل اختار سيارته وبانتظار تحويل المبلغ. تابع وصول الإيصال.`;
       push(lines, "رقم الحجز", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "الرحلة", tripLabel(payload));
       push(lines, "موعد الانطلاق", pickup);
       push(lines, "الإجمالي", money(total, currency));
@@ -589,6 +727,7 @@ export function renderNotification(
       lead = `رفع العميل إيصال التحويل — الحجز انتقل إلى «قيد المراجعة» وينتظر تحقق التشغيل من وصول المبلغ.`;
       push(lines, "رقم الحجز", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "المبلغ المفترض تحويله", money(amountDue, currency));
       push(lines, "الإجمالي", money(total, currency));
       push(lines, "العميل", customerName);
@@ -600,6 +739,7 @@ export function renderNotification(
       lead = `تم تأكيد الحجز بعد التحقق من التحويل — جهّز الإسناد وأبلغ العميل بموعد السائق.`;
       push(lines, "رقم الحجز", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "الرحلة", tripLabel(payload));
       push(lines, "موعد الانطلاق", pickup);
       push(lines, "الإجمالي", money(total, currency));
@@ -614,6 +754,7 @@ export function renderNotification(
       lead = `أُلغي الحجز. راجع سبب الإلغاء وتصرّف في أي مبلغ محصَّل حسب سياسة الاسترداد.`;
       push(lines, "رقم الحجز", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "الإجمالي", money(total, currency));
       push(lines, "سبب الإلغاء", firstStr(payload, ["reason", "note", "statusNote"]));
       push(lines, "العميل", customerName);
@@ -673,6 +814,7 @@ export function renderNotification(
         `سنُجهّز سيارتك ونوافيك ببياناتها قبل الموعد، وتجد كل التفاصيل في صفحة متابعة حجزك.`;
       push(lines, "رقم حجزك", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "الرحلة", tripLabel(payload));
       push(lines, "موعد الانطلاق", pickup);
       push(lines, "إجمالي الرحلة", money(total, currency));
@@ -691,6 +833,7 @@ export function renderNotification(
         `ويظهر رقم السائق قبل الموعد بوقتٍ كافٍ.`;
       push(lines, "رقم حجزك", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "الرحلة", tripLabel(payload));
       push(lines, "موعد الانطلاق", pickup);
       break;
@@ -702,6 +845,7 @@ export function renderNotification(
         `وتجد بيانات السيارة والسائق في صفحة متابعة حجزك.`;
       push(lines, "رقم حجزك", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "موعد الانطلاق", pickup);
       push(lines, "يُدفع مع السائق", money(amountRemaining, currency));
       break;
@@ -713,6 +857,7 @@ export function renderNotification(
         `تجد تفاصيلها كاملةً في صفحة متابعة حجزك متى احتجتها.`;
       push(lines, "رقم حجزك", reference);
       push(lines, "المسار", routeLabel(payload));
+      push(lines, "المحطات", stopsLine(payload));
       push(lines, "موعد الانطلاق", pickup);
       break;
     }

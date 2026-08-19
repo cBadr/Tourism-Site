@@ -334,7 +334,7 @@ export default async function PortalGuidePage() {
             </p>
             <p>
               وإن تكرر ذلك كثيراً فالسبب غالباً أن العرض لا يبلغك بسرعة: راجع{" "}
-              <Link href="/portal/notifications" className="text-primary underline underline-offset-4">
+              <Link href="/portal/profile#channels" className="text-primary underline underline-offset-4">
                 قنوات التنبيه
               </Link>{" "}
               — صندوق البوابة وحده لا يكفي لأنه يستلزم أن تفتحه.
@@ -678,7 +678,7 @@ export default async function PortalGuidePage() {
             <p>
               استعمل مفتاح{" "}
               <span className="font-medium text-foreground">«أستقبل طلبات الرحلات»</span> في{" "}
-              <Link href="/portal/notifications" className="text-primary underline underline-offset-4">
+              <Link href="/portal/profile#channels" className="text-primary underline underline-offset-4">
                 قنوات التنبيه
               </Link>
               ، ولا تُطفئ قنواتك.
@@ -941,10 +941,10 @@ export default async function PortalGuidePage() {
               body: "سجلّك أنت؛ منه تختار سائق كل رحلة بنقرتين.",
             },
             {
-              href: "/portal/notifications" as const,
+              href: "/portal/profile#channels" as const,
               icon: BellRing,
               title: "قنوات التنبيه",
-              body: "أين يصلك العرض، ومفتاح إيقاف الاستقبال مؤقتاً.",
+              body: "أين يصلك العرض، ومفتاح إيقاف الاستقبال مؤقتاً — قسمٌ في «حسابي».",
             },
             {
               href: "/portal/inbox" as const,

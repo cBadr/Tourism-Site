@@ -4,6 +4,9 @@ import { createServiceSupabase } from "@/lib/supabase/admin";
 import { afterResponse } from "@/lib/geo/background";
 import { readTripSettings } from "@/lib/trip-settings";
 import { isWithinServiceArea } from "@/lib/place-search-types";
+// قارئُ المحطات **الوحيد** في المشروع (وحدةٌ محيَّدة بلا `"use client"`) —
+// ونسخةٌ ثانية هنا كانت ستقرأ مفاتيح لقطةٍ أخرى بأول تعديل (النمط ٨).
+import { readTripStops } from "@/components/booking/stops";
 import {
   fetchStaticRouteMap,
   isDrawablePoint,
@@ -81,6 +84,8 @@ type BookingMapRow = {
   status: string;
   origin: MapPoint | null;
   destination: MapPoint | null;
+  /** المحطات الوسطى — `[]` رحلةُ نقطتين، و`null` محطاتٌ لا تصلح للرسم */
+  stops: MapPoint[] | null;
 };
 
 function readPoint(trip: Record<string, unknown>, latKeys: string[], lngKeys: string[]) {
@@ -128,7 +133,36 @@ async function loadBookingForMap(bookingId: string): Promise<BookingMapRow | nul
     status: String(data.status ?? ""),
     origin: readPoint(trip, ["originLat", "origin_lat"], ["originLng", "origin_lng"]),
     destination: readPoint(trip, ["destLat", "dest_lat"], ["destLng", "dest_lng"]),
+    stops: readTripRouteStops(trip),
   };
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ *  محطاتُ الرحلة كنقاطٍ للرسم والملاحة — من اللقطة المجمَّدة وحدها
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * 🔴 **وثلاثُ قيمٍ لا اثنتان**، والفرقُ بين الأخيرتين هو الفرقُ بين صمتٍ وكذب:
+ *
+ * | الناتج | معناه | ماذا يفعل المنادي |
+ * |---|---|---|
+ * | `[]` | رحلةُ نقطتين | سلوكُ اليوم حرفياً — صورةٌ ورابطٌ كما هما |
+ * | `[…]` | محطاتٌ صالحة بترتيب القيادة | تُرسم وتُمرَّر إلى جوجل |
+ * | `null` | اللقطة تحمل محطةً **خارج نطاق التشغيل** | **لا مسارَ يُرسم ولا رابطَ يُبنى** |
+ *
+ * ولماذا `null` لا «ارسم الباقي»؟ لأن الباقي **طريقٌ أقصر من المُسعَّر** مرسومٌ
+ * بثقة — وهو العطل نفسه في ثوبٍ أنظف. والقاعدة (٥) في ترويسة هذا الملف تقول
+ * «لا خريطة لنقطةٍ خارج منطقة الخدمة»؛ والمحطةُ نقطةٌ في المسار كالطرفين.
+ *
+ * ⚠ **ومحطةٌ بلا إحداثيات ليست هذه الحالة**: `readTripStops` تُسقطها عمداً
+ * (‏D-09 — «لم تدخل حساب المسافة، فعرضُها نقطةً ادّعاءٌ»)، وذلك عقدٌ قائم لا
+ * يُنقض هنا. والمرفوض هنا **إحداثيٌّ صحيحٌ في مكانٍ لا نخدمه** — وهو بيانةٌ لا
+ * نثق بها لا حقلٌ ناقص.
+ */
+export function readTripRouteStops(trip: unknown): MapPoint[] | null {
+  const stops = readTripStops(trip).map((stop) => ({ lat: stop.lat, lng: stop.lng }));
+  if (stops.some((point) => !isDrawablePoint(point) || !withinServiceArea(point))) return null;
+  return stops;
 }
 
 /** نقطةٌ داخل نطاق التشغيل؟ — تفويضٌ إلى الحدّ الوحيد، بلا إعادة تعريف */
@@ -145,15 +179,20 @@ export function withinServiceArea(point: MapPoint): boolean {
  * 🔴 وحدُّ الجمهور **ليس هنا**: هذه الدالة تقرأ بمفتاح الخدمة وتُرجع الإحداثيات
  * لمن سألها. من ينادي عليه أن يكون قد أثبت أن سائله يستحقها —
  * `partner_route_map_visible` للمتعهد، والتوكن للعميل.
+ *
+ * ⚠ **و`stops` قد تكون `null` والطرفان سليمان** — وهي حالةٌ مقصودة لا سهو:
+ * رابطُ **الوصول إلى نقطة الالتقاط** لا يحتاج المحطات ويبقى صحيحاً، ورابطُ
+ * **المسار كاملاً** لا يجوز أن يُبنى. فالتمييز يقع عند المنادي لا هنا، وإلا
+ * أسقطت محطةٌ معطوبةٌ ملاحةَ السائق إلى العميل كذلك.
  */
 export async function readBookingRoutePoints(
   bookingId: string
-): Promise<{ origin: MapPoint; destination: MapPoint } | null> {
+): Promise<{ origin: MapPoint; destination: MapPoint; stops: MapPoint[] | null } | null> {
   try {
     const booking = await loadBookingForMap(bookingId);
     if (!booking?.origin || !booking.destination) return null;
     if (!withinServiceArea(booking.origin) || !withinServiceArea(booking.destination)) return null;
-    return { origin: booking.origin, destination: booking.destination };
+    return { origin: booking.origin, destination: booking.destination, stops: booking.stops };
   } catch {
     return null;
   }
@@ -219,8 +258,12 @@ export async function ensureBookingRouteMap(bookingId: string): Promise<RouteMap
     // 🔴 خارج نطاق التشغيل ⇒ لا صورة ولا نداء. والحكم `isWithinServiceArea`
     //    نفسها لا صندوقٌ ثانٍ (القاعدة ٥ في ترويسة الملف).
     if (!withinServiceArea(booking.origin) || !withinServiceArea(booking.destination)) return null;
+    // 🔴 ومحطةٌ لا نثق بها ⇒ **لا صورة**، لا صورةٌ تتخطّاها. صورةٌ مدفوعة
+    //    الثمن ترسم طريقاً أقصر من المُسعَّر أسوأُ من فراغٍ يقرأ عنده العميلُ
+    //    وسومَ رحلته مكتوبةً (القاعدة ٥ + `readTripRouteStops`).
+    if (booking.stops === null) return null;
 
-    const image = await fetchStaticRouteMap(booking.origin, booking.destination);
+    const image = await fetchStaticRouteMap(booking.origin, booking.destination, booking.stops);
     if (!image) return null;
 
     const path = `${id}.png`;

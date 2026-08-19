@@ -1,11 +1,17 @@
 import { trackFunnel } from "@/lib/analytics/emit";
 import { routeDistance } from "@/lib/geo/route";
 import { createServiceSupabase } from "@/lib/supabase/admin";
-import type {
-  BookingError,
-  CreateBookingResponse,
-  PaymentPlan,
+import {
+  MAX_PLACE_LABEL_LENGTH,
+  MAX_TRIP_STOPS,
+  sanitizeBlock,
+  sanitizeLine,
+  type BookingError,
+  type CreateBookingResponse,
+  type PaymentPlan,
+  type TripStop,
 } from "@/lib/booking-types";
+import { getStopsCap } from "@/components/booking/stops-cap";
 import {
   parseExtrasSelection,
   parseLuggage,
@@ -59,6 +65,23 @@ import {
  *               `price_extras` تقرأ الأسعار من الكتالوج وتقصّها على `max_qty`،
  *               و`create_booking` تجمّدها في `booking_extras`.
  *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  المحطات الوسطى — `stops` في الجسم، و`p_stops` في الدالة
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * الجسم يقبل `stops` (‏`TripStop[]`، عقد `lib/booking-types.ts`) — **إحداثياتٌ
+ * وتسميات ولا مسافة ولا سعر**، نفس مبدأ الكوبون والنقاط حرفياً. والمسافةُ
+ * متعددةُ الأرجل تُحسب هنا في `routeDistance`، والسعرُ كلُّه في `create_booking`.
+ *
+ * 🔴 **ورحلةٌ بمحطاتٍ لا تُسعَّر من قائمة أسعار متعهد إطلاقاً** — القاعدة تفرض
+ * ذلك بنفسها حين يصلها `p_stops`، وهذا المسار لا يقرّر شيئاً منه (D-05). والعلّة
+ * اتفاقية: المتعهد سعّر **مساراً مباشراً**، ورحلةٌ بمحطةٍ وسطى أطولُ زمناً
+ * ومسافةً ومستحقُّه لا يتغيّر.
+ *
+ * 🔴 **ولا تُسقَط `p_stops` عند فقدان التوقيع.** هي في `hasNewSignatureFields`
+ * فلا يجري مسارُ السقوط أصلاً، والفشل يقع **مغلقاً** (`db-unavailable` ٥٠٣ ورسالة
+ * تدعو للتواصل) لا بحجزٍ ناقصٍ صامت. ونافذةُ ذلك دقائقُ النشر قبل الهجرة.
+ *
  * ⚠ **ساعات الانتظار لم تعد اختياراً في الشاشة**: تُشتق من موعد العودة داخل
  * `create_booking` (‏`greatest(p_waiting_hours, derive_waiting_hours(...))`).
  * وما يصل هنا في `waitingHours` هو الرقم الذي أرجعه `/api/quote` من نفس الدالة،
@@ -82,6 +105,10 @@ import {
  * رموز الخطأ (الواجهة تعرض `message` مباشرة في كل الحالات):
  *   invalid-input     ٤٠٠ — مدخلات ناقصة أو خارج الحدود
  *   pickup-required   ٤٠٠ — بلا موعد انطلاق (تُعيد الواجهة العميل إلى الخطوة ١)
+ *   stops-too-many    ٤٠٠ — محطاتٌ فوق سقف المالك (‏`max_trip_stops()`)؛ والرسالة
+ *                            تحمل السقف الفعليّ، ونصُّ القاعدة يُعرض كما هو
+ *   stop-out-of-area  ٤٠٠ — محطةٌ خارج نطاق الخدمة (‏`point_in_service_area`)
+ *   stop-invalid      ٤٠٠ — محطةٌ بلا وسم أو بلا إحداثيات أو بشكلٍ فاسد
  *   class-unavailable ٤٠٩ — الفئة المختارة لم تعد صالحة لهذه الرحلة
  *   coupon-rejected   ٤٠٩ — رمز الخصم لم يعد صالحاً لحظة الحجز (تُسقطه الواجهة)
  *   redeem-rejected   ٤٠٩ — تعذّر استبدال النقاط لحظة الحجز (تُسقطه الواجهة)
@@ -99,7 +126,12 @@ const MAX_WAITING_HOURS = 24;
 const MIN_NAME_LENGTH = 3;
 const MAX_NAME_LENGTH = 120;
 const MAX_NOTES_LENGTH = 1000;
-const MAX_LABEL_LENGTH = 240;
+/**
+ * سقفُ التسمية **مستوردٌ لا معرَّفٌ هنا** (`MAX_PLACE_LABEL_LENGTH`).
+ * كان رقماً محلياً في هذا الملف و**غائباً تماماً** عن `/api/quote`، فقُبل هناك
+ * وسمٌ بـ٥٠٠٣ محارف. ورقمٌ واحد يقرؤه المساران يُغلق البابين معاً.
+ */
+const MAX_LABEL_LENGTH = MAX_PLACE_LABEL_LENGTH;
 /** أقصى طول رمز كوبون — مرآة لحدّ `/api/discount/verify` */
 const MAX_COUPON_LENGTH = 40;
 /** تسامح مع فارق ساعة جهاز الزائر عن الخادم */
@@ -148,16 +180,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** نص مُنظَّف: مسافات مضغوطة وطول محدود */
+/**
+ * نص مُنظَّف: مسافات مضغوطة وطول محدود — **ومحارفُ لا تُرى تُحذف**.
+ *
+ * 🔴 كان الجسم `value.replace(/\s+/g, " ").trim().slice(0, maxLength)`،
+ * و`\s` **لا يمسّ محارفَ التحكم غير البيضاء ولا محارفَ الاتجاه**: قِيس وسمٌ
+ * يبدأ بـU+202E (RLO) وفيه U+0007 (BEL) فقُبل وخُزِّن في لقطة الرحلة **وخرج كما
+ * هو** إلى المتعهد. و`slice` كان يشطر الأزواج البديلة فوق ذلك.
+ *
+ * والعلاج مفوَّضٌ إلى `sanitizeLine` في عقد الحجز (القاعدة الذهبية ١٢: لا
+ * يُستنسخ منطق، بل يُفوَّض إليه) — فالمساران يقرآن قراراً واحداً في محارف
+ * يونيكود، وحجّةُ ما يسقط وما يبقى مكتوبةٌ هناك لا هنا.
+ */
 function cleanLine(value: unknown, maxLength: number): string {
-  if (typeof value !== "string") return "";
-  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+  return sanitizeLine(value, maxLength);
 }
 
-/** نص حر يحافظ على الأسطر — لملاحظات العميل */
+/** نص حر يحافظ على الأسطر — لملاحظات العميل. نفس التنقية، وU+000A وحده يبقى. */
 function cleanBlock(value: unknown, maxLength: number): string {
-  if (typeof value !== "string") return "";
-  return value.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, maxLength);
+  return sanitizeBlock(value, maxLength);
 }
 
 /** نقطة بإحداثيات منتهية وضمن مجال خرائط صالح */
@@ -167,6 +208,42 @@ function parsePlace(value: unknown): { label: string; lat: number; lng: number }
   if (typeof lat !== "number" || !Number.isFinite(lat) || Math.abs(lat) > 90) return null;
   if (typeof lng !== "number" || !Number.isFinite(lng) || Math.abs(lng) > 180) return null;
   return { label: cleanLine(value.label, MAX_LABEL_LENGTH), lat, lng };
+}
+
+/**
+ * المحطات الوسطى — مصفوفةُ نقاطٍ صالحة بالترتيب، و**الرفضُ صريحٌ بسببه**.
+ *
+ * 🔴 **ولا تُبتلَع محطةٌ مشوَّهة بصمت.** إسقاطُها يُنشئ حجزاً برحلةٍ **أقصر**
+ * مما اختاره العميل ومما سيقودها السائق: العميل يدفع ثمن مسارٍ ليس مساره،
+ * والمتعهد يُطلب منه انحرافٌ لم يُسعَّر. وهو نفس ما رفضته `0024` في حالة
+ * الكوبون — ما لا نعرف تسعيره يُرفض، ولا يُنشأ حجزٌ يخالف ما وافق عليه صاحبه.
+ *
+ * والغيابُ التامّ للحقل ليس رفضاً: هو **رحلةُ النقطتين** كما كانت دائماً — وهو
+ * حال كل حجزٍ قائم في القاعدة وكل متصفحٍ لم يصله الويدجت الجديد بعد.
+ */
+function parseStops(
+  value: unknown
+): { ok: true; value: TripStop[] } | { ok: false; reason: "shape" | "cap" | "coords" | "label" } {
+  if (value === undefined || value === null) return { ok: true, value: [] };
+  if (!Array.isArray(value)) return { ok: false, reason: "shape" };
+  // 🔒 سقفُ **الكلفة** المطلق وحده هنا (`MAX_TRIP_STOPS`)، وهو تحقّقٌ متزامن.
+  //    أما سقفُ **المالك** (`max_trip_stops()`، افتراضُه ٣) فيُقرأ من القاعدة في
+  //    `POST` لأنه يستلزم نداءً — ولا يُقرأ إلا حين توجد محطةٌ فعلاً.
+  if (value.length > MAX_TRIP_STOPS) return { ok: false, reason: "cap" };
+
+  const stops: TripStop[] = [];
+  for (const item of value) {
+    const place = parsePlace(item);
+    if (!place) return { ok: false, reason: "coords" };
+    // 🔴 **الوسمُ الفارغ رفضٌ لا تسامح** — مرآةٌ لـ`trip_stops_reject_reason` في
+    //    القاعدة (`stop-label-missing`): هي ترفض المحطةَ بلا وسمٍ بعد `btrim`.
+    //    وبلا هذا السطر يمضي الطلب إلى `create_booking` فترفضه هي، بعد أن
+    //    استهلكنا نداءَ مسافةٍ خارجياً وأعطينا العميل ٥٠٣ «حاول مرة أخرى».
+    //    ⚠ وصار لزاماً بعد التنقية: وسمٌ كلُّه محارفُ اتجاهٍ يخرج منها فارغاً.
+    if (place.label.length === 0) return { ok: false, reason: "label" };
+    stops.push(place);
+  }
+  return { ok: true, value: stops };
 }
 
 /** هاتف مقبول شكلياً — نحفظه كما كتبه العميل بعد ضغط المسافات */
@@ -354,6 +431,25 @@ function parseBody(body: unknown): ParseResult {
     return { ok: false, message: "الخدمات الإضافية المختارة غير صالحة. أعد اختيارها من القائمة." };
   }
 
+  // المحطات الوسطى — رسالة مستقلة لكل سبب: العلاج مختلف في الثلاثة
+  const stops = parseStops(body.stops);
+  if (!stops.ok) {
+    return {
+      ok: false,
+      message:
+        stops.reason === "cap"
+          ? // ⚠ **بلا رقمٍ هنا بقصد**: هذا حاجزُ الكلفة المطلق (`MAX_TRIP_STOPS`)،
+            // والسقفُ الذي يهمّ العميل هو سقفُ المالك — تقوله بوابةُ `getStopsCap`
+            // في `POST` بقيمته الحيّة. ورقمان في رسالتين لشيءٍ واحد يُربكان.
+            "لا يمكن إضافة هذا العدد من المحطات الوسطى في رحلةٍ واحدة. احذف محطة أو اطلب عرض سعر مخصص."
+          : stops.reason === "coords"
+            ? "اختر كل محطة من قائمة الاقتراحات حتى نحصل على موقعها بدقة ونحسب طول الرحلة الحقيقي."
+            : stops.reason === "label"
+              ? "لكل محطة اسم يقرؤه السائق. اختر كل محطة من قائمة الاقتراحات بدل كتابتها يدوياً."
+              : "محطات الرحلة غير صالحة. أعد اختيارها من قائمة الاقتراحات.",
+    };
+  }
+
   const notes = cleanBlock(body.notes, MAX_NOTES_LENGTH);
 
   // رقم الرحلة الجوية (ج‑٣): يُنظَّف شكلياً ويُقصّ، **ولا يُرفض أبداً**.
@@ -377,6 +473,7 @@ function parseBody(body: unknown): ParseResult {
       redeemPoints: body.redeemPoints === true,
       origin,
       destination,
+      stops: stops.value,
       passengers,
       roundTrip: body.roundTrip,
       waitingHours,
@@ -522,6 +619,76 @@ function mapDbError(error: { code?: string; message?: string; details?: string; 
     };
   }
 
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  🔴 المحطات الوسطى — ستةُ تلاميح، وكلُّها كانت تسقط إلى ٥٠٣
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * الرموزُ مقروءةٌ من جسم `create_booking` الحيّ لا من ملف هجرة (**D-58**):
+   * `stops-not-array` تُرفع في الدالة نفسها، والخمسةُ الباقية تُرفع بـ
+   * `using hint = v_stop_reason` حيث القيمةُ ناتجُ `trip_stops_reject_reason` —
+   * وهي **الدالة نفسها** التي يقرؤها قيدُ الجدول، فلا مصدرَ ثانٍ للشكل.
+   * و`stops-too-many` تُرفع مرتين: في `create_booking` وفي المُشغّل
+   * `bookings_guard_trip_stops` (‏هجرة `0140`).
+   *
+   * 🔴 **وبلا هذه الفروع كانت الستةُ تخرج `db-unavailable` بـ٥٠٣ ورسالة «تعذّر
+   * إنشاء الحجز الآن. حاول مرة أخرى»** — قِيس حياً على ثلاثةٍ منها. وهي أسوأ
+   * صور النمط ٢ في `handover/LESSONS.md`: نصيحةٌ **محكومٌ عليها بالفشل**، لأن
+   * إعادة المحاولة بنفس المحطة تُنتج نفس الرفض إلى الأبد، والعميل لا يعرف أن
+   * الحلّ في يده. و٤٠٠ لا ٥٠٣: المُدخَل خطأُ العميل لا عطلُ الخادم.
+   *
+   * ⚠ **ونصُّ القاعدة يُعرض كما هو في `stops-too-many` وحدها** — نظير `lead-time`
+   * حرفياً: هي الموضع الوحيد الذي يعرف **السقف الفعليّ** الذي ضبطه المالك
+   * («عدد المحطات (٤) يتجاوز الحدّ المسموح (٣)»)، وإعادةُ صياغته هنا تعني قراءة
+   * الإعداد مرتين. وبقيةُ الرموز تصف أعطالاً لا رقم فيها، فتُصاغ عربيةً هنا.
+   *
+   * ⚠ **وأربعةٌ منها لا تقع من هذا المسار بعد اليوم** (‏`parseStops` وبوابةُ
+   * السقف تمسكانها قبل النداء) — **وبقاؤها هو المقصود**، نظير `pickup-required`:
+   * القاعدةُ هي الحارس، وهذا المسار يترجم حكمها لا يستبدله. ومن نادى الدالة
+   * بمفتاح الخدمة من طريقٍ آخر يجد الجملة نفسها.
+   */
+  if (hint === "stops-too-many") {
+    return {
+      code: "stops-too-many",
+      message:
+        (error.message ?? "").trim() ||
+        "عدد المحطات الوسطى يتجاوز الحدّ المسموح في هذه الرحلة. احذف محطة وأعد المحاولة.",
+      status: 400,
+    };
+  }
+
+  if (hint === "stop-out-of-area") {
+    return {
+      code: "stop-out-of-area",
+      message: "إحدى المحطات خارج نطاق الخدمة. اختر محطة داخل نطاق تشغيلنا، أو اطلب عرض سعر مخصص.",
+      status: 400,
+    };
+  }
+
+  if (hint === "stop-coords-missing") {
+    return {
+      code: "stop-invalid",
+      message: "اختر كل محطة من قائمة الاقتراحات حتى نحصل على موقعها بدقة ونحسب طول الرحلة الحقيقي.",
+      status: 400,
+    };
+  }
+
+  if (hint === "stop-label-missing") {
+    return {
+      code: "stop-invalid",
+      message: "لكل محطة اسم يقرؤه السائق. اختر كل محطة من قائمة الاقتراحات بدل كتابتها يدوياً.",
+      status: 400,
+    };
+  }
+
+  if (hint === "stop-not-object" || hint === "stops-not-array") {
+    return {
+      code: "stop-invalid",
+      message: "محطات الرحلة غير صالحة. احذفها وأعد اختيارها من قائمة الاقتراحات.",
+      status: 400,
+    };
+  }
+
   // الدالة غير موجودة أصلاً (هجرة غير مطبَّقة) أو صلاحية التنفيذ لم تُمنح
   // لـ service_role بعد سحبها من anon — كلاهما «البيئة غير جاهزة» لا خطأ عميل
   const code = error.code ?? "";
@@ -605,10 +772,54 @@ export async function POST(request: Request) {
     );
   }
 
-  // (٢) المسافة تُعاد حسابها على الخادم دائماً — ما يرسله المتصفح لا يُقرأ
+  const stops = input.stops ?? [];
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  🔴 (١ج) سقفُ المحطات **من القاعدة** — قبل أي نداءٍ خارجيّ
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * كان هذا المسار يعرف رقماً واحداً: `MAX_TRIP_STOPS` = ٥ (سقفُ كلفةٍ مطلق في
+   * العقد). والقاعدةُ تفرض `max_trip_stops()` = **٣** بالافتراض، يضبطه المالك
+   * في `trip_settings`. فأربعُ محطاتٍ أو خمس كانت تعبر `parseStops`، وتستهلك
+   * نداءَ مسافةٍ خارجياً، **ثم ترفضها `create_booking`** — نداءٌ يُدفع ثمنه
+   * ورحلةٌ سُعِّرت ولا تُحجز.
+   *
+   * والقراءةُ مفوَّضةٌ إلى `getStopsCap` — **نفسُ ما تقرؤه الحاسبة** لتقرّر كم
+   * زرَّ «أضف محطة» تعرض (القاعدة الذهبية ١٢). فالشاشةُ والمسارُ والقاعدةُ على
+   * رقمٍ واحد، ولا رابعَ يخترعه أحد.
+   *
+   * ⚠ **ولا نداءَ قاعدةٍ لكل طلب**: الشرطُ `stops.length > 0` — ورحلةُ النقطتين
+   * (وهي كلُّ حجزٍ قائم اليوم) لا تقرأ شيئاً ولا تدفع رحلةَ شبكةٍ واحدة.
+   * و`getStopsCap` مُغلَّفةٌ بـ`cache` فوق ذلك، فمناديها مرةً أو مراراً سواء.
+   *
+   * 🔒 **والفشلُ مغلق**: تعذّرت القراءة (بلا مفتاح خدمة · هجرةٌ غير مطبَّقة ·
+   * منحةٌ ناقصة) ⇒ `DEFAULT_STOPS_CAP` = **٣** = افتراضُ العمود نفسه، أي **الأدنى
+   * لا الأعلى**. والسقوط إلى ٥ كان يعني وعداً بما ترفضه القاعدة — وهو العطل
+   * الذي وُلد هذا الفرع لأجله، لا علاجاً له.
+   *
+   * ⚠ وحارسُ القاعدة يبقى قائماً بعد هذا كله (`stops-too-many` في `mapDbError`):
+   * هذا المسار ليس الطريق الوحيد إلى `create_booking`، وما هنا يوفّر نداءً
+   * خارجياً ويعطي رسالةً أبكر — لا أكثر.
+   */
+  if (stops.length > 0) {
+    const cap = await getStopsCap();
+    if (stops.length > cap) {
+      return errorJson(
+        "stops-too-many",
+        cap === 0
+          ? "الرحلات متعددة المحطات غير متاحة حالياً. احجز رحلةً من نقطة إلى نقطة، أو اطلب عرض سعر مخصص."
+          : `لا يمكن إضافة أكثر من ${cap.toLocaleString("ar-EG")} محطات وسطى في الرحلة الواحدة. احذف محطة أو اطلب عرض سعر مخصص.`,
+        400
+      );
+    }
+  }
+
+  // (٢) المسافة تُعاد حسابها على الخادم دائماً — ما يرسله المتصفح لا يُقرأ.
+  //     ومع المحطات هي **مجموع الأرجل** لا الخط المباشر، ومصدرُها أضعفُ رجل.
   let distance;
   try {
-    distance = await routeDistance(input.origin, input.destination);
+    distance = await routeDistance(input.origin, input.destination, stops);
   } catch {
     return errorJson("pricing-failed", "تعذّر حساب مسافة الرحلة. حاول مرة أخرى.", 500);
   }
@@ -659,11 +870,18 @@ export async function POST(request: Request) {
     input.returnAt !== null ||
     luggage > 0 ||
     extrasSelection.length > 0 ||
-    flightNumber !== null;
+    flightNumber !== null ||
+    // 🔴 المحطات منها **بالضرورة**: إسقاطها يعني حجزاً بمسارٍ مباشر لرحلةٍ فيها
+    //    انحراف — أقصرَ مما اختاره العميل، وأقصرَ مما سيقوده السائق، ومسعَّراً
+    //    من قائمة متعهدٍ سعّر ما هو أقصر. لا يقع صامتاً بحال.
+    stops.length > 0;
 
   const args = {
     ...baseArgs,
     ...(input.couponCode ? { p_coupon_code: input.couponCode } : {}),
+    // تُلحق **بالشرط** كإخوتها: حجزٌ بلا محطات يبقى نداءً بالتوقيع الذي تعرفه
+    // أي قاعدة لم تصلها هجرة المحطات بعد، فلا ينكسر مسار الحجز أثناء النشر.
+    ...(stops.length > 0 ? { p_stops: stops } : {}),
     ...(input.returnAt ? { p_return_at: input.returnAt } : {}),
     ...(luggage > 0 ? { p_luggage: luggage } : {}),
     ...(extrasSelection.length > 0 ? { p_extras: extrasSelection } : {}),

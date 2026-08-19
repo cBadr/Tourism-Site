@@ -40,7 +40,12 @@ export type StepHref =
   | "/portal/fleet"
   | "/portal/drivers"
   | "/portal/prices"
-  | "/portal/notifications";
+  /**
+   * قسمُ القنوات في «حسابي» — لا `/portal/notifications`، فتلك صارت إعادةَ
+   * توجيهٍ إليه (2026-08-19). والوجهةُ المباشرة تُوفّر قفزةً على الشريك،
+   * والقديمةُ تبقى حيّةً لمن حفظها.
+   */
+  | "/portal/profile#channels";
 
 export type OnboardingStep = {
   key: string;

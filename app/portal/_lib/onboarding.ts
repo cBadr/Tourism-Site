@@ -460,7 +460,7 @@ export const loadOnboarding = cache(async (): Promise<OnboardingReadiness | null
     title: "قناة تنبيه واحدة على الأقل",
     weight: "reach",
     state: !reachKnown ? "unknown" : reachable ? "done" : "todo",
-    href: "/portal/notifications",
+    href: "/portal/profile#channels",
     cta: "اربط قناة",
     body: !reachKnown
       ? "تعذّرت قراءة قنواتك الآن، فلا نستطيع الحكم على هذا البند — حدّث الصفحة."

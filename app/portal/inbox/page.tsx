@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { Archive, BellRing, CheckCheck, Inbox, MailOpen } from "lucide-react";
 
@@ -20,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { StageLock } from "../_components/stage-lock";
 import { portalAccess, readPortalGate } from "../_lib/session";
 import { markInboxAllRead, markInboxItemRead } from "./actions";
-import { loadInbox, summaryBool, summaryNumber, summaryText } from "./data";
+import { loadInbox, summaryBool, summaryNumber, summaryStops, summaryText } from "./data";
 
 /**
  * صندوق التنبيهات في البورتال — ج٣ من
@@ -83,6 +84,7 @@ function InboxCard({ item }: { item: PortalInboxItem }) {
   const round = summaryNumber(s, "round");
   const pickupAt = summaryText(s, "pickupAt");
   const classTitle = summaryText(s, "classTitle");
+  const stops = summaryStops(s);
   const hasRoute = Boolean(origin || dest);
 
   return (
@@ -107,9 +109,26 @@ function InboxCard({ item }: { item: PortalInboxItem }) {
         </span>
       </div>
 
+      {/*
+        🔴 المحطاتُ **داخل سطر المسار** لا في بطاقةِ حقيقةٍ منفصلة أسفله.
+        فالمسارُ يُقرأ نظرةً واحدة، ومحطةٌ في صندوقٍ جانبيٍّ تحت «الركاب» تقول
+        للقارئ إنها تفصيلٌ ثانويّ — وهي التي تجعل الرحلة أطول. وترتيبُها هو
+        ترتيبُ القيادة، فلا يُعرض مرتَّباً هجائياً ولا مطوياً خلف «المزيد».
+      */}
       {hasRoute ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <span className="font-medium">{origin ?? "—"}</span>
+          {stops.map((label, index) => (
+            <Fragment key={`${index}-${label}`}>
+              <span aria-hidden="true" className="text-muted-foreground">
+                ←
+              </span>
+              <span className="font-medium text-amber-700 dark:text-amber-500">
+                {label}
+                <span className="sr-only"> (محطة في الطريق)</span>
+              </span>
+            </Fragment>
+          ))}
           <span aria-hidden="true" className="text-muted-foreground">
             ←
           </span>
@@ -130,8 +149,13 @@ function InboxCard({ item }: { item: PortalInboxItem }) {
         <Fact label="موعد الانطلاق" value={pickupAt ? dateTimeLabel(pickupAt) : null} />
         <Fact label="الفئة المطلوبة" value={classTitle} />
         <Fact label="الركاب" value={passengers === null ? null : passengersLabel(passengers)} />
+        {/*
+          الوسمُ يتبع الرقم: `distanceKm` مجموعُ الأرجل، و«المسافة (اتجاه واحد)»
+          تُقرأ «من المنطلق إلى الوجهة» فتجعل المتعهد يظنّ الرقم أكبرَ ممّا يبرّره
+          طرفاه. رقمٌ صادقٌ بوسمٍ كاذب أسوأ من غيابه.
+        */}
         <Fact
-          label="المسافة (اتجاه واحد)"
+          label={stops.length > 0 ? "إجمالي المسافة عبر المحطات" : "المسافة (اتجاه واحد)"}
           value={distance === null ? null : formatDistance(distance)}
         />
         <Fact label="الانتظار" value={waiting === null ? null : waitingLabel(waiting)} />
@@ -249,14 +273,22 @@ export default async function PortalInboxPage({ searchParams }: PageProps<"/port
         يفترض أنه المكان الذي «تصل» إليه الرسائل. تصحيح هذا الافتراض هو الفرق بين
         متعهد يُبقي قناةً بالغة مفتوحة وآخر يطفئ كل شيء ثم يفوته العمل.
 
-        📌 ملاحظة تكامل: شاشة «قنوات التنبيه» في البورتال يملكها وكيلٌ آخر في هذه
-        الموجة. حين تُشحن، يصير هذا النصّ رابطاً إليها بدل وصفها بالاسم.
+        📌 وقد شُحنت: صارت قنوات التنبيه **قسماً في «حسابي»** (2026-08-19)، فصار
+        النصّ رابطاً إلى مرساتها بدل وصفها بالاسم — وهو ما نصّت عليه ملاحظة
+        التكامل التي كانت هنا.
       */}
       <Notice tone="warning" icon={<BellRing className="size-5 shrink-0" aria-hidden="true" />}>
         <p>
           <span className="font-semibold">هذه الصفحة لا تنبّهك — هي سجلّ ما نُبِّهت به.</span>{" "}
           وصولُ العرض إليك يكون على قنواتك التي تستقبل بلا أن تفتح شيئاً: تليجرام، أو إشعار
-          الجهاز، أو البريد. فأبقِ واحدة منها مفعَّلة على الأقل من شاشة «قنوات التنبيه»؛ ومن
+          الجهاز، أو البريد. فأبقِ واحدة منها مفعَّلة على الأقل من{" "}
+          <Link
+            href="/portal/profile#channels"
+            className="font-medium underline underline-offset-4"
+          >
+            «قنوات التنبيه» في حسابي
+          </Link>
+          ؛ ومن
           يطفئها كلها يُحسَب <span className="font-semibold">غير متصل</span> فلا يصله بثّ أصلاً،
           ولن ينفعه فتحُ هذا الصندوق كل ساعة.
         </p>

@@ -3,6 +3,7 @@ import { ArrowLeft, Search } from "lucide-react";
 
 import { ExportLink } from "@/components/admin/export-link";
 import { formatMoney, toArabicDigits } from "@/components/booking/format";
+import { readTripStops } from "@/components/booking/stops";
 import { HelpTip } from "@/components/shared/HelpTip";
 import { PagePulse } from "@/components/stats/page-pulse";
 import { Button } from "@/components/ui/button";
@@ -172,14 +173,31 @@ async function loadOrders(
   return { orders, counts, ready: true, pulse };
 }
 
-/** ملخص المسار في سطر واحد — من لقطة الرحلة المخزّنة مع الحجز */
+/**
+ * ملخص المسار في سطر واحد — من لقطة الرحلة المخزّنة مع الحجز.
+ *
+ * 🔴 **والمحطات تُذكر عدداً هنا لا أسماءً**: العمود بعرض `18rem` في جدولٍ
+ * صفوفُه طابورُ تشغيل، وثلاثةُ أسماءٍ فيه تدفع بقيةَ الأعمدة خارج الشاشة.
+ * ومن يحتاج الأسماء يفتح الطلب — وهناك تُعرض كاملةً بترتيبها.
+ *
+ * ⚠ **والسكوت عنها ليس خياراً**: من يفتح هذا الطابور ليُسند يدوياً يحتاج أن
+ * يعرف أن هذه الرحلة **ليست مساراً مباشراً** قبل أن يقرّر — الطولُ يختلف
+ * والمستحقُّ يختلف.
+ */
 function RouteSummary({ trip }: { trip: Partial<TripSnapshot> }) {
   const origin = trip.originLabel ?? "—";
   const dest = trip.destLabel ?? "—";
+  const stopsCount = readTripStops(trip).length;
   return (
     <span className="block leading-relaxed">
       <span className="text-muted-foreground">من</span> {origin}{" "}
       <span className="text-muted-foreground">إلى</span> {dest}
+      {stopsCount > 0 ? (
+        <span className="text-muted-foreground">
+          {" "}
+          · عبر {toArabicDigits(stopsCount)} محطة
+        </span>
+      ) : null}
       {trip.roundTrip ? <span className="text-muted-foreground"> · ذهاب وعودة</span> : null}
     </span>
   );

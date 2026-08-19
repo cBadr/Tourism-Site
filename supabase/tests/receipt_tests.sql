@@ -54,7 +54,7 @@ begin
     ('public.get_booking_by_token(text)'),
     ('public.attach_receipt(text, text, uuid, numeric)'),
     ('public.set_booking_status(uuid, text, text)'),
-    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text)')
+    ('public.create_booking(jsonb, jsonb, integer, boolean, numeric, numeric, numeric, text, text, text, text, text, text, timestamptz, text, text, timestamptz, integer, jsonb, integer, text, jsonb)')
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
 

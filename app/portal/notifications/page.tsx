@@ -1,271 +1,41 @@
-import { BellRing, BellOff, PlugZap } from "lucide-react";
-
-import {
-  Banners,
-  NotReadyNotice,
-  Notice,
-  PageHeading,
-} from "@/components/portal/portal-ui";
-import { Card } from "@/components/ui/card";
-import { REACHING_CHANNELS, type PartnerChannel } from "@/lib/partner-alerts-types";
-import { PushSetup } from "../_components/push-setup";
-import { portalSetupAccess } from "../_lib/session";
-/**
- * 🔴 التسميات من الوحدة المحيّدة لا من `./channels-form`.
- *
- * هذه الصفحة **خادمية**، و`channels-form.tsx` يبدأ بـ`"use client"`. وقيمةٌ
- * تُصدَّر من وحدة عميل لا تعبر إلى الخادم: ما يراه الخادم مرجعُ عميل لا الكائن —
- * مقيسٌ حياً (2026-08-17): `typeof CHANNEL_META === "function"` و
- * `CHANNEL_META.telegram === undefined`. فكان `CHANNEL_META[channel].label`
- * أدناه يرمي TypeError فتسقط الصفحة كلها بـ٥٠٠، **أول ما يربط متعهدٌ تليجرامه**
- * — لأن ذلك السطر في فرع «أنت متاح» وحده، وقبل أول ارتباطٍ لم يكن أحدٌ بالغاً.
- * التفصيل في ترويسة `channel-meta.ts`.
- */
-import { channelLabel } from "./channel-meta";
-import { ChannelsForm } from "./channels-form";
-import { loadPartnerAlerts, type PartnerAlertsView } from "./data";
-import { TelegramCard } from "./telegram-card";
+import { redirect } from "next/navigation";
 
 /**
- * «قنوات التنبيه» — أين تصلك عروض الرحلات، ومتى تتوقف.
+ * `/portal/notifications` — **إعادةُ توجيهٍ إلى قسم القنوات في «حسابي»**.
  *
- * ── لماذا هذه الشاشة موجودة أصلاً ───────────────────────────────────────────
+ * ── لماذا توجيهٌ ولا حذف ────────────────────────────────────────────────────
  *
- * لأن **لا قناة كانت تبلغ متعهداً**: تليجرام وجهته محادثة المالك، والبريد بلا
- * مزوّد. فالعرض يمرّ في الطابور ثم لا يصل أحداً، وتنتهي مهلة الجولة، وتعود
- * الرحلة إلى الطابور بلا أن يعرف أحد لماذا. والمقيس على قاعدة بدر لحظة كتابة هذه
- * الشاشة: **صفر متعهدين** لهم معرّف تليجرام — أي أن كل شريك في المنصة «غير
- * متصل» بمقياس `partner_availability()`.
+ * محرِّرُ القنوات انتقل بكامله إلى `/portal/profile#channels` (‏قسمٌ في «حسابي»)،
+ * فلم يبقَ لهذه الشاشة محتوى — والإبقاءُ عليها بمحرِّرها كان يعني **بابين للشيء
+ * الواحد**، وهو بعينه ما أمر المالك بإنهائه في 2026-08-19.
  *
- * ── والقرار الذي تحمله الشاشة على وجهها ─────────────────────────────────────
+ * لكن **حذفَ المسار ليس إنهاءً بل كسر**: العنوان مرّ على الشركاء شهوراً في شريط
+ * التنقل وفي معالج التجهيز وفي دليل البورتال ورسائل الإدارة، وقد يكون محفوظاً في
+ * متصفّح شريكٍ الآن. و٤٠٤ في وجهه تقول «الميزة زالت» لا «انتقلت» — وهو النمط ٣
+ * في `LESSONS.md` مقلوباً: صفحةٌ كانت لها طرق ثم قُطعت.
  *
- * 🔒 **إطفاء كل القنوات = «غير متصل»، لا «متصلٌ بلا إشعارات»** (القرار ١-و).
- * وهذا قرار مالكٍ لا اجتهاد شاشة، وله ثمنٌ يقع على المتعهد مباشرةً: التوزيع
- * **يتخطّى** من لا يمكن بلوغه. فيجب ألّا يكتشفه بفقد عمل — يُقال له في ثلاثة
- * مواضع: بطاقة الحالة أعلى الشاشة، ووسمُ كل قناة، وتنبيهٌ حيٌّ **قبل** الحفظ.
+ * ── وماذا يُنقل معه ────────────────────────────────────────────────────────
  *
- * ولا يعاد اشتقاق الحالة هنا: `reachable/willing/available` تصل من الدالة نفسها
- * التي يقرؤها حوض البث (`partner_availability`) — انظر ترويسة `data.ts`.
+ * **معاملاتُ الحالة تُمرَّر كما هي.** رابطٌ محفوظ قد يحمل `?saved=1` أو
+ * `?error=telegram-taken`، والوجهةُ تترجم الرمزَين نفسَهما من
+ * `profile/_components/channels-summary.tsx` ← `ALERTS_ERROR_MESSAGES`. وإسقاطُها
+ * هنا كان يبتلع رسالةً كتبها فعلٌ سابق.
+ *
+ * و`redirect()` مؤقّت (307) لا دائم عمداً: الدائم يُخزَّن في المتصفح فلا يُلغى
+ * إن رجع القرار، والبورتال خلف تسجيل دخول فلا وزنَ لفهرسةٍ هنا أصلاً.
  */
-
-export const metadata = { title: "قنوات التنبيه" };
-
-const ERROR_MESSAGES: Record<string, string> = {
-  // رموز الربط — من `PAIRING_ISSUES`
-  "no-credentials": "قناة تليجرام متوقفة عند المنصة الآن، فتعذّر الربط. لا شيء مطلوب منك.",
-  "bot-unreachable": "تعذّر الوصول إلى تليجرام في هذه اللحظة — أعد المحاولة بعد قليل.",
-  "webhook-set":
-    "ربط تليجرام متوقف لسبب فني عند المنصة. أبلغ الإدارة بهذه الرسالة كما تظهر لك.",
-  "no-match":
-    "لم نجد ضغطتك على «ابدأ». افتح الرابط، واضغط الزر داخل محادثة البوت، ثم عُد واضغط «تحققتُ».",
-  expired: "انتهت صلاحية الرابط. حدّث الصفحة، ثم افتح الرابط الجديد واضغط «ابدأ».",
-  "not-private":
-    "ضغطتَ «ابدأ» داخل مجموعة. افتح محادثة خاصة مع البوت — عروض رحلاتك لا تُرسل إلى مجموعة يقرؤها غيرك.",
-  /*
-   * رموز ارتباط المحادثة (0057) — ترفعها القاعدة في `hint` والشاشة تترجمها.
-   * 🔒 ولا يُذكر **مَن** يملك المحادثة الأخرى: «حسابٌ آخر» يكفي الشريك ليصلح،
-   * ومعرفةُ اسم الجهة هي بعينها ما يمنعه D-20.
-   */
-  "telegram-taken":
-    "حساب تليجرام هذا مربوط بحساب آخر في المنصة. المحادثة الواحدة تخصّ جهة واحدة — افتح تليجرام بحساب خاص بشركتك، اضغط «ابدأ» من الرابط أعلاه، ثم أعد المحاولة.",
-  "telegram-is-ops":
-    "حساب تليجرام هذا مستعمَل لاستقبال إشعارات إدارة المنصة، فلا يصلح لاستقبال عروض رحلاتك — رسائل الإدارة تحتوي بيانات لا تخصّك. استخدم حساباً مستقلاً لهذه الشركة ثم أعد المحاولة.",
-  /*
-   * ⚠ الاتجاه المعاكس لا يُنشأ من هذه الشاشة — `portal_set_telegram_chat_id`
-   * تكتب على `subcontractors` فترفع `telegram-taken` أو `telegram-is-ops` وحدهما.
-   * ومع ذلك يُترجَم هنا لأن `readTelegramBindCode` **يُرجعه بنوعه**: رمزٌ يعبر
-   * ولا تقابله جملة يصل الشريكَ «حدث خطأ غير متوقع» — وخريطةٌ ناقصةٌ عن رمزٍ
-   * ممكنٍ في العقد هي بعينها الثغرة التي أوجدت 0097.
-   */
-  "ops-telegram-taken":
-    "حساب تليجرام هذا محجوز كوجهة إشعارات لإدارة المنصة، فلا يمكن ربطه بحسابك. استخدم حساباً مستقلاً لهذه الشركة ثم أعد المحاولة — ولا شيء تغيّر في ربطك الحالي.",
-  /** رمزٌ قديم من قبل 0057 — يبقى مترجَماً كي لا يظهر رابطٌ محفوظ بلا رسالة */
-  taken:
-    "حساب تليجرام هذا مربوط بحساب آخر. لكل شريك حسابه — استخدم حسابك أنت ثم أعد المحاولة.",
-  proof:
-    "تم الربط، لكن رسالة التأكيد لم تصل. افتح المحادثة وتأكد أنك لم تحظر البوت، ثم جرّب «أرسل رسالة تجربة».",
-  "test-failed":
-    "لم تصل رسالة التجربة — الغالب أنك حظرت البوت أو حذفت المحادثة. افتحها من جديد واضغط «ابدأ»، ثم أعد الربط.",
-};
-
-/* ------------------------------------------------------------------ */
-/* بطاقة الحالة — أول ما تقع عليه العين                                 */
-/* ------------------------------------------------------------------ */
-
-/**
- * ما ينقص بالضبط ليصير المتعهد بالغاً — سطرٌ لكل قناةٍ ينفع فيها فعل.
- * ⚠ والقنوات المعطّلة عند المنصة **لا تُذكر هنا كمطلوب**: مطالبةُ الشريك بما لا
- * يملكه هي بعينها الشكوى التي أُصلحت في معالج التجهيز (يطارد ما ليس هو العائق).
- */
-function missingSteps(view: PartnerAlertsView): string[] {
-  const steps: string[] = [];
-  for (const channel of REACHING_CHANNELS) {
-    const state = view.channels[channel];
-    if (state === "needs-link") {
-      steps.push(
-        channel === "telegram"
-          ? "اربط تليجرام من البطاقة أدناه — دقيقة واحدة وخطوتان."
-          : channel === "email"
-            ? "أضف بريدك في «ملفي» ليصلك العرض عليه."
-            : "سجّل جهازاً لإشعارات المتصفح."
-      );
-    }
-    if (state === "off") {
-      steps.push(`فعّل قناة «${channelLabel(channel)}» في التفضيلات أدناه.`);
-    }
-  }
-  return steps;
-}
-
-function AvailabilityCard({ view }: { view: PartnerAlertsView }) {
-  if (!view.reachable) {
-    const steps = missingSteps(view);
-    return (
-      <Card className="gap-3 border border-red-300 bg-red-50 p-5 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100">
-        <div className="flex flex-wrap items-center gap-2">
-          <BellOff className="size-5 shrink-0" aria-hidden="true" />
-          <span className="font-heading text-base font-bold">أنت غير متصل</span>
-        </div>
-        <p className="text-sm leading-relaxed">
-          لا قناة واحدة تستطيع أن تبلغك بعرض رحلة، فتوزيع الرحلات <b>يتخطّاك</b>. ولا يظهر
-          لك شيء حين يقع ذلك — لا رسالة ولا صفر: العروض تذهب إلى غيرك بصمت.
-        </p>
-        {steps.length > 0 ? (
-          <ul className="list-disc space-y-1 ps-5 text-sm leading-relaxed">
-            {steps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ul>
-        ) : null}
-      </Card>
-    );
-  }
-
-  if (!view.willing) {
-    return (
-      <Card className="gap-3 border border-amber-300 bg-amber-50 p-5 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-        <div className="flex flex-wrap items-center gap-2">
-          <PlugZap className="size-5 shrink-0" aria-hidden="true" />
-          <span className="font-heading text-base font-bold">أوقفتَ استقبال الطلبات</span>
-        </div>
-        <p className="text-sm leading-relaxed">
-          قنواتك تعمل، لكنك أوقفتَ الاستقبال بنفسك — فلا يصلك عرض جديد. أعد العلامة في
-          «أستقبل طلبات الرحلات» أدناه ليعود الوصول فوراً.
-        </p>
-      </Card>
-    );
-  }
-
-  const reaching = view.reachingChannels as PartnerChannel[];
-  return (
-    <Card className="gap-3 border border-emerald-300 bg-emerald-50 p-5 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100">
-      <div className="flex flex-wrap items-center gap-2">
-        <BellRing className="size-5 shrink-0" aria-hidden="true" />
-        <span className="font-heading text-base font-bold">أنت متاح لاستقبال الرحلات</span>
-      </div>
-      <p className="text-sm leading-relaxed">
-        تصلك عروض الرحلات على:{" "}
-        <b>{reaching.map((channel) => channelLabel(channel)).join(" · ")}</b>.
-      </p>
-    </Card>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* الصفحة                                                              */
-/* ------------------------------------------------------------------ */
-
 export default async function PortalNotificationsPage({
   searchParams,
 }: PageProps<"/portal/notifications">) {
-  const [params, access] = await Promise.all([searchParams, portalSetupAccess()]);
-  // الغلاف يعرض شاشة الحالة المناسبة؛ الصفحة لا تُصيَّر أصلاً في تلك الحالات
-  if (!access.ok) return null;
+  const params = await searchParams;
 
-  const result = await loadPartnerAlerts();
-  const onboarding = access.stage === "onboarding";
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") query.set(key, value);
+    // مصفوفة = المفتاح تكرّر في الرابط؛ يُنقل بتكراره لا بأول قيمة
+    else if (Array.isArray(value)) for (const one of value) query.append(key, one);
+  }
 
-  const saved = params.saved === "1";
-  const linked = params.linked === "1";
-  const unlinked = params.unlinked === "1";
-  const tested = params.tested === "1";
-  const error = typeof params.error === "string" ? params.error : null;
-
-  return (
-    <div className="space-y-6">
-      <PageHeading title="قنوات التنبيه">
-        من هنا تختار أين يصلك عرض الرحلة، ومتى توقف استقبال الطلبات. وعرض الرحلة له مهلة
-        تنتهي — فالقناة التي تصلك فوراً هي ما يجعلك تلحق به.
-      </PageHeading>
-
-      <Banners
-        saved={saved || linked || unlinked || tested}
-        error={error}
-        errorMessages={ERROR_MESSAGES}
-        savedMessage={
-          linked
-            ? "تم ربط تليجرام — أرسلنا رسالة تأكيد إلى محادثتك."
-            : unlinked
-              ? "فُصل تليجرام. لن تصلك عروض عليه بعد الآن."
-              : tested
-                ? "أُرسلت رسالة التجربة — افتح تليجرام وتأكد من وصولها."
-                : "حُفظت تفضيلاتك."
-        }
-      />
-
-      {onboarding ? (
-        <Notice tone="info">
-          <p>
-            حسابك قيد المراجعة، فلا تصلك عروض بعد. لكن ربط قنواتك الآن يعني أن أول عرض بعد
-            اعتمادك يجدك <b>متصلاً</b> — لا أن تكتشف يومها أن شيئاً لم يصلك.
-          </p>
-        </Notice>
-      ) : null}
-
-      {result.state === "hidden" ? (
-        <NotReadyNotice what="قنوات التنبيه" />
-      ) : result.state === "failed" ? (
-        <Notice tone="warning">
-          <p className="font-semibold">تعذّر قراءة حالة قنواتك</p>
-          <p>حدّث الصفحة. إن تكرّر الأمر فراسل الإدارة — ولا تعتمد على وصول العروض حتى تتأكد.</p>
-        </Notice>
-      ) : (
-        <>
-          <AvailabilityCard view={result.view} />
-
-          <TelegramCard view={result.view} subcontractorId={access.sub.id} />
-
-          {/*
-            تدفّق دفع الويب (ج٢) — والشاشة هي بيته المنصوص عليه في القرار ١-ز:
-            «شاشة قنوات التنبيه ← شرح **لماذا** ← زرٌّ صريح ← ثم يظهر طلب المتصفح».
-            والمكوّن يقرأ حالته بنفسه من `/api/push/*` ولا يحتاج منّا وسيطاً.
-
-            ⚠ **وللمعتمَد وحده**: مسارات `/api/push` على الحارس **الضيّق**
-            (`portalAccess` — مكتوبٌ في `app/api/push/_shared.ts`)، فتركيبه للمدعوّ
-            كان سيُنتج زرّاً يردّ `auth` — وهو أسوأ من غيابه («الشاشة تتبع الحارس»).
-            وربطُ تليجرام أعلاه مفتوحٌ له لأن دواله على الحارس الموسَّع فعلاً.
-          */}
-          {onboarding ? null : <PushSetup />}
-
-          <div className="space-y-3">
-            <h3 className="font-heading text-base font-bold">قنواتك</h3>
-            <ChannelsForm view={result.view} />
-          </div>
-
-          {/*
-            الحقيقة التي تجعل الشاشة كلها مفهومة، ومكانها آخر الصفحة لا أولها:
-            من قرأ ما فوقه يعرف الآن **لماذا** لا يكفي الصندوق وحده.
-          */}
-          <Notice tone="info">
-            <p className="font-semibold">لماذا لا يكفي صندوق البورتال وحده؟</p>
-            <p className="mt-1">
-              لأنه سجلٌّ يستلزم أن تفتحه، وعرض الرحلة له مهلة تنتهي قبل أن تنظر. ولذلك لا
-              يُحسب قناةً «تبلغك» في حالة الإتاحة: من ليس له إلا الصندوق يُعدّ{" "}
-              <b>غير متصل</b>، ويتخطّاه التوزيع.
-            </p>
-          </Notice>
-        </>
-      )}
-    </div>
-  );
+  const qs = query.toString();
+  redirect(qs ? `/portal/profile?${qs}#channels` : "/portal/profile#channels");
 }

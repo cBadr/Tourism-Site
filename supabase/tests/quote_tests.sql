@@ -412,7 +412,7 @@ declare
   c_dlng  constant numeric := 31.332914;
 begin
   if to_regprocedure('public.quote_public(numeric, integer, boolean, numeric,'
-                     || ' numeric, numeric, numeric, numeric, text, integer, jsonb)') is null then
+                     || ' numeric, numeric, numeric, numeric, text, integer, jsonb, jsonb)') is null then
     raise exception 'شرط مسبق: public.quote_public غير موجودة — نفّذ 0031 وما قبلها';
   end if;
   if to_regprocedure('public.quote_arg_finite(numeric, text, numeric)') is null then

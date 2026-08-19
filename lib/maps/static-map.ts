@@ -127,12 +127,22 @@ function coord(point: MapPoint): string {
  */
 export async function fetchRouteGeometry(
   origin: MapPoint,
-  destination: MapPoint
+  destination: MapPoint,
+  stops: readonly MapPoint[] = []
 ): Promise<RouteGeometry | null> {
   if (!isDrawablePoint(origin) || !isDrawablePoint(destination)) return null;
+  if (stops.some((stop) => !isDrawablePoint(stop))) return null;
 
-  // ⚠ ترتيب OSRM هو `lng,lat` — معكوسٌ عن كل بقية المشروع
-  const path = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+  // ⚠ ترتيب OSRM هو `lng,lat` — معكوسٌ عن كل بقية المشروع.
+  //
+  // والمحطات إحداثياتٌ وسطى في **نفس** المسار مفصولةٌ بـ`;`، أي **نداءٌ واحد
+  // للرحلة كلها** لا نداءٌ لكل رجل. وهذا يخالف `lib/geo/route.ts` عمداً: ذاك
+  // يقيس **رجلاً رجلاً** ليكيّش كل رجلٍ على حدة ويجمع الأطوال، ونحن نريد
+  // **هندسةً متصلة** لخطٍّ واحد يُرسم — ورجلان مقيستان منفصلتين تعطيان خطين
+  // لا خطاً. والكلفة صفرٌ في الحالتين (OSRM مجاني بلا مفتاح).
+  const path = [origin, ...stops, destination]
+    .map((point) => `${point.lng},${point.lat}`)
+    .join(";");
   try {
     const res = await fetch(`${OSRM_ROUTE_URL}/${path}?overview=simplified&geometries=polyline`, {
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -156,7 +166,8 @@ export async function fetchRouteGeometry(
 }
 
 /**
- * صورة خريطة ثابتة لمسارٍ من نقطةٍ إلى نقطة.
+ * صورة خريطة ثابتة لمسار الرحلة: من المنطلق، **مارّاً بالمحطات في ترتيبها**،
+ * إلى الوجهة. ورحلةُ النقطتين (`stops` فارغة) تُنتج العنوانَ نفسه حرفاً.
  *
  * ⚠ **بلا `center` ولا `zoom` عمداً**: تركُهما يجعل الخدمة تحسب الإطار الذي
  * يسع العلامتين والخط معاً. وحسابُهما هنا كان سيعني معادلة إطارٍ ثانية في
@@ -166,16 +177,28 @@ export async function fetchRouteGeometry(
  * **محرفٌ لاتيني واحد أو رقم** — لا يقبل «نقطة الانطلاق» بحال. فالتفريق باللون،
  * و**الأسماء العربية تُكتب في مفتاح الخريطة تحت الصورة** حيث تُقرأ فعلاً
  * وتصل قارئ الشاشة — لا حرفاً أعجمياً لا يقول للعميل العربي شيئاً.
+ *
+ * ══ 🔴 والمحطاتُ الوسطى تُرقَّم — والرقمُ هو الاستثناء من القاعدة أعلاه ══════
+ *
+ * الطرفان لا وسمَ لهما لأن اللونَ يكفي لتمييز اثنين. أما المحطاتُ فثلاثٌ بلونٍ
+ * واحد، **ومحطةٌ بلا رقمٍ لا تقول للسائق أيُّها أولاً** — وهو بعينه ما تُحلّه
+ * هذه الميزة. والرقمُ ١..٩ محرفٌ واحد تقبله الواجهة، ولا يحتاج ترجمةً: الرقمُ
+ * اللاتينيّ يُقرأ على كل خريطة. والاسمُ العربيُّ يبقى في مفتاح الخريطة تحتها
+ * مقابلَ رقمه.
  */
 export async function fetchStaticRouteMap(
   origin: MapPoint,
-  destination: MapPoint
+  destination: MapPoint,
+  stops: readonly MapPoint[] = []
 ): Promise<StaticMapImage | null> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) return null;
   if (!isDrawablePoint(origin) || !isDrawablePoint(destination)) return null;
+  // محطةٌ لا تصلح للرسم ⇒ لا صورة. ورسمُ الباقي كان سيُنتج **مساراً أقصر من
+  // المُسعَّر** مرسوماً بثقة — وهو العطل الذي وُجدت الميزة لتفاديه.
+  if (stops.some((stop) => !isDrawablePoint(stop))) return null;
 
-  const geometry = await fetchRouteGeometry(origin, destination);
+  const geometry = await fetchRouteGeometry(origin, destination, stops);
 
   const build = (source: RouteGeometrySource): URL => {
     const url = new URL(GOOGLE_STATIC_MAP_URL);
@@ -188,11 +211,24 @@ export async function fetchStaticRouteMap(
     // الخريطة يُترجَمان وقت العرض فيصل الزائرَ الإنجليزي وصفُ الصورة بلغته.
     url.searchParams.set("language", "ar");
     url.searchParams.append("markers", `color:0x2563eb|${coord(origin)}`);
+    // ⚠ **بعد المنطلق وقبل الوجهة** — لا لترتيبٍ تفرضه الواجهة (لا تفرضه)، بل
+    //    ليقرأ الإنسانُ العنوانَ في سجلٍّ أو أثرٍ بترتيب القيادة نفسه.
+    stops.forEach((stop, index) => {
+      const number = index + 1;
+      // وسمُ العلامة محرفٌ **واحد**: ١..٩ وحدها تُرقَّم. وما بعدها — وهو غيرُ
+      // بالغٍ بنيوياً (`MAX_TRIP_STOPS` = ٥) — يُرسم بلا رقمٍ ولا يُسقَط:
+      // نقطةٌ بلا رقمٍ أفضلُ من مسارٍ ناقصِ نقطة.
+      const label = number <= 9 ? `label:${number}|` : "";
+      url.searchParams.append("markers", `color:0xd97706|${label}${coord(stop)}`);
+    });
     url.searchParams.append("markers", `color:0x16a34a|${coord(destination)}`);
     url.searchParams.append(
       "path",
       source === "straight" || !geometry
-        ? `color:0x2563ebcc|weight:5|${coord(origin)}|${coord(destination)}`
+        ? // 🔴 التراجعُ **يمرّ بالمحطات أيضاً**: خطٌّ مكسورٌ منطلق←محطات←وجهة.
+          //    وقفزُه فوقها كان سيرسم طريقاً لا يمرّ بما دفع العميل ثمنه — أي
+          //    نفس العطل في ثوب «تقريبيّ».
+          `color:0x2563ebcc|weight:5|${[origin, ...stops, destination].map(coord).join("|")}`
         : `color:0x2563ebcc|weight:5|enc:${geometry.encoded}`
     );
     url.searchParams.set("key", apiKey);
