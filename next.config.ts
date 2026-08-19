@@ -55,8 +55,47 @@ function storageHost(): string | null {
 
 const mediaHost = storageHost();
 
+/**
+ * ── ترويسات الأمن — مقيسٌ غيابُها على الإنتاج 2026-08-19 ────────────────────
+ *
+ * `curl -D -` على `https://rentlimousine.duckdns.org/` أعاد `Server: nginx/1.24.0`
+ * و`X-Powered-By: Next.js` **ولا ترويسةَ أمنٍ واحدة**. وأثقلُ ما يفتحه ذلك اثنان:
+ *
+ * 🔴 **`Referrer-Policy`**: صفحةُ متابعة الحجز مسارُها يحمل `public_token`، وهو
+ *    سرُّ الوصول إليها. وبلا سياسةٍ يرسل المتصفح المسار كاملاً في `Referer` إلى
+ *    كل مضيفٍ خارجيّ تُفتح رابطُه من الصفحة — فيتسرّب التوكن إلى سجلّ طرفٍ ثالث.
+ *    و`strict-origin-when-cross-origin` تُرسل الأصل وحده عبر النطاقات.
+ *
+ * 🔴 **`X-Frame-Options`**: صفحةُ الحجز تُدخل فيها بيانات، وقابليةُ تأطيرها في
+ *    موقعٍ خبيث هي clickjacking بعينه. و`frame-ancestors 'none'` أحدثُ منها لكن
+ *    الترويسةَ القديمة ما زالت تُحترم في متصفحاتٍ لا تقرأ CSP كاملاً، فتُكتبان معاً.
+ *
+ * و`HSTS` بسنةٍ وشمولِ النطاقات الفرعية: أولُ طلبٍ على شبكةٍ عامة بعد زيارةٍ واحدة
+ * لا يقبل التنزيل إلى HTTP. **ولا `preload`** — إدراجُ النطاق في قائمة المتصفحات
+ * قرارٌ لا رجعةَ فيه عملياً، وهو قرارُ المالك لا قرارُ ملفِّ إعداد.
+ *
+ * ⚠ ولا `Content-Security-Policy` هنا: النصوصُ السطرية التي يولّدها Next تحتاج
+ *    `nonce` يُمرَّر من الوسيط، وسياسةٌ مكتوبةٌ على عجل تكسر الصفحة أو تُكتب
+ *    `unsafe-inline` فتصير زينة. تُبنى في مرحلتها بقياسٍ لا بحدس.
+ */
+const SECURITY_HEADERS = [
+  { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self), payment=()" },
+];
+
 const nextConfig: NextConfig = {
   ...(standalone ? { output: "standalone" as const } : {}),
+
+  /** بصمةٌ مجانية للماسحات، ولا تفيد أحداً — تُطفأ */
+  poweredByHeader: false,
+
+  async headers() {
+    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+  },
   ...(actionOrigins.length > 0
     ? { experimental: { serverActions: { allowedOrigins: actionOrigins } } }
     : {}),
