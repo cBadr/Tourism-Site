@@ -14,7 +14,7 @@
 ثم — **قبل كتابة أي كود** — أضف:
 
 4. **`handover/ARCHITECTURE.md`** و **`handover/LOGIC.md`** و **`handover/CONVENTIONS.md`**
-5. **`handover/DECISIONS.md`** (٤٠ قراراً بمبرره وعاقبة نقضه) و **`handover/LESSONS.md`**
+5. **`handover/DECISIONS.md`** (٦٤ قراراً بمبرره وعاقبة نقضه) و **`handover/LESSONS.md`**
    (قائمة فحص تُشغَّل قبل إعلان اكتمال أي مرحلة)
 
 6. **`docs/STANDING-ORDERS.md`** — أوامر بدر الدائمة: **التتابع التلقائي بين
