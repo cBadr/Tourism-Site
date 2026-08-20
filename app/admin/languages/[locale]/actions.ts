@@ -12,7 +12,8 @@ import { createServerSupabase } from "@/lib/supabase/server";
 
 /**
  * إجراءات طابور المراجعة: اعتماد ترجمة صف واحد (بنشرها أو بدونه)، ونشر كل
- * المراجَع في اللغة دفعةً واحدة، و**اعتماد كل المسودات ونشرها** دفعةً واحدة.
+ * المراجَع في اللغة دفعةً واحدة، و**اعتماد كل المسودات ونشرها** دفعةً واحدة،
+ * و**نشر ما كُتب بيدٍ في الهجرات** بزرٍّ ثانٍ مستقلّ (هجرة `0146`).
  *
  * **الاعتماد والنشر يقعان داخل `review_translation` و`publish_locale` في
  * Postgres لا هنا.** السبب ليس أناقة: قاعدة الحالات (مسودة ← مراجَعة ← منشورة)
@@ -269,13 +270,64 @@ function countOf(data: unknown, key: string): number {
 }
 
 /**
- * «انشر كل المسودات» — طلب المالك 2026-08-17.
+ * حصيلةُ زرٍّ جماعيّ ← رابطُ عودةٍ يحمل أرقامها كلَّها.
  *
  * الحصيلة **تُنقل بأرقامها في الرابط** لا برقمٍ واحد، لأن الوعد الذي قطعناه له
  * أن يعرف **ما لم يحدث ولماذا**: زرٌّ يقول «تم» وهو يتخطّى أربعين صفاً صامتاً
- * أسوأ من لا زرّ. والرمز `saved` يفرّق حالتين ليختلف نصّ الشريط بجوار الزرّ:
- * `bulkall` نُشر كل مؤهَّل بلا استثناء، و`bulkpart` استُثني شيء (آليّ أو قديم
- * أو فارغ) فالتفصيل في شريط أعلى الصفحة.
+ * أسوأ من لا زرّ.
+ *
+ * ⚠ **ولا رقمَ يُحسب هنا** — كلُّها من حصيلة الدالة، أي من مصنِّف
+ * `draft_publish_plan` نفسه. ورقمٌ تحسبه الواجهة يصير مصدراً ثانياً ينحرف
+ * (‏`LESSONS` النمط ٨).
+ *
+ * ── و«جزئيّاً» صارت تُقاس بعد 0146 على المتبقّي **الذي له فعلٌ يغلقه** ─────
+ *
+ * 🔴 **والمحجوزُ خارجها**: مفاتيحُ `.href` روابطُ لا تُترجَم (D-24)، و`0115`
+ * تمنع نشرها بنيوياً. فعدُّها في «ما لم يُنشر» يجعل الزرَّ يبلّغ «جزئيّاً»
+ * **إلى الأبد** عن بابٍ مغلقٍ بقرار — وتنبيهٌ لا يمكن إطفاؤه لا يُقرأ.
+ * وتُذكَر مع ذلك في الشريط بوصفها **خارج الحساب**، لا تُخفى.
+ */
+function bulkResultUrl(data: unknown, kind: "drafts" | "authored"): string {
+  const approved = countOf(data, "approved");
+  const published = countOf(data, "published");
+  const machine = countOf(data, "skippedMachine");
+  const stale = countOf(data, "skippedStale");
+  const blank = countOf(data, "skippedBlank");
+  const staleReviewed = countOf(data, "staleReviewed");
+  const reserved = countOf(data, "skippedReserved");
+  // المتبقّي للزرّ **الآخر**: كلُّ زرٍّ يقول ما تركه لأخيه بلا أن يزعم أنه نشره
+  const eligible = countOf(data, "eligible");
+  const eligibleAuthored = countOf(data, "eligibleAuthored");
+  const otherLeft = kind === "drafts" ? eligibleAuthored : eligible;
+
+  const partial = machine + stale + blank + staleReviewed + otherLeft > 0;
+  const qs = new URLSearchParams({
+    saved: kind === "drafts" ? (partial ? "bulkpart" : "bulkall") : partial ? "authpart" : "authall",
+    ap: String(approved),
+    pb: String(published),
+    mt: String(machine),
+    st: String(stale),
+    bl: String(blank),
+    sr: String(staleReviewed),
+    rv: String(reserved),
+    ot: String(otherLeft),
+  });
+  return qs.toString();
+}
+
+/** إبطالُ ذاكرة اللوحة والواجهة العامة بعد نشرٍ جماعيّ — نسخةٌ واحدة للزرَّين */
+function afterBulkPublish(): void {
+  revalidatePath("/admin/languages", "layout");
+  revalidatePath("/", "layout");
+  clearPublicCaches();
+}
+
+/**
+ * «انشر كل المسودات» — طلب المالك 2026-08-17.
+ *
+ * ينشر ما كُتب في **شاشة المراجعة** وحده (حكم `approve`). والرمز `saved` يفرّق
+ * حالتين ليختلف نصّ الشريط بجوار الزرّ: `bulkall` لم يبقَ شيء له فعلٌ يغلقه،
+ * و`bulkpart` بقي (آليّ أو قديم أو فارغ أو مكتوبٌ بيدٍ ينتظر زرَّه).
  */
 export async function publishDrafts(formData: FormData) {
   const supabase = await createServerSupabase();
@@ -288,26 +340,37 @@ export async function publishDrafts(formData: FormData) {
   const { data, error } = await supabase.rpc("review_and_publish_drafts", { p_locale: locale });
   if (error) redirect(returnUrl(formData, locale, `error=${errorCode(error)}`));
 
-  const approved = countOf(data, "approved");
-  const published = countOf(data, "published");
-  const machine = countOf(data, "skippedMachine");
-  const stale = countOf(data, "skippedStale");
-  const blank = countOf(data, "skippedBlank");
-  const staleReviewed = countOf(data, "staleReviewed");
+  afterBulkPublish();
+  redirect(returnUrl(formData, locale, bulkResultUrl(data, "drafts")));
+}
 
-  const partial = machine + stale + blank + staleReviewed > 0;
-  const qs = new URLSearchParams({
-    saved: partial ? "bulkpart" : "bulkall",
-    ap: String(approved),
-    pb: String(published),
-    mt: String(machine),
-    st: String(stale),
-    bl: String(blank),
-    sr: String(staleReviewed),
-  });
+/**
+ * «انشر ما كُتب بيدٍ في الهجرات» — زرٌّ **ثانٍ مستقل** (هجرة `0146`).
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  🔴 لماذا زرٌّ ثانٍ ولا يُضاف الصنفُ إلى الزرّ القائم
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ثمانيةٌ وأربعون صفاً في `en` كتبها بشرٌ بيده **داخل ملفّات الهجرات** (‏`0125`
+ * و`0127` و`0129`)، وكان `draft_publish_plan` يحكم عليها `machine` لأن مزوّدها
+ * ليس `human` — فحُبست في المسودة بلا زرٍّ ينشرها.
+ *
+ * والعلاجُ ليس أن يبتلعها زرُّ اليوم: قرارُ المالك 2026-08-17 «الآليُّ لا يُنشر
+ * بلا قراءةِ بشر» يحرس **وعياً بما يُنشر**، لا كلمةَ `machine` بعينها. فصنفٌ
+ * جديد يظهر فجأةً في حصيلة زرٍّ اعتاد عليه المالكُ = **نشرٌ بأثرٍ جانبيّ**.
+ * ⇒ زرٌّ ثانٍ **يسمّي صنفَه ومصادرَه وعددَه** قبل الضغط، فيبقى النشرُ فعلاً واعياً.
+ */
+export async function publishAuthoredDrafts(formData: FormData) {
+  const supabase = await createServerSupabase();
 
-  revalidatePath("/admin/languages", "layout");
-  revalidatePath("/", "layout");
-  clearPublicCaches();
-  redirect(returnUrl(formData, locale, qs.toString()));
+  const rawLocale = field(formData, "locale");
+  const locale = rawLocale && LOCALE_PATTERN.test(rawLocale) ? rawLocale.toLowerCase() : null;
+  if (!locale || locale === DEFAULT_LOCALE) redirect("/admin/languages?error=locale");
+  if (!supabase) redirect(returnUrl(formData, locale, "error=env"));
+
+  const { data, error } = await supabase.rpc("review_and_publish_authored", { p_locale: locale });
+  if (error) redirect(returnUrl(formData, locale, `error=${errorCode(error)}`));
+
+  afterBulkPublish();
+  redirect(returnUrl(formData, locale, bulkResultUrl(data, "authored")));
 }

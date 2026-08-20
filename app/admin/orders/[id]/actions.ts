@@ -470,6 +470,11 @@ const FAILED_HINTS: Record<string, string> = {
   "negative-amount": "failamountsign",
   "note-required": "failledgernote",
   "not-found": "failledgermissing",
+  // 0147: 🔴 والخصمُ لا يقع على متعهدٍ لم يقبل نسخةً سارية — البند ٨ من اتفاقيته.
+  //       ورمزٌ بلا مدخلٍ هنا يسقط على `fallback = "save"` فتقول الشاشةُ للمشرف
+  //       «تأكد أنك مسجل الدخول بحساب دوره admin» — أي **تتّهم صلاحيتَه** في خطأ
+  //       سببُه حالةُ المتعهد، وهو نمطُ الفشل ٢ الذي تحذّر منه ترويسةُ هذا الملف.
+  "agreement-not-accepted": "failagreement",
 };
 
 /** الإجراءات الثلاثة كما يفرضها `failure_reasons_action_chk` — والفارغ «اتّبع المقترح» */

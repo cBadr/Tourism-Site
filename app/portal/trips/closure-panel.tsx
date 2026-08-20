@@ -30,13 +30,26 @@ import type { ApologyOptions, PortalTrip } from "../requests/data";
  * في `completion_apology_tests.sql` قسم (ج).
  *
  * ══════════════════════════════════════════════════════════════════════════
- *  وما لا يُعرض هنا، بقصد
+ *  الاعتذار: ماذا يُعرض وماذا يُحجَب — وكلاهما بقصد (‏`0145`)
  * ══════════════════════════════════════════════════════════════════════════
  *
- * 🔒 **لا إجراءَ ماليّ بجوار سبب الاعتذار ولا مبلغ.** من يرى «هذا السبب إجراؤه
- *    خصم» يختار الأرخص لا الأصدق، فتفقد البيانات معناها — وهي علّةُ الكتالوج
- *    نفسها. والحجبُ بنيويّ: `loadApologyOptions` لا تقرأ العمودين أصلاً.
+ * 🔒 **لا مبلغَ خصمٍ بجوار السبب.** الحجبُ بنيويّ لا انضباطيّ:
+ *    `portal_apology_reasons()` لا تحمل `default_deduct_amount` في نوع إرجاعها
+ *    أصلاً. والمبلغ اقتراحٌ مسقوفٌ بمستحق الرحلة لا يُنفَّذ إلا بقرارٍ إداريٍّ
+ *    بمبرَّرٍ مكتوب — فرقمٌ هنا يَعِد بما لا تنفّذه القاعدة (النمط ٢).
+ *
+ * 🔴 **لكنّ وجودَ الأثر يُعرض** — وسم «قد يترتب عليه خصم» على السبب الذي يحمله.
+ *    والسببُ التزامٌ تعاقديّ لا تفضيلٌ تصميميّ: البند ٥ يقول «ولكل سبب أثرٌ مالي
+ *    **معلوم مسبقاً**»، ويُفصح بنفسه عن أحدها («والانسحاب لظرف قاهر لا يترتب عليه
+ *    خصم»). واختيارٌ أعمى بين سببٍ بثمنٍ وسببٍ بلا ثمن ليس اختياراً. والوسمُ
+ *    مشتقٌّ من مفتاح اللوحة الحيّ، فما دام الخصمُ على الاعتذار مطفأً فلا وسمَ
+ *    على شيء — ولا تحذيرَ من عقوبةٍ لا تقع.
+ *
  * 🔒 **ولا رقمَ تكلفةٍ ولا هامشٍ ولا مرجعِ عميل** — لا وجود لها في `portal_trips()`.
+ *
+ * ⚠ **والتأكيدُ قبل الضغط تأكيدُ واجهةٍ لا حارس**: الحارسُ الحقيقيّ في
+ *    `withdraw_from_trip` (الإسنادُ لك، والحالةُ تقبل، والسببُ من الكتالوج).
+ *    وخانةُ التأكيد تمنع الضغطةَ الشاردة ولا تُستبدَل بها القاعدة.
  */
 
 /** ما يُعرض للشريك عن وجهة رحلته بعد الاعتذار — نصٌّ لا رقم سياسة */
@@ -141,7 +154,8 @@ export function TripClosurePanel({
             <summary
               className={cn(
                 buttonVariants({ size: "lg" }),
-                "w-full cursor-pointer list-none justify-center [&::-webkit-details-marker]:hidden"
+                // ‏٤٤ بكسل هدفَ لمسٍ — والبابان متجاوران فيتساويان
+                "min-h-11 w-full cursor-pointer list-none justify-center [&::-webkit-details-marker]:hidden"
               )}
             >
               <CheckCircle2 aria-hidden="true" />
@@ -162,7 +176,7 @@ export function TripClosurePanel({
                 <li>وإن رأت الإدارة خلاف ذلك فسترى سببها هنا، ولك أن تتظلّم.</li>
               </ul>
               <form action={requestTripCompletion.bind(null, bookingId)}>
-                <Button type="submit" size="lg">
+                <Button type="submit" size="lg" className="min-h-11 px-4">
                   <CheckCircle2 aria-hidden="true" />
                   تأكيد الإعلان
                 </Button>
@@ -176,7 +190,7 @@ export function TripClosurePanel({
               <summary
                 className={cn(
                   buttonVariants({ variant: "outline", size: "lg" }),
-                  "w-full cursor-pointer list-none justify-center [&::-webkit-details-marker]:hidden"
+                  "min-h-11 w-full cursor-pointer list-none justify-center [&::-webkit-details-marker]:hidden"
                 )}
               >
                 <X aria-hidden="true" />
@@ -202,17 +216,29 @@ export function TripClosurePanel({
                     name="reason"
                     required
                     defaultValue=""
-                    className={controlClass}
+                    className={cn(controlClass, "min-h-11")}
                   >
                     <option value="" disabled>
                       اختر السبب
                     </option>
                     {apology.reasons.map((reason) => (
+                      /*
+                        الوسمُ في نصّ الخيار نفسه لا في شارةٍ بجواره: `<option>`
+                        لا يقبل تنسيقاً، وقارئُ الشاشة ينطق النصّ كاملاً — فيصل
+                        الإفصاحُ بالسمع كما يصل بالنظر.
+                      */
                       <option key={reason.slug} value={reason.slug}>
-                        {reason.label}
+                        {reason.mayDeduct ? `${reason.label} — قد يترتب عليه خصم` : reason.label}
                       </option>
                     ))}
                   </select>
+                  {apology.reasons.some((reason) => reason.mayDeduct) ? (
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      وما وُسم بـ«قد يترتب عليه خصم» فالقرارُ فيه إداريٌّ لا آليّ: لا يقع بلا
+                      مبرَّرٍ مكتوب يصلك في «خصومات على حسابك»، ولا يتجاوز مستحقَّ الرحلة، ولك
+                      الاعتراض عليه من بطاقتها.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="space-y-1.5">
@@ -229,7 +255,29 @@ export function TripClosurePanel({
                   />
                 </div>
 
-                <Button type="submit" variant="destructive" size="sm">
+                {/*
+                  خانةُ تأكيدٍ **إلزامية** قبل فعلٍ لا رجعةَ فيه من هنا: الرحلة
+                  تُسحب من جدولك وتعود إلى الدورة، ولا زرَّ يُعيدها. و`required`
+                  يعمل بلا جافاسكربت وبلوحة المفاتيح — ولا يُغني عن حارس القاعدة.
+                */}
+                <label
+                  htmlFor={`wconfirm-${bookingId}`}
+                  className="flex min-h-11 items-start gap-2 py-1 text-sm leading-relaxed"
+                >
+                  <input
+                    id={`wconfirm-${bookingId}`}
+                    type="checkbox"
+                    name="confirm"
+                    required
+                    className="mt-1 size-5 shrink-0 accent-destructive"
+                  />
+                  <span>
+                    أؤكد أنني لن أنفّذ هذه الرحلة، وأنها تُسحب من جدولي فور التأكيد ولا تعود
+                    إليّ إلا بعرضٍ جديد.
+                  </span>
+                </label>
+
+                <Button type="submit" variant="destructive" size="lg" className="min-h-11 px-4">
                   <X aria-hidden="true" />
                   تأكيد الاعتذار
                 </Button>

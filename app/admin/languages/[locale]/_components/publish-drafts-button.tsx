@@ -5,7 +5,13 @@ import { Upload } from "lucide-react";
 import { SaveButton, type SaveMessages } from "@/components/admin/save-feedback";
 
 /**
- * زرّ «انشر كل المسودات» — طلب المالك 2026-08-17.
+ * زرُّ نشرٍ جماعيٍّ بتأكيد — «انشر كل المسودات» (2026-08-17) و«انشر ما كُتب بيدٍ
+ * في الهجرات» (‏`0146`) معاً.
+ *
+ * ⚠ **مكوّنٌ واحدٌ لزرَّين** (القاعدة ١٢: لا يُستنسخ القائم). والفرقُ بينهما
+ *   **بيانات**: نصُّ الزرّ ونصُّ التأكيد ورسائلُ الحصيلة ونبرةُ اللون — كلُّها
+ *   تصل من الخادم. ولو نُسخ الملفُّ لصار لسلوك التأكيد نسختان، فأُصلح عيبٌ في
+ *   إحداهما وبقي في الأخرى.
  *
  * ── لماذا مكوّن عميل ولا يكفي `SaveButton` مباشرةً في الصفحة ────────────────
  *
@@ -26,6 +32,7 @@ export function PublishDraftsButton({
   label,
   confirmText,
   disabled,
+  variant,
   savedMessages,
   errorMessages,
 }: {
@@ -33,6 +40,8 @@ export function PublishDraftsButton({
   /** نصّ نافذة التأكيد — يصل جاهزاً بالأرقام العربية من الخادم */
   confirmText: string;
   disabled: boolean;
+  /** نبرةُ الزرّ — يتمايز بها الزرّان في صفٍّ واحد بلا نصٍّ إضافي */
+  variant?: "default" | "secondary" | "outline";
   savedMessages: SaveMessages;
   errorMessages: SaveMessages;
 }) {
@@ -40,6 +49,7 @@ export function PublishDraftsButton({
     <SaveButton
       label={label}
       icon={<Upload />}
+      variant={variant}
       // نمط «تم + مصدر» (قاعدة بدر 2026-08-17): الفعل وقع فيُسمّى بما وقع
       savedLabel="تم النشر"
       pendingLabel="جارٍ النشر…"

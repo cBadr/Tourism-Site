@@ -47,6 +47,8 @@
 --   (ن) 🔴 0126 — والسقفُ نفسه يسري على مسار الفشل
 --   (س) 🔴 0130 — مبلغٌ صريح ومبرَّرٌ مكتوبٌ بحدٍّ أدنى في **كل** خصم، ويصل
 --       بوابةَ المتعهد — بحارسَين مستقلَّين يُنزعان ويُعادان
+--   (ع) 🔴 0145 — كتالوجُ الاعتذار يصل المتعهد بدالةٍ definer لا بفتح RLS،
+--       وكلُّ سببٍ تعرضه الشاشة تقبله `withdraw_from_trip` نداءً حياً
 --   (ك) صفر أثر
 --
 -- ══════════════════════════════════════════════════════════════════════════
@@ -70,6 +72,7 @@
 --         · supabase/migrations/0124_completion_guards_and_deduction_cap.sql
 --         · supabase/migrations/0126_adversarial_fixes.sql
 --         · supabase/migrations/0130_manual_deduction_needs_written_reason.sql
+--         · supabase/migrations/0145_apology_catalog_reaches_the_partner.sql
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -1853,6 +1856,377 @@ begin
   end;
 
   raise notice '✔ القياس الحيّ تمّ داخل معاملةٍ فرعية أُرجعت بكاملها';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ع) 🔴 0145 — كتالوجُ الاعتذار يصل المتعهد، ولا يُفتح الجدولُ كلُّه
+--
+-- ما كان يقع قبل هذه الهجرة، مقيساً: سياساتُ `SELECT` على `failure_reasons`
+-- كلُّها `is_admin()`، و`loadApologyOptions` تقرأ الجدولَ **بجلسة المتعهد** ⇒
+-- صفرُ صفوف ⇒ `apology.ready = false` ⇒ زرُّ «اعتذر عن الرحلة» لا يُرسم أبداً.
+-- فحقٌّ في البند ٥ من الاتفاقية بلا سبيلٍ إليه، والبديلُ الوحيد أمام المتعهد
+-- أن يترك الرحلة تفشل — **وهو المسارُ الذي يُخصم فيه**.
+--
+-- والقسمُ يقيس **السلوك** لا الشكل: كم صفاً يصله بدورٍ حقيقي، وماذا يُحجب
+-- عنه، وهل يقبل `withdraw_from_trip` كلَّ سببٍ تعرضه الشاشة. ولكلِّ حارسٍ
+-- طفرةٌ تُنزعه فيحمرّ الشاهد، ثم يُعاد **حرفياً** من نصّه الملتقَط.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_usr    constant uuid    := '00000000-0000-4000-8000-00000000ca45';
+  v_sub    constant uuid    := '5ea11ed0-0000-4000-8000-00000000ca45';
+  -- 🔴 مستخدمٌ `authenticated` **بلا صفّ متعهد** — وهو نموذجُ التهديد في D-20
+  v_usr2   constant uuid    := '00000000-0000-4000-8000-00000000ca46';
+  v_cls    constant uuid    := 'c0000000-0000-4000-8000-00000000ca45';
+  v_slug   constant text    := 'catest-p';
+  v_phone  constant text    := '01000000945';
+  v_pay    constant numeric := 400;
+  v_admin  uuid;
+  v_bk     record;
+  v_r      record;
+  v_ids    uuid[] := '{}';
+  v_cnt    integer;
+  v_n      integer;
+  v_i      integer;
+  v_txt    text;
+  v_msg    text;
+  v_col    text;
+  v_def    text;   -- نصُّ الدالة كما هو على القاعدة — لإعادته حرفاً بحرف
+  v_mut    text;
+begin
+  select p.id into v_admin from public.profiles p where p.role = 'admin' limit 1;
+  if v_admin is null then
+    raise exception '(ع-٠) لا مشرف في القاعدة — الفيكسترة لا تُبنى';
+  end if;
+
+  select pg_get_functiondef(p.oid) into v_def
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'portal_apology_reasons';
+  if v_def is null then
+    raise exception '(ع-٠) portal_apology_reasons() غير موجودة — نفّذ 0145 أولاً';
+  end if;
+
+  begin
+    -- ══ الفيكسترة ═════════════════════════════════════════════════════════
+    insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                            created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+    values
+      (v_usr,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       'apologycat@example.invalid', 'x', now(), now(), '{}'::jsonb,
+       '{"full_name": "COMPLETION_TESTS متعهد الكتالوج"}'::jsonb),
+      (v_usr2, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       'apologycat2@example.invalid', 'x', now(), now(), '{}'::jsonb,
+       '{"full_name": "COMPLETION_TESTS مستخدم بلا تعهّد"}'::jsonb);
+
+    insert into public.subcontractors (id, profile_id, company_name, contact_name, phone, status)
+    values (v_sub, v_usr, 'COMPLETION_TESTS متعهد الكتالوج', 'CP', '01000000945', 'approved');
+
+    insert into public.vehicle_classes (id, slug, title, capacity, luggage_capacity, active, sort)
+    values (v_cls, v_slug, 'COMPLETION_TESTS فئة الكتالوج', 1, 4, true, 9945);
+    insert into public.tariffs (class_id, per_km, base_fee, min_price,
+                                waiting_hour_price, round_trip_factor)
+    values (v_cls, 20, 1000, 0, 0, 1.8);
+
+    -- ══ (ع-١) العيبُ نفسه: الجدولُ مُقفلٌ على المتعهد، وهذا **يجب أن يبقى** ══
+    --    فالعلاجُ دالةٌ لا فتحُ RLS. ولو احمرّ هذا التأكيدُ يوماً فقد فُتح
+    --    الجدولُ بأعمدته التشغيلية كلِّها لكل متعهد.
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.failure_reasons;
+    execute 'reset role';
+    if v_n <> 0 then
+      raise exception
+        '(ع-١) 🔴 المتعهد يقرأ % صفاً من failure_reasons مباشرةً — فُتحت RLS على جدولٍ فيه default_action و default_deduct_amount', v_n;
+    end if;
+
+    -- ══ (ع-٢) والدالةُ تُوصله ما يخصّه ═════════════════════════════════════
+    execute 'set local role authenticated';
+    select count(*)::integer into v_cnt from public.portal_apology_reasons();
+    execute 'reset role';
+    if v_cnt = 0 then
+      raise exception
+        '(ع-٢) 🔴 صفرُ أسبابٍ يصل المتعهد — الشاشةُ ستُخفي زرَّ الاعتذار كما كانت تفعل قبل 0145';
+    end if;
+
+    -- ══ (ع-٣) والحجبُ بنيويّ: أعمدةُ الإدارة لا وجود لها في نوع الإرجاع ════
+    --    (سلوكاً لا شكلاً: القراءةُ منها ترتدّ بـ42703 «عمود غير موجود»)
+    foreach v_col in array array['id', 'default_action', 'default_deduct_amount',
+                                 'applies_to', 'initiator', 'active', 'sort'] loop
+      v_msg := null;
+      begin
+        execute format('select x.%I from public.portal_apology_reasons() x limit 1', v_col);
+        v_msg := '(قُبل)';
+      exception when others then
+        get stacked diagnostics v_msg = returned_sqlstate;
+      end;
+      if v_msg = '(قُبل)' then
+        raise exception
+          '(ع-٣) 🔴 العمود «%» يخرج إلى المتعهد — والحجبُ يجب أن يكون في نوع الإرجاع لا في انضباط الواجهة (اتفاقية ٧)', v_col;
+      end if;
+      if v_msg <> '42703' then
+        raise exception '(ع-٣) القراءة من «%» ارتدّت بـ% لا بعمودٍ غير موجود (42703)', v_col, v_msg;
+      end if;
+    end loop;
+
+    -- ══ (ع-٤) العزل: `authenticated` ليست متعهداً — D-20 ════════════════════
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr2, 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons();
+    execute 'reset role';
+    if v_n <> 0 then
+      raise exception
+        '(ع-٤) 🔴 مستخدمٌ مسجَّلٌ بلا صفّ متعهد قرأ % سبباً — الحارسُ في الجسم غائب', v_n;
+    end if;
+
+    -- 🔬 وطفرةُ الحارس: تُنزع فيمرّ العيبُ أمام أعيننا، ثم يُعاد النصُّ حرفياً
+    v_mut := replace(v_def, 'public.current_subcontractor_id() is not null', 'true');
+    if v_mut = v_def then
+      raise exception '(ع-٤ط) الطفرة لم تغيّر النصّ — الشاهدُ التالي كان سيمرّ بلا معنى';
+    end if;
+    execute v_mut;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons();
+    execute 'reset role';
+    execute v_def;                                   -- الإعادةُ حرفاً بحرف
+    if v_n = 0 then
+      raise exception
+        '(ع-٤ط) 🔴 نُزع الحارسُ ولم يظهر شيء — فالشاهدُ (ع-٤) لا يقيس الحارسَ بل غيابَ البيانات';
+    end if;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons();
+    execute 'reset role';
+    if v_n <> 0 then
+      raise exception '(ع-٤ط) الدالةُ لم تعُد إلى حالها بعد الطفرة — % صفاً تسرّبت', v_n;
+    end if;
+
+    -- ══ (ع-٥) والزائرُ لا يبلغها أصلاً ═════════════════════════════════════
+    perform set_config('request.jwt.claims', '', true);
+    v_msg := null;
+    begin
+      execute 'set local role anon';
+      perform * from public.portal_apology_reasons();
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = returned_sqlstate;
+    end;
+    execute 'reset role';
+    if v_msg = '(قُبل)' then
+      raise exception '(ع-٥) 🔴 الزائر anon نفّذ الدالة — المنحةُ أوسع من authenticated';
+    end if;
+    if v_msg <> '42501' then
+      raise exception '(ع-٥) نداءُ anon ارتدّ بـ% لا بمنعِ صلاحية (42501)', v_msg;
+    end if;
+
+    -- ══ (ع-٦) ما ليس من نطاق الاعتذار لا يظهر — والفيكسترةُ تُثبت الاتجاهين ══
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+
+    insert into public.failure_reasons (slug, label, default_action, applies_to, initiator, active, sort)
+    values ('catest-scope',    'CP نطاقُ فشلٍ لا اعتذار', 'none', 'failure', 'partner',  true, 9941),
+           ('catest-platform', 'CP مُبادِرُه المنصة',      'none', 'apology', 'platform', true, 9942),
+           ('catest-off',      'CP معطَّل',                'none', 'apology', 'partner',  false, 9943);
+
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x
+     where x.slug in ('catest-scope', 'catest-platform', 'catest-off');
+    execute 'reset role';
+    if v_n <> 0 then
+      raise exception '(ع-٦) 🔴 % سبباً لا يخصّ المتعهد ظهر في قائمته', v_n;
+    end if;
+
+    -- وثلاثتُها تظهر بمجرّد أن تصير من نطاقه — فالغيابُ أعلاه سببُه التصفيةُ
+    -- لا أن الصفوفَ غير موجودة (والفيكسترةُ تقع حيث يظهر العيب)
+    update public.failure_reasons set applies_to = 'apology' where slug = 'catest-scope';
+    update public.failure_reasons set initiator  = 'partner' where slug = 'catest-platform';
+    update public.failure_reasons set active     = true      where slug = 'catest-off';
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x
+     where x.slug in ('catest-scope', 'catest-platform', 'catest-off');
+    execute 'reset role';
+    if v_n <> 3 then
+      raise exception
+        '(ع-٦) بعد تصحيح نطاقها ظهر % منها لا ثلاثةً — فتأكيدُ الغياب كان يقيس شيئاً آخر', v_n;
+    end if;
+    -- وتُعاد إلى ما كانت عليه كي تبقى (ع-٨) تقيس كتالوج المالك وحده
+    update public.failure_reasons set active = false where slug in ('catest-scope', 'catest-platform', 'catest-off');
+
+    -- 🔬 وطفرتا التصفية: كلٌّ منهما تُنزع وحدها فيظهر ما لا يخصّه
+    update public.failure_reasons set active = true where slug = 'catest-scope';
+    update public.failure_reasons set applies_to = 'failure' where slug = 'catest-scope';
+    v_mut := replace(v_def, $m$and r.applies_to in ('apology', 'both')$m$, '');
+    if v_mut = v_def then
+      raise exception '(ع-٦ط) طفرةُ النطاق لم تغيّر النصّ';
+    end if;
+    execute v_mut;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x where x.slug = 'catest-scope';
+    execute 'reset role';
+    execute v_def;
+    if v_n <> 1 then
+      raise exception '(ع-٦ط) 🔴 نُزعت تصفيةُ النطاق ولم يظهر سببُ الفشل — الشاهدُ (ع-٦) بلا أسنان';
+    end if;
+    update public.failure_reasons set active = false where slug = 'catest-scope';
+
+    update public.failure_reasons set active = true where slug = 'catest-platform';
+    v_mut := replace(v_def, $m$and r.initiator <> 'platform'$m$, '');
+    if v_mut = v_def then
+      raise exception '(ع-٦ط) طفرةُ المُبادِر لم تغيّر النصّ';
+    end if;
+    execute v_mut;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x where x.slug = 'catest-platform';
+    execute 'reset role';
+    execute v_def;
+    if v_n <> 1 then
+      raise exception '(ع-٦ط) 🔴 نُزعت تصفيةُ المُبادِر ولم يظهر سببُ المنصة — الشاهدُ بلا أسنان';
+    end if;
+    update public.failure_reasons set active = false where slug = 'catest-platform';
+
+    -- ══ (ع-٧) `may_deduct` اتجاهٌ مشتقٌّ من **الحالة الحيّة** لا رقمٌ محفور ══
+    --    والمفتاحُ نفسه هو الذي تفحصه `apply_withdrawal_deduction` قبل الخصم،
+    --    فلا رقمان لقاعدةٍ واحدة (النمط ٨ في LESSONS).
+    if exists (select 1 from public.trip_closure_config() c where c.apology_deduction_enabled) then
+      raise exception '(ع-٧) الفرضية مختلّة: مفتاحُ خصم الاعتذار مُشعَلٌ قبل القياس';
+    end if;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x where x.may_deduct;
+    execute 'reset role';
+    if v_n <> 0 then
+      raise exception
+        '(ع-٧) 🔴 والمفتاحُ مطفأ يَعِد % سبباً بخصمٍ لا يقع — تحذيرٌ من عقوبةٍ مستحيلة (النمط ٢)', v_n;
+    end if;
+
+    update public.trip_closure_settings set apology_deduction_enabled = true where id;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x where x.may_deduct;
+    execute 'reset role';
+    select count(*)::integer into v_i
+      from public.failure_reasons r
+     where r.active and r.applies_to in ('apology', 'both')
+       and r.initiator <> 'platform' and r.default_action = 'deduct';
+    update public.trip_closure_settings set apology_deduction_enabled = false where id;
+    if v_n <> v_i then
+      raise exception
+        '(ع-٧) والمفتاحُ مُشعَل: % سبباً موسوماً بالخصم والكتالوج يقول % — الحقلُ لا يُشتق من الحالة الحيّة', v_n, v_i;
+    end if;
+    if v_i = 0 then
+      raise exception '(ع-٧) لا سببَ خصمٍ في الكتالوج أصلاً — فالتأكيدُ أعلاه لا يمكن أن يفشل';
+    end if;
+    execute 'set local role authenticated';
+    select count(*)::integer into v_n from public.portal_apology_reasons() x where x.may_deduct;
+    execute 'reset role';
+    if v_n <> 0 then
+      raise exception '(ع-٧) المفتاحُ أُطفئ و% سبباً ما زال موسوماً بالخصم', v_n;
+    end if;
+
+    -- ══ (ع-٨) 🔴 التطابق: كلُّ سببٍ تعرضه الشاشة **تقبله القاعدة فعلاً** ═════
+    --    وهذا هو الشاهدُ الذي يمنع عودةَ النمط ٢: تصفيةُ العرض في الدالة
+    --    مرآةٌ لما تفرضه `withdraw_from_trip`، والانحرافُ بينهما يظهر هنا
+    --    نداءً حياً لا مقارنةَ نصوص.
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    for v_i in 1 .. (v_cnt + 1) loop
+      select * into v_bk from public.create_booking(
+        jsonb_build_object('label', 'CP مبدأ' || v_i, 'lat', 25.0, 'lng', 27.5),
+        jsonb_build_object('label', 'CP منتهى' || v_i, 'lat', 24.5, 'lng', 28.2),
+        1, false, 0, 100, 90, 'estimate', v_slug, 'full',
+        'COMPLETION_TESTS عميل كتالوج' || v_i, v_phone, null,
+        now() + interval '60 days' + make_interval(days => v_i),
+        'COMPLETION_TESTS_FIXTURE', null, null, 0, null, 0);
+      v_ids := v_ids || v_bk.id;
+
+      update public.bookings set status = 'under_review' where id = v_bk.id;
+      update public.bookings set status = 'confirmed'    where id = v_bk.id;
+      insert into public.dispatches (booking_id, status, round,
+                                     assigned_subcontractor_id, assigned_payout, assigned_at)
+      values (v_bk.id, 'assigned', 1, v_sub, v_pay, now());
+      insert into public.trip_offers (booking_id, subcontractor_id, round, payout, status,
+                                      expires_at, responded_at)
+      values (v_bk.id, v_sub, 1, v_pay, 'accepted', now() + interval '1 hour', now());
+      update public.bookings set status = 'assigned' where id = v_bk.id;
+    end loop;
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usr, 'role', 'authenticated')::text, true);
+
+    v_i := 0;
+    for v_r in
+      execute 'select x.slug, x.label from public.portal_apology_reasons() x'
+    loop
+      v_i := v_i + 1;
+      v_msg := null;
+      begin
+        perform public.withdraw_from_trip(v_ids[v_i], v_r.slug, 'CP اعتذارٌ بسببٍ من القائمة');
+      exception when others then
+        get stacked diagnostics v_msg = message_text;
+      end;
+      if v_msg is not null then
+        raise exception
+          '(ع-٨) 🔴 السبب «%» تعرضه الشاشةُ وترفضه القاعدة: «%» — وهو بعينه العيبُ الذي وُلدت التصفيةُ لمنعه',
+          v_r.slug, v_msg;
+      end if;
+      if not exists (
+        select 1 from public.trip_withdrawals w
+        where w.booking_id = v_ids[v_i] and w.reason_slug = v_r.slug
+          and w.subcontractor_id = v_sub
+      ) then
+        raise exception '(ع-٨) الاعتذار بـ«%» لم يُسجَّل صفاً', v_r.slug;
+      end if;
+    end loop;
+    if v_i <> v_cnt then
+      raise exception '(ع-٨) الحلقةُ مرّت % مرةً والقائمة % سبباً', v_i, v_cnt;
+    end if;
+
+    -- ══ (ع-٩) وما ليس منها تردّه القاعدة — على رحلةٍ **ما زالت مُسنَدة** ════
+    --    (والرحلةُ الأخيرة لم تُمسّ في الحلقة، فالرفضُ يقع في فحص السبب لا في
+    --     فحص الحالة — وإلا كان التأكيدُ يقيس شيئاً آخر)
+    select b.status into v_txt from public.bookings b where b.id = v_ids[v_cnt + 1];
+    if v_txt <> 'assigned' then
+      raise exception '(ع-٩) الفرضية مختلّة: الرحلةُ الشاهدة حالتُها «%» لا «assigned»', v_txt;
+    end if;
+
+    -- ثلاثةٌ نطاقُها `failure` وواحدٌ مُبادِرُه المنصة — والرسالتان مختلفتان
+    foreach v_col in array array['severe-delay', 'driver-no-show', 'customer-no-show',
+                                 'platform-withdrawn'] loop
+      v_msg := null;
+      begin
+        perform public.withdraw_from_trip(v_ids[v_cnt + 1], v_col, 'CP سببٌ خارج القائمة');
+        v_msg := '(قُبل)';
+      exception when others then
+        get stacked diagnostics v_msg = message_text;
+      end;
+      if v_msg = '(قُبل)' then
+        raise exception
+          '(ع-٩) 🔴 السبب «%» ليس في قائمة الاعتذار ومع ذلك نُفِّذ — والكتالوجان انحرفا', v_col;
+      end if;
+      if v_msg not like '%ليس من أسباب الاعتذار%' and v_msg not like '%تختاره الإدارة%' then
+        raise exception '(ع-٩) الرفضُ لـ«%» جاء برسالة «%» — ليست رسالةَ خروجٍ عن النطاق', v_col, v_msg;
+      end if;
+    end loop;
+    select b.status into v_txt from public.bookings b where b.id = v_ids[v_cnt + 1];
+    if v_txt <> 'assigned' then
+      raise exception '(ع-٩) الرفضُ ترك الرحلة في حالة «%» — رفضٌ ذو أثر', v_txt;
+    end if;
+
+    raise notice
+      '✔ (ع) 🔴 0145 — الكتالوج يصل المتعهد بـ% سبباً بدور authenticated (والجدولُ نفسه ما زال مقفلاً عليه بصفر صفوف)، بلا id ولا default_action ولا مبلغ ولا تصنيفٍ داخلي؛ والزائر 42501؛ ومستخدمٌ بلا صفّ متعهد صفرٌ — بطفرةٍ تُنزع الحارسَ فيظهر ثم تُعيده حرفياً؛ وما ليس من نطاقه محجوبٌ بطفرتين لكل تصفية؛ وmay_deduct مشتقٌّ من مفتاح اللوحة الحيّ لا محفوراً؛ و**كلُّ سببٍ تعرضه الشاشة قَبِلته withdraw_from_trip نداءً حياً**، وثلاثةٌ خارجها رُدّت بلا أثر',
+      v_cnt;
+
+    raise exception 'COMPLETION_APOLOGY_CATALOG_ROLLBACK';
+  exception
+    when others then
+      execute 'reset role';
+      perform set_config('request.jwt.claims', '', true);
+      -- الدالةُ تُعاد حرفياً مهما كان سببُ الخروج — فطفرةٌ لا تُنقض عيبٌ حيّ
+      begin execute v_def; exception when others then null; end;
+      if sqlerrm <> 'COMPLETION_APOLOGY_CATALOG_ROLLBACK' then raise; end if;
+  end;
+
+  raise notice '✔ (ع) القياس تمّ داخل معاملةٍ فرعية أُرجعت بكاملها';
 end;
 $$;
 

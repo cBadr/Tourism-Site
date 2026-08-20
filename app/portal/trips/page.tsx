@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CalendarCheck, History, Inbox, Lock, Scale, Ticket } from "lucide-react";
 
+import { toArabicDigits } from "@/components/booking/format";
 import {
   CustomerContact,
   PayoutBlock,
@@ -166,6 +167,18 @@ function DeductionsCard({ result }: { result: DeductionsResult }) {
               <p className="text-sm leading-relaxed">
                 {row.writtenReason ?? "لم يُسجَّل مبرَّر — راسل الإدارة."}
               </p>
+              {/*
+                🔴 ورقمُ النسخة تحت المبرَّر لا فوقه: المبرَّرُ هو ما يُقرأ أولاً،
+                والنسخةُ هي ما يُحتجّ به عند الاعتراض. وصمتُها عن الصفوف القديمة
+                مقصود — `null` تعني «كُتب قبل هذا النظام» لا «بلا اتفاقية»، ورقمٌ
+                يُخترع هنا يجعل المتعهد يحتجّ بوثيقةٍ لم تُقَس عليه.
+              */}
+              {row.agreementVersion === null ? null : (
+                <p className="text-xs text-muted-foreground">
+                  مقيسٌ على النسخة {toArabicDigits(row.agreementVersion)} من اتفاقية المتعهدين —
+                  وهي النسخة التي كانت مقبولةً منك وقت الواقعة، وبها يكون الاعتراض.
+                </p>
+              )}
             </li>
           ))}
         </ul>

@@ -42,6 +42,17 @@ export type PortalDeduction = {
   currency: string | null;
   /** المبرَّر المكتوب — هو بيتُ القصيد في هذا السطح كله */
   writtenReason: string | null;
+  /**
+   * رقمُ نسخة الاتفاقية التي كانت **مقبولةً منه** لحظةَ وقوع الواقعة (‏`0147`).
+   *
+   * 🔴 وليس زينة: البند ٨ يقول إن الخصم «يُقاس بالنسخة التي كانت مقبولةً منه
+   * وقت وقوع الواقعة» — **ومن لا يعرف رقمَها لا يستطيع أن يحتجّ بها**. فالوعدُ
+   * بحقِّ تظلّمٍ يستند إلى وثيقةٍ مجهولةِ الرقم وعدٌ ناقص.
+   *
+   * و`null` تعني **«قبل هذا النظام»** لا «بلا اتفاقية» — فالصفوفُ التي كُتبت
+   * قبل `0147` لا ختمَ لها، والشاشةُ تصمت عنها بدل أن تكتب رقماً لم يُقَس.
+   */
+  agreementVersion: number | null;
   appliedAt: string | null;
 };
 
@@ -91,6 +102,7 @@ export const loadDeductions = cache(async (): Promise<DeductionsResult> => {
       amount: asNumber(row.amount),
       currency: asText(row.currency),
       writtenReason: asText(row.written_reason),
+      agreementVersion: asNumber(row.agreement_version),
       appliedAt: asText(row.applied_at),
     };
   });

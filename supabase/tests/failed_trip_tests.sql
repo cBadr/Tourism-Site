@@ -42,9 +42,11 @@
 --   (ز)  نافذة الـ٤٨ ساعة: تفتح وتغلق، والرفض بلا أثر (D-48)
 --   (ح)  المدخلات المرفوضة (سبب مجهول · معطَّل · تجاوز بلا مبرر · خصم بلا مبلغ)
 --   (ط)  العزل: المتعهد والزائر — والبورتال يرى الحالة ولا يرى السبب
+--   (ك)  🔴 البند ٨: لا خصمَ بلا اتفاقيةٍ مقبولة، وختمُ نسختها على صفّ الواقعة
 --   (ي)  صفر أثر
 --
 -- المرجع: supabase/migrations/0051_failed_trips.sql
+--         · 0147_deduction_needs_an_accepted_agreement.sql
 --         · docs/phase-briefs/FAILED-TRIPS-AND-PARTNER-ALERTS.md
 -- ============================================================================
 
@@ -887,6 +889,524 @@ begin
 end;
 $$;
 
+-- ============================================================================
+-- (ك) 🔴 البند ٨ — لا خصمَ بلا اتفاقيةٍ مقبولة، والصفُّ يحمل ختمَ نسختها
+--                                                        (هجرة `0147`)
+--
+-- البند ٨ من اتفاقية المتعهدين المنشورة: «ولا يُنفَّذ خصمٌ إلا بعد أن يكون
+-- المتعهد قد قَبِل نسخةً سارية… والخصمُ يُقاس بالنسخة التي كانت مقبولةً منه
+-- **وقت وقوع الواقعة**». وقبل `0147` لم يكن للوعدين حارسٌ ولا سجل.
+--
+-- وكلُّ شاهدٍ هنا **يُقلب بسببه** لا بشكل الكود (‏`LESSONS` النمط ٥):
+--   (ك-١) مسارُ الفشل: خارج الاتفاقية ⇒ رفضٌ برسالةٍ تقول ماذا يُفعل ولا يحرّك
+--         جنيهاً · و«لا شيء» تمرّ (‏فالحارس لا يتجاوز موضعه) · 🔬 وبالقبول يقع
+--         الخصم ويُختم الصفُّ بنسخته
+--   (ك-٢) مسارُ الاعتذار: تنفيذُ الخصم مرفوضٌ خارج الاتفاقية · 🔬 وبالقبول يمرّ
+--   (ك-٣) ختمُ الاعتذار يُكتب لحظةَ **الاعتذار**، ولا يُحرَّر، ولا يبدّله التنفيذ
+--   (ك-٤) 🔴 وسقفُ الخصم لم يتغيّر: `trip_deduction_room` يقتسمه المساران
+--   (ك-٥) صفٌّ قديمٌ بلا ختم (‏`null`) يُقرأ في كل قارئ بلا خطأ
+--   (ك-٦) 🔴 والختمُ من **قبوله هو** لا من المنشور: يُنشر أحدثُ لم يقبله فيبقى
+--         الختمُ على نسخته · 🔬 ثم يقبله فينتقل إليه
+--   (ك-٧) والمتعهد يقرأ رقمَ نسخته في `portal_deductions()`
+--
+-- ولا رقمَ محفور: الإصداران يخلقهما القسم ويقرأ رقميهما من صفّيهما، والمستحق
+-- والمتبقّي من `dispatches` و`trip_deduction_room` أنفسهما.
+-- ============================================================================
+do $$
+declare
+  v_subp   constant uuid := '5ea11ed0-0000-4000-8000-00000000f752';  -- يفشل ويعتذر
+  v_subq   constant uuid := '5ea11ed0-0000-4000-8000-00000000f753';  -- معتذِرٌ خارج الاتفاقية
+  v_usrp   constant uuid := '00000000-0000-4000-8000-00000000f752';
+  v_usrq   constant uuid := '00000000-0000-4000-8000-00000000f753';
+  v_cls    constant uuid := 'c0000000-0000-4000-8000-00000000f752';
+  v_slug   constant text := 'fttest-k';
+  v_phone  constant text := '01000000752';
+  v_pay    constant numeric := 800;
+  v_part   constant numeric := 300;   -- خصمُ الاعتذار الجزئي في (ك-٤)
+  v_admin  uuid;
+  v_pub0   uuid;
+  v_v1     uuid;  v_n1 integer;  v_h1 text;
+  v_v2     uuid;  v_n2 integer;  v_h2 text;
+  v_bk     record;
+  v_res    record;
+  v_room   record;
+  v_ids    uuid[] := '{}';
+  v_wid    uuid;
+  v_msg    text;
+  v_hint   text;
+  v_acc    boolean;
+  v_n      integer;
+  v_amt    numeric;
+  v_ver    integer;
+  v_hash   text;
+  v_l0     integer;
+  v_l1     integer;
+begin
+  select p.id into v_admin from public.profiles p where p.role = 'admin' limit 1;
+  if v_admin is null then
+    raise exception '(ك-٠) لا مشرف في القاعدة — كل ما يلي كان سيقيس رفضاً لا سلوكاً';
+  end if;
+  select v.id into v_pub0 from public.partner_agreement_versions v where v.status = 'published';
+
+  begin
+    -- ══ الفيكسترة ═════════════════════════════════════════════════════════
+    -- إصدارٌ يملكه الاختبار: الحيُّ يُؤرشَف داخل المعاملة الفرعية وحدها ثم يعود
+    -- بالإرجاع (والسطر الأخير في هذا البلوك يقيس عودته).
+    update public.partner_agreement_versions v set status = 'archived' where v.status = 'published';
+
+    insert into public.partner_agreement_versions (title, preamble, clauses)
+    values ('FT اتفاقية فحص ١', 'ديباجة فحص.',
+            '[{"k":"c8","title":"بند ٨ فحص","body":"لا يُنفَّذ خصم إلا بعد قبول نسخة سارية."}]'::jsonb)
+    returning id into v_v1;
+    select v.version, public.partner_agreement_hash(v.title, v.preamble, v.clauses)
+      into v_n1, v_h1
+    from public.partner_agreement_versions v where v.id = v_v1;
+    -- 🔴 نُشر **قبل ٤٠٠ يوم**: المهلة تُقاس من الأحدث بين النشر وإنشاء الشريك،
+    --    فبنشرٍ حديثٍ يصير الجميع «في المهلة» ولا يظهر الحارس أصلاً — وهي
+    --    الفيكسترة التي تقع خارج منطقة العيب (‏`LESSONS` النمط ٦ب).
+    update public.partner_agreement_versions v
+       set status = 'published', published_at = now() - interval '400 days',
+           grace_days = 14, doc_hash = v_h1
+     where v.id = v_v1;
+
+    insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                            created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+    values
+      (v_usrp, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       'ft-agreement-p@example.invalid', 'x', now(), now(), '{}'::jsonb,
+       '{"full_name": "FAILED_TRIP_TESTS شريك الاتفاقية"}'::jsonb),
+      (v_usrq, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       'ft-agreement-q@example.invalid', 'x', now(), now(), '{}'::jsonb,
+       '{"full_name": "FAILED_TRIP_TESTS معتذر الاتفاقية"}'::jsonb);
+
+    insert into public.subcontractors (id, profile_id, company_name, contact_name, phone,
+                                       status, created_at)
+    values
+      (v_subp, v_usrp, 'FAILED_TRIP_TESTS شريك الاتفاقية', 'FTK', '01000000752',
+       'approved', now() - interval '400 days'),
+      (v_subq, v_usrq, 'FAILED_TRIP_TESTS معتذر الاتفاقية', 'FTQ', '01000000753',
+       'approved', now() - interval '400 days');
+
+    insert into public.vehicle_classes (id, slug, title, capacity, luggage_capacity, active, sort)
+    values (v_cls, v_slug, 'FAILED_TRIP_TESTS فئة ك', 1, 4, true, 9752);
+    insert into public.tariffs (class_id, per_km, base_fee, min_price,
+                                waiting_hour_price, round_trip_factor)
+    values (v_cls, 20, 1000, 0, 0, 1.8);
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    -- ثمانيةُ حجوزاتٍ مُسندة متطابقة — والسابع والثامن للمعتذِر «ق»
+    for v_n in 1 .. 8 loop
+      select * into v_bk from public.create_booking(
+        jsonb_build_object('label', 'FT-K مبدأ' || v_n, 'lat', 25.0, 'lng', 27.5),
+        jsonb_build_object('label', 'FT-K منتهى' || v_n, 'lat', 24.5, 'lng', 28.2),
+        1, false, 0, 100, 90, 'estimate', v_slug, 'full',
+        'FAILED_TRIP_TESTS عميل ك' || v_n, v_phone, null,
+        now() + interval '40 days' + make_interval(days => v_n),
+        'FAILED_TRIP_TESTS_FIXTURE', null, null, 0, null, 0);
+      v_ids := v_ids || v_bk.id;
+
+      update public.bookings set status = 'under_review' where id = v_bk.id;
+      update public.bookings set status = 'confirmed'    where id = v_bk.id;
+      insert into public.dispatches (booking_id, status, round,
+                                     assigned_subcontractor_id, assigned_payout, assigned_at)
+      values (v_bk.id, 'assigned', 1,
+              case when v_n in (7, 8) then v_subq else v_subp end, v_pay, now());
+      insert into public.trip_offers (booking_id, subcontractor_id, round, payout, status,
+                                      expires_at, responded_at)
+      values (v_bk.id, case when v_n in (7, 8) then v_subq else v_subp end, 1, v_pay,
+              'accepted', now() + interval '1 hour', now());
+      update public.bookings set status = 'assigned' where id = v_bk.id;
+    end loop;
+
+    -- ══ (ك-١) مسارُ الفشل: الحارس والختم ═══════════════════════════════════
+    if public.partner_agreement_ok(v_subp) then
+      raise exception
+        '(ك-١) الفيكسترة لا تقع حيث يظهر العيب: الشريك «داخل الاتفاقية» قبل أن يقبل شيئاً — وكلُّ ما بعده كان سيقيس نجاحاً بلا حارس';
+    end if;
+
+    select count(*)::integer into v_l0 from public.ledger_entries;
+
+    v_msg := null; v_hint := null;
+    begin
+      perform * from public.mark_booking_failed(
+        v_ids[1], 'driver-no-show', 'deduct', 100,
+        'FT-K مبررٌ مكتوب: خصمٌ على متعهدٍ لم يقبل الاتفاقية بعد (البند ٨)');
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(ك-١) 🔴 خصمٌ وقع على متعهدٍ لم يقبل اتفاقيةً سارية — البند ٨ وعدٌ بلا حارس';
+    end if;
+    if v_hint is distinct from 'agreement-not-accepted' then
+      raise exception '(ك-١) الرفض جاء بـ«%» لا برمز الاتفاقية — «%»', v_hint, v_msg;
+    end if;
+    if v_msg not like '%بوابته%' or v_msg not like '%البند ٨%' then
+      raise exception '(ك-١) رسالةُ الرفض لا تقول ماذا يُفعل: «%»', v_msg;
+    end if;
+
+    select count(*)::integer into v_l1 from public.ledger_entries;
+    if v_l1 <> v_l0 then
+      raise exception '(ك-١) 🔴 الرفض حرّك الدفتر: % ⇐ %', v_l0, v_l1;
+    end if;
+    if exists (select 1 from public.booking_failures f where f.booking_id = v_ids[1]) then
+      raise exception '(ك-١) 🔴 الرفض ترك صفَّ فشلٍ خلفه';
+    end if;
+
+    -- والحارس لا يتجاوز موضعه: «لا شيء» تمرّ على المتعهد نفسه، وبختمٍ فارغ
+    select * into v_res from public.mark_booking_failed(v_ids[1], 'force-majeure', null, null, null);
+    if v_res.action_taken <> 'none' then
+      raise exception '(ك-١) الإجراء «%» لا «none» — الحارس منع ما لا يمسّ مالاً', v_res.action_taken;
+    end if;
+    select f.agreement_version, f.agreement_doc_hash into v_ver, v_hash
+      from public.booking_failures f where f.booking_id = v_ids[1];
+    if v_ver is not null or v_hash is not null then
+      raise exception
+        '(ك-١) 🔴 ختمٌ اختُرع لمن لم يقبل شيئاً (% / %) — الفراغُ هو الصدق هنا', v_ver, v_hash;
+    end if;
+
+    -- 🔬 الطفرة: يقبل الاتفاقية ⇒ نفسُ النداء المرفوض ينجح ويُختم
+    insert into public.partner_agreement_acceptances (
+      subcontractor_id, subcontractor_name, agreement_id, agreement_version,
+      doc_hash, signed_name, actor_kind)
+    values (v_subp, 'FAILED_TRIP_TESTS شريك الاتفاقية', v_v1, v_n1, v_h1, 'FT موقّع', 'partner');
+
+    if not public.partner_agreement_ok(v_subp) then
+      raise exception '(ك-١) قَبِل الاتفاقية ولم يُعدّ داخلها — الحارس يمنع من لا ذنب له';
+    end if;
+
+    select * into v_res from public.mark_booking_failed(
+      v_ids[2], 'driver-no-show', 'deduct', 100,
+      'FT-K مبررٌ مكتوب: خصمٌ بعد قبول الاتفاقية السارية (البند ٨)');
+    if v_res.action_taken <> 'deduct' or v_res.deduct_amount <> 100 then
+      raise exception '(ك-١) 🔬 الخصم بعد القبول لم يقع: % / %', v_res.action_taken, v_res.deduct_amount;
+    end if;
+
+    select f.agreement_version, f.agreement_doc_hash into v_ver, v_hash
+      from public.booking_failures f where f.booking_id = v_ids[2];
+    if v_ver is distinct from v_n1 or v_hash is distinct from v_h1 then
+      raise exception
+        '(ك-١) 🔴 الختم «% / %» لا يطابق قبولَه «% / %» — الصفُّ يشهد بنسخةٍ غير التي وقّعها',
+        v_ver, left(coalesce(v_hash, '∅'), 8), v_n1, left(v_h1, 8);
+    end if;
+
+    raise notice '✔ (ك-١) مسارُ الفشل: خارج الاتفاقية رفضٌ بلا أثرٍ في الدفتر ورسالةٌ تقول ماذا يُفعل، و«لا شيء» تمرّ — 🔬 وبالقبول يقع الخصم بختمِ نسخته %', v_n1;
+
+    -- ══ (ك-٢) مسارُ الاعتذار: تنفيذُ الخصم خارج الاتفاقية ═══════════════════
+    update public.trip_closure_settings set apology_deduction_enabled = true where id;
+    -- موعدٌ قريب ⇒ الوجهة «يدوي» فلا يُعاد البثّ ولا يُستدعى مجمع المتعهدين
+    update public.bookings
+       set trip = jsonb_set(trip, '{pickupAt}', to_jsonb((now() + interval '2 hours')::text))
+     where id = v_ids[7];
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usrq, 'role', 'authenticated')::text, true);
+    perform * from public.withdraw_from_trip(v_ids[7], 'vehicle-breakdown', 'FT-K اعتذار «ق»');
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    select w.id, w.agreement_version into v_wid, v_ver
+      from public.trip_withdrawals w where w.booking_id = v_ids[7];
+    if v_wid is null then
+      raise exception '(ك-٢) لا صفَّ اعتذار — الاعتذار نفسه حُبس، وهو ضررٌ على المتعهد لا حمايةٌ له';
+    end if;
+    if v_ver is not null then
+      raise exception '(ك-٢) 🔴 ختمٌ اختُرع لمن لم يقبل شيئاً: %', v_ver;
+    end if;
+
+    select count(*)::integer into v_l0 from public.ledger_entries;
+    v_msg := null; v_hint := null;
+    begin
+      perform public.apply_withdrawal_deduction(
+        v_wid, 150, 'FT-K مبررٌ مكتوب: تنفيذُ خصمٍ على معتذرٍ خارج الاتفاقية');
+      v_msg := '(نُفِّذ)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+    end;
+    if v_msg = '(نُفِّذ)' then
+      raise exception '(ك-٢) 🔴 خصمُ اعتذارٍ نُفِّذ على متعهدٍ خارج الاتفاقية';
+    end if;
+    if v_hint is distinct from 'agreement-not-accepted' then
+      raise exception '(ك-٢) الرفض جاء بـ«%» لا برمز الاتفاقية — «%»', v_hint, v_msg;
+    end if;
+    select count(*)::integer into v_l1 from public.ledger_entries;
+    if v_l1 <> v_l0 then
+      raise exception '(ك-٢) 🔴 الرفض حرّك الدفتر: % ⇐ %', v_l0, v_l1;
+    end if;
+    if (select w.deduct_applied from public.trip_withdrawals w where w.id = v_wid) then
+      raise exception '(ك-٢) 🔴 الرفض علّم الصفَّ منفَّذاً';
+    end if;
+
+    -- 🔬 الطفرة: يقبل المنشور ⇒ نفسُ النداء يمرّ
+    insert into public.partner_agreement_acceptances (
+      subcontractor_id, subcontractor_name, agreement_id, agreement_version,
+      doc_hash, signed_name, actor_kind)
+    values (v_subq, 'FAILED_TRIP_TESTS معتذر الاتفاقية', v_v1, v_n1, v_h1, 'FT موقّع ق', 'partner');
+
+    v_amt := public.apply_withdrawal_deduction(
+      v_wid, 150, 'FT-K مبررٌ مكتوب: تنفيذُ الخصم بعد قبوله الاتفاقية السارية');
+    if v_amt <> 150 then
+      raise exception '(ك-٢) 🔬 بعد القبول لم يقع الخصم: %', v_amt;
+    end if;
+    -- والختمُ يبقى فارغاً: لحظةَ الاعتذار لم تكن له نسخةٌ مقبولة، والسجل يصدق
+    select w.agreement_version into v_ver from public.trip_withdrawals w where w.id = v_wid;
+    if v_ver is not null then
+      raise exception
+        '(ك-٢) 🔴 التنفيذُ ملأ ختمَ واقعةٍ وقعت قبل القبول (%) — دليلٌ بأثرٍ رجعيّ', v_ver;
+    end if;
+
+    raise notice '✔ (ك-٢) مسارُ الاعتذار: الاعتذارُ نفسه لا يُحبس، وتنفيذُ الخصم مرفوضٌ خارج الاتفاقية بلا أثرٍ في الدفتر — 🔬 وبالقبول يمرّ، وختمُ الواقعة يبقى على صدقه';
+
+    -- ══ (ك-٣) ختمُ الاعتذار: لحظةَ الواقعة، ولا يُحرَّر، ولا يبدّله التنفيذ ══
+    update public.bookings
+       set trip = jsonb_set(trip, '{pickupAt}', to_jsonb((now() + interval '2 hours')::text))
+     where id = v_ids[5];
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usrp, 'role', 'authenticated')::text, true);
+    perform * from public.withdraw_from_trip(v_ids[5], 'vehicle-breakdown', 'FT-K اعتذار «ب»');
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    select w.id, w.agreement_version, w.agreement_doc_hash into v_wid, v_ver, v_hash
+      from public.trip_withdrawals w where w.booking_id = v_ids[5];
+    if v_ver is distinct from v_n1 or v_hash is distinct from v_h1 then
+      raise exception
+        '(ك-٣) 🔴 صفُّ الاعتذار خُتم بـ«%» لا بنسخته لحظتها «%» — والبند يقيس بنسخة **وقت وقوع الواقعة**',
+        v_ver, v_n1;
+    end if;
+
+    -- 🔬 وحارسُ التجميد: محاولةُ تحرير الختم يدوياً تُرفض
+    v_msg := null;
+    begin
+      update public.trip_withdrawals w set agreement_version = v_n1 + 99 where w.id = v_wid;
+      v_msg := '(كُتب)';
+    exception when others then
+      get stacked diagnostics v_msg = pg_exception_hint;
+    end;
+    if v_msg <> 'append-only' then
+      raise exception '(ك-٣) 🔴 ختمُ الاعتذار قابلٌ للتحرير («%») — دليلٌ يُعدَّل ليس دليلاً', v_msg;
+    end if;
+
+    v_amt := public.apply_withdrawal_deduction(
+      v_wid, 200, 'FT-K مبررٌ مكتوب: خصمٌ على اعتذارٍ بعد الإسناد (البند ٨)');
+    if v_amt <> 200 then
+      raise exception '(ك-٣) الخصم المنفَّذ % لا 200', v_amt;
+    end if;
+    select w.agreement_version, w.agreement_doc_hash into v_ver, v_hash
+      from public.trip_withdrawals w where w.id = v_wid;
+    if v_ver is distinct from v_n1 or v_hash is distinct from v_h1 then
+      raise exception '(ك-٣) 🔴 تنفيذُ الخصم بدّل ختمَ الواقعة: % ⇐ %', v_n1, v_ver;
+    end if;
+
+    raise notice '✔ (ك-٣) الاعتذار يُختم لحظتَه بـ%، وحارسُ التجميد يرفض تحريره، وتنفيذُ الخصم لا يمسّه', v_n1;
+
+    -- ══ (ك-٤) 🔴 وسقفُ الخصم لم يتغيّر — المساران يقتسمان المتبقّي ═════════
+    update public.bookings
+       set trip = jsonb_set(trip, '{pickupAt}', to_jsonb((now() + interval '2 hours')::text))
+     where id = v_ids[8];
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usrq, 'role', 'authenticated')::text, true);
+    perform * from public.withdraw_from_trip(v_ids[8], 'vehicle-breakdown', 'FT-K اعتذارٌ للسقف');
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    select w.id into v_wid from public.trip_withdrawals w where w.booking_id = v_ids[8];
+    v_amt := public.apply_withdrawal_deduction(
+      v_wid, v_part, 'FT-K مبررٌ مكتوب: خصمٌ جزئي يترك متبقّياً للمسار الآخر');
+    if v_amt <> v_part then
+      raise exception '(ك-٤) الخصم الجزئي % لا %', v_amt, v_part;
+    end if;
+
+    -- ويُعاد الإسناد إلى المتعهد نفسه بالمستحق نفسه، فيقيس المسارُ الآخر المتبقّي
+    update public.dispatches d
+       set status = 'assigned', assigned_subcontractor_id = v_subq,
+           assigned_payout = v_pay, assigned_at = now()
+     where d.booking_id = v_ids[8];
+    update public.bookings set status = 'assigned' where id = v_ids[8];
+
+    select * into v_room from public.trip_deduction_room(v_ids[8]);
+    if v_room.room <> v_pay - v_part then
+      raise exception '(ك-٤) المتبقّي % لا % — الفيكسترة لا تقع حيث يظهر العيب',
+        v_room.room, v_pay - v_part;
+    end if;
+
+    v_msg := null; v_hint := null;
+    begin
+      perform * from public.mark_booking_failed(
+        v_ids[8], 'driver-no-show', 'deduct', v_room.room + 1,
+        'FT-K مبررٌ مكتوب: خصمٌ يتجاوز متبقّي الرحلة بجنيهٍ واحد');
+      v_msg := '(قُبل)';
+    exception when others then
+      get stacked diagnostics v_msg = message_text, v_hint = pg_exception_hint;
+    end;
+    if v_msg = '(قُبل)' then
+      raise exception '(ك-٤) 🔴 سقفُ الرحلة سقط: المساران لم يعودا يقتسمان المتبقّي';
+    end if;
+    if v_hint is distinct from 'deduct-over-cap' then
+      raise exception '(ك-٤) الرفض جاء بـ«%» لا بسقف الرحلة — «%»', v_hint, v_msg;
+    end if;
+
+    select * into v_res from public.mark_booking_failed(
+      v_ids[8], 'driver-no-show', 'deduct', v_room.room,
+      'FT-K مبررٌ مكتوب: خصمٌ بالمتبقّي بالضبط بعد الخصم الجزئي');
+    if v_res.deduct_amount <> v_room.room then
+      raise exception '(ك-٤) المتبقّي بالضبط رُفض: %', v_res.deduct_amount;
+    end if;
+    select * into v_room from public.trip_deduction_room(v_ids[8]);
+    if v_room.room <> 0 then
+      raise exception '(ك-٤) 🔴 بقي متبقٍّ % بعد استنفاد السقف', v_room.room;
+    end if;
+
+    raise notice '✔ (ك-٤) 🔴 سقفُ الرحلة واحدٌ للمسارين كما كان: اعتذارٌ خُصم عنه % ثم فشلٌ يُرفض عند %+١ ويُقبل عند % بالضبط',
+      v_part, v_pay - v_part, v_pay - v_part;
+
+    update public.trip_closure_settings set apology_deduction_enabled = false where id;
+
+    -- ══ (ك-٥) صفٌّ قديمٌ بلا ختم يُقرأ في كل قارئ ══════════════════════════
+    insert into public.booking_failures (
+      booking_id, reason_id, reason_slug, reason_label, default_action,
+      action_taken, deduct_amount, override_note, from_status,
+      subcontractor_id, payout_snapshot, ledger_effect, failed_at)
+    select v_ids[6], r.id, r.slug, r.label, r.default_action, 'deduct', 50,
+           'FT-K صفٌّ يحاكي ما قبل هجرة 0147 — بلا ختمِ اتفاقية', 'assigned',
+           v_subp, v_pay, 'deduct', now()
+    from public.failure_reasons r where r.slug = 'driver-no-show';
+
+    select f.agreement_version into v_ver from public.booking_failures f where f.booking_id = v_ids[6];
+    if v_ver is not null then
+      raise exception '(ك-٥) الصفُّ «القديم» ليس بلا ختم — الفيكسترة لا تحاكي ما تدّعيه';
+    end if;
+
+    select * into v_room from public.trip_deduction_room(v_ids[6]);
+    if v_room.deducted <> 50 then
+      raise exception '(ك-٥) 🔴 `trip_deduction_room` لا تقرأ صفاً بلا ختم: مخصومٌ %', v_room.deducted;
+    end if;
+
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usrp, 'role', 'authenticated')::text, true);
+    select count(*)::integer into v_n
+      from public.portal_deductions(100) d
+     where d.booking_id = v_ids[6] and d.agreement_version is null;
+    if v_n <> 1 then
+      raise exception '(ك-٥) 🔴 البورتال لا يقرأ صفاً بلا ختم (% صفاً) — `null` صارت خطأً لا «قبل النظام»', v_n;
+    end if;
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    raise notice '✔ (ك-٥) صفٌّ بلا ختمٍ يُقرأ بلا خطأ: سقفُ الرحلة يعدّه، والبورتال يعرضه بنسخةٍ فارغة';
+
+    -- ══ (ك-٦) 🔴 الختمُ من قبوله هو لا من الإصدار المنشور ═══════════════════
+    update public.partner_agreement_versions v set status = 'archived' where v.id = v_v1;
+    insert into public.partner_agreement_versions (title, preamble, clauses)
+    values ('FT اتفاقية فحص ٢', 'ديباجة فحص محدَّثة.',
+            '[{"k":"c8","title":"بند ٨ فحص","body":"نصٌّ أحدث للبند الثامن."}]'::jsonb)
+    returning id into v_v2;
+    select v.version, public.partner_agreement_hash(v.title, v.preamble, v.clauses)
+      into v_n2, v_h2
+    from public.partner_agreement_versions v where v.id = v_v2;
+    update public.partner_agreement_versions v
+       set status = 'published', published_at = now(), grace_days = 14, doc_hash = v_h2
+     where v.id = v_v2;
+
+    if v_n2 <= v_n1 then
+      raise exception '(ك-٦) الإصدار الثاني ليس أحدث (% ≤ %) — الفيكسترة لا تُظهر الفرق', v_n2, v_n1;
+    end if;
+
+    -- الدالتان القائمتان تجيبان سؤالاً آخر: `status` تقيس القبول **على المنشور**
+    select st.accepted, st.accepted_version into v_acc, v_ver
+      from public.partner_agreement_status(v_subp) st;
+    if v_acc or v_ver is not null then
+      raise exception
+        '(ك-٦) `partner_agreement_status` تقول إنه قَبِل المنشور (% / %) — فالفيكسترة لم تنشر إصداراً لم يقبله',
+        v_acc, v_ver;
+    end if;
+    -- والدالةُ الجديدة تجيب سؤال البند ٨: أيُّ نسخةٍ يُحتجّ بها عليه؟
+    select ag.agreement_version into v_ver
+      from public.partner_accepted_agreement(v_subp) ag;
+    if v_ver is distinct from v_n1 then
+      raise exception
+        '(ك-٦) 🔴 النسخةُ التي يُحتجّ بها عليه صارت % والمقبولةُ منه % — نُشر إصدارٌ فانتقل الالتزام بلا توقيعه',
+        v_ver, v_n1;
+    end if;
+
+    perform * from public.mark_booking_failed(
+      v_ids[3], 'driver-no-show', 'deduct', 100,
+      'FT-K مبررٌ مكتوب: خصمٌ بعد نشر إصدارٍ لم يقبله المتعهد بعد (البند ٨)');
+    select f.agreement_version, f.agreement_doc_hash into v_ver, v_hash
+      from public.booking_failures f where f.booking_id = v_ids[3];
+    if v_ver is distinct from v_n1 or v_hash is distinct from v_h1 then
+      raise exception
+        '(ك-٦) 🔴 الصفُّ خُتم بالإصدار المنشور (% / %) لا بالمقبول منه (% / %) — وبه يُحتجّ عليه بنصٍّ لم يوقّعه',
+        v_ver, left(coalesce(v_hash, '∅'), 8), v_n1, left(v_h1, 8);
+    end if;
+
+    -- 🔬 الطفرة: يقبل الأحدث ⇒ ينتقل الختمُ إليه
+    insert into public.partner_agreement_acceptances (
+      subcontractor_id, subcontractor_name, agreement_id, agreement_version,
+      doc_hash, signed_name, actor_kind)
+    values (v_subp, 'FAILED_TRIP_TESTS شريك الاتفاقية', v_v2, v_n2, v_h2, 'FT موقّع', 'partner');
+
+    perform * from public.mark_booking_failed(
+      v_ids[4], 'driver-no-show', 'deduct', 100,
+      'FT-K مبررٌ مكتوب: خصمٌ بعد قبوله الإصدار الأحدث (البند ٨)');
+    select f.agreement_version, f.agreement_doc_hash into v_ver, v_hash
+      from public.booking_failures f where f.booking_id = v_ids[4];
+    if v_ver is distinct from v_n2 or v_hash is distinct from v_h2 then
+      raise exception
+        '(ك-٦) 🔬 قَبِل الأحدث ولم ينتقل الختمُ إليه (% ≠ %) — الختمُ مجمَّدٌ لا مقروءٌ من قبوله',
+        v_ver, v_n2;
+    end if;
+
+    raise notice '✔ (ك-٦) 🔴 الختمُ يتبع **قبولَه هو**: نُشر % وهو على % فبقي الختمُ %، و🔬 لمّا قَبِل % انتقل إليه',
+      v_n2, v_n1, v_n1, v_n2;
+
+    -- ══ (ك-٧) والمتعهد يقرأ رقمَ نسخته في بوابته ════════════════════════════
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_usrp, 'role', 'authenticated')::text, true);
+    select d.agreement_version into v_ver
+      from public.portal_deductions(100) d where d.booking_id = v_ids[3];
+    if v_ver is distinct from v_n1 then
+      raise exception
+        '(ك-٧) 🔴 البورتال يعرض النسخة % والصفُّ مختومٌ بـ% — ومن لا يعرف رقمَها لا يحتجّ بها',
+        v_ver, v_n1;
+    end if;
+    select d.agreement_version into v_ver
+      from public.portal_deductions(100) d where d.booking_id = v_ids[4];
+    if v_ver is distinct from v_n2 then
+      raise exception '(ك-٧) 🔴 البورتال لا يفرّق بين نسختين على متعهدٍ واحد: %', v_ver;
+    end if;
+    -- 🔒 ولا تتسرّب البصمة: ٦٤ محرفاً لا يقرؤها إنسان، وهي في تاريخ قبوله سلفاً
+    select count(*)::integer into v_n
+    from jsonb_object_keys(to_jsonb((select d from public.portal_deductions(1) d limit 1))) k
+    where k in ('agreement_doc_hash', 'doc_hash');
+    if v_n <> 0 then
+      raise exception '(ك-٧) البصمة تعبر إلى البورتال — نوعُ الإرجاع لا يحمل ما لا يُقرأ';
+    end if;
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
+
+    raise notice '✔ (ك-٧) المتعهد يقرأ رقمَ النسخة التي يُحتجّ بها عليه في كل بند خصم (% و%) — والبصمةُ لا تعبر', v_n1, v_n2;
+
+    raise exception 'FAILED_TRIP_TESTS_ROLLBACK';
+  exception
+    when others then
+      execute 'reset role';
+      perform set_config('request.jwt.claims', '', true);
+      if sqlerrm <> 'FAILED_TRIP_TESTS_ROLLBACK' then raise; end if;
+  end;
+
+  -- والإصدار الحيّ عاد كما كان — أُرشِف داخل المعاملة الفرعية وحدها
+  if (select v.id from public.partner_agreement_versions v where v.status = 'published')
+     is distinct from v_pub0 then
+    raise exception
+      '(ك) 🔴 الإصدار المنشور تغيّر بعد الإرجاع — عبثُ الفيكسترة تسرّب إلى اتفاقية المالك';
+  end if;
+
+  raise notice '✔ (ك) القياس الحيّ تمّ داخل معاملةٍ فرعية أُرجعت بكاملها';
+end;
+$$;
 -- ----------------------------------------------------------------------------
 -- (ي) 🔒 لم يبقَ أثر — وهذه **قاعدة الإنتاج نفسها**
 -- ----------------------------------------------------------------------------
@@ -960,6 +1480,6 @@ begin
   perform set_config('request.jwt.claim.sub', '', false);
   perform set_config('request.jwt.claims', '', false);
 
-  raise notice 'ALL PASSED — «فشل» لا «إلغاء»: الحالة نهائية ولا مسار إليها غير mark_booking_failed، والكتالوج مُدارٌ بلقطةٍ مجمَّدة لا يعيد كتابة تقارير الماضي ولا يُحذف منه مستعمَل، وجدول الأثر المالي الست حالات على record_partner_adjustment وreverse_ledger_entry وحدهما — و«لا يُدفع» بعد التسوية = عكسُ earned ورجلُ التحصيل باقية، والنقاط تُعكس بآليةٍ واحدة مفوَّض إليها، ونافذة الـ٤٨ ساعة تفتح وتغلق والرفض بلا أثر، والمتعهد يرى الحالة ولا يرى القرار — وصفر أثرٍ في القاعدة';
+  raise notice 'ALL PASSED — «فشل» لا «إلغاء»: الحالة نهائية ولا مسار إليها غير mark_booking_failed، والكتالوج مُدارٌ بلقطةٍ مجمَّدة لا يعيد كتابة تقارير الماضي ولا يُحذف منه مستعمَل، وجدول الأثر المالي الست حالات على record_partner_adjustment وreverse_ledger_entry وحدهما — و«لا يُدفع» بعد التسوية = عكسُ earned ورجلُ التحصيل باقية، والنقاط تُعكس بآليةٍ واحدة مفوَّض إليها، ونافذة الـ٤٨ ساعة تفتح وتغلق والرفض بلا أثر، والمتعهد يرى الحالة ولا يرى القرار — و🔴 0147: لا يقع خصمٌ على متعهدٍ خارج الاتفاقية في أيٍّ من المسارين (‏فشلاً أو اعتذاراً) والرفضُ برسالةٍ تقول ماذا يُفعل وبلا أثرٍ في الدفتر، وصفُّ الواقعة يحمل رقمَ النسخة التي كانت **مقبولةً منه هو** وبصمتَها لا نسخةَ المنشور، لا يُحرَّر بعدها ولا يبدّله تنفيذُ الخصم، ويصل رقمُها بوابةَ المتعهد؛ وسقفُ الرحلة ما زال واحداً للمسارين، وصفٌّ بلا ختمٍ يُقرأ بلا خطأ — وكلُّ شاهدٍ منها مقيسٌ بطفرةٍ تُحمّره ثم تُعاد حرفياً، وصفر أثرٍ في القاعدة';
 end;
 $$;

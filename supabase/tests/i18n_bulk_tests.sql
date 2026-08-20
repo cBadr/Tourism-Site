@@ -1,6 +1,7 @@
 -- ============================================================================
--- i18n_bulk_tests.sql — «انشر كل المسودات»: ما يعتمده الزرّ وما يرفضه
---                       (هجرة 0100_review_and_publish_drafts.sql)
+-- i18n_bulk_tests.sql — زرّا النشر: ما يعتمده كلٌّ منهما وما يرفضه
+--                       (هجرتا 0100_review_and_publish_drafts.sql
+--                        و 0146_hand_written_is_not_machine.sql)
 --
 -- كيف تشغّله: `pnpm db:test i18n_bulk` أو الصقه في SQL Editor واضغط Run.
 -- النجاح = آخر سطر «ALL PASSED». والفشل exception عربية فيها المتوقع والفعلي.
@@ -34,6 +35,26 @@
 -- والتأكيد المركزي (ج-٣) **يفشل على السلوك القديم**: لو نُسخ فرعُ تبنّي الأصل من
 -- `review_translation` كما هو لصار الصفّ القديم منشوراً — وهو ما يُثبته هذا
 -- الملف بأنه لا يقع.
+--
+-- ══════════════════════════════════════════════════════════════════════════
+--  وما أضافته 0146 — ثلاثة شواهد لها أسنان
+-- ══════════════════════════════════════════════════════════════════════════
+--
+--  (١) **المكتوبُ بيدٍ في هجرة ليس آلياً**: صفٌّ `provider = 'migration-0127'`
+--      يأخذ `authored` لا `machine`، **ولا ينشره زرُّ اليوم** — بل زرُّه هو
+--      (‏`review_and_publish_authored`). فقرارُ المالك «الآليُّ لا يُنشر بلا
+--      قراءةِ بشر» يبقى قائماً، والثمانيةُ والأربعون تخرج من الحبس.
+--
+--  (٢) 🔴 **والتصنيفُ بالسجلّ لا باسم المزوّد**: صفٌّ `provider =
+--      'migration-9999'` **غيرُ مسجَّلٍ** في `i18n_text_origins` يجب أن يأخذ
+--      `machine`. وهذا التأكيد **يقتل التنفيذَ الهشّ**: أيُّ نسخةٍ تصنّف
+--      بـ`like 'migration-%'` تحكم عليه `authored` **فيحمرّ الملف**.
+--
+--  (٣) **المحجوزُ حكمٌ بنفسه ومقدَّمٌ على الكل**: مفتاحٌ ينتهي بـ`.href`
+--      **ومزوّدُه `human` وبصمتُه مطابقة** — أي أنه كان يأخذ `approve` قبل
+--      `0146` — يجب أن يأخذ `reserved`. ولولا هذا التقديم لحاول الزرُّ رفعَه
+--      إلى `reviewed` فرفع المُشغِّلُ `translations_guard_reserved_field`
+--      استثناءً **وأسقط الدفعة كلَّها**.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -49,6 +70,9 @@ begin
     ('public.draft_publish_plan(text)'),
     ('public.draft_publish_preview(text)'),
     ('public.review_and_publish_drafts(text)'),
+    ('public.review_and_publish_authored(text)'),
+    ('public.i18n_provider_origin(text)'),
+    ('public.i18n_reserved_translation_key(text)'),
     ('public.publish_locale(text)'),
     ('public.review_translation(uuid, text, boolean)'),
     ('public.i18n_source_hash(text)'),
@@ -57,7 +81,11 @@ begin
   ) as x(sig)
   where to_regprocedure(x.sig) is null;
   if v_missing is not null then
-    raise exception 'شرط مسبق: دوال مفقودة (نفّذ 0100 أولاً): %', v_missing;
+    raise exception 'شرط مسبق: دوال مفقودة (نفّذ 0100 و0146 أولاً): %', v_missing;
+  end if;
+
+  if to_regclass('public.i18n_text_origins') is null then
+    raise exception 'شرط مسبق: جدول i18n_text_origins مفقود — نفّذ 0146 أولاً';
   end if;
 
   -- ── تنظيف بقايا تشغيلٍ انهار في منتصفه ──
@@ -116,10 +144,18 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
--- (أ) الفيكسترة — لغة + صفحة منشورة بقسمَين، وستّة صفوف ترجمة بحالاتٍ مقصودة
+-- (أ) الفيكسترة — لغة + صفحة منشورة بقسمَين، وأحد عشر صفَّ ترجمةٍ بحالاتٍ مقصودة
 --
 -- ⚠ اللغة **مخفية** (`enabled = false`): وهي شرطٌ للتأكيد (هـ) — نشرُ ثمانمئة
 --    نصٍّ لا يجوز أن يُظهر لغةً للزوار، والشاهد الإيجابي أن `ar` تبقى وحدها.
+--
+-- ⚠ **ولماذا تقع صفوفُ 0146 على مفاتيح خارج الفهرس** (‏`.items.…`): الفهرس
+--    (`i18n_corpus_rows`) لا يُخرج إلا `title` و`body` للأقسام، فمفتاحٌ خارجه
+--    أصلُه الحيّ هو المخزَّن نفسه ⇒ بصمتُه تطابق دائماً ⇒ **لا يمكن أن يُحكَم
+--    عليه `stale`**. وهذا مقصود: الشاهد على `authored` وعلى `reserved` يجب أن
+--    يقع في المنطقة التي **لا يحجبها** حكمٌ أسبق منه في السلسلة، وإلا لأثبت
+--    مرورَ الحكم القديم لا الجديد. والقِدَمُ نفسه مُختبَرٌ على `authored` بصفٍّ
+--    مستقلٍّ (٨) موضوعٍ على مفتاحٍ **داخل** الفهرس بقصد.
 -- ----------------------------------------------------------------------------
 do $$
 declare
@@ -167,14 +203,49 @@ begin
      'صفحة اختبار النشر الجماعي', '   ', 'draft', 'human'),
     -- (٦) مراجَعٌ سلفاً: ليس من عمل الزرّ، لكن `publish_locale` تنشره معنا
     ('zb', 'page', v_page::text || '.meta.title',
-     'عنوان سيو لاختبار النشر', 'Bulk SEO title', 'reviewed', 'human');
+     'عنوان سيو لاختبار النشر', 'Bulk SEO title', 'reviewed', 'human'),
+    -- ── صفوف 0146 ───────────────────────────────────────────────────────────
+    -- (٧) مكتوبٌ بيدٍ في هجرة: بشريٌّ، ومزوّدُه **مسجَّلٌ `authored`** ⇒ زرُّه هو
+    ('zb', 'section', v_s1::text || '.items.zbau.name',
+     'اسمٌ عربيٌّ كتبته هجرة', 'Hand-written by a migration', 'draft', 'migration-0127'),
+    -- (٨) مكتوبٌ بيدٍ **وأصلُه تغيّر** ⇒ `stale` يسبقه، فلا ينشره زرُّه أيضاً
+    ('zb', 'page', v_page::text || '.meta.description',
+     'وصفٌ عربيٌّ قديمٌ تغيّر بعد الترجمة', 'Stale authored description',
+     'draft', 'migration-0127'),
+    -- (٩) 🔴 مزوّدٌ **غيرُ مسجَّل** واسمُه يبدأ بـ`migration-` ⇒ يجب أن يبقى
+    --     `machine`: التصنيفُ بالسجلّ لا بالاسم
+    ('zb', 'section', v_s2::text || '.items.zbun.name',
+     'اسمٌ عربيٌّ من مزوّدٍ مجهول', 'From an unregistered provider',
+     'draft', 'migration-9999'),
+    -- (١٠) حقلٌ محجوز من مترجمٍ آليّ ⇒ `reserved` لا `machine`
+    ('zb', 'section', v_s1::text || '.items.zbrt.href',
+     '/routes/zb-fixture', '/routes/zb-fixtre', 'draft', 'mymemory'),
+    -- (١١) 🔴 حقلٌ محجوز **بشريٌّ وبصمتُه مطابقة** — كان `approve` قبل 0146،
+    --      واعتمادُه يرفع استثناء المُشغِّل فيُسقط الدفعة كلَّها
+    ('zb', 'section', v_s2::text || '.items.zbrt.href',
+     '/routes/zb-human', '/routes/zb-human-en', 'draft', 'human');
 
   select count(*) into v_n from public.translations t where t.locale = 'zb';
-  if v_n <> 6 then
-    raise exception '(أ) الفيكسترة كتبت % صفاً من ٦ — أصلح الفيكسترة لا الاختبار', v_n;
+  if v_n <> 11 then
+    raise exception '(أ) الفيكسترة كتبت % صفاً من ١١ — أصلح الفيكسترة لا الاختبار', v_n;
   end if;
 
-  raise notice '✔ (أ) الفيكسترة: لغة zb مخفية + ٦ صفوف (مؤهَّل ×٢ · قديم · آليّ · فارغ · مراجَع)';
+  /*
+   * شاهدان على الفيكسترة نفسها — **الفيكسترة تقع حيث يظهر العيب أو لا شاهد**:
+   *  · `migration-9999` **يجب ألّا يكون مسجَّلاً**، وإلا صار الصفّ (٩) `authored`
+   *    فمرّ التأكيدُ على تنفيذٍ هشٍّ يصنّف بالاسم.
+   *  · و`migration-0127` **يجب أن يكون مسجَّلاً `authored`**، وإلا صار الصفّ (٧)
+   *    `machine` فمرّ القسمُ (ط) فارغاً بلا أن ينشر شيئاً.
+   */
+  if exists (select 1 from public.i18n_text_origins o where o.provider = 'migration-9999') then
+    raise exception '(أ-٢) migration-9999 مسجَّلٌ في السجلّ — اختر اسماً غيرَ مسجَّلٍ للفيكسترة';
+  end if;
+  if public.i18n_provider_origin('migration-0127') <> 'authored' then
+    raise exception '(أ-٣) migration-0127 ليس authored في السجلّ (%) — الفيكسترة لن تُنتج مؤهَّلاً بيد',
+      public.i18n_provider_origin('migration-0127');
+  end if;
+
+  raise notice '✔ (أ) الفيكسترة: لغة zb مخفية + ١١ صفاً (مؤهَّل ×٢ · قديم ×٢ · آليّ ×٢ · فارغ · مراجَع · مكتوبٌ بيد · محجوز ×٢)';
 end;
 $$;
 
@@ -192,12 +263,18 @@ begin
   for v_got, v_n in
     select x.expect, count(*)::int
     from (values
-      (v_s1::text || '.title',      'section', 'approve'),
-      (v_s1::text || '.body',       'section', 'approve'),
-      (v_s2::text || '.title',      'section', 'stale'),
-      (v_s2::text || '.body',       'section', 'machine'),
-      (v_page::text || '.title',    'page',    'blank'),
-      (v_page::text || '.meta.title','page',   'reviewed')
+      (v_s1::text || '.title',           'section', 'approve'),
+      (v_s1::text || '.body',            'section', 'approve'),
+      (v_s2::text || '.title',           'section', 'stale'),
+      (v_s2::text || '.body',            'section', 'machine'),
+      (v_page::text || '.title',         'page',    'blank'),
+      (v_page::text || '.meta.title',    'page',    'reviewed'),
+      -- 0146
+      (v_s1::text || '.items.zbau.name', 'section', 'authored'),
+      (v_page::text || '.meta.description','page',  'stale'),
+      (v_s2::text || '.items.zbun.name', 'section', 'machine'),
+      (v_s1::text || '.items.zbrt.href', 'section', 'reserved'),
+      (v_s2::text || '.items.zbrt.href', 'section', 'reserved')
     ) as x(k, ns, expect)
     join public.translations tr
       on tr.locale = 'zb' and tr.namespace = x.ns and tr.key = x.k
@@ -209,11 +286,40 @@ begin
   end loop;
 
   select count(*) into v_n from public.draft_publish_plan('zb');
-  if v_n <> 6 then
-    raise exception '(ب-٢) المصنِّف حكم على % صفاً من ٦ — حكمٌ ساقط يعني صفاً بلا قرار', v_n;
+  if v_n <> 11 then
+    raise exception '(ب-٢) المصنِّف حكم على % صفاً من ١١ — حكمٌ ساقط يعني صفاً بلا قرار', v_n;
   end if;
 
-  raise notice '✔ (ب) المصنِّف: approve×٢ · stale · machine · blank · reviewed — بلا صفٍّ مهمَل';
+  /*
+   * (ب-٣) 🔴 **الشاهد الذي يقتل التنفيذ الهشّ.**
+   *
+   * `migration-9999` غيرُ مسجَّلٍ في `i18n_text_origins`، واسمُه مع ذلك يطابق
+   * `like 'migration-%'` حرفاً. فأيُّ تصنيفٍ بالاسم يحكم عليه `authored`
+   * ⇒ يُنشر نصٌّ لم يمرّ بمراجعةِ أحد. والحكمُ الصادق `machine`.
+   */
+  select p.verdict into v_got
+  from public.translations tr
+  join public.draft_publish_plan('zb') p on p.id = tr.id
+  where tr.locale = 'zb' and tr.namespace = 'section'
+    and tr.key = v_s2::text || '.items.zbun.name';
+  if v_got <> 'machine' then
+    raise exception
+      '(ب-٣) 🔴 مزوّدٌ غيرُ مسجَّلٍ اسمُه «migration-9999» حُكم عليه «%» — التصنيفُ بالاسم لا بالسجلّ',
+      v_got;
+  end if;
+
+  /*
+   * (ب-٤) والأحكامُ **متنافية**: مجموعُ الأصناف السبعة = عدد الصفوف. صفٌّ
+   *       يقع في حكمين يعني `case` بفرعين متداخلين، وصفٌّ بلا حكمٍ يعني
+   *       صفاً لا يقرّره أحد.
+   */
+  select count(*) into v_n
+  from (select p.id from public.draft_publish_plan('zb') p group by p.id having count(*) > 1) d;
+  if v_n <> 0 then
+    raise exception '(ب-٤) % صفاً أخذ أكثر من حكم', v_n;
+  end if;
+
+  raise notice '✔ (ب) المصنِّف: approve×٢ · stale×٢ · machine×٢ · blank · reviewed · authored · reserved×٢ — بلا صفٍّ مهمَل ولا مزدوج';
 end;
 $$;
 
@@ -222,6 +328,7 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 declare
+  v_s1   constant uuid := 'eb100000-0000-4000-8000-000000000001';
   v_s2   constant uuid := 'eb100000-0000-4000-8000-000000000002';
   v_page constant uuid := 'eb000000-0000-4000-8000-000000000001';
   v_prev jsonb;
@@ -232,12 +339,48 @@ begin
   -- (ج-١) المعاينة قبل الضغط = ما سيقع بعده. والرقم على الزرّ منها.
   v_prev := public.draft_publish_preview('zb');
   if (v_prev ->> 'eligible')::int <> 2
-     or (v_prev ->> 'drafts')::int <> 5
-     or (v_prev ->> 'skippedStale')::int <> 1
-     or (v_prev ->> 'skippedMachine')::int <> 1
+     or (v_prev ->> 'eligibleAuthored')::int <> 1
+     or (v_prev ->> 'drafts')::int <> 8
+     or (v_prev ->> 'skippedStale')::int <> 2
+     or (v_prev ->> 'skippedMachine')::int <> 2
      or (v_prev ->> 'skippedBlank')::int <> 1
+     or (v_prev ->> 'skippedReserved')::int <> 2
      or (v_prev ->> 'alreadyReviewed')::int <> 1 then
     raise exception '(ج-١) معاينةٌ خاطئة: %', v_prev::text;
+  end if;
+
+  /*
+   * (ج-١أ) 🔴 **المحجوزُ خارج `drafts`** — وهو كلُّ معنى البند الثاني في 0146.
+   *
+   * الأحكامُ السبعة مجموعُها ١١، والمحجوزُ منها ٢، والمراجَعُ سلفاً ١.
+   * فـ`drafts` **يجب** أن تساوي ١١ − ٢ − ١ = ٨. ولو عُدّ المحجوز فيها لصار ١٠،
+   * ولبقي الفارقُ بين `drafts` و(‏`eligible` + `eligibleAuthored`) قائماً أبداً
+   * بلا فعلٍ يغلقه — أي «عملٌ معلَّق» عن بابٍ أغلقته `0115` بنيوياً.
+   */
+  select count(*) into v_n from public.draft_publish_plan('zb') p
+   where p.verdict not in ('reserved', 'reviewed', 'reviewed-stale', 'reviewed-blank');
+  if (v_prev ->> 'drafts')::int <> v_n then
+    raise exception '(ج-١أ) drafts=% والمحسوبُ من المصنِّف % — المحجوزُ أو المراجَعُ يُعدّ عملاً معلَّقاً',
+      (v_prev ->> 'drafts')::int, v_n;
+  end if;
+
+  -- (ج-١د) والقوائمُ بنصّها: الآليّتان والمكتوبُ بيدٍ والمحجوزان — كلٌّ في قائمته
+  if jsonb_array_length(v_prev -> 'machineRows') <> 2
+     or jsonb_array_length(v_prev -> 'authoredRows') <> 1
+     or jsonb_array_length(v_prev -> 'reservedRows') <> 2
+     or jsonb_array_length(v_prev -> 'authoredSources') <> 1 then
+    raise exception '(ج-١د) قوائمُ المعاينة: آليّ=% مكتوبٌ بيد=% محجوز=% مصادر=%',
+      jsonb_array_length(v_prev -> 'machineRows'),
+      jsonb_array_length(v_prev -> 'authoredRows'),
+      jsonb_array_length(v_prev -> 'reservedRows'),
+      jsonb_array_length(v_prev -> 'authoredSources');
+  end if;
+  -- والمصدرُ يُسمّى باسمه وعدده — «يسمّي ما سينشره» شرطُ الزرّ الثاني لا زينة
+  if (v_prev -> 'authoredSources' -> 0 ->> 'provider') <> 'migration-0127'
+     or (v_prev -> 'authoredSources' -> 0 ->> 'count')::int <> 1
+     or btrim(coalesce(v_prev -> 'authoredSources' -> 0 ->> 'label', '')) = '' then
+    raise exception '(ج-١هـ) مصدرُ المكتوبِ بيدٍ بلا اسمٍ أو عدد: %',
+      (v_prev -> 'authoredSources' -> 0)::text;
   end if;
   if (v_prev ->> 'ran')::boolean then
     raise exception '(ج-١ب) المعاينة تدّعي أنها نفّذت — وهي stable لا تكتب';
@@ -309,6 +452,31 @@ begin
     raise exception '(ج-٥) الصفّ الفارغ صار «%»', v_row.status;
   end if;
 
+  /*
+   * (ج-٥ب) 🔴 **زرّ اليوم لا ينشر شيئاً جديداً** — قرارُ المالك بحرفه.
+   *
+   * المكتوبُ بيدٍ في هجرة **بشريٌّ**، ومع ذلك لا يمسّه هذا الزرّ: نشرُه فعلٌ
+   * واعٍ بزرٍّ ثانٍ يسمّيه، لا أثرٌ جانبيٌّ لضغطةٍ على زرٍّ آخر. والمحجوزُ
+   * كذلك — واعتمادُه أصلاً يرفع استثناء المُشغِّل فيُسقط الدفعة كلَّها.
+   *
+   * ⚠ **والمفاتيح مكتوبةٌ صراحةً هنا، ولا يُشتقّ الصفُّ من `draft_publish_plan`.**
+   *   وسببُه مقيسٌ في هذه الجلسة: النسخةُ الأولى من هذا الشاهد كانت تصل الصفوفَ
+   *   بالمصنِّف، **والمصنِّفُ لا يُرجع إلا `draft` و`reviewed`**. فحين طُفِر الزرُّ
+   *   ليبتلع المكتوبَ بيدٍ ويَنشره، خرج الصفُّ من نتيجة المصنِّف ⇒ **مرّ الشاهدُ
+   *   خضراءَ على العيب الذي وُضع ليمسكه**. شاهدٌ يُخلي نفسه من فيكسترته عند وقوع
+   *   العيب أخطرُ من غيابه.
+   */
+  select count(*) into v_n
+  from public.translations t
+  where t.locale = 'zb' and t.status <> 'draft'
+    and t.key in (v_s1::text || '.items.zbau.name',    -- مكتوبٌ بيدٍ في هجرة
+                  v_s1::text || '.items.zbrt.href',    -- محجوزٌ آليّ
+                  v_s2::text || '.items.zbrt.href');   -- محجوزٌ بشريّ
+  if v_n <> 0 then
+    raise exception
+      '(ج-٥ب) 🔴 % صفاً مكتوباً بيدٍ أو محجوزاً غادر «مسودة» بضغطة زرّ المسودات', v_n;
+  end if;
+
   -- (ج-٦) والمؤهَّلان وحدهما مع المراجَع سلفاً = ٣ منشورة، لا رابع
   select count(*) into v_n
   from public.translations t where t.locale = 'zb' and t.status = 'published';
@@ -353,12 +521,137 @@ begin
     raise exception '(د) تشغيلٌ ثانٍ اعتمد % ونشر % — الزرّ ليس خاملاً عند الفراغ',
       v_res ->> 'approved', v_res ->> 'published';
   end if;
-  -- والمستثنَيان الثلاثة ما زالوا مستثنَين، لا صاروا مؤهَّلين
-  if (v_res ->> 'eligible')::int <> 0 or (v_res ->> 'skippedStale')::int <> 1
-     or (v_res ->> 'skippedMachine')::int <> 1 or (v_res ->> 'skippedBlank')::int <> 1 then
+  -- والمستثنَون ما زالوا مستثنَين، لا صاروا مؤهَّلين — والمكتوبُ بيدٍ ينتظر زرَّه
+  if (v_res ->> 'eligible')::int <> 0 or (v_res ->> 'skippedStale')::int <> 2
+     or (v_res ->> 'skippedMachine')::int <> 2 or (v_res ->> 'skippedBlank')::int <> 1
+     or (v_res ->> 'skippedReserved')::int <> 2
+     or (v_res ->> 'eligibleAuthored')::int <> 1 then
     raise exception '(د-٢) حصيلة التشغيل الثاني: %', v_res::text;
   end if;
-  raise notice '✔ (د) التشغيل الثاني خاملٌ تماماً — والمستثنى باقٍ مستثنى';
+  raise notice '✔ (د) التشغيل الثاني خاملٌ تماماً — والمستثنى باقٍ مستثنى، والمكتوبُ بيدٍ ينتظر زرَّه';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ط) 🔴 الزرّ الثاني — **المكتوبُ بيدٍ وحده، وبفعلٍ مستقلّ**
+--
+-- ثلاثةٌ تُثبَت هنا معاً:
+--  (١) `review_and_publish_authored` تنشر صفَّ `authored` **وحده**.
+--  (٢) والقِدَمُ والفراغُ والحجزُ تبقى ساريةً عليه: صفٌّ مكتوبٌ بيدٍ **وأصلُه
+--      تغيّر** لا يُنشر، تماماً كنظيره البشريّ. فالحكمُ الجديد **فرعٌ في نفس
+--      السلسلة** لا بابٌ خلفيّ حولها.
+--  (٣) والمحجوزُ لا يُمسّ — واعتمادُه كان سيرفع استثناء المُشغِّل فيُسقط الدفعة.
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_s1   constant uuid := 'eb100000-0000-4000-8000-000000000001';
+  v_s2   constant uuid := 'eb100000-0000-4000-8000-000000000002';
+  v_page constant uuid := 'eb000000-0000-4000-8000-000000000001';
+  v_res  jsonb;
+  v_row  public.translations%rowtype;
+  v_n    integer;
+begin
+  -- شاهدٌ إيجابيّ قبل العمل: ثمة **صفٌّ واحدٌ فعلاً** لينشره، وإلا لأثبت
+  -- «صفر ⇒ صفر» ولا شيء غير ذلك
+  select count(*) into v_n from public.draft_publish_plan('zb') p where p.verdict = 'authored';
+  if v_n <> 1 then
+    raise exception '(ط-٠) المكتوبُ بيدٍ % صفاً لا ١ — الفيكسترة لا تُنتج ما يُختبَر', v_n;
+  end if;
+
+  v_res := public.review_and_publish_authored('zb');
+
+  if (v_res ->> 'approved')::int <> 1 or (v_res ->> 'published')::int <> 1 then
+    raise exception '(ط-١) اعتُمد % ونُشر % — والمتوقَّع ١ و١',
+      v_res ->> 'approved', v_res ->> 'published';
+  end if;
+  if not (v_res ->> 'ran')::boolean or (v_res ->> 'kind') <> 'authored' then
+    raise exception '(ط-١ب) الحصيلة لا تقول أيَّ زرٍّ جرى: %', v_res::text;
+  end if;
+
+  -- (ط-٢) والصفّ صار منشوراً بفاعلٍ مسجَّل
+  select * into v_row from public.translations t
+   where t.locale = 'zb' and t.namespace = 'section'
+     and t.key = v_s1::text || '.items.zbau.name';
+  if v_row.status <> 'published' then
+    raise exception '(ط-٢) الصفّ المكتوب بيدٍ بقي «%»', v_row.status;
+  end if;
+  if v_row.updated_by is distinct from public.current_actor() then
+    raise exception '(ط-٢ب) `updated_by` لا يطابق الفاعل';
+  end if;
+  -- ولم يُتبنَّ أصلٌ ولا تُغيَّر قيمة — الاعتمادُ حالةٌ وصاحبُها فقط
+  if v_row.value <> 'Hand-written by a migration'
+     or v_row.source_text <> 'اسمٌ عربيٌّ كتبته هجرة'
+     or v_row.provider <> 'migration-0127' then
+    raise exception '(ط-٢ج) الزرّ الثاني غيّر نصَّ الصفّ أو أصلَه أو مزوّدَه';
+  end if;
+
+  -- (ط-٣) 🔴 والمكتوبُ بيدٍ **القديم** بقي مسودةً — القِدَمُ يسبق الحكم الجديد
+  select * into v_row from public.translations t
+   where t.locale = 'zb' and t.namespace = 'page'
+     and t.key = v_page::text || '.meta.description';
+  if v_row.status <> 'draft' then
+    raise exception
+      '(ط-٣) صفٌّ مكتوبٌ بيدٍ وأصلُه تغيّر صار «%» — الحكمُ الجديد بابٌ حول القِدَم',
+      v_row.status;
+  end if;
+
+  -- (ط-٤) والمحجوزان مسودتان كما كانا، بقيمتهما
+  select count(*) into v_n
+  from public.translations t
+  where t.locale = 'zb' and t.status = 'draft'
+    and t.key in (v_s1::text || '.items.zbrt.href', v_s2::text || '.items.zbrt.href');
+  if v_n <> 2 then
+    raise exception '(ط-٤) 🔴 المحجوزان لم يبقيا مسودتين (% من ٢)', v_n;
+  end if;
+
+  -- (ط-٥) والآليّان لم يُمسّا — ومنهما المزوّدُ غيرُ المسجَّل
+  select count(*) into v_n
+  from public.translations t
+  where t.locale = 'zb' and t.status = 'draft'
+    and t.key in (v_s2::text || '.body', v_s2::text || '.items.zbun.name');
+  if v_n <> 2 then
+    raise exception '(ط-٥) الآليّان لم يبقيا مسودتين (% من ٢)', v_n;
+  end if;
+
+  -- (ط-٦) وتشغيلٌ ثانٍ خامل
+  v_res := public.review_and_publish_authored('zb');
+  if (v_res ->> 'approved')::int <> 0 or (v_res ->> 'published')::int <> 0
+     or (v_res ->> 'eligibleAuthored')::int <> 0 then
+    raise exception '(ط-٦) تشغيلٌ ثانٍ للزرّ الثاني ليس خاملاً: %', v_res::text;
+  end if;
+
+  -- (ط-٧) والمحصّلة: ٤ منشورة (٣ من زرّ المسودات + ١ من زرّ المكتوبِ بيد)
+  select count(*) into v_n
+  from public.translations t where t.locale = 'zb' and t.status = 'published';
+  if v_n <> 4 then
+    raise exception '(ط-٧) المنشور % صفاً من ٤', v_n;
+  end if;
+
+  raise notice '✔ (ط) الزرّ الثاني نشر المكتوبَ بيدٍ وحده — والقديمُ والمحجوزُ والآليُّ مسودات';
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (ط-ب) الزرّ الثاني يرفض اللغة المجهولة ولغة الأساس بنفس التلميح
+-- ----------------------------------------------------------------------------
+do $$
+declare
+  v_hint text;
+  v_ok   boolean := false;
+begin
+  begin
+    perform public.review_and_publish_authored('zq');
+  exception when others then
+    v_ok := true;
+    get stacked diagnostics v_hint = pg_exception_hint;
+    if coalesce(v_hint, '') <> 'not-found' then
+      raise exception '(ط-ب) تلميح الزرّ الثاني «%» لا «not-found»', coalesce(v_hint, 'بلا');
+    end if;
+  end;
+  if not v_ok then
+    raise exception '(ط-ب٢) الزرّ الثاني قبل لغةً غير مسجَّلة';
+  end if;
+  raise notice '✔ (ط-ب) الزرّ الثاني يرفض اللغة المجهولة بتلميح not-found';
 end;
 $$;
 
@@ -541,6 +834,33 @@ begin
       raise exception '(ز-١ب) 🔴 متعهدٌ مسجَّل نشر ترجمات — الحارس مفتوح';
     end if;
 
+    -- (ز-١ج) **والزرّ الثاني كذلك** — صلاحيةٌ جديدة تُختبَر يوم تولد لا بعده
+    v_ok := false;
+    begin
+      execute 'select public.review_and_publish_authored(''zb'')';
+    exception when others then
+      v_ok := true;
+      get stacked diagnostics v_hint = pg_exception_hint;
+      if coalesce(v_hint, '') <> 'forbidden' then
+        raise exception
+          '(ز-١ج) الزرّ الثاني رُفض بتلميح «%» لا «forbidden» — إن كان 42501 فالـgrant ناقص والحارس غيرُ مُختبَر',
+          coalesce(v_hint, 'بلا');
+      end if;
+    end;
+    if not v_ok then
+      raise exception '(ز-١د) 🔴 متعهدٌ مسجَّل نشر ما كُتب بيدٍ في الهجرات — الحارس مفتوح';
+    end if;
+
+    -- (ز-١هـ) وسجلُّ العمليات **لا يبلغه أصلاً** — لا قراءةً ولا كتابة
+    v_ok := false;
+    begin
+      execute 'select count(*) from public.i18n_text_origins';
+    exception when others then v_ok := true;
+    end;
+    if not v_ok then
+      raise exception '(ز-١و) متعهدٌ مسجَّل قرأ i18n_text_origins — القاعدة ١٦';
+    end if;
+
     -- (ز-٢) والمعاينة كذلك: عددُ مسودات لغةٍ ليست من شأنه
     v_ok := false;
     begin
@@ -576,11 +896,11 @@ begin
     raise;
   end;
 
-  -- والرفض لم يترك أثراً: القديم والآليّ والفارغ كما هم
+  -- والرفض لم يترك أثراً: القديمان والآليّان والفارغ والمحجوزان كما هم
   select count(*) into v_n
   from public.translations t where t.locale = 'zb' and t.status = 'draft';
-  if v_n <> 3 then
-    raise exception '(ز-٤) بعد المحاولة المرفوضة صار المسودات % لا ٣', v_n;
+  if v_n <> 7 then
+    raise exception '(ز-٤) بعد المحاولة المرفوضة صار المسودات % لا ٧', v_n;
   end if;
 
   delete from public.profiles p where p.id = v_part;
@@ -589,7 +909,7 @@ begin
   exception when others then null;
   end;
 
-  raise notice '✔ (ز) المتعهد المسجَّل مرفوضٌ من الثلاث بتلميح forbidden — والـgrant ليس هو الحاجز';
+  raise notice '✔ (ز) المتعهد المسجَّل مرفوضٌ من الأربع بتلميح forbidden، ولا يبلغ السجلّ — والـgrant ليس هو الحاجز';
 end;
 $$;
 
@@ -641,6 +961,6 @@ $$;
 -- ----------------------------------------------------------------------------
 do $$
 begin
-  raise notice 'ALL PASSED — «انشر كل المسودات» يعتمد المؤهَّل وحده ويرفض القديم';
+  raise notice 'ALL PASSED — زرّ المسودات يعتمد المؤهَّل وحده، وزرّ المكتوبِ بيدٍ يعتمد صنفه وحده، والمحجوزُ ليس عملاً معلَّقاً';
 end;
 $$;

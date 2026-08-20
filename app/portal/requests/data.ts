@@ -561,14 +561,28 @@ export const loadCrewRoster = cache(async (): Promise<CrewRoster> => {
 /* ------------------------------------------------------------------ */
 
 /**
- * سببُ اعتذارٍ كما يراه الشريك — **بلا `default_action` وبلا مبلغ**.
+ * سببُ اعتذارٍ كما يراه الشريك — **بلا مبلغ، ومعه اتجاهُ الأثر وحده**.
  *
- * 🔒 وهذا حذفٌ مقصود لا سهو: عرضُ «هذا السبب إجراؤه خصم» على شاشة من يختار
- * يجعله يختار الأرخص لا الأصدق، فتفقد البيانات معناها — وهي **علّة الكتالوج
- * نفسها** («كم رحلة فشلت بذنب هذا المتعهد؟» سؤالٌ له جواب). والمبلغ مقترحٌ
- * مسقوفٌ لا يُنفَّذ إلا بقرار إداري، فلا حقّ له في هذه الشاشة أصلاً.
+ * 🔒 **المبلغ محجوبٌ بنيوياً**: `portal_apology_reasons()` لا تحمله في نوع
+ * إرجاعها أصلاً (‏`0145`). وهو اقتراحٌ مسقوفٌ بمستحق الرحلة لا يُنفَّذ إلا
+ * بقرارٍ إداريٍّ بمبرَّرٍ مكتوب (‏`0130`)، فعرضُه رقماً يَعِد بما لا تنفّذه
+ * القاعدة.
+ *
+ * 🔴 **وأما وجودُ الأثر فيُعرض — وهذا نقضٌ صريح لما كان مكتوباً هنا.** كانت
+ * الحجّة أن «من يرى (هذا السبب إجراؤه خصم) يختار الأرخص لا الأصدق»، وهي حجّةٌ
+ * صحيحة في نفسها. **لكن البند ٥ من اتفاقية المتعهدين يقول نصّاً**: «ولكل سبب
+ * أثرٌ مالي **معلوم مسبقاً**» — فالإفصاحُ التزامٌ وقّع عليه الطرفان لا خيارٌ
+ * تصميميّ، واختيارٌ أعمى بين سببٍ بثمنٍ وسببٍ بلا ثمن ليس اختياراً. والتوفيق:
+ * يُعرض **الاتجاه** ولا يُعرض **المبلغ**، فيبقى الفارقُ الكمّي خفياً؛
+ * و`mayDeduct` مشتقٌّ من مفتاح اللوحة الحيّ — فما دام الخصمُ على الاعتذار
+ * مطفأً (وهو مطفأٌ اليوم) فلا سببَ موسومٌ به، ولا تحذيرَ من عقوبةٍ لا تقع.
  */
-export type ApologyReason = { slug: string; label: string };
+export type ApologyReason = {
+  slug: string;
+  label: string;
+  /** قد يترتب على هذا السبب خصم — اتجاهٌ لا مبلغ، ومن الحالة الحيّة لا من ثابت */
+  mayDeduct: boolean;
+};
 
 export type ApologyOptions = {
   reasons: ApologyReason[];
@@ -583,23 +597,27 @@ const NO_APOLOGY: ApologyOptions = { reasons: [], thresholdHours: null, ready: f
 /**
  * أسبابُ الاعتذار المتاحة للشريك + عتبة اللوحة، في نداءٍ واحد مُذاكَر.
  *
- * والتصفية هنا **مرآةُ ما تفرضه `withdraw_from_trip`** حرفاً بحرف: مفعَّل، ونطاقه
- * `apology` أو `both`، ومُبادِرُه ليس `platform`. ولو انحرف الطرفان لظهر للشريك
- * خيارٌ ترفضه القاعدة عند الضغط — وهو النمط ٢ في `LESSONS` («الواجهة تَعِد بما لا
- * تنفّذه القاعدة»). فالقاعدة تبقى الحَكَم، وهذه تصفيةُ عرضٍ لا حارس.
+ * 🔴 **ولماذا دالةٌ لا قراءةٌ من الجدول؟** هذا بعينه ما كان معطوباً: سياساتُ
+ * `SELECT` على `failure_reasons` كلُّها `is_admin()`، وهذه القراءة تجري **بجلسة
+ * المتعهد** — فكانت ترجع **صفرَ صفوف دائماً**، فتُخفي الشاشةُ زرَّ «اعتذر عن
+ * الرحلة» إخفاءً كاملاً. حقٌّ في البند ٥ من الاتفاقية بلا سبيلٍ إليه، وبديلُه
+ * الوحيد أن يترك المتعهد الرحلة تفشل — **وهو المسارُ الذي يُخصم فيه**.
+ *
+ * والعلاجُ `portal_apology_reasons()` (‏`0145`): دالةُ قراءةٍ `security definer`
+ * حارسُها `current_subcontractor_id()` في جسمها (‏D-20) — **لا فتحُ RLS على
+ * جدولٍ يحمل `default_action` و`default_deduct_amount` وتصنيفاً تشغيلياً**.
+ *
+ * والتصفيةُ صارت **داخل القاعدة**: مفعَّل، ونطاقه `apology` أو `both`، ومُبادِرُه
+ * ليس `platform` — وهي مرآةُ ما تفرضه `withdraw_from_trip` حرفاً بحرف. ولو انحرف
+ * الطرفان لظهر للشريك خيارٌ ترفضه القاعدة عند الضغط (النمط ٢ في `LESSONS`)، وهو
+ * ما يقيسه القسم (ع) في `completion_apology_tests.sql` نداءً حياً لكل سبب.
  */
 export const loadApologyOptions = cache(async (): Promise<ApologyOptions> => {
   const access = await portalAccess();
   if (!access.ok) return NO_APOLOGY;
 
   const [reasonsRes, cfgRes] = await Promise.all([
-    access.supabase
-      .from("failure_reasons")
-      .select("slug, label, applies_to, initiator, active, sort")
-      .eq("active", true)
-      .in("applies_to", ["apology", "both"])
-      .neq("initiator", "platform")
-      .order("sort", { ascending: true }),
+    access.supabase.rpc("portal_apology_reasons"),
     access.supabase.rpc("trip_closure_config"),
   ]);
 
@@ -609,6 +627,7 @@ export const loadApologyOptions = cache(async (): Promise<ApologyOptions> => {
     .map((row) => ({
       slug: asText(pick(row, ["slug"])) ?? "",
       label: asText(pick(row, ["label"])) ?? "",
+      mayDeduct: pick(row, ["may_deduct", "mayDeduct"]) === true,
     }))
     .filter((reason) => reason.slug !== "" && reason.label !== "");
 

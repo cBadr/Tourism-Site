@@ -248,7 +248,25 @@ begin
     insert into public.subcontractor_drivers (subcontractor_id, name, phone)
     values (v_sub, 'CREW_TESTS سائق', '01055443322') returning id into v_drv;
 
-    update public.subcontractor_vehicles set color = 'CREW_TESTS فضي' where id = v_veh;
+    /*
+     * 🔴 **واللوحةُ تُكتب هنا كما يُكتب اللون** — إصلاحُ حمرةٍ صنفية 2026-08-20.
+     *
+     * ما وقع: الشاهدُ يستعير مركبةً من أسطول المالك (‏`limit 1` بلا ترتيب)، ثم
+     * يطالبها بلوحةٍ **لا يكتبها هو**. فلمّا أضاف المتعهدُ مركبةً ثالثة من بوابته
+     * بلا لوحة (‏`actor_kind=partner` في 2026-08-19T23:55) صارت هي ما يلتقطه
+     * `limit 1`، فاحمرّ الشاهدُ — **والكودُ لم يتغيّر بحرف**.
+     *
+     * وهو النمط ٦ في `handover/LESSONS.md` حرفاً: اختبارٌ يفشل لأن **بيانات
+     * المالك تغيّرت**، لا لأن السلوك انكسر. والعلاجُ أن يملك الشاهدُ مدخلاته.
+     *
+     * ⚠ ولا يُغطّي هذا على سؤالٍ مشروع سُجّل للمالك: **أتُسنَد رحلةٌ إلى مركبةٍ
+     * بلا لوحة؟** فالعميلُ يبحث عن اللوحة عند الرصيف. لكنّ ذلك **حارسٌ يُبنى في
+     * `set_trip_crew`** لا توكيدٌ يُفرض من مجموعة اختبار على صفٍّ يملكه غيرُها.
+     */
+    update public.subcontractor_vehicles
+       set color = 'CREW_TESTS فضي',
+           plate = 'CREW_TESTS ص ب ١٢٣'
+     where id = v_veh;
     update public.dispatches
        set assigned_vehicle_id = v_veh, assigned_driver_id = v_drv, crew_at = now()
      where booking_id = v_booking;

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Bot, Filter, MapPin, Search, Upload } from "lucide-react";
+import { ArrowRight, Bot, Filter, Link2Off, MapPin, Search, Upload } from "lucide-react";
 
 import { SaveButton } from "@/components/admin/save-feedback";
 import { toArabicDigits } from "@/components/booking/format";
@@ -50,7 +50,7 @@ import {
   sortByPlace,
 } from "../_components/languages-ui";
 import { TranslateButton } from "../_components/translate-button";
-import { publishDrafts, publishReviewed } from "./actions";
+import { publishAuthoredDrafts, publishDrafts, publishReviewed } from "./actions";
 import { PublishDraftsButton } from "./_components/publish-drafts-button";
 import { QueueRowCard } from "./_components/queue-row";
 
@@ -106,12 +106,38 @@ import { QueueRowCard } from "./_components/queue-row";
  *  (٢) **الحصيلة تقول ما لم يحدث**: المستثنى آلياً وقديماً وفارغاً، كلٌّ برقمه.
  *  (٣) **الصفوف الآلية معروضةٌ بنصّها** في بطاقةٍ دائمة — قرار المالك كان
  *      «استثنِها وسجّل ملاحظة»، والملاحظة النافعة أن يراها فيقرّرها بيده.
+ *
+ * ── وما أضافته هجرة `0146` إلى هذه الشاشة ──────────────────────────────────
+ *
+ * ضغط المالك الزرَّ فنُشر عشرةُ صفوف وبقيت **٥٤**. والزرُّ لم يكذب — **والعيب
+ * في التصنيف**: `draft_publish_plan` كانت تحكم `machine` على كل ما ليس
+ * `provider = 'human'`، فدخل فيها ٤٨ نصاً كتبه بشرٌ بيده **داخل ملفّات
+ * الهجرات**، وستّةٌ مفاتيحُها محجوزة لا تُنشر بحال.
+ *
+ *  (أ) **زرٌّ ثانٍ مستقل** لِما كُتب بيدٍ في هجرة، يسمّي مصادرَه وعددَه قبل
+ *      الضغط. ولا يُضاف الصنف إلى زرّ اليوم: قرارُ المالك أن يبقى النشر فعلاً
+ *      واعياً لكل صنف، لا أثراً جانبياً لضغطةٍ اعتاد عليها.
+ *  (ب) **المحجوزُ يخرج من عدّاد العمل المعلَّق** — من `drafts` ومن «يحتاج
+ *      عملاً» معاً — ويُعرض في بطاقةٍ محايدة تقول ما هو. فتنبيهٌ لا يمكن
+ *      إطفاؤه لا يُقرأ.
+ *  (ج) **ولا رقمَ في هذه الشاشة يُحسب هنا**: كلُّها من `draft_publish_preview`،
+ *      أي من مصنِّف الدالة التي ستنفّذ.
  */
 
 export const metadata = { title: "مراجعة الترجمة" };
 
-/** صفٌّ آليٌّ يستثنيه زرّ المسودات — يُعرض بنصّه ليقرّره المالك بيده */
-type MachineRow = { id: string; namespace: string; key: string; value: string };
+/** صفٌّ يستثنيه زرٌّ (آليٌّ أو محجوز) أو ينشره الثاني — يُعرض بنصّه ليقرّره المالك بيده */
+type PlanRow = {
+  id: string;
+  namespace: string;
+  key: string;
+  value: string;
+  /** آخرُ مقطعٍ من المفتاح — يُملأ للمحجوز وحده (`href` · `src` · `icon` …) */
+  field: string;
+};
+
+/** مصدرُ صفوفٍ مكتوبةٍ بيد: هجرةٌ بعينها بعدد صفوفها — «يسمّي ما سينشره» */
+type AuthoredSource = { provider: string; label: string; count: number };
 
 /**
  * حصيلة `draft_publish_preview(locale)` — **ما سيفعله الزرّ لو ضُغط الآن**.
@@ -122,35 +148,47 @@ type MachineRow = { id: string; namespace: string; key: string; value: string };
  */
 type DraftPlan = {
   ready: boolean;
-  /** كل المسودات = eligible + الثلاثة المستثنَاة */
+  /** المسودات **التي لها عملٌ ممكن** — والمحجوزُ خارجها بحكم `0146` */
   drafts: number;
-  /** ما سيُعتمد ويُنشر فعلاً */
+  /** ما سيعتمده وينشره زرّ «انشر كل المسودات» */
   eligible: number;
+  /** ما سيعتمده وينشره زرّ «انشر ما كُتب بيدٍ في الهجرات» */
+  eligibleAuthored: number;
   skippedMachine: number;
   skippedBlank: number;
   skippedStale: number;
+  /** حقولٌ محجوزة (`href` وأخواتها) — **ليست عملاً معلَّقاً**، ولا زرَّ لها */
+  skippedReserved: number;
   /** مراجَعٌ سلفاً — تنشره `publish_locale` مع دفعتنا */
   alreadyReviewed: number;
   /** مراجَعٌ سلفاً **وأصله تغيّر** — عيبٌ في زرّ «المراجَع» القائم، يُعلَن لا يُخفى */
   staleReviewed: number;
-  machineRows: MachineRow[];
+  machineRows: PlanRow[];
+  authoredRows: PlanRow[];
+  authoredSources: AuthoredSource[];
+  reservedRows: PlanRow[];
 };
 
 const NO_PLAN: DraftPlan = {
   ready: false,
   drafts: 0,
   eligible: 0,
+  eligibleAuthored: 0,
   skippedMachine: 0,
   skippedBlank: 0,
   skippedStale: 0,
+  skippedReserved: 0,
   alreadyReviewed: 0,
   staleReviewed: 0,
   machineRows: [],
+  authoredRows: [],
+  authoredSources: [],
+  reservedRows: [],
 };
 
-function readMachineRows(value: unknown): MachineRow[] {
+function readPlanRows(value: unknown): PlanRow[] {
   if (!Array.isArray(value)) return [];
-  const out: MachineRow[] = [];
+  const out: PlanRow[] = [];
   for (const entry of value) {
     if (entry === null || typeof entry !== "object") continue;
     const row = entry as Record<string, unknown>;
@@ -161,6 +199,27 @@ function readMachineRows(value: unknown): MachineRow[] {
       namespace: typeof row.namespace === "string" ? row.namespace : "",
       key,
       value: typeof row.value === "string" ? row.value : "",
+      field: typeof row.field === "string" ? row.field : "",
+    });
+  }
+  return out;
+}
+
+/** مصادرُ المكتوبِ بيد — والصفُّ بلا اسمٍ أو بعددٍ صفر يسقط بدل أن يُعرض ناقصاً */
+function readAuthoredSources(value: unknown): AuthoredSource[] {
+  if (!Array.isArray(value)) return [];
+  const out: AuthoredSource[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const label = typeof row.label === "string" ? row.label.trim() : "";
+    const count =
+      typeof row.count === "number" && Number.isFinite(row.count) ? Math.trunc(row.count) : 0;
+    if (label === "" || count <= 0) continue;
+    out.push({
+      provider: typeof row.provider === "string" ? row.provider : "",
+      label,
+      count,
     });
   }
   return out;
@@ -183,12 +242,17 @@ async function readDraftPlan(
     ready: true,
     drafts: at("drafts"),
     eligible: at("eligible"),
+    eligibleAuthored: at("eligibleAuthored"),
     skippedMachine: at("skippedMachine"),
     skippedBlank: at("skippedBlank"),
     skippedStale: at("skippedStale"),
+    skippedReserved: at("skippedReserved"),
     alreadyReviewed: at("alreadyReviewed"),
     staleReviewed: at("staleReviewed"),
-    machineRows: readMachineRows(data.machineRows),
+    machineRows: readPlanRows(data.machineRows),
+    authoredRows: readPlanRows(data.authoredRows),
+    authoredSources: readAuthoredSources(data.authoredSources),
+    reservedRows: readPlanRows(data.reservedRows),
   };
 }
 
@@ -269,18 +333,25 @@ function paramCount(params: Record<string, string | string[] | undefined>, name:
  * يترك في القاعدة نصاً يظنّه منشوراً وهو ليس كذلك. فكل مستثنًى يُذكر برقمه
  * وسببه، **والقديم أوّلها** لأنه الوحيد الذي يعني «ترجمةٌ لم تعد تطابق أصلها».
  */
-function draftsSentence(params: Record<string, string | string[] | undefined>): string {
+function draftsSentence(
+  params: Record<string, string | string[] | undefined>,
+  kind: "drafts" | "authored"
+): string {
   const approved = paramCount(params, "ap");
   const published = paramCount(params, "pb");
   const machine = paramCount(params, "mt");
   const stale = paramCount(params, "st");
   const blank = paramCount(params, "bl");
   const staleReviewed = paramCount(params, "sr");
+  const reserved = paramCount(params, "rv");
+  /** ما تركه هذا الزرُّ **لأخيه** — لا ما فشل فيه */
+  const otherLeft = paramCount(params, "ot");
 
+  const noun = kind === "drafts" ? "مسودة" : "مسودةً مكتوبةً بيدٍ في الهجرات";
   const head =
     approved === 0
-      ? "لم تُعتمد مسودةٌ واحدة"
-      : `اعتُمدت ${toArabicDigits(approved)} مسودة باسمك ونُشرت`;
+      ? `لم تُعتمد ${kind === "drafts" ? "مسودةٌ واحدة" : "مسودةٌ مكتوبةٌ بيدٍ واحدة"}`
+      : `اعتُمدت ${toArabicDigits(approved)} ${noun} باسمك ونُشرت`;
   const total =
     published > approved
       ? ` — المنشور في هذه الجولة ${toArabicDigits(published)} صفاً بحساب ما كان مراجَعاً سلفاً`
@@ -296,21 +367,43 @@ function draftsSentence(params: Record<string, string | string[] | undefined>): 
     skipped.push(`${toArabicDigits(machine)} آلية استُثنيت بقرارك — قرّرها صفاً صفاً`);
   }
   if (blank > 0) skipped.push(`${toArabicDigits(blank)} بلا نص`);
+  // ما ينتظر الزرَّ الآخر — يُسمّى بزرّه صراحةً حتى لا يُقرأ «فشل»
+  if (otherLeft > 0) {
+    skipped.push(
+      kind === "drafts"
+        ? `${toArabicDigits(otherLeft)} كتبتها هجرات المشروع بيد — لها زرُّها «انشر ما كُتب بيدٍ في الهجرات»`
+        : `${toArabicDigits(otherLeft)} مسودة بشرية من الشاشة — لها زرُّها «انشر كل المسودات»`
+    );
+  }
   if (staleReviewed > 0) {
     skipped.push(
       `⚠ و${toArabicDigits(staleReviewed)} صفاً كان مراجَعاً سلفاً وأصله تغيّر — نشرته دالة «انشر كل المراجَع» معنا، فافحصه`
     );
   }
 
+  /*
+   * 🔴 والمحجوزُ **خارج «لم يُنشر»** لا داخله — وهو كلُّ الفرق الذي أحدثته
+   * `0146` في هذا الشريط. عدُّه مع المستثنى يجعل الشريط يقول «جزئيّاً» إلى
+   * الأبد عن حقولٍ يمنع `0115` نشرها بنيوياً، فيصير تنبيهاً لا يمكن إطفاؤه —
+   * ولا يُقرأ. ويُذكر مع ذلك بوصفه **خارج الحساب** فلا يُخفى.
+   */
+  const aside =
+    reserved > 0
+      ? ` وخارج الحساب: ${toArabicDigits(reserved)} حقلاً محجوزاً (روابط ومصادر) لا يُترجَم ولا يُنشر — ليس عملاً معلَّقاً.`
+      : "";
+
   return skipped.length === 0
-    ? `${head}${total}. لا صفَّ استُثني.`
-    : `${head}${total}. ولم يُنشر: ${skipped.join(" · ")}.`;
+    ? `${head}${total}. لا صفَّ استُثني.${aside}`
+    : `${head}${total}. ولم يُنشر: ${skipped.join(" · ")}.${aside}`;
 }
 
 /** جملة النجاح المناسبة للعملية التي رجعت من الإجراء */
 function savedSentence(params: Record<string, string | string[] | undefined>): string | null {
   if (params.saved === "bulkall" || params.saved === "bulkpart") {
-    return draftsSentence(params);
+    return draftsSentence(params, "drafts");
+  }
+  if (params.saved === "authall" || params.saved === "authpart") {
+    return draftsSentence(params, "authored");
   }
   if (typeof params.bulk === "string") {
     const count = /^\d+$/.test(params.bulk) ? toArabicDigits(params.bulk) : null;
@@ -386,16 +479,47 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
     plan.skippedBlank > 0 ? `${toArabicDigits(plan.skippedBlank)} بلا نص` : null,
   ].filter((part): part is string => part !== null);
 
+  /** سطرٌ يُذيَّل به كلا التأكيدين — حالةُ اللغة هي كل الفرق بين «عامّ» و«في الدرج» */
+  const visibilityLine = localeRow?.enabled
+    ? "واللغة ظاهرة للزوار الآن ⇒ يقرؤه الزائر فور النشر."
+    : "واللغة مخفية عن الزوار ⇒ لن يراه أحدٌ حتى تفعّلها من مدير اللغات.";
+
   const confirmText = [
     `اعتماد ${toArabicDigits(plan.eligible)} مسودة باسمك ونشرها في «${title}».`,
     skippedParts.length > 0 ? `يُستثنى: ${skippedParts.join(" · ")}.` : "لا صفَّ يُستثنى.",
-    localeRow?.enabled
-      ? "واللغة ظاهرة للزوار الآن ⇒ يقرؤه الزائر فور النشر."
-      : "واللغة مخفية عن الزوار ⇒ لن يراه أحدٌ حتى تفعّلها من مدير اللغات.",
+    plan.eligibleAuthored > 0
+      ? `ولا يشمل ${toArabicDigits(plan.eligibleAuthored)} صفاً كتبته هجرات المشروع بيد — لها زرُّها المستقل.`
+      : null,
+    visibilityLine,
     "متابعة؟",
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 
   const draftsDisabled = readOnly || !plan.ready || plan.eligible === 0;
+
+  /*
+   * ── الزرّ الثاني: نصُّ تأكيدٍ **يسمّي المصدر** لا العدد وحده ────────────────
+   *
+   * شرطُ المالك على هذا الزرّ أن يعرف **ما الذي يضغط عليه** قبل أن يضغط: أيُّ
+   * هجرةٍ كتبت هذه النصوص وكم صفاً منها. وبلا ذلك يصير «انشر ٤٨» رقماً مبهماً
+   * لا يفرّقه عن الزرّ الآخر شيء.
+   */
+  const authoredConfirmText = [
+    `نشر ${toArabicDigits(plan.eligibleAuthored)} نصاً كتبه بشرٌ داخل ملفّات الهجرات، في «${title}».`,
+    plan.authoredSources.length > 0
+      ? `مصادرها: ${plan.authoredSources
+          .map((source) => `${source.label} (${toArabicDigits(source.count)})`)
+          .join(" · ")}.`
+      : null,
+    "وهذه ليست ترجمةً آلية — مرّت بمراجعة الكود يوم كُتبت. والآليّ يبقى مستثنى بقرارك.",
+    visibilityLine,
+    "متابعة؟",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+
+  const authoredDisabled = readOnly || !plan.ready || plan.eligibleAuthored === 0;
 
   /*
    * عدد المراجَع على زرّه: من المعاينة إن قُرئت، ومن `translation_progress` إن لم
@@ -447,7 +571,24 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
   const page = pageNumber(params.p, pageCount);
   const from = (page - 1) * PAGE_SIZE;
   const shown = placed.slice(from, from + PAGE_SIZE);
-  const workLeft = placed.filter((entry) => needsWork(entry.row)).length;
+
+  /*
+   * ── «منها N تحتاج عملاً» — والمحجوزُ ليس منها ─────────────────────────────
+   *
+   * الحقلُ المحجوز (`href` وأخواته) مسودةٌ **لا تغادر المسودة أبداً**: `0115`
+   * تمنع نشره، والمُشغِّلُ يرفض أي حالةٍ غيرها. فعدُّه «يحتاج عملاً» يَعِد
+   * المالكَ بعملٍ لا يستطيع إنجازه مهما فعل.
+   *
+   * ⚠ **والقرار من القاعدة لا من الواجهة** (القاعدة ١٢): المعرّفاتُ تصل من
+   *   `draft_publish_preview` — أي من `draft_publish_plan` نفسه. ولا يُستنسخ
+   *   هنا شرطُ «ما هو محجوز»، وإلا صار للحجز تعريفان ينحرفان.
+   *   وقائمةُ `reservedRows` **بلا سقف** بقصد (الشرح في `0146`)، فالاستبعاد
+   *   تامٌّ لا جزئيّ.
+   */
+  const reservedIds = new Set(plan.reservedRows.map((row) => row.id));
+  const workLeft = placed.filter(
+    (entry) => needsWork(entry.row) && (entry.row.id === null || !reservedIds.has(entry.row.id))
+  ).length;
 
   /*
    * حالة الشاشة مضغوطةً في سلسلةٍ واحدة: تُوضع في حقلٍ مخفيٍّ واحد بكل صفٍّ
@@ -654,17 +795,68 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
             />
           </form>
           <HelpTip>
-            يعتمد كل مسودة <span className="font-semibold">باسمك</span> ثم ينشرها بنفس دالة{" "}
+            يعتمد كل مسودة كتبتَها <span className="font-semibold">في هذه الشاشة</span>{" "}
+            <span className="font-semibold">باسمك</span> ثم ينشرها بنفس دالة{" "}
             <code dir="ltr">publish_locale</code> — فلا يُكتب في الجدول نصٌّ لم يمرّ
-            بالاعتماد. ويستثني ثلاثة: ما{" "}
+            بالاعتماد. ويستثني أربعة: ما{" "}
             <span className="font-semibold">تغيّر أصله العربي</span> بعد ترجمته (ترجمةٌ لم
-            تعد تطابق أصلها فتبقى مسودةً)، والنصوص الآلية بقرارك، والفارغ. والعدد على الزرّ
-            هو ما سيُنشر فعلاً لا عدد المسودات كلها
+            تعد تطابق أصلها فتبقى مسودةً)، والنصوص الآلية بقرارك، والفارغ،{" "}
+            <span className="font-semibold">وما كتبته هجرات المشروع بيد</span> — ولهذا
+            الأخير زرُّه المستقل بجواره. والعدد على الزرّ هو ما سيُنشر فعلاً لا عدد المسودات
+            كلها
             {plan.ready && plan.drafts !== plan.eligible
-              ? ` (${numberText(plan.drafts)} مسودة، منها ${numberText(plan.eligible)} مؤهَّلة)`
+              ? ` (${numberText(plan.drafts)} مسودة، منها ${numberText(plan.eligible)} مؤهَّلة لهذا الزرّ)`
               : ""}
             .
           </HelpTip>
+
+          {/*
+            ── الزرّ الثاني (هجرة 0146) ─────────────────────────────────────────
+
+            🔴 **ولا يظهر إلا حين يكون له عمل.** زرٌّ دائمٌ معطَّلٌ في شاشةٍ مزدحمة
+            يُقرأ عطلاً لا حالة؛ وهذا الصنف قد يبقى فارغاً شهوراً (لا ينشأ إلا حين
+            تكتب هجرةٌ نصّاً بلغةٍ غير العربية). فحضورُه نفسه خبر: «ثمة نصٌّ كتبه
+            بشرٌ في الكود ينتظر قرارك».
+          */}
+          {plan.ready && plan.eligibleAuthored > 0 && (
+            <>
+              <form action={publishAuthoredDrafts} className="flex items-center gap-2">
+                <input type="hidden" name="locale" value={locale} />
+                <input type="hidden" name="back" value={back} />
+                <PublishDraftsButton
+                  label={`انشر ما كُتب بيدٍ في الهجرات (${numberText(plan.eligibleAuthored)})`}
+                  confirmText={authoredConfirmText}
+                  disabled={authoredDisabled}
+                  variant="secondary"
+                  savedMessages={{
+                    authall: "تم النشر — ولا صفَّ استُثني.",
+                    authpart:
+                      "تم النشر، وبقيت أصنافٌ أخرى — التفصيل في الشريط أعلى الصفحة.",
+                  }}
+                  errorMessages={LANGUAGE_ERRORS}
+                />
+              </form>
+              <HelpTip>
+                نصوصٌ إنجليزية <span className="font-semibold">كتبها بشرٌ بيده داخل ملفّات
+                الهجرات</span> (لا مترجمٌ آليّ)، فمرّت بمراجعة الكود يوم كُتبت. وكانت تُحسب
+                «آلية» خطأً فتُحبس في المسودة بلا زرٍّ ينشرها.{" "}
+                {plan.authoredSources.length > 0 && (
+                  <>
+                    ومصادرها الآن:{" "}
+                    {plan.authoredSources
+                      .map((source) => `${source.label} (${toArabicDigits(source.count)})`)
+                      .join(" · ")}
+                    .{" "}
+                  </>
+                )}
+                وهي منفصلةٌ عن زرّ المسودات عمداً: قرارك أن يبقى النشر فعلاً واعياً لكل
+                صنف، لا أثراً جانبياً لضغطةٍ على زرٍّ آخر. والتصنيف يقرؤه Postgres من سجلّ
+                المزوّدين <code dir="ltr">i18n_text_origins</code> —{" "}
+                <span className="font-semibold">ومزوّدٌ غير مسجَّل يُعامَل آلياً</span> فلا
+                يُنشر بهذا الزرّ.
+              </HelpTip>
+            </>
+          )}
         </div>
 
         {/*
@@ -689,6 +881,63 @@ export default async function LocaleReviewPage(props: PageProps<"/admin/language
             <ul className="mt-2 space-y-1">
               {plan.machineRows.map((row) => (
                 <li key={row.id} className="flex flex-wrap items-baseline gap-2">
+                  <code dir="ltr" className="text-xs text-muted-foreground">
+                    {row.key}
+                  </code>
+                  <span dir="ltr" className="font-medium">
+                    {row.value}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {/*
+          ── الحقول المحجوزة (هجرة 0146) ──────────────────────────────────────
+
+          بطاقةٌ **محايدةُ اللون** لا تحذيريّة: هذه ليست عملاً متأخراً ولا خطأً
+          يُصلَح، بل بابٌ أغلقه قرارٌ سابق (D-24 · `0104` · `0115`). ولذلك خرجت
+          من عدّاد «يحتاج عملاً» ومن `drafts` معاً — **وتُذكر هنا** لأن اختفاءها
+          الصامت يترك المالك يعدّ مسوداتٍ في القاعدة لا يجد لها أثراً في الشاشة.
+        */}
+        {plan.reservedRows.length > 0 && (
+          <details className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+            <summary className="flex cursor-pointer items-center gap-2 font-medium">
+              <Link2Off className="size-4 shrink-0 text-muted-foreground" />
+              {numberText(plan.reservedRows.length)} حقلاً محجوزاً — لا يُترجَم ولا يُنشر،
+              وليس عملاً معلَّقاً
+            </summary>
+            <p className="mt-2 leading-relaxed text-muted-foreground">
+              قيمةُ هذه الحقول رابطٌ أو مسارُ ملفٍّ أو معرّف — لا نثرٌ يُقرأ. والمسار{" "}
+              <span className="font-semibold">واحدٌ لكل اللغات</span> (العربية بلا بادئة،
+              و<code dir="ltr">/{locale}</code> إعادةُ كتابةٍ داخلية)، فترجمتُه رابطٌ مكسور
+              لا تحسينٌ ناقص — وقد وقع ذلك فعلاً: مترجمٌ آليّ ابتلع حرفاً من{" "}
+              <code dir="ltr">cairo-alexandria</code>. فقاعدةُ البيانات ترفض نشرها، وهي
+              صفوفٌ خاملةٌ للسجل لا أكثر. اتركها كما هي.
+            </p>
+            {/*
+              🔴 **الفارقُ يُشرَح ولا يُجبَر** (`LESSONS` النمط ٨). عدّادُ «مسودات» في
+              بطاقة «حالة اللغة» يأتي من `translation_progress` وهو يعدّ **كل** صفٍّ
+              حالتُه مسودة — والمحجوزُ منها. وأزرارُ النشر تأتي من
+              `draft_publish_preview` وهو يستثنيه. فرقمان مختلفان لسببٍ صحيح،
+              **ومساواتُهما قسراً كانت ستجعل المحجوز يُحسب «ناقصاً»** لأن
+              `missing = total − published − reviewed − draft`.
+            */}
+            <p className="mt-2 leading-relaxed text-muted-foreground">
+              ولهذا يزيد عدّاد «مسودات» في بطاقة «حالة اللغة» أعلاه بـ
+              {" "}
+              {numberText(plan.reservedRows.length)} عن العدد الذي تعمل عليه الأزرار: ذاك
+              يعدّ كل صفٍّ حالتُه مسودة، وهذه تعدّ ما له عملٌ ممكن.
+            </p>
+            <ul className="mt-2 space-y-1">
+              {plan.reservedRows.map((row) => (
+                <li key={row.id} className="flex flex-wrap items-baseline gap-2">
+                  {row.field !== "" && (
+                    <Badge variant="outline" className="font-normal">
+                      {row.field}
+                    </Badge>
+                  )}
                   <code dir="ltr" className="text-xs text-muted-foreground">
                     {row.key}
                   </code>
