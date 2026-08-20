@@ -319,8 +319,32 @@ export async function ServicesSection({
                  */}
                 {quoteHref ? (
                   <CardContent className="relative z-10 mt-auto">
+                    {/*
+                     * 🔴 **والنصُّ المرئيُّ واحدٌ عمداً، والمنطوقُ يسمّي خدمته.**
+                     *
+                     * رسب هذا في PageSpeed 2026-08-20: «روابطُ متطابقةٌ لها الغرضُ
+                     * نفسه» — ثلاثةُ روابطَ نصُّها «اطلب عرض سعر لهذه الخدمة»
+                     * ووجهاتُها `tours` و`events` و`conferences`. ومن يتصفّح
+                     * بقائمة روابط الصفحة (وهو أشيعُ ما يفعله مستخدمُ قارئ الشاشة)
+                     * يسمع ثلاثةً متطابقةً **ولا يعرف أيُّها أيّ**.
+                     *
+                     * والعلاجُ `aria-label` لا تغييرُ النصّ المرئيّ: «لهذه الخدمة»
+                     * صادقةٌ للمبصر لأن البطاقةَ تحيط بها وعنوانُها فوقها مباشرة،
+                     * والسياقُ البصريُّ هو بعينه ما يفقده القارئ الصوتيّ.
+                     *
+                     * ⚠ و`aria-label` **تحلّ محلَّ** النصّ الداخليّ لا تُضاف إليه،
+                     * فيجب أن تحمل الفعلَ كاملاً لا اسمَ الخدمة وحده — وإلا سمع
+                     * «رحلات» ولم يعرف أنه رابطُ طلبِ عرضِ سعر.
+                     */}
                     <a
                       href={quoteHref}
+                      aria-label={
+                        card.title
+                          ? t("quoteCtaNamed", "اطلب عرض سعر لخدمة {service}", {
+                              service: card.title,
+                            })
+                          : undefined
+                      }
                       className={cn(
                         "inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold underline-offset-4 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                         card.src ? "text-white" : "text-primary"

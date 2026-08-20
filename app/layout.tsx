@@ -8,6 +8,7 @@ import { getActiveLocale, getActiveLocaleDef } from "@/i18n/server";
 import { AnalyticsTags } from "@/lib/analytics/tags";
 import { normalizeIntegrations, resolveIntegration } from "@/lib/analytics/services";
 import { SiteTimeZoneSync } from "@/components/shared/site-time-zone-sync";
+import { colorSchemeFor, getThemeChoice } from "@/lib/theme";
 import "./globals.css";
 
 /**
@@ -212,8 +213,60 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  🔴 م‑٩ب — المظهر صار قرار **الجذر**، لا قرار مجموعة `(site)` وحدها      ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * ── ما نُقض صراحةً، ولا يُطوى ────────────────────────────────────────────────
+ *
+ * غلاف `app/(site)/layout.tsx` كان يحمل الوسم بقصدٍ مكتوب: «هذا الملف لا يُصيَّر
+ * إلا داخل مجموعة `(site)`، فاللوحة والبورتال لا يريانه إطلاقاً». وكان معه
+ * سطران في `globals.css`: «النطاق `.site-theme` مقصود ولا يُوسَّع إلى `<html>` —
+ * اللوحة `/admin` والبورتال `/portal` فاتحان **بقرار**». **وهذان القراران
+ * منقوضان هنا بأمر الجبهة**: المظهر تفضيلُ **شخص** لا خاصّيةُ **سطح**، ومن اختار
+ * الداكن على الموقع العام يفتح لوحته فيجدها داكنة.
+ *
+ * وثمنُ النقض مقيسٌ ومذكور: **٩٥٥ أداةَ `dark:`** كانت مكتوبةً في `app/admin`
+ * (‏٨٦٩ في ٦٧ ملفاً) و`app/portal` (‏٨٦ في ١٩) **ولم تُصيَّر قط** لأن أغلفتها بلا
+ * `.dark` ولا `data-theme`. وهي تشتعل كلُّها بهذا التغيير دفعةً واحدة، ومنها ما
+ * كُتب بلا أن يراه أحد. فالوصلُ هنا، **وقياس التباين وإصلاحه جبهةٌ تالية**.
+ *
+ * ── ولماذا `<body>` لا `<html>` — والسبب سطرٌ في ذيل `globals.css` ───────────
+ *
+ * 🔴 كتلة `:root` الثانية (‏`--tone-*` قرب نهاية الملف) تأتي **بعد** كتلة
+ * `.site-theme`، وكلتاهما بأولوية (0,1,0). فلو لبس `<html>` الصنفَ لَغلبت تلك
+ * الكتلةُ إسناداتِ `light-dark()` للنبرات الأربع على العنصر نفسه، ولَجمُدت
+ * «نجاح/تحذير/معلومة» على قيمها الفاتحة عند كل من لم يختر ونظامُه داكن —
+ * **بلا خطأ ولا اختبارٍ يسقط**. و`<body>` عنصرٌ آخر، وإسنادُه الخاص يغلب الوراثة
+ * دائماً مهما تأخّرت كتل `:root` — فينجو التتالي كله كما هو مقيسٌ اليوم.
+ *
+ * ── و`color-scheme` يبقى على `<html>` لأن الشريط لا يُرسم من غيره ───────────
+ *
+ * شريطُ تمرير الصفحة وأرضيةُ اللوحة (canvas) يرسمهما المتصفح من **العنصر
+ * الجذر**، فلا يبلغهما إسنادٌ على `<body>`. وكان يصل قبل اليوم عبر وسم
+ * `<style>{`:root{…}`}</style>` مزروعٍ في غلاف `(site)` — وهو التفافٌ وُلد من
+ * عجز ذلك الغلاف عن بلوغ `<html>` أصلاً. وقد بلغناه هنا، فسقط الالتفاف: القيمة
+ * تُكتب سمةً سطرية على `<html>` مباشرةً، وهي **جزءٌ من أول بايت** كسمة `lang`
+ * تماماً — بلا وسم زائد وبلا سطرٍ في المسار الحرج.
+ *
+ * ⚠ والقيمة ليست نصاً حراً: `colorSchemeFor` تُخرج واحدةً من ثلاث سلاسل مكتوبة
+ * في `lib/theme.ts`، ومدخلُها مرشَّحٌ بـ`normalizeThemeChoice` — فكوكيٌّ مصنوعٌ
+ * بيد لا يكتب حرفاً في السمة.
+ *
+ * ── وثلاثُ خصائص لم تتغيّر، وهي شرطُ صحّة هذا النقل ─────────────────────────
+ *
+ * ١) **بلا وميض**: الاختيار الصريح يصل كوكيّاً مع الطلب فيخرج `<body>` مطلياً من
+ *    الخادم؛ و«اتبع نظامي» يُحسم في CSS بـ`light-dark()` قبل أول طلاء.
+ * ٢) **بلا جافاسكربت**: لا سكربت حاجز ولا `useEffect` ولا `localStorage`.
+ * ٣) **الحالات ثلاث**: و«اتبع نظامي» = غيابُ الكوكي وغيابُ الصنف معاً.
+ */
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const [settings, locale] = await Promise.all([getSettings(), getActiveLocaleDef()]);
+  const [settings, locale, theme] = await Promise.all([
+    getSettings(),
+    getActiveLocaleDef(),
+    getThemeChoice(),
+  ]);
 
   /**
    * لوحة التصميم كاملةً من `site_settings` إلى `<html style>`.
@@ -252,6 +305,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     "--font-display": DISPLAY_STACK,
     "--font-body": BODY_STACK,
     "--font-sans": BODY_STACK,
+    /* أدوات المتصفح التي لا يبلغها `<body>`: شريط تمرير الصفحة وأرضية اللوحة —
+       المبرر الكامل في ترويسة `RootLayout` أعلاه. */
+    colorScheme: colorSchemeFor(theme),
   } as React.CSSProperties;
 
   return (
@@ -261,7 +317,16 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       style={brandVars}
       className={`${alexandriaArabic.variable} ${alexandriaLatin.variable} ${readexArabic.variable} ${readexLatin.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans">
+      {/* `site-theme` نطاقُ إسناد الرموز (‏`globals.css` §١ب)، و`data-theme` هو
+          الاختيار كما وصل، و`dark` **لا تُكتب إلا مع الاختيار الصريح** — الحالة
+          `system` تنقلب عبر `color-scheme` و`light-dark()` وحدهما، وصنفٌ ثابت
+          هنا كان سيجمّدها على الداكن ويُلغي الاتّباع. */}
+      <body
+        data-theme={theme}
+        className={`site-theme min-h-full flex flex-col font-sans${
+          theme === "dark" ? " dark" : ""
+        }`}
+      >
         {/* مزوّد الرسائل لجزر العميل (ويدجت البحث، مسار الحجز، نماذج الطلب) */}
         <NextIntlClientProvider>
           {/* 🔴 أول ابنٍ عمداً: يعكس منطقة الموقع إلى `lib/site-timezone.ts`

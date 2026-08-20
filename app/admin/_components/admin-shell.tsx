@@ -538,11 +538,21 @@ function SidebarContent({
   );
 }
 
+/**
+ * ── 🔴 لوحُ المظهر يصل هنا **مُصيَّراً**، ولا خيار في ذلك (م‑٩ب) ─────────────
+ *
+ * `ThemeToggleMenu` مكوّنٌ خادميّ `async` يقرأ الكوكي، وهذا الملف `"use client"`
+ * — فاستيرادُه هنا يحوّله إلى مكوّن عميل ويكسر «يعمل بلا جافاسكربت». أما تمريرُه
+ * مُصيَّراً من `app/admin/layout.tsx` (خادميّ) فيمرّ في حمولة RSC سليماً، وهو
+ * النمط نفسه الذي يمرّر به لوحُ المظهر إلى `AccountMenu` في الموقع العام.
+ */
 export function AdminShell({
   brandName,
+  themeMenu,
   children,
 }: {
   brandName: string;
+  themeMenu?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -590,7 +600,12 @@ export function AdminShell({
   // شاشات المصادقة (الدخول/تعيين كلمة المرور): بلا شريط جانبي — غلاف مُوسَّط بهوية العلامة فقط
   if (isLogin) {
     return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-muted/30 px-4 py-10">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center gap-6 bg-muted/30 px-4 py-10">
+        {/* المظهر متاحٌ **قبل** الدخول أيضاً: هذه الشاشة لا شريط لها ولا قائمة،
+            ومن يفتحها من جهازٍ ليلاً يستحق أن يقلبها قبل أن يقرأ حقلَ كلمة
+            المرور — لا بعده. وهي كذلك الشاشة الوحيدة في `/admin` التي تُفتح بلا
+            جلسة، فهي مسار التحقق الحيّ لهذه الجبهة. */}
+        {themeMenu ? <div className="absolute end-3 top-3">{themeMenu}</div> : null}
         <div className="text-center leading-tight">
           <div className="font-heading text-xl font-bold text-primary">{brandName}</div>
           <div className="mt-1 text-sm text-muted-foreground">لوحة التحكم</div>
@@ -690,6 +705,9 @@ export function AdminShell({
           {/* جرس الإشعارات — يعمل بالبيانات الحية متى كانت قاعدة البيانات مربوطة،
               ويتحول لجرس ساكن بتلميح شارح متى لم تكن (تدهور رشيق) */}
           <div className="ms-auto flex shrink-0 items-center gap-1">
+            {/* المظهر قبل الجرس: الجرسُ عملٌ يومي يُنقر مراراً، والمظهرُ تفضيلٌ
+                يُضبط مرة — فيبقى الأقربُ إلى اليد هو الأكثرُ استعمالاً. */}
+            {themeMenu}
             <NotificationBell />
             <Link
               href="/"

@@ -22,11 +22,24 @@ export function HelpTip({
 
   return (
     <span className={cn("group/helptip relative inline-flex align-middle", className)}>
+      {/*
+        🔴 **الدائرةُ المرئية ١٦ بكسلاً، وهدفُ اللمس ٤٤** — والفرقُ بينهما مقصود.
+        (‏PageSpeed 2026-08-20: «هدفُ لمسٍ أصغرُ من اللازم»، وهو أحدُ بندَين رسبا.)
+
+        فتكبيرُ الدائرة إلى ٤٤ يجعل علامةَ استفهامٍ جانبيةً تنافس النصَّ الذي
+        تشرحه؛ وتركُها ١٦ يجعل الإصابةَ بالإبهام حظّاً. والعلاجُ **طبقةٌ شفافة
+        موسَّعة** بـ`::after` تمتدّ من مركز الزرّ: المظهرُ لا يتغيّر بكسلاً،
+        والمساحةُ القابلة للنقر تصير ٤٤×٤٤.
+
+        ⚠ و`relative` على الزرّ لا على الغلاف: الغلافُ `relative` سلفاً لأن
+        التلميحَ يُرسى إليه، فطبقةٌ محسوبةٌ منه كانت ستنزاح مع عرض النصّ.
+        ⚠ و`z-0` تُبقي الطبقةَ تحت التلميح (`z-50`) فلا تبتلع تمريره.
+      */}
       <button
         type="button"
         aria-label="مساعدة"
         aria-describedby={id}
-        className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full border border-muted-foreground/40 text-[0.65rem] font-bold leading-none text-muted-foreground outline-none transition-colors hover:border-primary hover:text-primary focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+        className="relative z-0 inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-full border border-muted-foreground/40 text-[0.65rem] font-bold leading-none text-muted-foreground outline-none transition-colors after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] hover:border-primary hover:text-primary focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         ؟
       </button>

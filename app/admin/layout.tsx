@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { ThemeToggleMenu } from "@/components/site/theme-toggle";
 import { getSettings } from "@/lib/settings";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { AdminShell } from "./_components/admin-shell";
@@ -18,6 +19,11 @@ import { AdminShell } from "./_components/admin-shell";
  *
  * (٢) اسم العلامة من الإعدادات (انضباط الـ Whitelabel)، وصفحتا الدخول وتعيين
  *     كلمة المرور تُعرضان داخل الغلاف نفسه بلا شريط جانبي ولا حارس.
+ *
+ * (٣) لوحُ المظهر (م‑٩ب) — **نسخةٌ واحدة** من مبدّل الموقع العام لا ثانيةٌ له
+ *     (القاعدة ١٢). ويُصيَّر هنا لا في `AdminShell` لأن الأخير `"use client"`
+ *     والمبدّل خادميٌّ يقرأ الكوكي. أما **قرار المظهر نفسه** فليس هنا إطلاقاً:
+ *     `app/layout.tsx` يحمله على `<body>` فيسري على الأغلفة الثلاثة.
  */
 
 export const metadata: Metadata = {
@@ -64,5 +70,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     }
   }
 
-  return <AdminShell brandName={settings.brand.name}>{children}</AdminShell>;
+  return (
+    <AdminShell brandName={settings.brand.name} themeMenu={<ThemeToggleMenu />}>
+      {children}
+    </AdminShell>
+  );
 }

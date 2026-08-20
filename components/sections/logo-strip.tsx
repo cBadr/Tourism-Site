@@ -89,6 +89,76 @@ const SPEED_SEC = { slow: 64, normal: 40, fast: 24 } as const;
  * مقبضٌ يُشحن معطوباً خلف خيار (النمط ٣ في `LESSONS.md`). فالوعد مقصورٌ على
  * الأرضية الفاتحة، ونصُّ المساعدة في اللوحة يقول ذلك حرفاً.
  */
+/**
+ * 🔴 **أبعادُ الشعار الأصلية — تُقرأ من الملف، ولا تُخترع.**
+ *
+ * ما وقع (‏PageSpeed 2026-08-20): «عناصرُ صورٍ بلا عرضٍ وارتفاعٍ صريحين» —
+ * ثمانيةَ عشرَ إلى واحدٍ وعشرين عنصراً، **كلُّها شعاراتُ هذا الشريط** مضروبةً في
+ * نسخ اللفّ. والمتصفحُ بلا نسبةٍ يحجز صفراً ثم يتمدّد لحظةَ يصل الملفّ.
+ *
+ * ⚠ **ولا يكفي رقمٌ واحدٌ للجميع**: النِّسبُ متباعدةٌ جداً — BMW مربّعٌ (١٠١٥×١٠١٥)
+ * وهيونداي ٧٫٨:١ (٩٩٩٫٩٩×١٢٨٫٦٢). فقيمةٌ ثابتة تحجز عرضاً خاطئاً لتسعةٍ من عشرة،
+ * وهي **أسوأ من الغياب** لأنها تحجز ثم تنزاح بدل أن تتمدّد مرة.
+ *
+ * والارتفاعُ مثبَّتٌ بالـCSS (`h-7`/`sm:h-8`) والعرضُ `auto`، فما تفعله السمتان
+ * هو **إعلانُ النسبة** ليحسب المتصفح العرضَ قبل التحميل. ⇒ تُقرأ من `viewBox`
+ * وإلا من `width`/`height` — وكلا المصدرين موجودٌ فعلاً في العشرة كلها (مقيس).
+ *
+ * 🔒 **والقراءةُ للأصول المشحونة معنا وحدها**: مسارٌ داخليٌّ تحت `public/`.
+ * أما ما يرفعه المالك أو يشير إلى مضيفٍ خارجيّ **فلا سمات** — إعلانُ نسبةٍ لملفٍّ
+ * لم نره كذبٌ يُنتج انزياحاً بدل أن يمنعه.
+ *
+ * والذاكرةُ المؤقتة على مستوى الوحدة: الملفُّ يُقرأ مرةً في عمر العملية، والسالبةُ
+ * تُحفظ كذلك فلا يُعاد فتحُ مسارٍ مفقودٍ في كل تصييرة.
+ */
+type Intrinsic = { width: number; height: number };
+const intrinsicCache = new Map<string, Intrinsic | null>();
+
+function readIntrinsic(src: string): Intrinsic | null {
+  if (intrinsicCache.has(src)) return intrinsicCache.get(src) ?? null;
+
+  let result: Intrinsic | null = null;
+  try {
+    /* الاستيرادان داخل الدالة عمداً: هذه وحدةٌ تُصيَّر خادمياً، والاستيراد
+       العلويّ لـ`fs` يجعلها غيرَ صالحةٍ للاستيراد من أي شجرةٍ عميلة لاحقاً. */
+    if (src.startsWith("/") && !src.startsWith("//") && src.toLowerCase().endsWith(".svg")) {
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const fs = require("node:fs") as typeof import("node:fs");
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const path = require("node:path") as typeof import("node:path");
+
+      /* `..` يُقطع قبل الوصول إلى القرص: `safeMediaSrc` تمنع المخططات والمحارف
+         الضابطة ولا تمنع التسلّق. و`normalize` ثم فحصُ البادئة يفعل. */
+      const rel = path.normalize(src).replace(/^[/\\]+/, "");
+      const root = path.join(process.cwd(), "public");
+      const full = path.join(root, rel);
+      if (full.startsWith(root)) {
+        const head = fs.readFileSync(full, "utf8").slice(0, 2000);
+        const vb = /viewBox\s*=\s*"([^"]+)"/.exec(head);
+        if (vb) {
+          const parts = vb[1].trim().split(/[\s,]+/).map(Number);
+          if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+            result = { width: parts[2], height: parts[3] };
+          }
+        }
+        if (!result) {
+          const w = /\bwidth\s*=\s*"([\d.]+)/.exec(head);
+          const h = /\bheight\s*=\s*"([\d.]+)/.exec(head);
+          if (w && h && Number(w[1]) > 0 && Number(h[1]) > 0) {
+            result = { width: Number(w[1]), height: Number(h[1]) };
+          }
+        }
+      }
+    }
+  } catch {
+    /* ملفٌّ مفقودٌ أو غيرُ مقروء: الشريط يُعرض بلا سمات كما كان — ولا يسقط. */
+    result = null;
+  }
+
+  intrinsicCache.set(src, result);
+  return result;
+}
+
 const LOGO_BASE = "h-7 w-auto max-w-28 object-contain transition duration-300 sm:h-8";
 const DARK_MONO = "dark:opacity-55 dark:grayscale-0 dark:[filter:brightness(0)_invert(1)]";
 
@@ -247,6 +317,7 @@ export async function LogoStripSection({
            * الشعار نفسه — والنسخ الزخرفية يحجبها `Marquee` بـ`aria-hidden` على
            * الـ`<ul>` كله، فلا حاجة إلى نسختين من هذا الجسم كما كان هنا سابقاً.
            */
+          const dim = logo.src ? readIntrinsic(logo.src) : null;
           const media = logo.src ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
@@ -254,6 +325,10 @@ export async function LogoStripSection({
               alt={logo.alt}
               loading="lazy"
               decoding="async"
+              /* النسبةُ الأصلية إن عُرفت — والسمتان تسقطان معاً أو تبقيان معاً،
+                 فـ`width` وحدها تجعل المتصفح يحسب ارتفاعاً لا يريده أحد. */
+              width={dim?.width}
+              height={dim?.height}
               className={`${logoClass} ${reveal}`}
             />
           ) : (

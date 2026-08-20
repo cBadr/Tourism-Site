@@ -114,7 +114,11 @@ export function ExtrasPicker({
               disabled={disabled}
               aria-pressed={selected}
               className={cn(
-                "inline-flex min-h-10 items-center gap-2 rounded-full ps-3 text-sm transition-colors",
+                // 🔴 `min-h-11` لا `min-h-10`: أربعون بكسلاً دون معيار الأربعة
+                //    والأربعين، وقد رسب هذا المفتاح بعينه في PageSpeed 2026-08-20.
+                //    والزيادةُ أربعةُ بكسلات لا تُغيّر تخطيطاً — المربّعُ يحمل
+                //    ارتفاعَه من محتواه، والرقاقةُ كانت تكفي ٤٠ بمحض المصادفة.
+                "inline-flex min-h-11 items-center gap-2 rounded-full ps-3 text-sm transition-colors",
                 "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 "disabled:pointer-events-none disabled:opacity-50",
                 // ما يلي المفتاح داخل المربّع يحمل تباعدَه، فلا يُضاعَف الهامش

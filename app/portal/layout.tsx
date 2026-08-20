@@ -7,6 +7,7 @@ import { DispatchNav } from "@/components/portal/offer-nav";
 import { ContactLine } from "@/components/portal/portal-contact";
 import { PortalGateScreen } from "@/components/portal/portal-gate";
 import { PortalNav } from "@/components/portal/portal-nav";
+import { ThemeToggleMenu } from "@/components/site/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { getSettings } from "@/lib/settings";
 import { countLiveOffers } from "./requests/data";
@@ -86,6 +87,19 @@ export default async function PortalLayout({ children }: LayoutProps<"/portal">)
                 <Globe className="size-4" aria-hidden="true" />
                 الموقع
               </Link>
+              {/*
+                لوحُ المظهر (م‑٩ب) — **نسخةٌ واحدة** من مبدّل الموقع العام
+                (القاعدة ١٢)، في قرصٍ مطويّ لا ثلاث خانات: الشريط هنا خمسةُ بنودٍ
+                سلفاً، والمظهرُ تفضيلٌ يُضبط مرة لا وجهةٌ سادسة (قرار بدر
+                2026‑08‑18 مطبَّقاً على هذا السطح).
+
+                ⚠ **وموضعُه في الترويسة لا في `PortalNav`**: الأخير `"use client"`
+                فلا يقبل مكوّناً خادمياً، **وهو غائبٌ أصلاً** عن حالات البوّابة
+                (`blocked` · `suspended` · `env`) — فلو سكنه لَما بلغه شريكٌ
+                موقوفٌ يقرأ شاشةً في ضوءٍ لا يناسبه.
+              */}
+              <ThemeToggleMenu />
+              {/* وقرار المظهر نفسه ليس هنا: `app/layout.tsx` يحمله على `<body>` */}
               {signedIn ? (
                 <form action={signOutPortal}>
                   <Button type="submit" variant="ghost" size="sm">

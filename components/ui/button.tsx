@@ -31,8 +31,13 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+        /* 🔴 الأداتان `dark:` فوق `bg-destructive/20` و`dark:hover:` فوق العمق
+           `/30` حُذفتا (ولا تُكتبان حرفياً — المبرر في `badge.tsx`).
+           والمقيس كاملاً هناك، وزيادةً هنا: عمقُ `/30` **لا يعبر AA في الداكن
+           عند أي إضاءة** (‏3.54 عند 0.70 · 3.71 عند 0.76 · 3.76 عند 0.80) —
+           فهو ليس عمقاً يُضبط بل عمقٌ يُحذف. */
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

@@ -1,9 +1,10 @@
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { Check, ChevronDown, Monitor, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getActiveLocale } from "@/i18n/server";
 import { getT } from "@/lib/i18n/content";
 import { getThemeChoice, THEME_CHOICES, type ThemeChoice } from "@/lib/theme";
 import { setThemeChoice } from "@/app/(site)/theme-actions";
+import { TAP_TARGET_SQUARE } from "./links";
 
 /**
  * مبدّل الثيم — مكوّن خادمي بلا أي JavaScript على العميل، كمبدّل اللغة تماماً.
@@ -132,6 +133,72 @@ export async function ThemeToggle({ className }: ThemeToggleProps) {
         })}
       </div>
     </form>
+  );
+}
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  م‑٩ب — نفس اللوح، داخل قرصٍ مطويّ: مدخلُ المظهر في اللوحة والبورتال      ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * ── لماذا قرصٌ مطويّ لا ثلاثة أزرارٍ في الشريط ───────────────────────────────
+ *
+ * قرار بدر 2026‑08‑18 في الموقع العام كان: «الفصل بالوظيفة — اللغةُ تبقى في
+ * الشريط (قرارُ محتوى يُتّخذ في أول ثوانٍ)، والمظهرُ ينزوي (تفضيلٌ شخصيّ يُضبط
+ * مرة)». والسبب المقيس أن المبدّل **ثلاثُ خانات لا زرّ**، فوضعُه عارياً في
+ * الشريط أضاف ثلاثةَ أهداف إلى كتلةٍ فيها ستة سلفاً.
+ *
+ * وشريطُ اللوحة (`admin-shell`) وشريطُ البورتال (`portal-nav` وترويسته) لهما
+ * الضيقُ نفسه: خمسةُ بنودٍ في البورتال، و٢٣ وجهةً في اللوحة موزّعةً على خمس
+ * مجموعات. فالشكل الذي يوافق ذلك القرار **هدفٌ واحد يفتح لوحاً**، لا خانات.
+ *
+ * ⚠ **ولا `variant` ثانٍ للوح نفسه.** المفتوح هو `ThemeToggle` كما هو حرفاً —
+ * صفوفٌ كاملةُ العرض بحشوٍ حقيقيّ ٤٤. وقد سقط الشريط المقسّم بقياسٍ حيّ عند
+ * ٣٧٥ (التفصيل في ترويسة المكوّن أعلاه)، وإحياؤه هنا يعيد العيب نفسه.
+ *
+ * ── و`details` لا زرٌّ بحالة ────────────────────────────────────────────────
+ *
+ * نفس بدائيّة قائمة الحساب وقائمة الجوال ومبدّل اللغة: تفتح بالكيبورد وبقارئ
+ * الشاشة **بلا سطر جافاسكربت**، فيبقى المبدّل عاملاً بلا JS من طرفيه — الفتحُ
+ * والإرسال معاً. ولو كان زرّاً بحالة `useState` لصار الغلافُ عميلاً، وسقط
+ * التعهّد الذي بُني عليه المبدّل كلّه.
+ *
+ * ⚠ **والهدف ٤٤×٤٤ بهالةٍ لا بحشو**: الشريط ضيّقٌ أفقياً وجاره على بُعد ٤ بكسل
+ * (‏`TAP_TARGET_SQUARE` — القاعدة في `links.ts`: «هالةٌ حيث الضيق، وحشوٌ حيث
+ * السعة»). والصفوفُ داخل اللوح تأخذ الحشو الحقيقي لأن السعة هناك رأسية.
+ */
+export async function ThemeToggleMenu({ className }: ThemeToggleProps) {
+  const locale = await getActiveLocale();
+  const [current, t] = await Promise.all([getThemeChoice(), getT("site.themeToggle", locale)]);
+
+  const groupLabel = t("groupLabel", "مظهر الموقع");
+  const currentLabel = t(current, FALLBACK[current]);
+  const Icon = ICONS[current];
+
+  return (
+    <details className={cn("group relative", className)}>
+      {/* الاسمُ المقروء يحمل **الحالة الحالية** لأن الأيقونة وحدها لا تُقرأ:
+          «مظهر الموقع: داكن». ولا مفتاح رسائل جديداً — الاثنان قائمان. */}
+      <summary
+        aria-label={`${groupLabel}: ${currentLabel}`}
+        className={cn(
+          "flex size-9 cursor-pointer list-none items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&::-webkit-details-marker]:hidden",
+          TAP_TARGET_SQUARE
+        )}
+      >
+        <Icon className="size-4 shrink-0" aria-hidden="true" />
+        <ChevronDown
+          className="size-3 shrink-0 transition-transform group-open:rotate-180"
+          aria-hidden="true"
+        />
+      </summary>
+
+      {/* `end-0` و`top-11` كقائمة الحساب حرفاً — و`end` منطقية فتنقلب وحدها
+          في LTR بعد تفعيل الإنجليزية (اتفاقيات §١). */}
+      <div className="absolute end-0 top-11 z-50 w-48 rounded-2xl border border-border bg-background p-2 shadow-xl">
+        <ThemeToggle />
+      </div>
+    </details>
   );
 }
 

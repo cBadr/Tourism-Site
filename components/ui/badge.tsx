@@ -12,8 +12,17 @@ const badgeVariants = cva(
         default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
+        /* 🔴 الأداة `dark:` فوق `bg-destructive/20` حُذفت — والسبب رقمٌ مقيسٌ لا ذوق.
+           ⚠ ولا تُكتب هنا كاملةً ولو في تعليق: مستخرِج تيلويند ٤ يمسح **نصّ الملف**
+           لا شجرة JSX، فذكرُها حرفياً يُحيي القاعدة في الـCSS بعد حذفها من الكود.
+           كانت مكتوبةً يوم كان `/admin` فاتحاً بقرار، فلم تُصيَّر قط؛ ويوم اشتعلت
+           (رفعُ المظهر إلى `<body>`) صارت **حالة السكون** في الداكن عند
+           **4.18:1** فوق البطاقة — دون AA. والتِنت الأعمق فوق أرضيةٍ داكنة يزحف
+           بالأرضية **نحو** لون النص، عكسَ ما يفعله فوق الرمل: نفس الـ`/20` في
+           الفاتح يعطي 4.68 ✅. فالعائلتان لا تحتاجان عمقين، بل نفسَ العمق:
+           `/10` سكوناً (‏5.43 داكناً · 5.56 فاتحاً) و`/20` تمريراً. */
         destructive:
-          "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
+          "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost:
